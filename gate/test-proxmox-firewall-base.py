@@ -144,6 +144,22 @@ def delete_rule_retries_digest_races():
           json.loads(foreign_output.getvalue()), {"deleted": False})
 
 
+def api_health_check_uses_configured_token():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    uri_tasks = [task for task in tasks if "ansible.builtin.uri" in task]
+    check("one authenticated API health check is configured", len(uri_tasks), 1)
+    if not uri_tasks:
+        return
+    header = uri_tasks[0]["ansible.builtin.uri"].get("headers", {}).get("Authorization", "")
+    check("API health check uses configured user, token ID and secret",
+          all(field in header for field in (
+              "homelabinfra_config.proxmox.api_user",
+              "homelabinfra_config.proxmox.api_token_id",
+              "homelabinfra_config.proxmox.api_token_secret")), True)
+    check("API token is hidden from Ansible output", uri_tasks[0].get("no_log"), True)
+
+
 def main():
     example = yaml.safe_load((ROOT / "config.example/proxmox.yml").read_text())
     proxmox = copy.deepcopy(example["proxmox"])
@@ -248,6 +264,7 @@ def main():
     invalid_enabled["proxmox"]["firewall"]["enabled"] = "false"
     run_plan(invalid_enabled, expect_success=False)
     delete_rule_retries_digest_races()
+    api_health_check_uses_configured_token()
 
     legacy = copy.deepcopy(empty)
     legacy["node_rules"] = {
