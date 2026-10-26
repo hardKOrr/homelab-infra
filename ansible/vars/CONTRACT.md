@@ -370,13 +370,16 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `dns.host` | required for external providers | not in Proxmox inventory |
 | `dns.api_key` | optional | |
 | `dns.instance` | optional | |
-| `firewall.provider` | optional, default `none` | `opnsense \| none` — the firewall Deploy opens each app's declared `firewall:` access on (internet egress rules, opt-in WAN port forwards) and Remove withdraws it from |
+| `firewall.provider` | optional, default `none` | `opnsense \| none` — app Deploy opens each app's declared `firewall:` access and Remove withdraws it; the separate base-rules playbook runs only when `firewall.base.enabled: true` |
 | `firewall.host` | required unless provider `none` | OPNsense API address |
 | `firewall.interfaces` | required unless provider `none` | list of `{cidr, interface}`: the OPNsense interface (e.g. `opt4`) a guest's traffic enters on, matched by the guest's address |
 | `firewall.wan_interface` | optional | default `wan`; where inbound port forwards are published |
 | `firewall.sequence` | optional | default `1000`; baseline priority for app egress rules |
 | `firewall.egress[].sequence` | optional | overrides the baseline for one narrowly scoped exception that must precede a policy rule |
 | `firewall.validate_certs` | optional | default `false` |
+| `firewall.base.enabled` | optional, default `false` | `true` lets `playbooks/maintenance/reconcile-firewall-base.yml` manage the lab-wide OPNsense rules; absent/false makes the playbook a no-op and app Deploy does not reconcile base rules |
+| `firewall.base.aliases` | optional | map of alias name to a non-empty list of IPv4/IPv6 addresses or CIDRs; each becomes an OPNsense alias named `hli_<name>` |
+| `firewall.base.rules[]` | optional | list of `{name, interface, source, destination, protocol, ports, action}`; source/destination are alias names or `any`; protocols are `TCP`, `UDP`, `TCP/UDP`, `ICMP` or `any`; IPv6-only ICMP aliases render as `IPv6-ICMP`, while one ICMP rule must not mix IPv4 and IPv6 aliases; `ports` is a list of destination ports/ranges, or `[]` for any; optional `sequence` sets OPNsense priority (default `500`) |
 | `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
 | `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |
 | `mail.port` | required unless provider `none` | typically `587` (STARTTLS) or `465` (implicit TLS) |
@@ -430,6 +433,27 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `stacks.<name>.ip_address` | optional | pins the stack host to an exact address, honoured or refused with the conflict named |
 | `stacks.<name>.boot_order` | optional | the stack host's Proxmox startup tier. A property of the stack, like its sizing — an app cannot set it, or the tier would depend on deploy order |
 | `stacks.<name>.shared` | optional, default `false` | `true` means this stack host deliberately serves EVERY estate. See *Stack identity and estate isolation* below |
+
+`playbooks/maintenance/reconcile-firewall-base.yml` is the only operation that reconciles
+`firewall.base`. With the flag absent or false it is inert; ordinary app Deploy and Remove
+continue to manage only their `homelab-infra: <instance>` rules. When enabled, declared
+aliases are named `hli_<name>` and owned rules are described `homelab-infra: base <name>`.
+The runner must retain access to the firewall management API under the declared policy;
+when a private-deny rule covers its VLAN, include a narrow runner-to-firewall API pass
+ahead of that deny.
+Aliases removed from `firewall.base.aliases` remain in OPNsense; remove an unused `hli_<name>` alias manually after checking its references.
+A rule with multiple `ports` emits one filter rule per port, adding `port <number>` to its
+description to keep each rule identifiable. The first enabled run replaces only rules with
+the legacy `Green lab: ` description prefix; the temporary `Green lab: operator to Caddy`
+rules remain untouched. To keep rollback backups inside OPNsense's 100-entry history, the
+playbook uses two transactions, each capped at 80 model writes: reconcile and verify the
+owned aliases/rules, then remove and verify the replaced legacy rules. It records a fresh
+newest local config-backup ID immediately before each transaction with the
+`homelab-infra/firewall-admin` API key. If a write, apply or readback fails while the
+management API answers, it restores that transaction's backup and applies the restored
+config before failing the run. A failure in legacy cleanup therefore leaves the verified
+owned rules and the original legacy rules together. If the API stops answering, the failure
+names that transaction's backup ID for console recovery.
 
 #### Stack identity and estate isolation
 
@@ -614,6 +638,7 @@ The canonical top-level items are:
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
 | `homelab-infra/firewall` | `api_key`, `api_secret` |
+| `homelab-infra/firewall-admin` | `api_key`, `api_secret` — used only to list and restore OPNsense config backups |
 | `homelab-infra/mail` | `password` — shared relay credential used by every estate without a scoped override |
 | `homelab-infra/estates/<estate>/mail` | `password` — optional estate-specific relay credential; Store Secret is the post-cutover write path |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |

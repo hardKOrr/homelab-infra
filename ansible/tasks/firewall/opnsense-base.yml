@@ -1,0 +1,357 @@
+---
+# Reconcile the explicitly enabled OPNsense base firewall contract. This is separate
+# from app wiring: only descriptions beginning "homelab-infra: base " and legacy
+# "Green lab: " filter rules are considered, with the temporary operator-to-Caddy rules
+# excluded from the legacy migration. Install and verify owned rules first, then remove
+# legacy rules in a second backup transaction so neither rollback ID ages out of OPNsense's
+# 100-entry backup history.
+#
+# Inputs come from config/infrastructure.yml and the homelab-infra/firewall vault item.
+# The caller gates this task on firewall.base.enabled so an unset/false flag is inert.
+
+- name: Firewall base | Assert OPNsense is configured
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+      - homelabinfra_infra.firewall.host | default('') | length > 0
+      - homelabinfra_infra.firewall.api_key | default('') | length > 0
+      - homelabinfra_infra.firewall.api_secret | default('') | length > 0
+    fail_msg: >-
+      firewall.base.enabled needs firewall.provider: opnsense, firewall.host in
+      config/infrastructure.yml and api_key + api_secret in homelab-infra/firewall.
+
+- name: Firewall base | Resolve OPNsense API settings
+  ansible.builtin.set_fact:
+    fw_base: >-
+      {{ homelabinfra_infra.firewall.host
+         if homelabinfra_infra.firewall.host is search('^https?://')
+         else 'https://' ~ homelabinfra_infra.firewall.host }}
+    fw_validate: "{{ homelabinfra_infra.firewall.validate_certs | default(false) }}"
+    fw_owner_prefix: "homelab-infra: base "
+    _fw_base_config: "{{ homelabinfra_config.infrastructure.firewall.base }}"
+
+- name: Firewall base | Assert configured aliases and rules are mappings and lists
+  ansible.builtin.assert:
+    that:
+      - _fw_base_config.aliases | default({}) is mapping
+      - _fw_base_config.rules | default([]) is sequence
+      - _fw_base_config.rules | default([]) is not string
+    fail_msg: >-
+      firewall.base.aliases must be a name-to-address-list mapping and
+      firewall.base.rules must be a list; see config.example/infrastructure.yml.
+
+- name: Firewall base | Render OPNsense aliases
+  ansible.builtin.set_fact:
+    _fw_base_alias_desired: "{{ _fw_base_alias_json | from_json }}"
+  vars:
+    _fw_base_alias_json: >-
+      {%- set aliases = [] -%}
+      {%- for name, addresses in (_fw_base_config.aliases | default({})).items() -%}
+      {%-   set values = addresses | map('string') | unique | sort | list -%}
+      {%-   set content = values | join('\n') -%}
+      {%-   set alias_type = 'network' if '/' in content else 'host' -%}
+      {%-   set _ = aliases.append({
+              'enabled': '1', 'name': 'hli_' ~ name, 'type': alias_type,
+              'content': content,
+              'description': 'homelab-infra: base alias ' ~ name}) -%}
+      {%- endfor -%}
+      {{ aliases | to_json }}
+
+- name: Firewall base | Search OPNsense base aliases
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/alias/searchItem"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {current: 1, rowCount: 1000, searchPhrase: "hli_"}
+    status_code: [200, 401, 403]
+  register: _fw_base_alias_search
+  changed_when: false
+  no_log: true
+
+- name: Firewall base | Validate the alias search response
+  ansible.builtin.assert:
+    that:
+      - _fw_base_alias_search.status == 200
+      - _fw_base_alias_search.json is defined
+      - _fw_base_alias_search.json is mapping
+      - _fw_base_alias_search.json.rows is defined
+      - _fw_base_alias_search.json.rows | type_debug == 'list'
+      - _fw_base_alias_search.json.total | default(0) | int <= _fw_base_alias_search.json.rows | length
+    fail_msg: >-
+      OPNsense alias search returned an unexpected response. Check that the
+      homelab-infra/firewall API key holds the 'Firewall: Alias: Edit' privilege.
+
+- name: Firewall base | Refuse aliases owned by another caller
+  ansible.builtin.assert:
+    that:
+      - _fw_base_alias_matches | length <= 1
+      - _fw_base_alias_matches | length == 0 or
+        _fw_base_alias_matches[0].description | default('') == item.description
+      - _fw_base_alias_matches | length == 0 or
+        _fw_base_alias_matches[0].uuid | default('') | length > 0
+    fail_msg: >-
+      Refusing to change OPNsense alias {{ item.name }} because that exact alias name
+      is already in use outside this base firewall contract.
+  vars:
+    _fw_base_alias_matches: >-
+      {{ _fw_base_alias_search.json.rows
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', item.name)
+         | list }}
+  loop: "{{ _fw_base_alias_desired }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Firewall base | Plan alias changes
+  ansible.builtin.set_fact:
+    _fw_base_alias_plan: "{{ _fw_base_alias_plan_json | from_json }}"
+  vars:
+    _fw_base_alias_plan_json: >-
+      {%- set plan = {'add': [], 'set': []} -%}
+      {%- for wanted in _fw_base_alias_desired -%}
+      {%-   set found = (_fw_base_alias_search.json.rows
+                        | selectattr('name', 'defined')
+                        | selectattr('name', 'equalto', wanted.name)
+                        | list) -%}
+      {%-   if found | length == 0 -%}
+      {%-     set _ = plan.add.append(wanted) -%}
+      {%-   else -%}
+      {%-     set current = found[0] -%}
+      {%-     set current_content = current.content | default('')
+                | split('\n') | map('trim')
+                | reject('equalto', '') | map('lower') | unique | sort | list -%}
+      {%-     set wanted_content = wanted.content | default('')
+                | split('\n') | map('trim')
+                | reject('equalto', '') | map('lower') | unique | sort | list -%}
+      {%-     if (current.enabled | default('') | string) != wanted.enabled
+                or (current.type | default('')) != wanted.type
+                or current_content != wanted_content
+                or (current.description | default('')) != wanted.description -%}
+      {%-       set _ = plan.set.append({'uuid': current.uuid, 'payload': wanted}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ plan | to_json }}
+
+- name: Firewall base | Render filter rules
+  ansible.builtin.set_fact:
+    _fw_base_filter_desired: "{{ _fw_base_filter_json | from_json }}"
+  vars:
+    _fw_base_filter_json: >-
+      {%- set rendered = [] -%}
+      {%- for rule in (_fw_base_config.rules | default([])) -%}
+      {%-   set ports = rule.ports | default([]) | map('string') | list -%}
+      {%-   set port_values = ports if ports | length > 0 else [''] -%}
+      {%-   for port in port_values -%}
+      {%-     set description = fw_owner_prefix ~ rule.name
+                ~ (' port ' ~ port if ports | length > 1 else '') -%}
+      {%-     set source_values = (_fw_base_config.aliases[rule.source]
+                if rule.source != 'any' else []) | default([]) -%}
+      {%-     set destination_values = (_fw_base_config.aliases[rule.destination]
+                if rule.destination != 'any' else []) | default([]) -%}
+      {%-     set families = (source_values + destination_values)
+                | map('string')
+                | map('regex_replace', '/.*$', '')
+                | map('ansible.utils.ipaddr', 'version')
+                | unique | list -%}
+      {%-     set raw_protocol = rule.protocol | default('any') | lower -%}
+      {%-     set protocol = 'any' if raw_protocol == 'any' else
+                ('IPv6-ICMP' if raw_protocol == 'icmp' and families == [6]
+                 else raw_protocol | upper) -%}
+      {%-     set ipprotocol = 'inet6' if families == [6] else
+                ('inet46' if families | length > 1 else 'inet') -%}
+      {%-     set fields = {
+                'enabled': '1', 'action': rule.action | default('pass') | lower,
+                'quick': '1', 'interface': rule.interface, 'direction': 'in',
+                'ipprotocol': ipprotocol, 'protocol': protocol,
+                'source_net': ('hli_' ~ rule.source if rule.source != 'any' else 'any'),
+                'source_not': '0',
+                'destination_net': ('hli_' ~ rule.destination
+                                    if rule.destination != 'any' else 'any'),
+                'destination_not': '0', 'destination_port': port,
+                'sequence': rule.sequence | default(500) | string,
+                'log': '1', 'statetype': 'keep', 'description': description} -%}
+      {%-     set _ = rendered.append({'description': description,
+                                    'fields': fields, 'payload': fields}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ rendered | to_json }}
+
+- name: Firewall base | Plan owned filter rules
+  ansible.builtin.include_tasks: opnsense-reconcile.yml
+  vars:
+    fw_model: filter
+    fw_desc_field: description
+    fw_desired: "{{ _fw_base_filter_desired }}"
+    fw_plan_only: true
+
+- name: Firewall base | Remember the filter rule plan
+  ansible.builtin.set_fact:
+    _fw_base_filter_changed: "{{ _fw_model_changed | bool }}"
+    _fw_base_filter_write_count: >-
+      {{ (_fw_plan.add | length) + (_fw_plan.set | length) + (_fw_plan.del | length) }}
+  changed_when: false
+
+- name: Firewall base | Search legacy Green lab rules
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/filter/searchRule"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {current: 1, rowCount: 1000, searchPhrase: "Green lab: "}
+    status_code: [200, 401, 403]
+  register: _fw_base_legacy_search
+  changed_when: false
+  no_log: true
+
+- name: Firewall base | Validate the legacy rule search response
+  ansible.builtin.assert:
+    that:
+      - _fw_base_legacy_search.status == 200
+      - _fw_base_legacy_search.json is defined
+      - _fw_base_legacy_search.json is mapping
+      - _fw_base_legacy_search.json.rows is defined
+      - _fw_base_legacy_search.json.rows | type_debug == 'list'
+      - _fw_base_legacy_search.json.total | default(0) | int <= _fw_base_legacy_search.json.rows | length
+    fail_msg: >-
+      OPNsense legacy rule search returned an unexpected response; refusing to change
+      firewall rules until the ownership set can be read completely.
+
+- name: Firewall base | Select the legacy rules to replace
+  ansible.builtin.set_fact:
+    _fw_base_legacy_to_delete: >-
+      {{ _fw_base_legacy_search.json.rows
+         | selectattr('uuid', 'defined')
+         | selectattr('description', 'defined')
+         | selectattr('description', 'match', '^Green lab: ')
+         | rejectattr('description', 'match', '^Green lab: operator to Caddy(?: port [0-9]+)?$')
+         | list }}
+  changed_when: false
+
+- name: Firewall base | Determine the bounded OPNsense transactions
+  ansible.builtin.set_fact:
+    _fw_base_rules_changed: >-
+      {{ (_fw_base_alias_plan.add | length > 0)
+         or (_fw_base_alias_plan.set | length > 0)
+         or (_fw_base_filter_changed | bool) }}
+    _fw_base_legacy_changed: "{{ _fw_base_legacy_to_delete | length > 0 }}"
+    _fw_base_rules_write_count: >-
+      {{ (_fw_base_alias_plan.add | length) + (_fw_base_alias_plan.set | length)
+         + (_fw_base_filter_write_count | int) }}
+    _fw_base_legacy_write_count: "{{ _fw_base_legacy_to_delete | length }}"
+  changed_when: false
+
+- name: Firewall base | Keep each transaction within backup retention
+  ansible.builtin.assert:
+    that:
+      - not (_fw_base_rules_changed | bool) or _fw_base_rules_write_count | int <= 80
+      - not (_fw_base_legacy_changed | bool) or _fw_base_legacy_write_count | int <= 80
+    fail_msg: >-
+      Refusing a base firewall transaction with more than 80 model writes. Split the
+      change so its pre-write backup remains available through the OPNsense 100-backup
+      retention window.
+  when: (_fw_base_rules_changed | bool) or (_fw_base_legacy_changed | bool)
+
+- name: Firewall base | Determine whether either OPNsense transaction is needed
+  ansible.builtin.set_fact:
+    _fw_base_changed: >-
+      {{ (_fw_base_rules_changed | bool) or (_fw_base_legacy_changed | bool) }}
+  changed_when: false
+
+- name: Firewall base | Require the OPNsense backup API credential
+  ansible.builtin.include_tasks: ../bitwarden/required-item.yml
+  vars:
+    vault_required_item: homelab-infra/firewall-admin
+    vault_required_fields: [api_key, api_secret]
+  when: _fw_base_changed | bool
+
+- name: Firewall base | Record the newest config backup before owned-rule writes
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/core/backup/backups/this"
+    method: GET
+    url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+    url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    status_code: 200
+  register: _fw_base_rules_backup_list
+  changed_when: false
+  no_log: true
+  when: _fw_base_rules_changed | bool
+
+- name: Firewall base | Validate a newest local config backup is available for owned rules
+  ansible.builtin.assert:
+    that:
+      - _fw_base_rules_backup_list.status | default(0) | int == 200
+      - _fw_base_rules_backup_list.json is defined
+      - _fw_base_rules_backup_list.json['items'] is defined
+      - _fw_base_rules_backup_list.json['items'] | type_debug == 'list'
+      - _fw_base_rules_backup_list.json['items'] | length > 0
+      - _fw_base_rules_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
+    fail_msg: >-
+      OPNsense did not return a newest local config backup ID. No base firewall
+      writes were attempted.
+  when: _fw_base_rules_changed | bool
+
+- name: Firewall base | Remember the pre-write config backup ID for owned rules
+  ansible.builtin.set_fact:
+    _fw_base_rules_backup_id: "{{ _fw_base_rules_backup_list.json['items'][0].id }}"
+  changed_when: false
+  no_log: true
+  when: _fw_base_rules_changed | bool
+
+- name: Firewall base | Reconcile owned aliases and rules with backup rollback
+  ansible.builtin.include_tasks: opnsense-apply-base.yml
+  vars:
+    _fw_base_apply_phase: rules
+    _fw_base_apply_backup_id: "{{ _fw_base_rules_backup_id }}"
+  when: _fw_base_rules_changed | bool
+
+- name: Firewall base | Record the newest config backup before legacy cleanup
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/core/backup/backups/this"
+    method: GET
+    url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+    url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    status_code: 200
+  register: _fw_base_legacy_backup_list
+  changed_when: false
+  no_log: true
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Validate a newest local config backup is available for legacy cleanup
+  ansible.builtin.assert:
+    that:
+      - _fw_base_legacy_backup_list.status | default(0) | int == 200
+      - _fw_base_legacy_backup_list.json is defined
+      - _fw_base_legacy_backup_list.json['items'] is defined
+      - _fw_base_legacy_backup_list.json['items'] | type_debug == 'list'
+      - _fw_base_legacy_backup_list.json['items'] | length > 0
+      - _fw_base_legacy_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
+    fail_msg: >-
+      OPNsense did not return a newest local config backup ID. Legacy rules were not
+      deleted.
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Remember the pre-write config backup ID for legacy cleanup
+  ansible.builtin.set_fact:
+    _fw_base_legacy_backup_id: "{{ _fw_base_legacy_backup_list.json['items'][0].id }}"
+  changed_when: false
+  no_log: true
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Delete legacy rules after owned rules verify
+  ansible.builtin.include_tasks: opnsense-apply-base.yml
+  vars:
+    _fw_base_apply_phase: legacy
+    _fw_base_apply_backup_id: "{{ _fw_base_legacy_backup_id }}"
+  when: _fw_base_legacy_changed | bool

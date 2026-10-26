@@ -176,15 +176,66 @@ dns:
 # `host` is the address the runner reaches the OPNsense API on. Use the address your
 # runner is allowed to open HTTPS to (the same one `dns.host` uses), not the gateway
 # address of the runner's own network, which a private-range block usually catches.
-# firewall:
-#   provider: opnsense
-#   host: "192.168.1.1"
-#   interfaces:                # which OPNsense interface each guest network enters on
-#     - cidr: "192.168.1.0/24"
-#       interface: lan
-#   # wan_interface: wan
-#   # sequence: 1000           # after your own lower-numbered rules
-#   # validate_certs: false
+# Base rules are managed only by `playbooks/maintenance/reconcile-firewall-base.yml`.
+# They are disabled by default, so copied examples and ordinary app Deploys leave them
+# alone. Set enabled true only after declaring this lab's aliases and rules.
+# IPv6-only ICMP aliases render as `IPv6-ICMP`; split IPv4 and IPv6 ICMP into separate rules.
+firewall:
+  provider: none
+  # host: "192.0.2.1"
+  # interfaces:                # which OPNsense interface each guest network enters on
+  #   - cidr: "192.0.2.0/24"
+  #     interface: lan
+  # wan_interface: wan
+  # sequence: 1000             # after your own lower-numbered app rules
+  # validate_certs: false
+  base:
+    enabled: false
+    aliases:                    # keys become OPNsense aliases named hli_<key>
+      example_clients:
+        - "192.0.2.20"
+      example_resolvers:
+        - "192.0.2.53"
+        - "2001:db8::53"
+      example_v6_clients:
+        - "2001:db8::20"
+      example_v6_target:
+        - "2001:db8::80"
+      example_private:
+        - "198.51.100.0/24"
+    rules:                       # source/destination use an alias key or `any`
+      - name: example client DNS
+        interface: lan
+        source: example_clients
+        destination: example_resolvers
+        protocol: TCP/UDP
+        ports: [53]
+        action: pass
+        sequence: 230
+      - name: example IPv6 probe
+        interface: lan
+        source: example_v6_clients
+        destination: example_v6_target
+        protocol: ICMP
+        ports: []
+        action: pass
+        sequence: 240
+      - name: example client web
+        interface: lan
+        source: example_clients
+        destination: any
+        protocol: TCP
+        ports: [80, 443]
+        action: pass
+        sequence: 310
+      - name: example private deny
+        interface: lan
+        source: example_clients
+        destination: example_private
+        protocol: any
+        ports: []
+        action: block
+        sequence: 300
 
 # ── Public DNS ─────────────────────────────────────────────────────────────────
 # Lab-wide address for every estate that sets domains.<name>.public_dns.enabled. The

@@ -37,6 +37,7 @@ import os
 import re
 import sys
 import glob
+import ipaddress
 
 import yaml
 
@@ -474,6 +475,145 @@ else:
             report("ERROR", "infrastructure.yml", "firewall.interfaces",
                    "a list of {cidr, interface} naming the OPNsense interface each guest "
                    "network enters on, e.g. [{cidr: 192.168.40.0/24, interface: opt4}]")
+
+    firewall = infra.get("firewall") if isinstance(infra.get("firewall"), dict) else {}
+    firewall_base = firewall.get("base")
+    if firewall_base is not None:
+        if not isinstance(firewall_base, dict):
+            report("ERROR", "infrastructure.yml", "firewall.base", "must be a mapping")
+        else:
+            enabled = firewall_base.get("enabled", False)
+            if not isinstance(enabled, bool):
+                report("ERROR", "infrastructure.yml", "firewall.base.enabled",
+                       "must be true or false")
+            elif enabled:
+                if firewall.get("provider", "none") != "opnsense":
+                    report("ERROR", "infrastructure.yml", "firewall.base.enabled",
+                           "requires firewall.provider: opnsense")
+                if not firewall.get("host"):
+                    report("ERROR", "infrastructure.yml", "firewall.host",
+                           "required when firewall.base.enabled is true")
+
+            aliases = firewall_base.get("aliases", {})
+            if not isinstance(aliases, dict):
+                report("ERROR", "infrastructure.yml", "firewall.base.aliases",
+                       "must be a mapping of alias name to address/CIDR list")
+                aliases = {}
+            for name, addresses in aliases.items():
+                key = "firewall.base.aliases.%s" % name
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+                    report("ERROR", "infrastructure.yml", key,
+                           "alias names must start with a letter and contain only letters, digits and underscores")
+                if not isinstance(addresses, list) or not addresses:
+                    report("ERROR", "infrastructure.yml", key,
+                           "must be a non-empty list of addresses or CIDRs")
+                    continue
+                for address in addresses:
+                    try:
+                        ipaddress.ip_network(str(address), strict=False)
+                    except ValueError:
+                        report("ERROR", "infrastructure.yml", key,
+                               "entries must be valid IPv4 or IPv6 addresses/CIDRs")
+
+            rules = firewall_base.get("rules", [])
+            if not isinstance(rules, list):
+                report("ERROR", "infrastructure.yml", "firewall.base.rules",
+                       "must be a list of rule mappings")
+                rules = []
+            rule_names = set()
+            rule_ports = set()
+            for index, rule in enumerate(rules):
+                key = "firewall.base.rules[%d]" % index
+                if not isinstance(rule, dict):
+                    report("ERROR", "infrastructure.yml", key, "must be a mapping")
+                    continue
+                name = rule.get("name")
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", name):
+                    report("ERROR", "infrastructure.yml", key + ".name",
+                           "must start with a letter or digit and contain only letters, digits, spaces, dots, underscores or hyphens")
+                elif name in rule_names:
+                    report("ERROR", "infrastructure.yml", key + ".name",
+                           "duplicates another firewall.base rule name")
+                else:
+                    rule_names.add(name)
+
+                interface = rule.get("interface")
+                if not isinstance(interface, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", interface):
+                    report("ERROR", "infrastructure.yml", key + ".interface",
+                           "must name one OPNsense interface")
+
+                for field in ("source", "destination"):
+                    reference = rule.get(field)
+                    if not isinstance(reference, str) or (reference != "any" and reference not in aliases):
+                        report("ERROR", "infrastructure.yml", key + "." + field,
+                               "must be `any` or a name declared in firewall.base.aliases")
+
+                protocol = rule.get("protocol")
+                protocols = ("TCP", "UDP", "TCP/UDP", "ICMP", "any")
+                normalized_protocol = (
+                    "any" if isinstance(protocol, str) and protocol.lower() == "any"
+                    else protocol.upper() if isinstance(protocol, str) else None
+                )
+                if normalized_protocol not in protocols:
+                    report("ERROR", "infrastructure.yml", key + ".protocol",
+                           "must be TCP, UDP, TCP/UDP, ICMP or any")
+
+                if normalized_protocol == "ICMP":
+                    rule_families = set()
+                    for field in ("source", "destination"):
+                        reference = rule.get(field)
+                        addresses = aliases.get(reference, []) if isinstance(reference, str) else []
+                        if reference != "any" and isinstance(addresses, list):
+                            for address in addresses:
+                                try:
+                                    rule_families.add(
+                                        ipaddress.ip_network(str(address), strict=False).version)
+                                except ValueError:
+                                    pass  # The alias address error is reported above.
+                    if len(rule_families) > 1:
+                        report("ERROR", "infrastructure.yml", key + ".protocol",
+                               "ICMP rules cannot mix IPv4 and IPv6 aliases; split them into "
+                               "family-specific rules")
+
+                if "ports" not in rule:
+                    report("ERROR", "infrastructure.yml", key + ".ports",
+                           "required as a list of destination ports, or [] for any")
+                ports = rule.get("ports", [])
+                if not isinstance(ports, list):
+                    report("ERROR", "infrastructure.yml", key + ".ports",
+                           "must be a list of destination ports, or [] for any")
+                    ports = []
+                elif ports and normalized_protocol not in ("TCP", "UDP", "TCP/UDP"):
+                    report("ERROR", "infrastructure.yml", key + ".ports",
+                           "only TCP and UDP rules can declare destination ports")
+                for port in ports:
+                    if isinstance(port, bool) or not re.fullmatch(r"[0-9]+(?:-[0-9]+)?", str(port)):
+                        report("ERROR", "infrastructure.yml", key + ".ports",
+                               "ports must be numbers or numeric ranges from 1 to 65535")
+                        continue
+                    limits = [int(piece) for piece in str(port).split("-")]
+                    if any(value < 1 or value > 65535 for value in limits) \
+                            or (len(limits) == 2 and limits[0] > limits[1]):
+                        report("ERROR", "infrastructure.yml", key + ".ports",
+                               "ports must be numbers or numeric ranges from 1 to 65535")
+                    if name:
+                        generated_name = name + (" port " + str(port) if len(ports) > 1 else "")
+                        if generated_name in rule_ports:
+                            report("ERROR", "infrastructure.yml", key + ".ports",
+                                   "duplicates a rendered firewall.base rule description")
+                        rule_ports.add(generated_name)
+
+                action = rule.get("action")
+                if not isinstance(action, str) or action.lower() not in ("pass", "block", "reject"):
+                    report("ERROR", "infrastructure.yml", key + ".action",
+                           "must be pass, block or reject")
+
+                sequence = rule.get("sequence")
+                if sequence is not None and (isinstance(sequence, bool)
+                                             or not re.fullmatch(r"[0-9]+", str(sequence))
+                                             or int(sequence) < 1):
+                    report("ERROR", "infrastructure.yml", key + ".sequence",
+                           "must be a positive rule priority")
 
     # Mail is always an external relay -- this platform never runs an SMTP server, so
     # unlike dns/pihole there is no in-lab instance option; a configured provider always
