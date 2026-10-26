@@ -100,6 +100,70 @@ checkout update; the Reimport Jobs path also refreshes before importing job defi
    and the execution IDs of any Rundeck checks in the PR. Retest after any change to the
    candidate. The issue can close at merge.
 
+### Moving PBS to another node with its datastore
+
+Use this when the PBS VM's node is unavailable but its separate ZFS datastore can be made
+available to another Proxmox node. Deploy PBS in `reuse` mode so it attaches the existing
+volume without formatting it. Fence a failed source node before moving or importing its
+drives. Never let two PBS guests write to the source and received copies at the same time.
+
+1. Verify that no backup, prune, or garbage-collection task is writing to PBS. Record the
+   PBS backup groups and snapshot identifiers. Identify the datastore volume from
+   `config/apps/pbs.yml`: `proxmox.vm.datastore_disk.storage` plus its reserved
+   `source_vmid` gives
+   `<pve-storage>:vm-<pbs-datastore-vmid>-disk-1`. Keep `source_vmid` unchanged; it must
+   not be a guest VMID.
+2. For a physical drive move, power off and fence the failed node before moving every disk
+   that belongs to the ZFS pool. On the recovery node, import the pool without mounting
+   filesystems, for example `zpool import -N <zfs-pool>`. Verify the pool identity and
+   confirm the Proxmox storage ID is enabled for the recovery node and maps to that pool.
+   Never force-import a pool while the source node can still write to it.
+3. For a copy-based drill while the source is still available, resolve the exact volume to
+   its ZFS zvol with `pvesm path <pve-storage>:vm-<pbs-datastore-vmid>-disk-1`, then
+   snapshot and send it to the matching destination
+   pool. The received zvol must keep the same
+   `vm-<pbs-datastore-vmid>-disk-1` name so Proxmox exposes the same volume ID. For example,
+   after replacing the placeholders with the paths from `pvesm path` and the Proxmox
+   storage definition:
+
+   ```sh
+   set -o pipefail
+   ssh root@<pve-node-1> zfs snapshot '<zfs-pool-1>/vm-<pbs-datastore-vmid>-disk-1@<zfs-snapshot>'
+   ssh root@<pve-node-1> zfs send -p '<zfs-pool-1>/vm-<pbs-datastore-vmid>-disk-1@<zfs-snapshot>' |
+     ssh root@<pve-node-2> zfs receive -u '<zfs-pool-2>/vm-<pbs-datastore-vmid>-disk-1'
+   ```
+
+   Confirm on the recovery node that `pvesm list <pve-storage> --vmid <pbs-datastore-vmid>`
+   shows exactly one matching volume and its ZFS volume size matches the source. Keep the
+   source volume untouched as the rollback copy.
+4. Stop the old PBS guest and remove only that owned guest while preserving its separately
+   owned datastore volume. For a still-reachable source, use Remove App with
+   `delete_data=true` and `destroy_guest=true`; its ownership checks require the exact
+   `_+lab` and `_pbs` tags. Do not continue if the datastore volume is still owned by the
+   guest VMID instead of the reserved `source_vmid`:
+
+   ```sh
+   "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/remove.yml \
+     -e instance=pbs -e delete_data=true -e destroy_guest=true
+   ```
+5. In the private `config/apps/pbs.yml`, set `proxmox.node` to the recovery node, keep the
+   datastore disk's storage and reserved `source_vmid`, and set
+   `app.datastore_mode: reuse`. A per-instance node must already be present in
+   `proxmox.nodes`. Run **Deploy PBS**; its volume preflight checks the selected node before
+   creating the guest, then attaches the existing disk and registers the existing
+   datastore without initialising it:
+
+   ```sh
+   "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/pbs.yml -e instance=pbs
+   ```
+6. Confirm PBS lists the baseline groups and snapshots. Restore an application canary from
+   one of those snapshots and verify the application, then verify the refreshed PVE PBS
+   storage fingerprint and managed guest VMID list. Run the scheduled backup job and
+   confirm it writes a new snapshot to the moved datastore.
+7. Keep the original volume until the application restore and a new scheduled backup have
+   both passed. If Deploy fails, stop the replacement before changing volume attachment or
+   configuration; the source volume remains the recovery point.
+
 ### Application recovery drill
 
 The drill proves deploy, convergence and native recovery for one instance. Running it

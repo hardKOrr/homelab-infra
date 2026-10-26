@@ -24,6 +24,9 @@ in is a lookup, not a guess.
 | `<pve-storage>` | Proxmox storage pool ID, such as the database VM pool | `config/proxmox.yml` → `proxmox.storage` or `proxmox.storage_ids.database_vm` |
 | `<pve-storage-iscsi>` | Shared ZFS over iSCSI VM storage ID | `config/proxmox.yml` → `proxmox.storage_ids.floating_vm` |
 | `<pve-storage-nfs>` | Shared NFS container storage ID | `config/proxmox.yml` → `proxmox.storage_ids.floating_lxc` |
+| `<pbs-datastore-vmid>` | VMID reserved as the owner of the independent PBS datastore volume | `config/apps/pbs.yml` → `proxmox.vm.datastore_disk.source_vmid` |
+| `<zfs-pool>`, `<zfs-pool-N>` | ZFS pool name holding the PBS volume on one or more Proxmox nodes | Proxmox storage definition or `pvesm path` for the volume |
+| `<zfs-snapshot>` | Operator-chosen name for a temporary ZFS snapshot during a move | The move procedure; keep its value in private session scratch |
 | `<lab-cidr>` | A network's subnet | `config/proxmox.yml` → `networks.<name>.cidr` |
 | `<lab-gateway>` | A network's gateway | `config/proxmox.yml` → `networks.<name>.gateway` |
 | `<runner-ip>` | Rundeck runner address | `config/apps/rundeck.yml` → `proxmox.ip` |

@@ -118,14 +118,30 @@ assert cleanup_manifest["ansible.builtin.file"]["state"] == "absent"
 
 provision_tasks = playbook[0]["tasks"]
 provision_pre_tasks = playbook[0]["pre_tasks"]
+pbs_placement = task(provision_tasks, "Resolve placement for a new PBS guest with a datastore disk")
+assert pbs_placement["ansible.builtin.include_tasks"] == "../../tasks/proxmox/resolve-guest-placement.yml"
+assert pbs_placement["vars"]["guest_placement_class"] == "floating_vm"
+assert pbs_placement["vars"]["guest_placement_guest_type"] == "qemu"
+assert pbs_placement["vars"]["guest_placement_additional_storage"] == "{{ app_config.proxmox.vm.datastore_disk.storage | default('') }}"
+assert "app_config.proxmox.vm.datastore_disk is defined" in str(pbs_placement["when"])
+assert "_existing_hosts | length == 0" in str(pbs_placement["when"])
+pbs_preflight_node = task(provision_tasks, "Resolve the PBS datastore preflight node")
+assert "hostvars[_existing_hosts[0]].proxmox_node" in str(
+    pbs_preflight_node["ansible.builtin.set_fact"]["_pbs_disk_preflight_node"]
+)
+assert "_guest_placement.node" in str(
+    pbs_preflight_node["ansible.builtin.set_fact"]["_pbs_disk_preflight_node"]
+)
 reuse_preflight = task(provision_tasks, "Refuse provisioning without the exact retained PBS volume")
 clone_index = next(i for i, item in enumerate(provision_tasks) if item.get("name") == "Provision new VM")
+assert provision_tasks.index(pbs_placement) < provision_tasks.index(reuse_preflight)
 assert provision_tasks.index(reuse_preflight) < clone_index
 disk_declaration = task(provision_pre_tasks, "Validate the optional PBS datastore disk declaration")
 assert "source_vmid is defined" in str(disk_declaration["ansible.builtin.assert"]["that"])
 assert "stable source_vmid reserved for the volume" in disk_declaration["ansible.builtin.assert"]["fail_msg"]
 owner_query = task(provision_tasks, "Check PBS datastore owner identity against current guests")
 assert owner_query["ansible.builtin.command"]["argv"][:3] == ["pvesh", "get", "/cluster/resources"]
+assert owner_query["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
 owner_guard = task(provision_tasks, "Refuse a PBS datastore owner VMID assigned to a guest")
 assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.builtin.assert"]["that"])
 assert provision_tasks.index(owner_guard) < clone_index
@@ -138,6 +154,8 @@ assert existing_copy_disk_include["vars"]["pbs_disk_index"] == 2
 assert existing_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
 assert "second_copy.enabled" in str(existing_copy_disk_include["when"])
 provision_block = task(provision_tasks, "Provision new VM")["block"]
+cloud_template = task(provision_block, "Ensure the Debian cloud-init template exists")
+assert cloud_template["vars"]["proxmox_placement_node"] == "{{ (_guest_placement | default({})).node | default('') }}"
 derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
 avoid_vmid = task(provision_block, "Avoid colliding with the retained PBS datastore VMID")
 assert provision_block.index(avoid_vmid) == derive_index + 1
@@ -151,6 +169,8 @@ new_copy_disk_include = task(provision_block, "Attach the retained PBS second-co
 assert new_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
 assert new_copy_disk_include["vars"]["pbs_disk_index"] == 2
 assert new_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
+assert new_copy_disk_include["vars"]["pbs_disk_node"] == "{{ _guest_placement.node }}"
+assert new_disk_include["vars"]["pbs_disk_node"] == "{{ _guest_placement.node }}"
 avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
 assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
     task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
