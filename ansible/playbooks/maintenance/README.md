@@ -23,6 +23,29 @@ view without stopping at inventory parsing; ascent verification reports the offl
 and cannot declare a clean ascent. Guest selection and allocation still refuse incomplete
 inventory. Malformed or failed API inventory reads remain fatal.
 
+### Lab Status public resolution
+
+When top-level `public_dns` is configured, Lab Status adds one `PUBLIC RESOLUTION` row per
+estate. It checks the apex and a fresh random name under the wildcard through two public
+DNS-over-HTTPS resolvers. Set the Ansible variable `status_public_dns_resolvers` in
+inventory or per-run extra vars to replace the Cloudflare and Google defaults; provide
+exactly two distinct `{name, url}` entries, each a DNS-over-HTTPS JSON endpoint. For a
+`lookup` address source, Lab Status asks the configured HTTPS echo URLs from the Caddy
+proxy guest, in order and separately for each enabled IP family. The section also lists
+deployed apps whose effective `routing.access` is `public`. Without top-level `public_dns`,
+the existing report is unchanged.
+
+`matches` means the public answers equal the expected address or CNAME target at both
+names through both resolvers. `stale` means answers differ from the configured/current
+address; `missing` means at least one required answer is absent; `unreachable-resolver`
+means at least one resolver could not answer; `disabled` means the estate has not opted in.
+A DNS match does not prove that a port forward works. Configure any required inbound
+ports separately through the existing opt-in `firewall.inbound` configuration.
+
+After a failed provider write, Caddy's dynamic DNS updater does not retry until the
+address changes or Caddy restarts; a config reload does not clear the failure. If Lab
+Status reports `stale` after such a failure, restart Caddy on the proxy guest to retry.
+
 Read [`../../../rundeck/README.md`](../../../rundeck/README.md) for the supported job
 projection. Read playbook headers for exact inputs and effects.
 

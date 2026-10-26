@@ -410,6 +410,12 @@
         - name: Read the volumes nothing is using
           ansible.builtin.include_tasks: ../../tasks/kubernetes/list-orphan-volumes.yml
 
+    # ── Public DNS ─────────────────────────────────────────────────────────────
+    # This section is absent from older lab configs, keeping their report unchanged.
+    - name: Read public DNS resolution status
+      ansible.builtin.include_tasks: ../../tasks/maintenance/status-public-dns.yml
+      when: (homelabinfra_config.infrastructure | default({})).public_dns is defined
+
     # ── Render ─────────────────────────────────────────────────────────────────
     # One debug of a pre-split line list: Rundeck renders a msg list one line per
     # entry, which a single embedded-newline string does not.
@@ -430,6 +436,18 @@
           {% for h in _st_guests %}
             {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ (hostvars[h]._st_stale_services | default([]) | length) if (hostvars[h]._st_stale_checked | default(false) | bool) else 'not checked' }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
           {% endfor %}
+
+          {%- if _st_public_dns_section | default(false) | bool %}
+          PUBLIC RESOLUTION
+          {% if _st_public_dns_rows | default([]) | length == 0 %}
+            none — no estates are configured under domains
+          {% endif %}
+          {% for row in _st_public_dns_rows | default([]) %}
+            {{ '%-18s' | format(row.estate) }} {{ '%-22s' | format(row.status) }} public apps: {{ row.apps | join(', ') if row.apps | length > 0 else 'none' }}
+          {% endfor %}
+            A DNS match does not prove the port forward works; configure required inbound
+            ports separately under firewall.inbound.
+          {% endif %}
 
           CONTAINERS
           {% set _ctr_hosts = [] %}

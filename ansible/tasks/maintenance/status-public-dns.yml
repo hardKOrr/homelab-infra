@@ -1,0 +1,118 @@
+---
+# Read public DNS only. No provider credentials or DNS write APIs are used here.
+- name: Public DNS status | Resolve the estate and resolver inputs
+  ansible.builtin.set_fact:
+    _st_public_dns_section: true
+    _st_public_dns_config: "{{ homelabinfra_config.infrastructure.public_dns | default({}) }}"
+    _st_public_dns_address: "{{ _st_public_dns_address_input }}"
+    _st_public_dns_source: "{{ _st_public_dns_address_input.source | default('') }}"
+    _st_public_dns_default_estate: "{{ _st_public_dns_default_estate_value }}"
+    _st_public_dns_estates: "{{ _st_public_dns_estates_json | from_json }}"
+    _st_public_dns_proxy_guest: >-
+      {{ _st_public_dns_reverse_proxy_input.instance | default('')
+         if _st_public_dns_reverse_proxy_input.provider | default('none') == 'caddy'
+         else '' }}
+    _st_public_dns_resolvers: "{{ status_public_dns_resolvers | default(_st_public_dns_default_resolvers) }}"
+    _st_public_dns_instances: "{{ _st_public_dns_instances_json | from_json }}"
+    _st_public_dns_app_slugs: >-
+      {{ lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../vars/app-defaults/*.yml', wantlist=True)
+         | map('basename') | map('regex_replace', '[.]yml$', '')
+         | reject('equalto', '_template') | list }}
+    _st_public_dns_apps: []
+  no_log: true
+  vars:
+    _st_public_dns_address_input: >-
+      {{ (homelabinfra_config.infrastructure.public_dns | default({})).address | default({}) }}
+    _st_public_dns_reverse_proxy_input: >-
+      {{ homelabinfra_config.infrastructure.reverse_proxy | default({}) }}
+    _st_public_dns_default_resolvers:
+      - name: Cloudflare
+        url: https://cloudflare-dns.com/dns-query
+      - name: Google
+        url: https://dns.google/resolve
+    _st_public_dns_default_estate_value: >-
+      {%- set domains = homelabinfra_config.infrastructure.domains | default({}) -%}
+      {%- set declared = domains | dict2items
+            | selectattr('value.default', 'defined')
+            | selectattr('value.default')
+            | map(attribute='key') | list -%}
+      {{ (declared | first) | default(domains.keys() | first | default(''), true) }}
+    _st_public_dns_estates_json: >-
+      {%- set rows = [] -%}
+      {%- for estate in (homelabinfra_config.infrastructure.domains | default({}) | dict2items) -%}
+      {%- set settings = estate.value.public_dns | default({}) -%}
+      {%- set _ = rows.append({
+            'name': estate.key,
+            'domain': estate.value.domain | default(''),
+            'enabled': settings.enabled | default(false) | bool
+          }) -%}
+      {%- endfor -%}
+      {{ rows | to_json }}
+    _st_public_dns_instances_json: >-
+      {%- set instances = [] -%}
+      {%- for guest in (groups['lab_managed'] | default([])) -%}
+      {%- for tag in (hostvars[guest].proxmox_tags_parsed | default([])) -%}
+      {%- if tag is match('^_[A-Za-z0-9]') -%}
+      {%- set instance = tag[1:] -%}
+      {%- if instance not in instances -%}
+      {%- set _ = instances.append(instance) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ instances | sort | to_json }}
+
+- name: Public DNS status | Resolve public apps from their deployed instance tags
+  ansible.builtin.include_tasks: status-public-dns-app.yml
+  loop: "{{ _st_public_dns_instances }}"
+  loop_control:
+    loop_var: status_public_dns_instance
+    label: "{{ status_public_dns_instance }}"
+
+- name: Public DNS status | Check enabled estates through public resolvers
+  lab_public_dns_status:
+    enabled: true
+    domain: "{{ item.domain }}"
+    source: "{{ _st_public_dns_source }}"
+    static_address: "{{ _st_public_dns_address.address | default('') }}"
+    cname_target: "{{ _st_public_dns_address.target | default('') }}"
+    lookup_urls: "{{ _st_public_dns_address.urls | default([]) }}"
+    families: "{{ _st_public_dns_config.families | default(['ipv4']) }}"
+    resolvers: "{{ _st_public_dns_resolvers }}"
+  delegate_to: "{{ _st_public_dns_proxy_guest if _st_public_dns_source == 'lookup' else 'localhost' }}"
+  register: _st_public_dns_check_results
+  vars:
+    # Proxmox inventory carries no SSH account. The status playbook's guest play
+    # applies this same configured account, so delegated lookup checks must do so too.
+    ansible_user: "{{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}"
+  loop: "{{ _st_public_dns_estates | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  no_log: true
+  when:
+    - _st_public_dns_estates | selectattr('enabled') | list | length > 0
+    - _st_public_dns_source != 'lookup'
+      or _st_public_dns_proxy_guest in hostvars
+
+- name: Public DNS status | Assemble safe report rows
+  ansible.builtin.set_fact:
+    _st_public_dns_rows: "{{ _st_public_dns_rows_json | from_json }}"
+  vars:
+    _st_public_dns_rows_json: >-
+      {%- set rows = [] -%}
+      {%- set checks = _st_public_dns_check_results.results | default([]) -%}
+      {%- for estate in _st_public_dns_estates -%}
+      {%- set apps = _st_public_dns_apps
+            | selectattr('estate', 'equalto', estate.name)
+            | map(attribute='name') | list | sort -%}
+      {%- set result = (checks | selectattr('item.name', 'defined')
+            | selectattr('item.name', 'equalto', estate.name) | list | first | default({})) -%}
+      {%- set state = 'disabled' if not estate.enabled else
+            ('unreachable-resolver' if result.unreachable | default(false) | bool
+             else result.status | default('unreachable-resolver')) -%}
+      {%- set _ = rows.append({'estate': estate.name, 'status': state, 'apps': apps}) -%}
+      {%- endfor -%}
+      {{ rows | to_json }}
