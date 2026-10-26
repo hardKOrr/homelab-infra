@@ -418,6 +418,47 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
         "a second public DNS render is identical"
     )
 
+    inherited_default = self.build_public_dns_apps(
+        {
+            "reverse_proxy": {
+                "dns_challenge": {
+                    "provider": "cloudflare",
+                    "api_token": "fixture-default-token",
+                }
+            },
+            "public_dns": {
+                "address": {"source": "static", "address": "203.0.113.10"},
+            },
+            "domains": {
+                "alpha": {
+                    "default": True,
+                    "domain": "alpha.example.test",
+                    "public_dns": {"enabled": True},
+                },
+                "beta": {
+                    "domain": "beta.example.test",
+                    "public_dns": {"enabled": False},
+                },
+            },
+        }
+    )
+    assert inherited_default["_caddy_public_dns_apps"]["dynamic_dns"]["providers"] == [
+        {
+            "dns_provider": {
+                "name": "cloudflare",
+                "api_token": "fixture-default-token",
+            },
+            "domains": {"alpha.example.test": ["@", "*"]},
+        },
+    ], "the default estate inherits the lab's DNS-01 challenge for public DNS"
+    beta_inherited = next(
+        estate for estate in inherited_default["_caddy_public_dns_estates"]
+        if estate["name"] == "beta"
+    )
+    assert beta_inherited["dns_challenge_provider"] == "" and not beta_inherited["has_dns_challenge_credentials"], (
+        "the default estate's DNS-01 credentials do not leak to another estate"
+    )
+
     static_infra = {
         "domains": {"alpha": alpha},
         "public_dns": {

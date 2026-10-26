@@ -11,8 +11,20 @@
   vars:
     _caddy_public_dns_estates_json: >-
       {%- set result = [] -%}
-      {%- for estate in (homelabinfra_config.infrastructure.domains | default({}) | dict2items) -%}
-      {%- set challenge = estate.value.dns_challenge | default({}) -%}
+      {%- set domains = homelabinfra_config.infrastructure.domains | default({}) -%}
+      {%- set default_names = domains | dict2items
+            | selectattr('value.default', 'defined')
+            | selectattr('value.default', 'equalto', true)
+            | map(attribute='key') | list -%}
+      {%- set default_name = (default_names | first)
+            | default(domains.keys() | list | first | default(''), true) -%}
+      {%- set default_challenge = homelabinfra_config.infrastructure.reverse_proxy.dns_challenge
+            | default({}, true) -%}
+      {%- for estate in (domains | dict2items) -%}
+      {%- set challenge = estate.value.dns_challenge | default({}, true) -%}
+      {%- if estate.key == default_name and challenge | length == 0 -%}
+      {%- set challenge = default_challenge -%}
+      {%- endif -%}
       {%- set challenge_values = challenge | dict2items if challenge is mapping else [] -%}
       {%- set credentials = challenge_values
             | rejectattr('key', 'in', ['provider', 'resolvers', 'ttl', 'propagation_delay',

@@ -5,6 +5,9 @@ The lab-wide `public_dns` block supplies one address source, record TTL, and ena
 IP families; each enabled estate uses its own DNS-01 provider configuration and
 credentials for its apex (`@`) and wildcard (`*`) records. See the
 [configuration contract](../../vars/CONTRACT.md).
+When the default estate omits `dns_challenge`, it inherits the lab's
+`reverse_proxy.dns_challenge`; other estates continue to use their own challenge
+configuration.
 
 For `static` and `lookup` sources, the role installs the pinned
 [`caddy-dynamicdns`](https://github.com/mholt/caddy-dynamicdns/tree/67d107a42c0279f6e6d58a6afe646745c8b44f78)
