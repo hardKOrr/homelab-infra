@@ -38,7 +38,10 @@ the existing report is unchanged.
 `matches` means the public answers equal the expected address or CNAME target at both
 names through both resolvers. `stale` means answers differ from the configured/current
 address; `missing` means at least one required answer is absent; `unreachable-resolver`
-means at least one resolver could not answer; `disabled` means the estate has not opted in.
+means at least one resolver could not answer. With a `lookup` address source, this status
+also covers cases where Lab Status cannot run the delegated lookup on the Caddy guest,
+such as when that guest is missing from inventory or the module cannot start; it does not
+necessarily mean the public resolver itself failed. `disabled` means the estate has not opted in.
 A DNS match does not prove that a port forward works. Configure any required inbound
 ports separately through the existing opt-in `firewall.inbound` configuration.
 
