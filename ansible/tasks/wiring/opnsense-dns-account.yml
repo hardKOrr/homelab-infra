@@ -27,20 +27,39 @@
       homelab-infra/firewall-admin.
 
 - name: OPNsense DNS account | Search for the exact account name
-  ansible.builtin.uri:
-    url: "{{ _opn_base }}/api/auth/user/search"
-    method: POST
-    url_username: "{{ _opn_dns_admin_credential.api_key }}"
-    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
-    force_basic_auth: true
-    validate_certs: "{{ _opn_validate | bool }}"
-    body_format: json
-    body: >-
-      {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_dns_account_name} }}
-    status_code: 200
-  register: _opn_dns_user_search
-  changed_when: false
-  no_log: true
+  block:
+    - name: OPNsense DNS account | Submit exact-name user search
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/auth/user/search"
+        method: POST
+        url_username: "{{ _opn_dns_admin_credential.api_key }}"
+        url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: >-
+          {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_dns_account_name} }}
+        status_code: 200
+      register: _opn_dns_user_search
+      changed_when: false
+      no_log: true
+  rescue:
+    # The request is protected by no_log. Surface only a fixed error category and
+    # integer HTTP status so an operator can distinguish transport from API failures.
+    - name: OPNsense DNS account | Report sanitized user-search failure
+      ansible.builtin.fail:
+        msg: >-
+          OPNsense DNS account search failed:
+          category={{ 'transport' if _opn_dns_search_failure_status | int == -1
+            else 'authentication-or-authorization' if _opn_dns_search_failure_status | int in [401, 403]
+            else 'http-status' if _opn_dns_search_failure_status | int > 0
+            else 'pre-request-or-module' }};
+          status={{ _opn_dns_search_failure_status | int }}.
+          No provider details were logged. For transport failures check the runner's
+          connectivity and OPNsense API availability; for HTTP failures check API access.
+      vars:
+        _opn_dns_search_failure_status: >-
+          {{ ansible_failed_result.status | default(0) | int }}
 
 - name: OPNsense DNS account | Validate the user search response
   ansible.builtin.assert:

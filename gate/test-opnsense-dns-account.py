@@ -101,6 +101,9 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 self._record(username, 403 if username else 401)
                 return self._reply(403 if username else 401, {})
             if path[2:] == ["user", "search"]:
+                if getattr(self.server, "fail_user_search", False):
+                    self._record(username, 503)
+                    return self._reply(503, {"error": admin_secret})
                 phrase = body.get("searchPhrase", "")
                 rows = [dict(user) for user in self.server.users.values()
                         if phrase in user["name"]]
@@ -460,6 +463,25 @@ def main():
               all(value not in refused.stdout + refused.stderr
                   for value in (admin_key, admin_secret, old_key, old_secret)))
         checks.append("refuse-foreign")
+
+        # Protected API errors expose only a safe category and status.
+        server, thread = initial_opnsense()
+        servers.append((server, thread))
+        server.fail_user_search = True
+        search_error_dir = root / "search-error"
+        search_error_dir.mkdir()
+        search_error, _ = run_account(
+            server, search_error_dir, {"api_key": old_key, "api_secret": old_secret})
+        search_error_output = search_error.stdout + search_error.stderr
+        check("failed admin search reports a sanitized HTTP status",
+              search_error.returncode != 0
+              and "category=http-status" in search_error_output
+              and "status=503" in search_error_output)
+        check("failed admin search does not print credentials or response body",
+              all(value not in search_error_output
+                  for value in (admin_key, admin_secret, old_key, old_secret)))
+        check("failed admin search makes no account changes", server.mutations == [])
+        checks.append("safe-search-error")
 
         # An unmatched Vaultwarden key does not silently rotate; explicit input does.
         server, thread = initial_opnsense(owned=True, legacy=True, existing_key=True)
