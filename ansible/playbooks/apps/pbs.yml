@@ -246,20 +246,32 @@
       no_log: true
       when: app_config.second_copy.enabled | default(false) | bool
 
-    - name: Refuse provisioning without the exact retained PBS second-copy volume
+    - name: Require a unique retained PBS second-copy volume
       ansible.builtin.assert:
         that:
           - >-
             (_pbs_second_copy_preflight_content.stdout | from_json)
             | selectattr('volid', 'equalto', _pbs_second_copy_volume_id) | list | length <= 1
-          - >-
-            app_config.app.datastore_mode | default('create') != 'reuse'
-            or ((_pbs_second_copy_preflight_content.stdout | from_json)
-                | selectattr('volid', 'equalto', _pbs_second_copy_volume_id)
-                | list | length == 1)
         fail_msg: >-
-          PBS second-copy volume is absent or ambiguous. Reuse never creates a replacement
-          disk. Keep the guest and storage unchanged while the volume owner is repaired.
+          PBS second-copy volume is ambiguous. Refusing to attach or replace a retained disk.
+      when: app_config.second_copy.enabled | default(false) | bool
+
+    - name: Resolve whether the PBS second-copy disk is new or retained
+      ansible.builtin.set_fact:
+        _pbs_second_copy_volume_exists: >-
+          {{ (_pbs_second_copy_preflight_content.stdout | from_json)
+             | selectattr('volid', 'equalto', _pbs_second_copy_volume_id) | list | length == 1 }}
+      changed_when: false
+      when: app_config.second_copy.enabled | default(false) | bool
+
+    - name: Select safe modes for the PBS second-copy disk and datastore
+      ansible.builtin.set_fact:
+        _pbs_second_copy_disk_mode: "{{ 'reuse' if _pbs_second_copy_volume_exists | bool else 'create' }}"
+        _pbs_second_copy_mount_mode: "{{ 'attach' if _pbs_second_copy_volume_exists | bool else 'create' }}"
+        _pbs_second_copy_datastore_mode: >-
+          {{ app_config.app.datastore_mode | default('create')
+             if _pbs_second_copy_volume_exists | bool else 'create' }}
+      changed_when: false
       when: app_config.second_copy.enabled | default(false) | bool
 
     # Resolve without allocating, for both reuse and creation. The same effective
@@ -305,6 +317,9 @@
              | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
+        pbs_second_copy_disk_mode: "{{ _pbs_second_copy_disk_mode | default('create') }}"
+        pbs_second_copy_mount_mode: "{{ _pbs_second_copy_mount_mode | default('create') }}"
+        pbs_second_copy_datastore_mode: "{{ _pbs_second_copy_datastore_mode | default('create') }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       when: _existing_hosts | length > 0
       # Inventory bookkeeping, not a lab change: add_host always reports changed,
@@ -340,7 +355,7 @@
         pbs_disk_node: "{{ hostvars[_existing_hosts[0]].proxmox_node }}"
         pbs_disk_guest_ip: "{{ hostvars[_existing_hosts[0]].ansible_host | default('') }}"
         pbs_disk_config: "{{ _pbs_second_copy_disk_config }}"
-        pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+        pbs_disk_mode: "{{ _pbs_second_copy_disk_mode }}"
         pbs_disk_index: 2
         pbs_disk_device: scsi2
         pbs_disk_serial: homelab-pbs-copy
@@ -422,6 +437,9 @@
             ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
+            pbs_second_copy_disk_mode: "{{ _pbs_second_copy_disk_mode | default('create') }}"
+            pbs_second_copy_mount_mode: "{{ _pbs_second_copy_mount_mode | default('create') }}"
+            pbs_second_copy_datastore_mode: "{{ _pbs_second_copy_datastore_mode | default('create') }}"
             homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
 
         - name: Attach the retained PBS datastore disk to the new guest
@@ -444,7 +462,7 @@
             pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
             pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
             pbs_disk_config: "{{ _pbs_second_copy_disk_config }}"
-            pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+            pbs_disk_mode: "{{ _pbs_second_copy_disk_mode }}"
             pbs_disk_index: 2
             pbs_disk_device: scsi2
             pbs_disk_serial: homelab-pbs-copy
@@ -553,6 +571,7 @@
         pbs_datastore_name: "{{ _pbs_deploy_host.app_config.app.datastore_name }}"
         pbs_datastore_mode: "{{ _pbs_deploy_host.app_config.app.datastore_mode | default('create') }}"
         pbs_second_copy: "{{ _pbs_deploy_host.app_config.second_copy | default({}) }}"
+        pbs_second_copy_datastore_mode: "{{ _pbs_deploy_host.pbs_second_copy_datastore_mode | default('create') }}"
         pbs_token_rotated: "{{ _pbs_deploy_host.pbs_token_rotated | default(false) }}"
 
     - name: Reload infrastructure facts

@@ -43,8 +43,16 @@ assert "second_copy.enabled" in str(second_declaration["when"])
 second_disk_identity = task(pbs[0]["tasks"], "Resolve the PBS second-copy disk identity")
 assert "datastore_disk.source_vmid" in str(second_disk_identity["ansible.builtin.set_fact"])
 assert "-disk-2" in str(second_disk_identity["ansible.builtin.set_fact"])
+provision_tasks = pbs[0]["tasks"]
+volume_mode = task(provision_tasks, "Resolve whether the PBS second-copy disk is new or retained")
+assert "_pbs_second_copy_volume_exists" in str(volume_mode["ansible.builtin.set_fact"])
+safe_modes = task(provision_tasks, "Select safe modes for the PBS second-copy disk and datastore")
+assert "_pbs_second_copy_volume_exists" in str(safe_modes["ansible.builtin.set_fact"])
+assert "'create'" in str(safe_modes["ansible.builtin.set_fact"])
+assert "'attach'" in str(safe_modes["ansible.builtin.set_fact"])
 pbs_configure = task(pbs[2]["tasks"], "Configure datastore, backup job and notifications")
 assert "pbs_second_copy" in pbs_configure["vars"]
+assert "pbs_second_copy_datastore_mode" in pbs_configure["vars"]
 configure_tasks = load_yaml("ansible/tasks/bootstrap/configure-pbs.yml")
 second_copy_include = task(
     configure_tasks, "PBS | Configure the optional second-copy datastore and restore source"
@@ -76,6 +84,10 @@ assert "second_copy.enabled" in str(copy_disk["when"])
 assert "second_copy.datastore_path" in primary_disk["vars"]["pbs_datastore_required_mounts"]
 
 copy_tasks = load_yaml("ansible/tasks/bootstrap/configure-pbs-second-copy.yml")
+datastore_identity = task(copy_tasks, "PBS second copy | Validate retained datastore identity")
+assert "pbs_second_copy_datastore_mode" in str(datastore_identity["ansible.builtin.assert"]["that"])
+create_datastore = task(copy_tasks, "PBS second copy | Create datastore")
+assert "pbs_second_copy_datastore_mode" in str(create_datastore["when"])
 sync_config = task(copy_tasks, "PBS second copy | Build desired local sync-job configuration")
 sync_values = sync_config["ansible.builtin.set_fact"]["_pbs_second_copy_sync_config"]
 assert sync_values["store"] == "{{ _pbs_second_copy_datastore }}"

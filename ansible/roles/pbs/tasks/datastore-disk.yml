@@ -1,11 +1,12 @@
 ---
 # Mount one explicitly declared PBS datastore volume. Only create mode may initialise
-# a blank managed disk. Reuse mode requires its filesystem and snapshots to exist.
+# a blank managed disk. Reuse requires snapshot data; attach requires an existing
+# filesystem but allows a newly enabled second copy to be empty before its first sync.
 
 - name: PBS datastore disk | Validate the path and mode
   ansible.builtin.assert:
     that:
-      - pbs_datastore_disk_mode in ['create', 'reuse']
+      - pbs_datastore_disk_mode in ['create', 'reuse', 'attach']
       - pbs_datastore_disk_path is defined
       - pbs_datastore_disk_path is match('^/')
       - pbs_datastore_disk_path != '/'
@@ -13,8 +14,8 @@
       - pbs_datastore_disk_serial | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - pbs_datastore_disk_label | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
     fail_msg: >-
-      PBS datastore_disk requires an absolute, non-root datastore path and a create or
-      reuse mode. Refusing to mount or initialise an ambiguous location.
+      PBS datastore_disk requires an absolute, non-root datastore path and a create, reuse
+      or attach mode. Refusing to mount or initialise an ambiguous location.
 
 - name: PBS datastore disk | Read block devices and serials
   ansible.builtin.command:
@@ -69,11 +70,11 @@
     that:
       - _pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list in [[], ['ext4']]
       - >-
-        pbs_datastore_disk_mode != 'reuse'
+        pbs_datastore_disk_mode not in ['reuse', 'attach']
         or (_pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list) == ['ext4']
     fail_msg: >-
-      Reuse requires an existing ext4 filesystem. Create mode can format only the exact
-      declared PBS datastore disk when it has no filesystem signature.
+      Reuse and attach require an existing ext4 filesystem. Create mode can format only
+      the exact declared PBS datastore disk when it has no filesystem signature.
 
 - name: PBS datastore disk | Initialise a blank declared disk
   ansible.builtin.command:
@@ -201,6 +202,16 @@
     _pbs_stage_has_chunks: "{{ _pbs_datastore_markers.results[1].stat.isdir | default(false) }}"
     _pbs_source_path_is_symlink: "{{ _pbs_datastore_markers.results[2].stat.islnk | default(false) }}"
   when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Refuse to hide existing data when attaching a retained disk
+  ansible.builtin.assert:
+    that: not (_pbs_source_has_chunks | default(false) | bool)
+    fail_msg: >-
+      The attach-mode target path contains an unmounted datastore. Refusing to hide its
+      data under the retained second-copy disk.
+  when:
+    - pbs_datastore_disk_mode == 'attach'
+    - _pbs_final_mount.rc != 0
 
 - name: PBS datastore disk | Refuse unsafe source or create-mode adoption
   ansible.builtin.assert:

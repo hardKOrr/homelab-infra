@@ -135,6 +135,7 @@ assert existing_disk_include["vars"]["pbs_disk_index"] == 1
 existing_copy_disk_include = task(provision_tasks, "Attach the retained PBS second-copy disk to the existing guest")
 assert existing_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
 assert existing_copy_disk_include["vars"]["pbs_disk_index"] == 2
+assert existing_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
 assert "second_copy.enabled" in str(existing_copy_disk_include["when"])
 provision_block = task(provision_tasks, "Provision new VM")["block"]
 derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
@@ -149,6 +150,7 @@ assert new_disk_include["vars"]["pbs_disk_index"] == 1
 new_copy_disk_include = task(provision_block, "Attach the retained PBS second-copy disk to the new guest")
 assert new_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
 assert new_copy_disk_include["vars"]["pbs_disk_index"] == 2
+assert new_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
 avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
 assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
     task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
@@ -227,6 +229,7 @@ active_discard_check = task(pbs_role, "Confirm discard is active on the retained
 assert "discard=on" in str(active_discard_check["ansible.builtin.assert"]["that"])
 copy_disk_role_include = task(pbs_role, "Configure the optional PBS second-copy datastore disk")
 assert "app_config.second_copy.enabled" in str(copy_disk_role_include["when"])
+assert "pbs_second_copy_mount_mode" in copy_disk_role_include["vars"]["pbs_datastore_disk_mode"]
 assert copy_disk_role_include["vars"]["pbs_datastore_disk_serial"] == "homelab-pbs-copy"
 assert "second_copy.datastore_path" in copy_disk_role_include["vars"]["pbs_datastore_disk_path"]
 assert "scsi2" in str(task(pbs_role, "Confirm discard is active on the retained PBS second-copy disk")["ansible.builtin.assert"]["that"])
@@ -252,6 +255,9 @@ assert "--checksum" in str(task(disk_tasks, "PBS datastore disk | Verify the cop
 assert "RequiresMountsFor" in task(disk_tasks, "PBS datastore disk | Make both PBS services require the datastore mount")["ansible.builtin.copy"]["content"]
 assert "_pbs_datastore_path_before.stat.uid" in str(task(disk_tasks, "PBS datastore disk | Preserve datastore root ownership and mode"))
 assert task(pbs_role, "Give PBS ownership of an empty datastore directory")["ansible.builtin.file"]["owner"] == "backup"
+assert "attach" in str(task(disk_tasks, "PBS datastore disk | Validate the path and mode")["ansible.builtin.assert"]["that"])
+attach_guard = task(disk_tasks, "PBS datastore disk | Refuse to hide existing data when attaching a retained disk")
+assert "pbs_datastore_disk_mode == 'attach'" in str(attach_guard["when"])
 
 register_tasks = load_yaml("ansible/roles/pbs/tasks/register-reused-datastore.yml")
 register_existing = task(register_tasks, "PBS datastore reuse | Register the retained directory without initialising it")

@@ -43,7 +43,9 @@
         or (((_pbs_second_copy_registered | first).path | default(''))
             | regex_replace('(?<=.)/+$', ''))
            == (_pbs_second_copy_path | regex_replace('(?<=.)/+$', ''))
-      - pbs_datastore_mode | default('create') != 'reuse' or _pbs_second_copy_registered | length == 1
+      - >-
+        pbs_second_copy_datastore_mode | default(pbs_datastore_mode | default('create')) != 'reuse'
+        or _pbs_second_copy_registered | length == 1
     fail_msg: >-
       PBS second-copy datastore {{ _pbs_second_copy_datastore }} does not have the expected
       retained registration at {{ _pbs_second_copy_path }}. Reuse requires the existing
@@ -64,7 +66,7 @@
       path: "{{ _pbs_second_copy_path }}"
     validate_certs: false
   when:
-    - pbs_datastore_mode | default('create') == 'create'
+    - pbs_second_copy_datastore_mode | default(pbs_datastore_mode | default('create')) == 'create'
     - >-
       _pbs_second_copy_datastores.json.data | map(attribute='name') | list
       is not contains(_pbs_second_copy_datastore)
