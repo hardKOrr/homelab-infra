@@ -26,8 +26,10 @@
             | default({}, true) -%}
       {%- for estate in (domains | dict2items) -%}
       {%- set challenge = estate.value.dns_challenge | default({}, true) -%}
-      {%- if estate.key == default_name and challenge | length == 0 -%}
-      {%- set challenge = default_challenge -%}
+      {%- if estate.key == default_name and challenge is mapping
+             and challenge.provider is not defined -%}
+      {%- set challenge = (default_challenge if default_challenge is mapping else {})
+            | combine(challenge, recursive=True) -%}
       {%- endif -%}
       {%- set challenge_values = challenge | dict2items if challenge is mapping else [] -%}
       {%- set credentials = challenge_values

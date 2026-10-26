@@ -5,8 +5,9 @@ The lab-wide `public_dns` block supplies one address source, record TTL, and ena
 IP families; each enabled estate uses its own DNS-01 provider configuration and
 credentials for its apex (`@`) and wildcard (`*`) records. See the
 [configuration contract](../../vars/CONTRACT.md).
-When the default estate omits `dns_challenge`, it inherits the lab's
-`reverse_proxy.dns_challenge`; other estates continue to use their own challenge
+When the default estate's `dns_challenge` has no provider, it inherits the lab's
+`reverse_proxy.dns_challenge`; estate-specific fields such as Vault-provided credentials
+override inherited values. Other estates continue to use only their own challenge
 configuration.
 
 For `static` and `lookup` sources, the role installs the pinned

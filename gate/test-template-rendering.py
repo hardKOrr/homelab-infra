@@ -465,6 +465,41 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
         "the default estate's DNS-01 credentials do not leak to another estate"
     )
 
+    inherited_with_estate_credentials = self.build_public_dns_apps(
+        {
+            "reverse_proxy": {
+                "dns_challenge": {
+                    "provider": "cloudflare",
+                    "api_token": "fixture-global-token",
+                }
+            },
+            "public_dns": {
+                "address": {"source": "static", "address": "203.0.113.10"},
+            },
+            "domains": {
+                "alpha": {
+                    "default": True,
+                    "domain": "alpha.example.test",
+                    "dns_challenge": {"api_token": "fixture-estate-token"},
+                    "public_dns": {"enabled": True},
+                },
+                "beta": {
+                    "domain": "beta.example.test",
+                    "public_dns": {"enabled": False},
+                },
+            },
+        }
+    )
+    assert inherited_with_estate_credentials["_caddy_public_dns_apps"]["dynamic_dns"]["providers"] == [
+        {
+            "dns_provider": {
+                "name": "cloudflare",
+                "api_token": "fixture-estate-token",
+            },
+            "domains": {"alpha.example.test": ["@", "*"]},
+        },
+    ], "the default estate's Vault credential overlays the inherited DNS-01 challenge"
+
     static_infra = {
         "domains": {"alpha": alpha},
         "public_dns": {
