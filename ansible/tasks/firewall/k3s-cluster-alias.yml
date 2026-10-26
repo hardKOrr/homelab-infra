@@ -74,7 +74,8 @@
     validate_certs: "{{ _k3s_firewall_validate | bool }}"
     body_format: json
     body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': firewall_k3s_alias_name} }}"
-    status_code: 200
+    # Let an ACL denial reach the assert below; no_log would hide the status here.
+    status_code: [200, 401, 403]
   register: _k3s_firewall_alias_search
   changed_when: false
   no_log: true
@@ -82,6 +83,7 @@
 - name: k3s firewall alias | Validate the alias search response
   ansible.builtin.assert:
     that:
+      - _k3s_firewall_alias_search.status == 200
       - _k3s_firewall_alias_search.json is defined
       - _k3s_firewall_alias_search.json is mapping
       - _k3s_firewall_alias_search.json.rows is defined
@@ -89,8 +91,9 @@
       - _k3s_firewall_alias_search.json.total | default(0) | int
         <= _k3s_firewall_alias_search.json.rows | length
     fail_msg: >-
-      OPNsense alias search returned an unexpected shape. Check that the
-      homelab-infra/firewall API key can manage firewall aliases.
+      OPNsense alias search returned an unexpected shape (HTTP
+      {{ _k3s_firewall_alias_search.status | default('?') }}). Check that the
+      homelab-infra/firewall API key holds the 'Firewall: Aliases' privilege.
 
 - name: k3s firewall alias | Select exact-name matches
   ansible.builtin.set_fact:

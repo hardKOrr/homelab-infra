@@ -31,7 +31,8 @@
     validate_certs: "{{ fw_validate | bool }}"
     body_format: json
     body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': wiring_app_name} }}"
-    status_code: 200
+    # Let an ACL denial reach the assert below; no_log would hide the status here.
+    status_code: [200, 401, 403]
   register: _fw_search
   changed_when: false
   no_log: true
@@ -41,6 +42,7 @@
 - name: Firewall | Validate the {{ fw_model }} search response
   ansible.builtin.assert:
     that:
+      - _fw_search.status == 200
       - _fw_search.json is defined
       - _fw_search.json is mapping
       - _fw_search.json.rows is defined
@@ -49,8 +51,8 @@
     fail_msg: >-
       OPNsense {{ fw_model }} searchRule returned an unexpected shape (HTTP
       {{ _fw_search.status | default('?') }}). Check that the homelab-infra/firewall API
-      key holds the 'Firewall: Rules [new]' and 'Firewall: NAT: Destination NAT'
-      privileges.
+      key holds the 'Firewall: Rules [new]', 'Firewall: NAT: Destination NAT' and
+      'Firewall: Aliases' privileges.
 
 - name: Firewall | Plan {{ fw_model }} changes
   ansible.builtin.set_fact:
