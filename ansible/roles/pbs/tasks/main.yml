@@ -66,7 +66,28 @@
 
 - name: Configure the persistent PBS datastore disk
   ansible.builtin.include_tasks: datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-store
+    pbs_datastore_disk_label: pbs-datastore
+    pbs_datastore_required_mounts: >-
+      {{ [homelabinfra_config.infrastructure.backups.datastore_path]
+         + ([app_config.second_copy.datastore_path]
+            if app_config.second_copy.enabled | default(false) | bool else []) }}
   when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Configure the optional PBS second-copy datastore disk
+  ansible.builtin.include_tasks: datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ app_config.second_copy.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-copy
+    pbs_datastore_disk_label: pbs-copy
+    pbs_datastore_required_mounts: >-
+      {{ [homelabinfra_config.infrastructure.backups.datastore_path,
+          app_config.second_copy.datastore_path] }}
+  when: app_config.second_copy.enabled | default(false) | bool
 
 - name: Create apt keyrings directory
   ansible.builtin.file:
@@ -128,6 +149,26 @@
     - app_config.app.datastore_mode | default('create') == 'create'
     - not (_pbs_new_datastore_chunks.stat.isdir | default(false))
 
+- name: Read the new PBS second-copy directory marker
+  ansible.builtin.stat:
+    path: "{{ app_config.second_copy.datastore_path }}/.chunks"
+    follow: false
+  register: _pbs_new_second_copy_chunks
+  when:
+    - app_config.second_copy.enabled | default(false) | bool
+    - app_config.app.datastore_mode | default('create') == 'create'
+
+- name: Give PBS ownership of an empty second-copy directory
+  ansible.builtin.file:
+    path: "{{ app_config.second_copy.datastore_path }}"
+    owner: backup
+    group: backup
+    mode: "0750"
+  when:
+    - app_config.second_copy.enabled | default(false) | bool
+    - app_config.app.datastore_mode | default('create') == 'create'
+    - not (_pbs_new_second_copy_chunks.stat.isdir | default(false))
+
 - name: Enable and start the PBS services
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -161,7 +202,6 @@
   no_log: true
   when:
     - app_config.proxmox.vm.datastore_disk is defined
-    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
 
 - name: Confirm discard is active on the retained PBS datastore disk
   ansible.builtin.assert:
@@ -174,7 +214,17 @@
       device did not apply the option after restart.
   when:
     - app_config.proxmox.vm.datastore_disk is defined
-    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
+
+- name: Confirm discard is active on the retained PBS second-copy disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_disk_active_config_after.stdout is search(
+          '(?m)^scsi2:\s*[^\n]*,discard=on(,|$)')
+    fail_msg: >-
+      The retained PBS second-copy disk is configured with discard but its active QEMU
+      device did not apply the option after restart.
+  when: app_config.second_copy.enabled | default(false) | bool
 
 - name: Wait for the PBS API to answer
   ansible.builtin.uri:

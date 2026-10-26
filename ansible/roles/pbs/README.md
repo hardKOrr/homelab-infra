@@ -8,6 +8,25 @@ The role installs PBS packages and verifies its API token. An optional
 datastore path. This gives the datastore a storage identity independent of the replaceable
 PBS OS disk.
 
+## Optional second copy
+
+`second_copy` is disabled by default. When enabled, it attaches a second retained disk on
+`scsi2` from `second_copy.storage`, formats and mounts it at the internal path
+`/mnt/homelab-copy`, and registers the `homelab-copy` PBS datastore. The storage ID must
+name a different Proxmox pool from the primary datastore disk. The disk uses the existing
+`proxmox.vm.datastore_disk.source_vmid` with volume slot 2, so it survives PBS guest
+replacement without a second reserved VMID.
+
+PBS manages a local pull sync job from the primary datastore to `homelab-copy`; it has no
+remote. `second_copy.schedule` controls the sync schedule. The copy's prune job uses
+`second_copy.retention` when set, otherwise it inherits the primary retention policy, and
+garbage collection uses the primary GC schedule. PVE exposes the copy as the
+`pbs-homelab-copy` storage ID for **Restore Guest**. **Restore App** accepts
+`backup_datastore=homelab-copy` for a one-run source override. Neither restore choice
+changes the app's saved configuration. Disabling the option stops managing the copy but
+removes only its managed sync schedule. It keeps the datastore, PVE restore source, prune
+policy, disk and existing backups.
+
 `infrastructure.backups.restore_bandwidth_mib_s` optionally caps **Restore Guest** at the
 per-restore limit. The value is MiB/s; Restore Guest converts it to KiB/s and passes it as
 `--bwlimit` on the PVE restore request. When omitted or null, it omits the option. Deploy

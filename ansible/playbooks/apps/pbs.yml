@@ -72,6 +72,28 @@
           Refusing an unsafe volume identity.
       when: app_config.proxmox.vm.datastore_disk is defined
 
+    - name: Validate the optional PBS second copy declaration
+      ansible.builtin.assert:
+        that:
+          - app_config.proxmox.vm.datastore_disk is defined
+          - app_config.proxmox.vm.datastore_disk.source_vmid is defined
+          - app_config.second_copy.storage | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - app_config.second_copy.storage != app_config.proxmox.vm.datastore_disk.storage
+          - app_config.second_copy.size | default(0) | string is match('^[1-9][0-9]*$')
+          - app_config.second_copy.schedule | default('', true) | length > 0
+          - app_config.second_copy.datastore_name | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - app_config.second_copy.pve_storage_id | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - app_config.second_copy.datastore_path | default('') is match('^/[^/].*$')
+          - >-
+            app_config.second_copy.datastore_path
+            != homelabinfra_config.infrastructure.backups.datastore_path
+          - "'..' not in app_config.second_copy.datastore_path.split('/')"
+        fail_msg: >-
+          PBS second_copy requires the primary retained datastore disk and its reserved
+          source_vmid, a different Proxmox storage ID, a positive GiB size, a PBS calendar
+          schedule, and a distinct absolute datastore path. Refusing an unsafe second copy.
+      when: app_config.second_copy.enabled | default(false) | bool
+
   tasks:
     # VM PATH — dedicated VM per instance. Mirrors the native LXC playbooks: an
     # existing `_<instance>` host is reused so re-runs are idempotent (a fresh
@@ -112,9 +134,45 @@
              if _existing_hosts | length > 0 else homelabinfra_config.proxmox.node }}
       when: app_config.proxmox.vm.datastore_disk is defined
 
+    - name: Resolve the PBS second-copy disk identity
+      ansible.builtin.set_fact:
+        _pbs_second_copy_disk_config:
+          storage: "{{ app_config.second_copy.storage }}"
+          size_gib: "{{ app_config.second_copy.size }}"
+          source_vmid: "{{ app_config.proxmox.vm.datastore_disk.source_vmid }}"
+        _pbs_second_copy_volume_id: >-
+          {{ app_config.second_copy.storage }}:vm-{{ app_config.proxmox.vm.datastore_disk.source_vmid }}-disk-2
+      when: app_config.second_copy.enabled | default(false) | bool
+
     - name: Register the PBS volume preflight node
       ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
       when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Read Proxmox storage available to the PBS node for the second copy
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _pbs_disk_preflight_node }}/storage"
+          - --output-format
+          - json
+      delegate_to: "{{ _pbs_disk_preflight_node }}"
+      register: _pbs_second_copy_node_storages
+      changed_when: false
+      no_log: true
+      when: app_config.second_copy.enabled | default(false) | bool
+
+    - name: Require second-copy storage to be active on the PBS node
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_pbs_second_copy_node_storages.stdout | from_json)
+            | selectattr('storage', 'equalto', app_config.second_copy.storage)
+            | selectattr('active', 'equalto', 1) | list | length == 1
+        fail_msg: >-
+          PBS second_copy.storage must be active on the PBS VM's Proxmox node and must be
+          a distinct pool from the primary datastore storage. No guest was created or changed.
+      when: app_config.second_copy.enabled | default(false) | bool
 
     - name: Check PBS datastore owner identity against current guests
       ansible.builtin.command:
@@ -171,6 +229,38 @@
           PBS reuse volume is absent or ambiguous. The existing guest remains untouched;
           restore the exact retained volume before retrying Deploy PBS.
       when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+    - name: Check the retained PBS second-copy volume before creating a replacement guest
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _pbs_disk_preflight_node }}/storage/{{ app_config.second_copy.storage }}/content"
+          - --content
+          - images
+          - --output-format
+          - json
+      delegate_to: "{{ _pbs_disk_preflight_node }}"
+      register: _pbs_second_copy_preflight_content
+      changed_when: false
+      no_log: true
+      when: app_config.second_copy.enabled | default(false) | bool
+
+    - name: Refuse provisioning without the exact retained PBS second-copy volume
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_pbs_second_copy_preflight_content.stdout | from_json)
+            | selectattr('volid', 'equalto', _pbs_second_copy_volume_id) | list | length <= 1
+          - >-
+            app_config.app.datastore_mode | default('create') != 'reuse'
+            or ((_pbs_second_copy_preflight_content.stdout | from_json)
+                | selectattr('volid', 'equalto', _pbs_second_copy_volume_id)
+                | list | length == 1)
+        fail_msg: >-
+          PBS second-copy volume is absent or ambiguous. Reuse never creates a replacement
+          disk. Keep the guest and storage unchanged while the volume owner is repaired.
+      when: app_config.second_copy.enabled | default(false) | bool
 
     # Resolve without allocating, for both reuse and creation. The same effective
     # network (including default inheritance) must guard a reused running VM too.
@@ -238,7 +328,25 @@
         pbs_disk_guest_ip: "{{ hostvars[_existing_hosts[0]].ansible_host | default('') }}"
         pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
         pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+        pbs_disk_index: 1
+        pbs_disk_device: scsi1
+        pbs_disk_serial: homelab-pbs-store
       when: app_config.proxmox.vm.datastore_disk is defined and _existing_hosts | length > 0
+
+    - name: Attach the retained PBS second-copy disk to the existing guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
+      vars:
+        pbs_disk_vmid: "{{ hostvars[_existing_hosts[0]].proxmox_vmid }}"
+        pbs_disk_node: "{{ hostvars[_existing_hosts[0]].proxmox_node }}"
+        pbs_disk_guest_ip: "{{ hostvars[_existing_hosts[0]].ansible_host | default('') }}"
+        pbs_disk_config: "{{ _pbs_second_copy_disk_config }}"
+        pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+        pbs_disk_index: 2
+        pbs_disk_device: scsi2
+        pbs_disk_serial: homelab-pbs-copy
+      when:
+        - app_config.second_copy.enabled | default(false) | bool
+        - _existing_hosts | length > 0
 
     - name: Provision new VM
       when: _existing_hosts | length == 0
@@ -324,7 +432,23 @@
             pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
             pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
             pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+            pbs_disk_index: 1
+            pbs_disk_device: scsi1
+            pbs_disk_serial: homelab-pbs-store
           when: app_config.proxmox.vm.datastore_disk is defined
+
+        - name: Attach the retained PBS second-copy disk to the new guest
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
+          vars:
+            pbs_disk_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+            pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
+            pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
+            pbs_disk_config: "{{ _pbs_second_copy_disk_config }}"
+            pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+            pbs_disk_index: 2
+            pbs_disk_device: scsi2
+            pbs_disk_serial: homelab-pbs-copy
+          when: app_config.second_copy.enabled | default(false) | bool
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -428,6 +552,7 @@
         pbs_instance: "{{ instance }}"
         pbs_datastore_name: "{{ _pbs_deploy_host.app_config.app.datastore_name }}"
         pbs_datastore_mode: "{{ _pbs_deploy_host.app_config.app.datastore_mode | default('create') }}"
+        pbs_second_copy: "{{ _pbs_deploy_host.app_config.second_copy | default({}) }}"
         pbs_token_rotated: "{{ _pbs_deploy_host.pbs_token_rotated | default(false) }}"
 
     - name: Reload infrastructure facts
