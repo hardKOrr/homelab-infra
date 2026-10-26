@@ -1,0 +1,458 @@
+---
+# Own the API user used only for Unbound record writes. The broader account-management
+# key is kept in a separate Vaultwarden item and is used only in this task file.
+# OPNsense exposes these operations through auth/user; API keys are returned once by
+# add_api_key, so the new pair is sent directly to the canonical Vaultwarden item.
+# Docs: https://docs.opnsense.org/development/api/core/auth.html
+
+- name: OPNsense DNS account | Resolve the account-management inputs
+  ansible.builtin.set_fact:
+    _opn_dns_account_name: homelab-infra-dns
+    _opn_dns_account_description: Owned by homelab-infra
+    _opn_dns_account_privilege: page-services-unbound
+    _opn_dns_admin_credential: "{{ homelabinfra_infra['firewall-admin'] | default({}, true) }}"
+    _opn_dns_saved_key: "{{ homelabinfra_infra.dns.api_key | default('', true) }}"
+    _opn_dns_saved_secret: "{{ homelabinfra_infra.dns.api_secret | default('', true) }}"
+    _opn_dns_rotate_requested: "{{ opnsense_dns_rotate_key | default(false) | bool }}"
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Require the dedicated admin API key
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_admin_credential.api_key | default('') | length > 0
+      - _opn_dns_admin_credential.api_secret | default('') | length > 0
+    fail_msg: >-
+      OPNsense DNS account management needs api_key and api_secret in Vaultwarden item
+      homelab-infra/firewall-admin.
+
+- name: OPNsense DNS account | Search for the exact account name
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/search"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: >-
+      {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_dns_account_name} }}
+    status_code: 200
+  register: _opn_dns_user_search
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Validate the user search response
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_user_search.json is defined
+      - _opn_dns_user_search.json is mapping
+      - _opn_dns_user_search.json.rows is defined
+      - _opn_dns_user_search.json.rows | type_debug == 'list'
+      - _opn_dns_user_search.json.rows | select('mapping') | list | length == _opn_dns_user_search.json.rows | length
+    fail_msg: OPNsense user search returned an unexpected response; no account was changed.
+  no_log: true
+
+- name: OPNsense DNS account | Select exact-name users
+  ansible.builtin.set_fact:
+    _opn_dns_named_users: >-
+      {{ _opn_dns_user_search.json.rows
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', _opn_dns_account_name)
+         | list }}
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Refuse duplicate exact-name users
+  ansible.builtin.assert:
+    that: _opn_dns_named_users | length <= 1
+    fail_msg: >-
+      OPNsense has more than one user named homelab-infra-dns. Resolve the duplicate
+      manually before deploying DNS records.
+
+- name: OPNsense DNS account | Refuse a foreign exact-name user
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_named_users | length == 0 or
+        (_opn_dns_named_users | first).descr | default('') == _opn_dns_account_description
+    fail_msg: >-
+      Refusing to adopt OPNsense user homelab-infra-dns because its description is not
+      "Owned by homelab-infra". Inspect System > Access > Users before continuing.
+
+- name: OPNsense DNS account | Create the owned user
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/add"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body:
+      user:
+        name: "{{ _opn_dns_account_name }}"
+        descr: "{{ _opn_dns_account_description }}"
+        scope: user
+        disabled: "0"
+        expires: ""
+        shell: ""
+        authorizedkeys: ""
+        priv: "{{ _opn_dns_account_privilege }}"
+        group_memberships: ""
+        scrambled_password: "1"
+    status_code: 200
+  register: _opn_dns_user_create
+  changed_when: true
+  when: _opn_dns_named_users | length == 0
+  no_log: true
+
+- name: OPNsense DNS account | Verify user creation
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_user_create.json is defined
+      - _opn_dns_user_create.json.result | default('') == 'saved'
+    fail_msg: OPNsense refused to create homelab-infra-dns; no DNS record was changed.
+  when: _opn_dns_user_create is changed
+
+- name: OPNsense DNS account | Read back the created user
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/search"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: >-
+      {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_dns_account_name} }}
+    status_code: 200
+  register: _opn_dns_created_user_search
+  changed_when: false
+  when: _opn_dns_user_create is changed
+  no_log: true
+
+- name: OPNsense DNS account | Validate the created-user readback
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_created_user_search.json is defined
+      - _opn_dns_created_user_search.json.rows is defined
+      - _opn_dns_created_user_search.json.rows | type_debug == 'list'
+      - _opn_dns_created_user_search.json.rows | select('mapping') | list | length == _opn_dns_created_user_search.json.rows | length
+    fail_msg: OPNsense did not return the newly created DNS user; no key was generated.
+  when: _opn_dns_user_create is changed
+  no_log: true
+
+- name: OPNsense DNS account | Resolve the live user record
+  ansible.builtin.set_fact:
+    _opn_dns_account_user: >-
+      {{ ((_opn_dns_created_user_search.json.rows
+           | selectattr('name', 'equalto', _opn_dns_account_name) | list)
+          if (_opn_dns_user_create is changed)
+          else _opn_dns_named_users) | first | default({}) }}
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Require a readable owned user record
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_account_user | length > 0
+      - _opn_dns_account_user.descr | default('') == _opn_dns_account_description
+      - _opn_dns_account_user.uuid | default(_opn_dns_account_user.id | default('')) | length > 0
+    fail_msg: >-
+      OPNsense did not confirm the owned homelab-infra-dns user. No DNS record was changed.
+  no_log: true
+
+- name: OPNsense DNS account | Check the account's privilege and login scope
+  ansible.builtin.set_fact:
+    _opn_dns_user_needs_repair: >-
+      {{ (_opn_dns_account_user.scope | default('user') | string != 'user')
+         or (_opn_dns_account_user.disabled | default('0') | string != '0')
+         or ((_opn_dns_account_user.priv | default('', true) | string).split(',')
+             | reject('equalto', '') | list != [_opn_dns_account_privilege])
+         or (_opn_dns_account_user.group_memberships | default('', true) | string | trim | length > 0)
+         or (_opn_dns_account_user.shell | default('', true) | string | trim | length > 0)
+         or (_opn_dns_account_user.authorizedkeys | default('', true) | string | trim | length > 0)
+         or (_opn_dns_account_user.expires | default('', true) | string | trim | length > 0) }}
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Restrict the owned user to Unbound
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/set/{{ _opn_dns_account_user.uuid | default(_opn_dns_account_user.id) }}"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body:
+      user:
+        name: "{{ _opn_dns_account_name }}"
+        descr: "{{ _opn_dns_account_description }}"
+        scope: user
+        disabled: "0"
+        expires: ""
+        shell: ""
+        authorizedkeys: ""
+        priv: "{{ _opn_dns_account_privilege }}"
+        group_memberships: ""
+    status_code: 200
+  register: _opn_dns_user_repair
+  changed_when: true
+  when: _opn_dns_user_needs_repair | bool
+  no_log: true
+
+- name: OPNsense DNS account | Verify the privilege update
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_user_repair.json is defined
+      - _opn_dns_user_repair.json.result | default('') == 'saved'
+    fail_msg: OPNsense refused to restrict homelab-infra-dns to its Unbound privilege.
+  when: _opn_dns_user_repair is changed
+  no_log: true
+
+- name: OPNsense DNS account | Read back the restricted user
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/search"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: >-
+      {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_dns_account_name} }}
+    status_code: 200
+  register: _opn_dns_repaired_user_search
+  changed_when: false
+  when: _opn_dns_user_repair is changed
+  no_log: true
+
+- name: OPNsense DNS account | Validate the restricted-user readback
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_repaired_user_search.json is defined
+      - _opn_dns_repaired_user_search.json.rows is defined
+      - _opn_dns_repaired_user_search.json.rows | type_debug == 'list'
+      - _opn_dns_repaired_user_search.json.rows | select('mapping') | list | length == _opn_dns_repaired_user_search.json.rows | length
+    fail_msg: OPNsense did not return the restricted DNS user after its update.
+  when: _opn_dns_user_repair is changed
+  no_log: true
+
+- name: OPNsense DNS account | Record the restricted user readback
+  ansible.builtin.set_fact:
+    _opn_dns_account_user: >-
+      {{ (_opn_dns_repaired_user_search.json.rows
+          | selectattr('name', 'equalto', _opn_dns_account_name) | list)
+         | first | default({}) }}
+  changed_when: false
+  when: _opn_dns_user_repair is changed
+  no_log: true
+
+- name: OPNsense DNS account | Verify the user has only Unbound access
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_account_user.priv | default('', true) | string == _opn_dns_account_privilege
+      - _opn_dns_account_user.group_memberships | default('', true) | string | trim | length == 0
+      - _opn_dns_account_user.disabled | default('0') | string == '0'
+      - _opn_dns_account_user.scope | default('user') | string == 'user'
+      - _opn_dns_account_user.shell | default('', true) | string | trim | length == 0
+      - _opn_dns_account_user.authorizedkeys | default('', true) | string | trim | length == 0
+      - _opn_dns_account_user.expires | default('', true) | string | trim | length == 0
+    fail_msg: >-
+      OPNsense user homelab-infra-dns does not have exactly the Unbound privilege and a
+      disabled shell. Inspect the owned user before deploying DNS records.
+  no_log: true
+
+- name: OPNsense DNS account | Search for the account's API keys
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/search_api_key?current=1&rowCount=1000"
+    method: GET
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    status_code: 200
+  register: _opn_dns_key_search
+  changed_when: false
+  when: _opn_dns_user_create is not changed
+  no_log: true
+
+- name: OPNsense DNS account | Validate the API-key search response
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_key_search.json is defined
+      - _opn_dns_key_search.json is mapping
+      - _opn_dns_key_search.json.rows is defined
+      - _opn_dns_key_search.json.rows | type_debug == 'list'
+      - _opn_dns_key_search.json.rows | select('mapping') | list | length == _opn_dns_key_search.json.rows | length
+    fail_msg: OPNsense API-key search returned an unexpected response; no key was rotated.
+  when: _opn_dns_user_create is not changed
+  no_log: true
+
+- name: OPNsense DNS account | Select this user's API keys
+  ansible.builtin.set_fact:
+    _opn_dns_account_api_keys: >-
+      {{ _opn_dns_key_search.json.rows | default([])
+         | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', _opn_dns_account_name)
+         | list }}
+    _opn_dns_saved_key_matches_account: >-
+      {{ (_opn_dns_key_search.json.rows | default([])
+          | selectattr('username', 'defined')
+          | selectattr('username', 'equalto', _opn_dns_account_name)
+          | selectattr('key', 'defined')
+          | selectattr('key', 'equalto', _opn_dns_saved_key)
+          | list | length) == 1
+         and _opn_dns_saved_key | length > 0 }}
+  changed_when: false
+  when: _opn_dns_user_create is not changed
+  no_log: true
+
+- name: OPNsense DNS account | Probe the stored DNS key
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+    method: POST
+    url_username: "{{ _opn_dns_saved_key }}"
+    url_password: "{{ _opn_dns_saved_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {current: 1, rowCount: 1, searchPhrase: ""}
+    status_code: [200, 401, 403]
+  register: _opn_dns_saved_key_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - _opn_dns_user_create is not changed
+    - _opn_dns_saved_key | length > 0
+    - _opn_dns_saved_secret | length > 0
+  no_log: true
+
+- name: OPNsense DNS account | Require a well-formed Unbound probe
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_saved_key_probe.json is defined
+      - _opn_dns_saved_key_probe.json is mapping
+      - _opn_dns_saved_key_probe.json.rows is defined
+      - _opn_dns_saved_key_probe.json.rows | type_debug == 'list'
+    fail_msg: OPNsense accepted the stored DNS key but returned an unexpected Unbound response.
+  when:
+    - _opn_dns_user_create is not changed
+    - _opn_dns_saved_key_probe.status | default(0) | int == 200
+  no_log: true
+
+- name: OPNsense DNS account | Refuse to rotate after a transport or server failure
+  ansible.builtin.assert:
+    that: _opn_dns_saved_key_probe.status | int in [200, 401, 403]
+    fail_msg: >-
+      The OPNsense Unbound API probe failed with HTTP status
+      {{ _opn_dns_saved_key_probe.status | default(0) | int }}; no key was rotated.
+  when:
+    - _opn_dns_user_create is not changed
+    - _opn_dns_saved_key_probe.status is defined
+
+- name: OPNsense DNS account | Reject a key mismatch without explicit rotation
+  ansible.builtin.assert:
+    that:
+      - >-
+        _opn_dns_rotate_requested | bool
+        or (_opn_dns_saved_key_matches_account | default(false) | bool
+            and _opn_dns_saved_key_probe.status | default(0) | int == 200)
+    fail_msg: >-
+      The DNS key in Vaultwarden item homelab-infra/dns does not authenticate as
+      homelab-infra-dns. No key was changed. Review the account, then rerun once with
+      -e opnsense_dns_rotate_key=true to rotate it.
+  when: _opn_dns_user_create is not changed
+
+- name: OPNsense DNS account | Generate a key for a new or explicitly rotated account
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/add_api_key/{{ _opn_dns_account_name }}"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _opn_dns_issued_key
+  changed_when: true
+  when: _opn_dns_user_create is changed or _opn_dns_rotate_requested | bool
+  no_log: true
+
+- name: OPNsense DNS account | Validate the issued key
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_issued_key.json is defined
+      - _opn_dns_issued_key.json.result | default('') == 'ok'
+      - _opn_dns_issued_key.json.key | default('') | length > 0
+      - _opn_dns_issued_key.json.secret | default('') | length > 0
+    fail_msg: OPNsense did not return a complete API key; no DNS record was changed.
+  when: _opn_dns_issued_key is changed
+  no_log: true
+
+- name: OPNsense DNS account | Store a new key in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/dns
+    vault_item_merge: true
+    vault_item_fields:
+      api_key: "{{ _opn_dns_issued_key.json.key }}"
+      api_secret: "{{ _opn_dns_issued_key.json.secret }}"
+    vault_item_secret_fields: [api_key, api_secret]
+  when: _opn_dns_issued_key is changed
+  no_log: true
+
+- name: OPNsense DNS account | Confirm the newly stored key works
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+    method: POST
+    url_username: "{{ homelabinfra_infra.dns.api_key }}"
+    url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {current: 1, rowCount: 1, searchPhrase: ""}
+    status_code: 200
+  register: _opn_dns_new_key_probe
+  changed_when: false
+  when: _opn_dns_issued_key is changed
+  no_log: true
+
+- name: OPNsense DNS account | Verify the stored key is Unbound-only
+  ansible.builtin.assert:
+    that:
+      - _opn_dns_new_key_probe.json is defined
+      - _opn_dns_new_key_probe.json is mapping
+      - _opn_dns_new_key_probe.json.rows is defined
+      - _opn_dns_new_key_probe.json.rows | type_debug == 'list'
+    fail_msg: >-
+      The newly stored OPNsense DNS key could not read Unbound overrides. No DNS record
+      was changed; inspect the owned user's privilege before rerunning.
+  when: _opn_dns_issued_key is changed
+  no_log: true
+
+- name: OPNsense DNS account | Verify the DNS key cannot read firewall rules
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/firewall/filter/searchRule"
+    method: POST
+    url_username: "{{ homelabinfra_infra.dns.api_key }}"
+    url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {current: 1, rowCount: 1, searchPhrase: ""}
+    status_code: [401, 403]
+  register: _opn_dns_firewall_denial
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Assert the DNS key is denied firewall access
+  ansible.builtin.assert:
+    that: _opn_dns_firewall_denial.status | default(0) | int in [401, 403]
+    fail_msg: >-
+      OPNsense DNS API key was not denied by the firewall rules API. Review the owned
+      user's effective privileges before deploying DNS records.
+  no_log: true

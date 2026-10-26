@@ -44,6 +44,16 @@ class FakeDnsApis(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/api/auth/user/search_api_key":
+            if self.headers.get("Authorization") != "Basic " + base64.b64encode(
+                b"fixture-admin-key:fixture-admin-secret"
+            ).decode():
+                return self.reply(401, {})
+            return self.reply(200, {"rows": [{
+                "username": "homelab-infra-dns",
+                "key": "fixture-key",
+                "id": base64.b64encode(b"fixture-key").decode(),
+            }], "total": 1})
         if path == "/config/apps/http/servers/srv0/routes":
             return self.reply(200, self.server.caddy_routes)
         if path.startswith("/id/"):
@@ -57,6 +67,14 @@ class FakeDnsApis(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if path == "/api/auth/user/search":
+            if self.headers.get("Authorization") != "Basic " + base64.b64encode(
+                b"fixture-admin-key:fixture-admin-secret"
+            ).decode():
+                return self.reply(401, {})
+            return self.reply(200, {"rows": [dict(self.server.opnsense_dns_user)], "total": 1})
+        if path == "/api/firewall/filter/searchRule":
+            return self.reply(403, {})
         if path == "/api/unbound/settings/searchHostOverride":
             if self.headers.get("Authorization") != "Basic " + base64.b64encode(
                 b"fixture-key:fixture-secret"
@@ -181,6 +199,18 @@ def main():
         "enabled": "1",
     }
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeDnsApis)
+    server.opnsense_dns_user = {
+        "uuid": "fixture-dns-user",
+        "name": "homelab-infra-dns",
+        "descr": "Owned by homelab-infra",
+        "scope": "user",
+        "disabled": "0",
+        "expires": "",
+        "shell": "",
+        "authorizedkeys": "",
+        "priv": "page-services-unbound",
+        "group_memberships": "",
+    }
     server.opnsense_overrides = {
         "old-owned": deepcopy(old_override),
         "manual": deepcopy(manual),
@@ -206,6 +236,8 @@ def main():
             "provider": "opnsense", "host": host,
             "api_key": "fixture-key", "api_secret": "fixture-secret",
             "validate_certs": False,
+        }, "firewall-admin": {
+            "api_key": "fixture-admin-key", "api_secret": "fixture-admin-secret",
         }},
         "wiring_app_name": "ntfy",
         "wiring_domain": "alerts.example.test",
