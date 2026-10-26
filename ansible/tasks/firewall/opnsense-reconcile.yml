@@ -30,7 +30,7 @@
     force_basic_auth: true
     validate_certs: "{{ fw_validate | bool }}"
     body_format: json
-    body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': wiring_app_name} }}"
+    body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': fw_owner_prefix | default(wiring_app_name)} }}"
     # Let an ACL denial reach the assert below; no_log would hide the status here.
     status_code: [200, 401, 403]
   register: _fw_search
@@ -112,6 +112,7 @@
   changed_when: true
   failed_when: _fw_add.json.result | default('') != 'saved'
   no_log: true
+  when: not (fw_plan_only | default(false) | bool)
 
 - name: Firewall | Update drifted {{ fw_model }} rules
   ansible.builtin.uri:
@@ -131,6 +132,7 @@
   changed_when: true
   failed_when: _fw_set.json.result | default('') != 'saved'
   no_log: true
+  when: not (fw_plan_only | default(false) | bool)
 
 - name: Firewall | Delete {{ fw_model }} rules this instance no longer declares
   ansible.builtin.uri:
@@ -148,7 +150,9 @@
   changed_when: true
   failed_when: _fw_del.json.result | default('') not in ['deleted', 'saved']
   no_log: true
+  when: not (fw_plan_only | default(false) | bool)
 
 - name: Firewall | Record whether {{ fw_model }} changed
   ansible.builtin.set_fact:
     _fw_model_changed: "{{ (_fw_plan.add + _fw_plan.set + _fw_plan.del) | length > 0 }}"
+  changed_when: false

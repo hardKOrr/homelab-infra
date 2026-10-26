@@ -1,0 +1,71 @@
+---
+# Apply a base ruleset with OPNsense's timed rollback. The caller creates
+# _fw_base_prewrite_savepoint before any changes; this helper keeps that revision armed
+# until the firewall API answers after the reload.
+# Inputs: fw_base, fw_validate, _fw_base_prewrite_savepoint.
+
+- name: Firewall base | Apply the OPNsense ruleset with rollback armed
+  ansible.builtin.uri:
+    url: >-
+      {{ fw_base }}/api/firewall/filter/apply/{{ _fw_base_prewrite_savepoint.json.revision }}
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _fw_base_apply
+  changed_when: true
+  failed_when: _fw_base_apply.json.status | default('error') | trim | lower == 'error'
+  no_log: true
+
+- name: Firewall base | Verify the OPNsense management API after apply
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/filter/searchRule"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body:
+      current: 1
+      rowCount: 1
+      searchPhrase: "homelab-infra: base"
+    status_code: [200, 400, 401, 403, 404, 500, 502, 503, 504]
+  register: _fw_base_api_verify
+  changed_when: false
+  failed_when: false
+  until: _fw_base_api_verify.status | default(0) == 200
+  retries: "{{ fw_base_verify_retries | default(12) | int }}"
+  delay: "{{ fw_base_verify_delay | default(4) | int }}"
+  no_log: true
+
+- name: Firewall base | Refuse to confirm an unverified firewall apply
+  ansible.builtin.assert:
+    that:
+      - _fw_base_api_verify.status | default(0) == 200
+      - _fw_base_api_verify.json is defined
+      - _fw_base_api_verify.json is mapping
+    fail_msg: >-
+      The OPNsense management API did not answer after the base firewall apply.
+      Leave the rollback armed; OPNsense should restore its saved ruleset shortly.
+
+- name: Firewall base | Confirm the OPNsense ruleset
+  ansible.builtin.uri:
+    url: >-
+      {{ fw_base }}/api/firewall/filter/cancelRollback/{{ _fw_base_prewrite_savepoint.json.revision }}
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _fw_base_confirm
+  changed_when: false
+  failed_when: _fw_base_confirm.json.status | default('error') | trim | lower in ['error', 'failed']
+  no_log: true
