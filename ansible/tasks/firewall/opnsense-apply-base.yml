@@ -266,6 +266,23 @@
           restored firewall configuration.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0
 
+    - name: Firewall base | Reload aliases from the restored backup
+      ansible.builtin.uri:
+        url: "{{ fw_base }}/api/firewall/alias/reconfigure"
+        method: POST
+        url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+        url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ fw_validate | bool }}"
+        body_format: json
+        body: {}
+        status_code: 200
+      register: _fw_base_restore_alias_reload
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: _fw_base_api_recovery_check.status | default(0) | int > 0
+
     - name: Firewall base | Apply the restored OPNsense configuration
       ansible.builtin.uri:
         url: "{{ fw_base }}/api/firewall/filter/apply"
@@ -286,11 +303,14 @@
     - name: Firewall base | Require the restored ruleset to apply
       ansible.builtin.assert:
         that:
+          - _fw_base_restore_alias_reload.status | default(0) | int == 200
+          - _fw_base_restore_alias_reload.json.status | default('') | trim | lower == 'ok'
           - _fw_base_restore_apply.status | default(0) | int == 200
           - _fw_base_restore_apply.json.status | default('') | trim | lower == 'ok'
         fail_msg: >-
-          Config backup {{ _fw_base_apply_backup_id }} was restored, but the firewall
-          did not confirm the apply. Apply the restored configuration manually.
+          Config backup {{ _fw_base_apply_backup_id }} was restored, but OPNsense did
+          not confirm reloading the restored aliases and applying the firewall rules.
+          Apply the restored configuration manually.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0
 
     - name: Firewall base | Verify the management API after restoring the backup

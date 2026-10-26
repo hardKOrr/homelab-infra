@@ -100,6 +100,7 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 self.server.record_backup()
                 return self.reply(200, {"result": "saved"})
             if action == "reconfigure":
+                self.server.active_aliases = copy.deepcopy(aliases)
                 return self.reply(200, {"status": "ok"})
             return self.reply(404, {})
 
@@ -184,6 +185,7 @@ def configure_server(server, rules, aliases, *, verify_failed_phase="", legacy_v
         b"fixture-admin-key:fixture-admin-secret").decode()
     server.rules = copy.deepcopy(rules)
     server.aliases = copy.deepcopy(aliases)
+    server.active_aliases = copy.deepcopy(aliases)
     server.backup_counter = 0
     server.backup_history = [{
         "id": "config-2026-10-26_00.00.00.xml",
@@ -466,7 +468,13 @@ def main():
 
         failure_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
         configure_server(failure_server,
-                         {"legacy": {"description": "Green lab: legacy"}}, {},
+                         {"legacy": {"description": "Green lab: legacy"}}, {
+                             "existing-clients": {
+                                 "name": "hli_example_clients", "enabled": "1",
+                                 "type": "host", "content": "192.0.2.99",
+                                 "description": "homelab-infra: base alias example_clients",
+                             },
+                         },
                          verify_failed_phase="rules")
         threading.Thread(target=failure_server.serve_forever, daemon=True).start()
         failed_result, failed_calls = run_base(failure_server, root, base, retries=1, delay=0,
@@ -475,6 +483,17 @@ def main():
               "backup/revertBackup" in failed_calls, True)
         check("failed readback reapplies the restored ruleset",
               failed_calls.count("filter/apply"), 2)
+        revert_index = next((i for i, request in enumerate(failure_server.request_log)
+                             if request[1].startswith("/api/core/backup/revertBackup/")), -1)
+        restore_alias_index = next((i for i, request in enumerate(failure_server.request_log)
+                                    if request[1] == "/api/firewall/alias/reconfigure"
+                                    and i > revert_index), -1)
+        restore_apply_index = next((i for i, request in enumerate(failure_server.request_log)
+                                    if request[1] == "/api/firewall/filter/apply"
+                                    and i > revert_index), -1)
+        check("rollback reloads restored aliases after revert and before filter apply",
+              revert_index >= 0 and revert_index < restore_alias_index < restore_apply_index,
+              True)
         check("admin credential is used only for backup list and revert",
               [(path, role) for path, role in failure_server.auth_log if role == "admin"],
               [("/api/core/backup/backups/this", "admin"),
@@ -484,6 +503,9 @@ def main():
               (failure_server.rules, failure_server.aliases),
               (failure_server.backup_reads[0]["rules"],
                failure_server.backup_reads[0]["aliases"]))
+        check("failed readback reloads the restored alias table",
+              failure_server.active_aliases,
+              failure_server.backup_reads[0]["aliases"])
         check("failed readback reports that its backup was restored",
               ("was restored and applied" in failed_result.stdout + failed_result.stderr)
               and failure_server.reverted, True)
