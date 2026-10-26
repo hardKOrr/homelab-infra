@@ -423,7 +423,8 @@
 - name: OPNsense DNS account | Revoke prior keys after an explicit rotation
   ansible.builtin.uri:
     url: >-
-      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.key | b64encode | urlencode }}
+      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.key | b64encode
+         | replace('+', '%2B') | replace('/', '%2F') | replace('=', '%3D') }}
     method: POST
     url_username: "{{ _opn_dns_admin_credential.api_key }}"
     url_password: "{{ _opn_dns_admin_credential.api_secret }}"
@@ -434,7 +435,7 @@
     status_code: 200
   register: _opn_dns_prior_key_revocation
   changed_when: true
-  failed_when: _opn_dns_prior_key_revocation.json.result | default('') != 'deleted'
+  failed_when: false
   loop: "{{ _opn_dns_account_api_keys | default([]) }}"
   loop_control:
     label: prior DNS key
@@ -444,6 +445,31 @@
     - item.username | default('') == _opn_dns_account_name
     - item.key | default('') | length > 0
   no_log: true
+
+- name: OPNsense DNS account | Verify prior keys were revoked
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_opn_dns_prior_key_revocation.results | default([])
+         | rejectattr('skipped', 'defined')
+         | selectattr('json', 'defined')
+         | selectattr('json.result', 'defined')
+         | selectattr('json.result', 'equalto', 'deleted') | list | length)
+        ==
+        (_opn_dns_prior_key_revocation.results | default([])
+         | rejectattr('skipped', 'defined') | list | length)
+    fail_msg: >-
+      OPNsense did not revoke prior DNS API keys after explicit rotation
+      (HTTP statuses={{ _opn_dns_prior_key_revocation.results | default([])
+                        | map(attribute='status') | list }};
+      results={{ _opn_dns_prior_key_revocation.results | default([])
+                 | selectattr('json', 'defined')
+                 | selectattr('json.result', 'defined')
+                 | map(attribute='json.result') | list }}).
+  no_log: false
+  when:
+    - _opn_dns_issued_key is changed
+    - _opn_dns_rotate_requested | bool
 
 - name: OPNsense DNS account | Verify the stored key is Unbound-only
   ansible.builtin.assert:

@@ -5,6 +5,7 @@ import base64
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +24,7 @@ admin_key = "fixture-admin-key"
 admin_secret = "fixture-admin-secret"
 old_key = "fixture-old-dns-key"
 old_secret = "fixture-old-dns-secret"
+existing_owned_key = "AA>BB?CC"
 account_name = "homelab-infra-dns"
 account_description = "Owned by homelab-infra"
 account_privilege = "page-services-unbound"
@@ -272,7 +274,7 @@ def initial_opnsense(*, owned=False, foreign=False, legacy=False, existing_key=F
         user = account_user(description="Operator-owned" if foreign else account_description)
         server.users[account_name] = user
     if existing_key:
-        server.api_keys.append({"username": account_name, "key": "fixture-owned-key",
+        server.api_keys.append({"username": account_name, "key": existing_owned_key,
                                 "secret": "fixture-owned-secret"})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -405,7 +407,7 @@ def main():
               ) == 403)
         check("create run does not print fixture credentials",
               all(value not in created.stdout + created.stderr
-                  for value in (admin_secret, old_secret,
+                  for value in (admin_key, admin_secret, old_key, old_secret,
                                 created_key.get("key", ""), created_key.get("secret", ""))))
         mutation_count = len(server.mutations)
         repeat_dir = root / "repeat"
@@ -419,7 +421,9 @@ def main():
               == item_values)
         check("repeat run does not print fixture credentials",
               all(value not in repeated.stdout + repeated.stderr
-                  for value in (admin_secret, item_values.get("api_secret", ""))))
+                  for value in (admin_key, admin_secret,
+                                item_values.get("api_key", ""),
+                                item_values.get("api_secret", ""))))
         checks.append("create")
 
         # An unchanged owned account validates the exact saved pair without a write.
@@ -429,15 +433,16 @@ def main():
         confirm_dir.mkdir()
         confirmed, confirm_state_path = run_account(
             server, confirm_dir,
-            {"api_key": "fixture-owned-key", "api_secret": "fixture-owned-secret"})
+            {"api_key": existing_owned_key, "api_secret": "fixture-owned-secret"})
         check("confirm run succeeds", confirmed.returncode == 0)
         check("confirm run reports no changes", "changed=0" in confirmed.stdout)
         check("confirm run performs no account or API-key writes", server.mutations == [])
         check("confirm run does not call the Vaultwarden CLI",
               read_state(confirm_state_path).get("invocations", []) == [])
         check("confirm run does not print fixture credentials",
-              "fixture-owned-secret" not in confirmed.stdout + confirmed.stderr
-              and admin_secret not in confirmed.stdout + confirmed.stderr)
+              all(value not in confirmed.stdout + confirmed.stderr
+                  for value in (existing_owned_key, "fixture-owned-secret",
+                                admin_key, admin_secret)))
         checks.append("confirm")
 
         # Same username with another description is foreign and remains untouched.
@@ -453,7 +458,7 @@ def main():
         check("foreign account is not modified", server.mutations == [])
         check("foreign refusal does not print credentials",
               all(value not in refused.stdout + refused.stderr
-                  for value in (admin_secret, old_secret)))
+                  for value in (admin_key, admin_secret, old_key, old_secret)))
         checks.append("refuse-foreign")
 
         # An unmatched Vaultwarden key does not silently rotate; explicit input does.
@@ -471,19 +476,40 @@ def main():
               "user/del_api_key" not in server.mutations)
         check("mismatch output does not print credentials",
               all(value not in mismatch.stdout + mismatch.stderr
-                  for value in (admin_secret, old_secret, "fixture-owned-secret")))
+                  for value in (admin_key, admin_secret, old_key, old_secret,
+                                existing_owned_key, "fixture-owned-secret")))
         checks.append("mismatch-no-rotation")
 
         rotate_dir = root / "rotate"
         rotate_dir.mkdir()
         rotated, rotated_state_path = run_account(
             server, rotate_dir, {"api_key": old_key, "api_secret": old_secret}, rotate=True)
+        if rotated.returncode != 0:
+            last_task = "unknown"
+            diagnostic_lines = (rotated.stdout + "\n" + rotated.stderr).splitlines()
+            for index, line in enumerate(diagnostic_lines):
+                task = re.match(r"TASK \[(.*?)\]", line)
+                if task:
+                    last_task = task.group(1)
+                if "FAILED!" in line or "fatal:" in line or "ERROR!" in line:
+                    print(f"rotation failed task: {last_task}")
+                if "OPNsense did not revoke prior DNS API keys" in line:
+                    print(f"rotation diagnostic: {line.strip()}")
+                if "HTTP statuses=" in line or "results=" in line:
+                    print(f"rotation status: {line.strip()}")
+                if "TASK [OPNsense DNS account | Verify prior keys were revoked]" in line:
+                    for detail in diagnostic_lines[index:index + 15]:
+                        for secret in (admin_key, admin_secret, old_key, old_secret,
+                                       existing_owned_key, "fixture-owned-secret"):
+                            detail = detail.replace(secret, "[redacted]")
+                        detail = re.sub(r"fixture-new-[A-Za-z0-9-]+", "[redacted]", detail)
+                        print(f"rotation detail: {detail.strip()}")
         rotated_state = read_state(rotated_state_path)
         rotated_fields = {field["name"]: field["value"]
                           for field in rotated_state["items"][0].get("fields", [])}
         new_owned_key = next((value for value in server.api_keys
                               if value["username"] == account_name
-                              and value["key"] != "fixture-owned-key"), {})
+                              and value["key"] != existing_owned_key), {})
         check("explicit rotation succeeds and stores the replacement pair",
               rotated.returncode == 0
               and rotated_fields.get("api_key") == new_owned_key.get("key")
@@ -493,9 +519,14 @@ def main():
                if value["username"] == account_name] == [new_owned_key.get("key")]
               and any(value["username"] == "homelab-green-dns"
                       and value["key"] == old_key for value in server.api_keys))
+        check("prior key path encodes reserved URL characters",
+              any("/api/auth/user/del_api_key/" in path
+                  and "%2B" in path and "%2F" in path
+                  for _method, path, _username, _status in server.calls))
         check("rotated run does not print fixture credentials",
               all(value not in rotated.stdout + rotated.stderr
-                  for value in (admin_secret, old_secret,
+                  for value in (admin_key, admin_secret, existing_owned_key,
+                                "fixture-owned-secret", old_key, old_secret,
                                 new_owned_key.get("key", ""),
                                 new_owned_key.get("secret", ""))))
         checks.append("explicit-rotation")
