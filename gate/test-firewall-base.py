@@ -176,7 +176,8 @@ def main():
     base = example["firewall"]["base"]
     check("documented base rules default to disabled", base["enabled"], False)
     check("documented aliases are loaded for rendering", set(base["aliases"]), {
-        "example_clients", "example_resolvers", "example_private"})
+        "example_clients", "example_resolvers", "example_v6_clients",
+        "example_v6_target", "example_private"})
     check("documented firewall rule fields", set(base["rules"][0]), {
         "name", "interface", "source", "destination", "protocol", "ports", "action", "sequence"})
 
@@ -184,6 +185,23 @@ def main():
     doctor_base["enabled"] = True
     doctor_result = config_doctor(doctor_base)
     check("config doctor accepts enabled documented base rules", doctor_result.returncode, 0)
+
+    mixed_icmp = copy.deepcopy(doctor_base)
+    mixed_icmp["rules"].append({
+        "name": "example mixed-family ICMP",
+        "interface": "lan",
+        "source": "example_clients",
+        "destination": "example_resolvers",
+        "protocol": "ICMP",
+        "ports": [],
+        "action": "pass",
+    })
+    mixed_icmp_result = config_doctor(mixed_icmp)
+    check("config doctor rejects mixed-family ICMP rules",
+          mixed_icmp_result.returncode != 0, True)
+    check("mixed-family ICMP diagnostic explains the restriction",
+          "ICMP rules cannot mix IPv4 and IPv6 aliases"
+          in mixed_icmp_result.stdout + mixed_icmp_result.stderr, True)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
     server.rules = {
@@ -208,11 +226,11 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         result, calls = run_base(server, root, base)
-        check("first run creates three declared aliases",
-              calls.count("alias/addItem"), 3)
+        check("first run creates five declared aliases",
+              calls.count("alias/addItem"), 5)
         check("first run reloads aliases", calls.count("alias/reconfigure"), 1)
-        check("first run creates four rendered filter rules",
-              calls.count("filter/addRule"), 4)
+        check("first run creates five rendered filter rules",
+              calls.count("filter/addRule"), 5)
         check("legacy Green lab rules are removed except the Caddy drill path",
               {key for key, rule in server.rules.items()
                if rule.get("description", "").startswith("Green lab: ")},
@@ -258,6 +276,14 @@ def main():
               if "homelab-infra: base example client DNS" in rendered else {}, {
                   "source_net": "hli_example_clients", "destination_net": "hli_example_resolvers",
                   "protocol": "TCP/UDP", "destination_port": "53", "sequence": "230",
+              })
+        check("IPv6 ICMP renders the IPv6 protocol and family",
+              {key: rendered["homelab-infra: base example IPv6 probe"][key]
+               for key in ("source_net", "destination_net", "protocol", "ipprotocol")}
+              if "homelab-infra: base example IPv6 probe" in rendered else {}, {
+                  "source_net": "hli_example_v6_clients",
+                  "destination_net": "hli_example_v6_target",
+                  "protocol": "IPv6-ICMP", "ipprotocol": "inet6",
               })
         check("multi-port web rule expands to unique descriptions", sorted(
             key for key in rendered if key.startswith("homelab-infra: base example client web")), [

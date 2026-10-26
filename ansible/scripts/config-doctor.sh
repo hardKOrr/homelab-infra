@@ -558,6 +558,23 @@ else:
                     report("ERROR", "infrastructure.yml", key + ".protocol",
                            "must be TCP, UDP, TCP/UDP, ICMP or any")
 
+                if normalized_protocol == "ICMP":
+                    rule_families = set()
+                    for field in ("source", "destination"):
+                        reference = rule.get(field)
+                        addresses = aliases.get(reference, []) if isinstance(reference, str) else []
+                        if reference != "any" and isinstance(addresses, list):
+                            for address in addresses:
+                                try:
+                                    rule_families.add(
+                                        ipaddress.ip_network(str(address), strict=False).version)
+                                except ValueError:
+                                    pass  # The alias address error is reported above.
+                    if len(rule_families) > 1:
+                        report("ERROR", "infrastructure.yml", key + ".protocol",
+                               "ICMP rules cannot mix IPv4 and IPv6 aliases; split them into "
+                               "family-specific rules")
+
                 if "ports" not in rule:
                     report("ERROR", "infrastructure.yml", key + ".ports",
                            "required as a list of destination ports, or [] for any")

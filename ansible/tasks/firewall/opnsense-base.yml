@@ -141,8 +141,6 @@
       {%-   for port in port_values -%}
       {%-     set description = fw_owner_prefix ~ rule.name
                 ~ (' port ' ~ port if ports | length > 1 else '') -%}
-      {%-     set protocol = 'any' if rule.protocol | default('any') | lower == 'any'
-                else rule.protocol | default('any') | upper -%}
       {%-     set source_values = (_fw_base_config.aliases[rule.source]
                 if rule.source != 'any' else []) | default([]) -%}
       {%-     set destination_values = (_fw_base_config.aliases[rule.destination]
@@ -152,6 +150,10 @@
                 | map('regex_replace', '/.*$', '')
                 | map('ansible.utils.ipaddr', 'version')
                 | unique | list -%}
+      {%-     set raw_protocol = rule.protocol | default('any') | lower -%}
+      {%-     set protocol = 'any' if raw_protocol == 'any' else
+                ('IPv6-ICMP' if raw_protocol == 'icmp' and families == [6]
+                 else raw_protocol | upper) -%}
       {%-     set ipprotocol = 'inet6' if families == [6] else
                 ('inet46' if families | length > 1 else 'inet') -%}
       {%-     set fields = {

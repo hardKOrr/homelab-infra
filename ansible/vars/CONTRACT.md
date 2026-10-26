@@ -379,7 +379,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `firewall.validate_certs` | optional | default `false` |
 | `firewall.base.enabled` | optional, default `false` | `true` lets `playbooks/maintenance/reconcile-firewall-base.yml` manage the lab-wide OPNsense rules; absent/false makes the playbook a no-op and app Deploy does not reconcile base rules |
 | `firewall.base.aliases` | optional | map of alias name to a non-empty list of IPv4/IPv6 addresses or CIDRs; each becomes an OPNsense alias named `hli_<name>` |
-| `firewall.base.rules[]` | optional | list of `{name, interface, source, destination, protocol, ports, action}`; source/destination are alias names or `any`; protocols are `TCP`, `UDP`, `TCP/UDP`, `ICMP` or `any`; `ports` is a list of destination ports/ranges, or `[]` for any; optional `sequence` sets OPNsense priority (default `500`) |
+| `firewall.base.rules[]` | optional | list of `{name, interface, source, destination, protocol, ports, action}`; source/destination are alias names or `any`; protocols are `TCP`, `UDP`, `TCP/UDP`, `ICMP` or `any`; IPv6-only ICMP aliases render as `IPv6-ICMP`, while one ICMP rule must not mix IPv4 and IPv6 aliases; `ports` is a list of destination ports/ranges, or `[]` for any; optional `sequence` sets OPNsense priority (default `500`) |
 | `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
 | `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |
 | `mail.port` | required unless provider `none` | typically `587` (STARTTLS) or `465` (implicit TLS) |
