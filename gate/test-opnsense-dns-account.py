@@ -2,6 +2,7 @@
 """Exercise the owned OPNsense DNS-user lifecycle against a local API and Vaultwarden fake."""
 
 import base64
+import hashlib
 import http.server
 import json
 import os
@@ -67,15 +68,19 @@ def legacy_user():
 
 
 class FakeOPNsense(http.server.BaseHTTPRequestHandler):
-    def _auth_user(self):
+    def _auth_credentials(self):
         header = self.headers.get("Authorization", "")
         if not header.startswith("Basic "):
-            return ""
+            return "", ""
         try:
             decoded = base64.b64decode(header[6:]).decode()
             key, secret = decoded.split(":", 1)
         except (ValueError, UnicodeDecodeError):
-            return ""
+            return "", ""
+        return key, secret
+
+    def _auth_user(self):
+        key, secret = self._auth_credentials()
         if key == admin_key and secret == admin_secret:
             return "admin"
         for item in self.server.api_keys:
@@ -90,7 +95,10 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(payload).encode())
 
     def _record(self, username, status):
-        self.server.calls.append((self.command, urlparse(self.path).path, username, status))
+        key, _secret = self._auth_credentials()
+        fingerprint = hashlib.sha256(key.encode()).hexdigest() if key else ""
+        self.server.calls.append((self.command, urlparse(self.path).path, username,
+                                  status, fingerprint))
 
     def do_POST(self):
         path = urlparse(self.path).path.strip("/").split("/")
@@ -178,8 +186,10 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 self._record(username, status)
                 return self._reply(status, {})
             self._record(username, 200)
-            return self._reply(200, {"rows": self.server.api_keys,
-                                     "total": len(self.server.api_keys)})
+            rows = [{"username": item["username"], "key": item["key"],
+                     "id": base64.b64encode(item["key"].encode()).decode()}
+                    for item in self.server.api_keys]
+            return self._reply(200, {"rows": rows, "total": len(rows)})
         self._record(username, 404)
         return self._reply(404, {})
 
@@ -329,6 +339,20 @@ def run_account(server, directory, item_fields, *, rotate=False):
             "tasks": [{
                 "ansible.builtin.include_tasks":
                     "{{ wiring_dir }}/{{ homelabinfra_infra.dns.provider }}.yml",
+            }],
+        },
+        {
+            "name": "Verify the active API pair is available to later DNS wiring",
+            "hosts": "localhost",
+            "gather_facts": False,
+            "tasks": [{
+                "ansible.builtin.assert": {
+                    "that": [
+                        "homelabinfra_infra.dns.api_key == _opn_dns_active_key",
+                        "homelabinfra_infra.dns.api_secret == _opn_dns_active_secret",
+                    ],
+                },
+                "no_log": True,
             }],
         },
     ]
@@ -532,6 +556,8 @@ def main():
         new_owned_key = next((value for value in server.api_keys
                               if value["username"] == account_name
                               and value["key"] != existing_owned_key), {})
+        new_key_fingerprint = hashlib.sha256(
+            new_owned_key.get("key", "").encode()).hexdigest()
         check("explicit rotation succeeds and stores the replacement pair",
               rotated.returncode == 0
               and rotated_fields.get("api_key") == new_owned_key.get("key")
@@ -541,10 +567,19 @@ def main():
                if value["username"] == account_name] == [new_owned_key.get("key")]
               and any(value["username"] == "homelab-green-dns"
                       and value["key"] == old_key for value in server.api_keys))
+        check("rotation probes Unbound and firewall denial with the replacement key",
+              any(path.endswith("/api/unbound/settings/searchHostOverride")
+                  and username == account_name and status == 200
+                  and key_fingerprint == new_key_fingerprint
+                  for _method, path, username, status, key_fingerprint in server.calls)
+              and any(path.endswith("/api/firewall/filter/searchRule")
+                      and username == account_name and status == 403
+                      and key_fingerprint == new_key_fingerprint
+                      for _method, path, username, status, key_fingerprint in server.calls))
         check("prior key path encodes reserved URL characters",
               any("/api/auth/user/del_api_key/" in path
                   and "%2B" in path and "%2F" in path
-                  for _method, path, _username, _status in server.calls))
+                  for _method, path, _username, _status, _fingerprint in server.calls))
         check("rotated run does not print fixture credentials",
               all(value not in rotated.stdout + rotated.stderr
                   for value in (admin_key, admin_secret, existing_owned_key,

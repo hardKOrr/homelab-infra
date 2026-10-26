@@ -328,6 +328,26 @@
   when: _opn_dns_user_create is not changed
   no_log: true
 
+- name: OPNsense DNS account | Require delete identifiers before rotation
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_opn_dns_account_api_keys | default([])
+         | selectattr('id', 'defined') | list | length)
+        == (_opn_dns_account_api_keys | default([]) | length)
+      - >-
+        (_opn_dns_account_api_keys | default([])
+         | selectattr('id', 'defined')
+         | rejectattr('id', 'equalto', '') | list | length)
+        == (_opn_dns_account_api_keys | default([]) | length)
+    fail_msg: >-
+      OPNsense API-key search did not return delete identifiers for every key owned by
+      homelab-infra-dns; no key was rotated.
+  when:
+    - _opn_dns_user_create is not changed
+    - _opn_dns_rotate_requested | bool
+  no_log: true
+
 - name: OPNsense DNS account | Probe the stored DNS key
   ansible.builtin.uri:
     url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
@@ -423,12 +443,36 @@
   when: _opn_dns_issued_key is changed
   no_log: true
 
+- name: OPNsense DNS account | Select the credential for this Deploy
+  ansible.builtin.set_fact:
+    _opn_dns_active_key: >-
+      {{ _opn_dns_issued_key.json.key
+         if _opn_dns_issued_key is changed else _opn_dns_saved_key }}
+    _opn_dns_active_secret: >-
+      {{ _opn_dns_issued_key.json.secret
+         if _opn_dns_issued_key is changed else _opn_dns_saved_secret }}
+  changed_when: false
+  no_log: true
+
+- name: OPNsense DNS account | Refresh the in-memory DNS credential after issuance
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine(
+             {'dns': (homelabinfra_infra.dns | default({}, true))
+               | combine({'api_key': _opn_dns_active_key,
+                          'api_secret': _opn_dns_active_secret}, recursive=True)},
+             recursive=True) }}
+  changed_when: false
+  when: _opn_dns_issued_key is changed
+  no_log: true
+
 - name: OPNsense DNS account | Confirm the newly stored key works
   ansible.builtin.uri:
     url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
     method: POST
-    url_username: "{{ homelabinfra_infra.dns.api_key }}"
-    url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+    url_username: "{{ _opn_dns_active_key }}"
+    url_password: "{{ _opn_dns_active_secret }}"
     force_basic_auth: true
     validate_certs: "{{ _opn_validate | bool }}"
     body_format: json
@@ -442,7 +486,7 @@
 - name: OPNsense DNS account | Revoke prior keys after an explicit rotation
   ansible.builtin.uri:
     url: >-
-      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.key | b64encode
+      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.id
          | replace('+', '%2B') | replace('/', '%2F') | replace('=', '%3D') }}
     method: POST
     url_username: "{{ _opn_dns_admin_credential.api_key }}"
@@ -463,6 +507,7 @@
     - _opn_dns_rotate_requested | bool
     - item.username | default('') == _opn_dns_account_name
     - item.key | default('') | length > 0
+    - item.id | default('') | length > 0
   no_log: true
 
 - name: OPNsense DNS account | Verify prior keys were revoked
@@ -507,8 +552,8 @@
   ansible.builtin.uri:
     url: "{{ _opn_base }}/api/firewall/filter/searchRule"
     method: POST
-    url_username: "{{ homelabinfra_infra.dns.api_key }}"
-    url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+    url_username: "{{ _opn_dns_active_key }}"
+    url_password: "{{ _opn_dns_active_secret }}"
     force_basic_auth: true
     validate_certs: "{{ _opn_validate | bool }}"
     body_format: json
