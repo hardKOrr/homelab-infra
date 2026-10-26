@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -160,6 +161,23 @@ def api_health_check_uses_configured_token():
     check("API token is hidden from Ansible output", uri_tasks[0].get("no_log"), True)
 
 
+def quorum_guard_accepts_aligned_output():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    quorum_task = next(
+        task for task in tasks
+        if task.get("name") == "Proxmox host firewall | Require quorum before cancelling rollback")
+    condition = quorum_task["ansible.builtin.assert"]["that"][0]
+    match = re.search(r"regex_search\('([^']+)'\)", condition)
+    check("quorum guard uses whitespace-tolerant matching", match is not None, True)
+    if match:
+        pattern = match.group(1)
+        check("quorum guard accepts aligned pvecm output",
+              re.search(pattern, "Quorum information\nQuorate:          Yes\n") is not None, True)
+        check("quorum guard rejects non-quorate pvecm output",
+              re.search(pattern, "Quorum information\nQuorate:          No\n") is not None, False)
+
+
 def main():
     example = yaml.safe_load((ROOT / "config.example/proxmox.yml").read_text())
     proxmox = copy.deepcopy(example["proxmox"])
@@ -265,6 +283,7 @@ def main():
     run_plan(invalid_enabled, expect_success=False)
     delete_rule_retries_digest_races()
     api_health_check_uses_configured_token()
+    quorum_guard_accepts_aligned_output()
 
     legacy = copy.deepcopy(empty)
     legacy["node_rules"] = {

@@ -348,7 +348,7 @@
 - name: Proxmox host firewall | Require quorum before cancelling rollback
   ansible.builtin.assert:
     that:
-      - "'Quorate: Yes' in _pve_fw_quorum.stdout"
+      - _pve_fw_quorum.stdout | regex_search('(?im)^\s*Quorate:\s*Yes\s*$') is not none
     fail_msg: Proxmox cluster does not report quorum.
   no_log: true
 
