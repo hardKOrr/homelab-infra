@@ -178,6 +178,28 @@ def quorum_guard_accepts_aligned_output():
               re.search(pattern, "Quorum information\nQuorate:          No\n") is not None, False)
 
 
+def rollback_cancellation_is_guarded_and_idempotent():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    by_name = {task.get("name"): task for task in tasks}
+    guard = by_name["Proxmox host firewall | Require rollback timer before cancellation"]
+    check("rollback cancellation requires an armed timer",
+          guard["ansible.builtin.assert"]["that"], [
+              "_pve_fw_rollback_timer_before_cancel.rc == 0",
+          ])
+    stop = by_name["Proxmox host firewall | Stop rollback only after access, storage and quorum pass"]
+    check("rollback cancellation tolerates already absent transient units",
+          stop["failed_when"], "_pve_fw_rollback_stop.rc not in [0, 5]")
+    check("rollback cancellation marks changes only when systemctl stops a unit",
+          stop["changed_when"], "_pve_fw_rollback_stop.rc == 0")
+    check("rollback cancellation verifies units are inactive",
+          "Proxmox host firewall | Require rollback units inactive after cancellation"
+          in by_name, True)
+    check("rollback cancellation rechecks enabled firewall options",
+          "Proxmox host firewall | Keep the baseline enabled after rollback cancellation"
+          in by_name, True)
+
+
 def main():
     example = yaml.safe_load((ROOT / "config.example/proxmox.yml").read_text())
     proxmox = copy.deepcopy(example["proxmox"])
@@ -284,6 +306,7 @@ def main():
     delete_rule_retries_digest_races()
     api_health_check_uses_configured_token()
     quorum_guard_accepts_aligned_output()
+    rollback_cancellation_is_guarded_and_idempotent()
 
     legacy = copy.deepcopy(empty)
     legacy["node_rules"] = {
