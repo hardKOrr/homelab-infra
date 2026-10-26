@@ -1,0 +1,87 @@
+---
+- name: Proxmox host firewall | Delete a verified rule with a fresh digest
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import json
+        import re
+        import subprocess
+        import sys
+        import time
+
+        BASE_COMMENT = "homelab-infra: base "
+        payload = json.load(sys.stdin)
+        path = payload.get("path", "")
+        wanted = payload.get("rule", {})
+        if not (path == "/cluster/firewall/rules"
+                or re.fullmatch(r"/nodes/[A-Za-z0-9][A-Za-z0-9_.-]*/firewall/rules", path)):
+            raise SystemExit(2)
+        comment = str(wanted.get("comment", "") or "")
+        if comment and not comment.startswith(BASE_COMMENT):
+            raise SystemExit(2)
+
+        def matches(live):
+            for field in ("type", "action", "proto", "dport", "source", "dest", "enable", "comment"):
+                actual = live.get(field, "")
+                expected = wanted.get(field, "")
+                if field == "enable":
+                    try:
+                        if int(actual or 1) != int(expected or 1):
+                            return False
+                    except (TypeError, ValueError):
+                        return False
+                elif field == "action":
+                    if str(actual or "").upper() != str(expected or "").upper():
+                        return False
+                elif field in ("type", "proto"):
+                    if str(actual or "").lower() != str(expected or "").lower():
+                        return False
+                elif str(actual or "") != str(expected or ""):
+                    return False
+            return True
+
+        for attempt in range(5):
+            read = subprocess.run(
+                ["pvesh", "get", path, "--output-format", "json"],
+                capture_output=True, text=True, check=False,
+            )
+            if read.returncode != 0:
+                raise SystemExit(3)
+            try:
+                rules = json.loads(read.stdout)
+            except (TypeError, ValueError):
+                raise SystemExit(3)
+            if not isinstance(rules, list):
+                raise SystemExit(3)
+            candidates = [rule for rule in rules if isinstance(rule, dict) and matches(rule)]
+            if not candidates:
+                print(json.dumps({"deleted": False}))
+                raise SystemExit(0)
+            try:
+                original_pos = int(wanted["pos"])
+                target = next((rule for rule in candidates
+                               if int(rule.get("pos", -1)) == original_pos), None)
+                target = target or min(candidates, key=lambda rule: int(rule["pos"]))
+                position = int(target["pos"])
+            except (KeyError, TypeError, ValueError):
+                raise SystemExit(3)
+            argv = ["pvesh", "delete", f"{path}/{position}"]
+            digest = str(target.get("digest", "") or "")
+            if digest:
+                argv.extend(["--digest", digest])
+            removed = subprocess.run(argv, capture_output=True, text=True, check=False)
+            if removed.returncode == 0:
+                print(json.dumps({"deleted": True}))
+                raise SystemExit(0)
+            if attempt == 4:
+                raise SystemExit(4)
+            time.sleep(0.25)
+        raise SystemExit(4)
+    stdin: >-
+      {{ {'path': pve_fw_delete_path, 'rule': pve_fw_delete_rule} | to_json }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_delete_result
+  changed_when: (_pve_fw_delete_result.stdout | from_json).deleted | bool
+  no_log: true

@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+"""Render and compare the documented Proxmox host-firewall baseline."""
+
+import copy
+import contextlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import subprocess
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PLANNER = ROOT / "ansible/scripts/proxmox-firewall-plan.py"
+PYTHON = Path.home() / ".venvs/homelab-ansible/bin/python"
+ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
+FAILURES = []
+
+
+def check(name, actual, expected):
+    if actual != expected:
+        FAILURES.append(f"{name}: expected {expected!r}, got {actual!r}")
+
+
+def run_plan(payload, *, expect_success=True):
+    result = subprocess.run(
+        [str(PYTHON), str(PLANNER)],
+        input=json.dumps(payload), capture_output=True, text=True, check=False,
+    )
+    if (result.returncode == 0) != expect_success:
+        FAILURES.append(
+            f"planner returned {result.returncode}: {result.stdout[-2000:]} {result.stderr[-2000:]}"
+        )
+    return json.loads(result.stdout) if result.returncode == 0 else {}
+
+
+def rule_match_rejects_extra_fields():
+    matcher = runpy.run_path(str(PLANNER))["_rule_matches"]
+    desired = {"type": "in", "action": "ACCEPT", "enable": 1,
+               "comment": "homelab-infra: base synthetic"}
+    optional_fields = ("dest", "iface", "macro", "proto", "dport", "source")
+    for field in optional_fields:
+        live = {**desired, field: "extra-match"}
+        check(f"rule matcher rejects extra {field} match field",
+              matcher(live, desired), False)
+        blank_live = {**desired, field: ""}
+        check(f"rule matcher accepts empty optional {field} field",
+              matcher(blank_live, desired), True)
+
+
+def narrowed_owned_rule_is_replaced(payload, desired, field, value, label):
+    drifted = copy.deepcopy(payload)
+    target = next(rule for rule in drifted["cluster_rules"]
+                  if rule["comment"] == desired["comment"])
+    target[field] = value
+    plan = run_plan(drifted)
+    check(f"{label} with extra {field} is recreated",
+          desired in plan["cluster"]["create"], True)
+    check(f"{label} with extra {field} is removed",
+          any(rule.get("comment") == desired["comment"]
+              for rule in plan["cluster"]["delete"]), True)
+
+
+def doctor(proxmox, invalid=False):
+    with tempfile.TemporaryDirectory() as directory:
+        config_dir = Path(directory)
+        fixture = yaml.safe_load(
+            (ROOT / "gate/fixtures/config-loading/valid/proxmox.yml").read_text())
+        fixture["proxmox"].update(copy.deepcopy(proxmox))
+        (config_dir / "proxmox.yml").write_text(yaml.safe_dump(fixture))
+        (config_dir / "infrastructure.yml").write_text(
+            (ROOT / "gate/fixtures/config-loading/valid/infrastructure.yml").read_text())
+        result = subprocess.run(
+            ["bash", str(ROOT / "ansible/scripts/config-doctor.sh"), str(config_dir)],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg")},
+        )
+        if (result.returncode != 0) != invalid:
+            FAILURES.append(
+                f"config doctor returned {result.returncode}:\n"
+                f"{result.stdout[-2000:]}\n{result.stderr[-2000:]}"
+            )
+        return result.stdout + result.stderr
+
+
+def disabled_playbook_noop():
+    playbook = ROOT / "ansible/playbooks/maintenance/reconcile-proxmox-host-firewall.yml"
+    with tempfile.TemporaryDirectory() as directory:
+        variables = Path(directory) / "vars.yml"
+        variables.write_text(yaml.safe_dump({
+            "homelabinfra_config": {"proxmox": {}}
+        }))
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(playbook),
+             "-e", f"user_vars_file={variables}"],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg")},
+        )
+        check("disabled baseline playbook exits successfully", result.returncode, 0)
+        check("disabled baseline reports no changed tasks", "changed=0" in result.stdout, True)
+
+
+def delete_rule_retries_digest_races():
+    task = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/delete-host-firewall-rule.yml").read_text())[0]
+    script = task["ansible.builtin.command"]["argv"][2]
+    expected = {
+        "type": "in", "action": "ACCEPT", "proto": "tcp", "dport": "111,2049",
+        "source": "203.0.113.22/32", "enable": 1, "comment": "",
+        "pos": 7,
+    }
+    reads = 0
+    deletes = []
+
+    def fake_run(argv, **kwargs):
+        nonlocal reads
+        if argv[1] == "get":
+            reads += 1
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps([{**expected, "digest": "old" if reads == 1 else "new"}]),
+                stderr="",
+            )
+        deletes.append(argv)
+        if len(deletes) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr="digest mismatch")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    output = io.StringIO()
+    namespace = {}
+    with patch("sys.stdin", io.StringIO(json.dumps({
+            "path": "/nodes/pve-1/firewall/rules", "rule": expected}))), \
+            patch("subprocess.run", side_effect=fake_run), patch("time.sleep"), \
+            contextlib.redirect_stdout(output):
+        try:
+            exec(script, namespace)
+        except SystemExit as exc:
+            check("digest-race delete exits successfully", exc.code, 0)
+
+    check("digest-race deletion refreshes the rule digest", [call[-1] for call in deletes],
+          ["old", "new"])
+    check("digest-race deletion reports the removed rule",
+          json.loads(output.getvalue()), {"deleted": True})
+
+    foreign_reads = []
+
+    def foreign_rule(argv, **kwargs):
+        foreign_reads.append(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([{**expected, "comment": "operator-owned"}]),
+            stderr="",
+        )
+
+    foreign_output = io.StringIO()
+    with patch("sys.stdin", io.StringIO(json.dumps({
+            "path": "/nodes/pve-1/firewall/rules", "rule": expected}))), \
+            patch("subprocess.run", side_effect=foreign_rule), \
+            contextlib.redirect_stdout(foreign_output):
+        try:
+            exec(script, {})
+        except SystemExit as exc:
+            check("changed rule signature is left in place", exc.code, 0)
+    check("foreign rule is not deleted", len(foreign_reads), 1)
+    check("foreign rule is reported absent from the owned signature",
+          json.loads(foreign_output.getvalue()), {"deleted": False})
+
+
+def api_health_check_uses_configured_token():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    uri_tasks = [task for task in tasks if "ansible.builtin.uri" in task]
+    check("one authenticated API health check is configured", len(uri_tasks), 1)
+    if not uri_tasks:
+        return
+    header = uri_tasks[0]["ansible.builtin.uri"].get("headers", {}).get("Authorization", "")
+    check("API health check uses configured user, token ID and secret",
+          all(field in header for field in (
+              "homelabinfra_config.proxmox.api_user",
+              "homelabinfra_config.proxmox.api_token_id",
+              "homelabinfra_config.proxmox.api_token_secret")), True)
+    check("API token is hidden from Ansible output", uri_tasks[0].get("no_log"), True)
+
+
+def quorum_guard_accepts_aligned_output():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    quorum_task = next(
+        task for task in tasks
+        if task.get("name") == "Proxmox host firewall | Require quorum before cancelling rollback")
+    condition = quorum_task["ansible.builtin.assert"]["that"][0]
+    match = re.search(r"regex_search\('([^']+)'\)", condition)
+    check("quorum guard uses whitespace-tolerant matching", match is not None, True)
+    if match:
+        pattern = match.group(1)
+        check("quorum guard accepts aligned pvecm output",
+              re.search(pattern, "Quorum information\nQuorate:          Yes\n") is not None, True)
+        check("quorum guard rejects non-quorate pvecm output",
+              re.search(pattern, "Quorum information\nQuorate:          No\n") is not None, False)
+
+
+def rollback_cancellation_is_guarded_and_idempotent():
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    by_name = {task.get("name"): task for task in tasks}
+    guard = by_name["Proxmox host firewall | Require rollback timer before cancellation"]
+    check("rollback cancellation requires an armed timer",
+          guard["ansible.builtin.assert"]["that"], [
+              "_pve_fw_rollback_timer_before_cancel.rc == 0",
+          ])
+    stop = by_name["Proxmox host firewall | Stop rollback only after access, storage and quorum pass"]
+    check("rollback cancellation tolerates already absent transient units",
+          stop["failed_when"], "_pve_fw_rollback_stop.rc not in [0, 5]")
+    check("rollback cancellation marks changes only when systemctl stops a unit",
+          stop["changed_when"], "_pve_fw_rollback_stop.rc == 0")
+    check("rollback cancellation verifies units are inactive",
+          "Proxmox host firewall | Require rollback units inactive after cancellation"
+          in by_name, True)
+    check("rollback cancellation rechecks enabled firewall options",
+          "Proxmox host firewall | Keep the baseline enabled after rollback cancellation"
+          in by_name, True)
+
+
+def main():
+    example = yaml.safe_load((ROOT / "config.example/proxmox.yml").read_text())
+    proxmox = copy.deepcopy(example["proxmox"])
+    check("firewall is disabled in the example", proxmox["firewall"]["enabled"], False)
+    defaults = yaml.safe_load((ROOT / "ansible/vars/homelabinfra-defaults.yml").read_text())
+    check("firewall defaults are disabled", defaults["homelabinfra_defaults"]["proxmox"]["firewall"]["enabled"], False)
+    check("management sources are an explicit list",
+          proxmox["firewall"]["management_sources"], [])
+    check("storage clients are an explicit list",
+          proxmox["firewall"]["storage_clients"], [])
+    check("storage nodes are documented at proxmox level",
+          "storage_nodes" in (ROOT / "config.example/proxmox.yml").read_text(), True)
+
+    proxmox.update({
+        "node": "pve-1",
+        "api_host": "192.0.2.11",
+        "nodes": {"pve-1": "192.0.2.11", "pve-2": "192.0.2.12"},
+        "storage_nodes": ["pve-1"],
+        "firewall": {
+            "enabled": True,
+            "management_sources": ["198.51.100.0/24"],
+            "storage_clients": ["203.0.113.22/32"],
+        },
+    })
+    status = [
+        {"type": "node", "name": "pve-1", "online": 1},
+        {"type": "node", "name": "pve-2", "online": 1},
+    ]
+    empty = {
+        "proxmox": proxmox,
+        "cluster_status": status,
+        "cluster_options": {"enable": 0},
+        "cluster_rules": [],
+        "node_options": {},
+        "node_rules": {},
+    }
+    first = run_plan(empty)
+    check("first reconciliation requires changes", first["changed"], True)
+    check("management renders SSH and API rules", {
+        (rule.get("source"), rule.get("dport"))
+        for rule in first["cluster"]["desired"] if rule.get("proto") == "tcp"
+    }, {("198.51.100.0/24", "22"), ("198.51.100.0/24", "8006")})
+    check("cluster rules connect each direction between the configured peers", {
+        (rule.get("source"), rule.get("dest"))
+        for rule in first["cluster"]["desired"] if rule.get("source") in {
+            "192.0.2.11", "192.0.2.12"}
+    }, {("192.0.2.11", "192.0.2.12"), ("192.0.2.12", "192.0.2.11")})
+    check("NFS is limited to TCP 111 and 2049 on the storage node",
+          first["nodes"]["pve-1"]["desired"], [{
+              "type": "in", "action": "ACCEPT", "proto": "tcp", "dport": "111,2049",
+              "source": "203.0.113.22/32", "enable": 1,
+              "comment": "homelab-infra: base storage-nfs-pve-1-1",
+          }])
+    check("per-app API rules are not part of the baseline namespace",
+          all(rule["comment"].startswith("homelab-infra: base ")
+              for rule in first["cluster"]["desired"]), True)
+
+    joining = copy.deepcopy(proxmox)
+    joining["nodes"]["pve-3"] = "192.0.2.13"
+    joining_payload = copy.deepcopy(empty)
+    joining_payload["proxmox"] = joining
+    joining_plan = run_plan(joining_payload)
+    peer_pairs = {
+        (rule.get("source"), rule.get("dest"))
+        for rule in joining_plan["cluster"]["desired"]
+        if rule.get("comment", "").startswith("homelab-infra: base cluster-")
+    }
+    check("adding a joining node opens it as a peer before it joins", {
+        ("192.0.2.13", "192.0.2.11"), ("192.0.2.11", "192.0.2.13"),
+        ("192.0.2.13", "192.0.2.12"), ("192.0.2.12", "192.0.2.13"),
+    } <= peer_pairs, True)
+    check("joining nodes are not queried for host rules before joining",
+          set(joining_plan["nodes"]), {"pve-1", "pve-2"})
+
+    converged = copy.deepcopy(empty)
+    converged["cluster_options"] = {
+        "enable": 1, "policy_in": "DROP", "policy_out": "ACCEPT"}
+    converged["cluster_rules"] = [
+        {**rule, "pos": index, "digest": "fixture"}
+        for index, rule in enumerate(first["cluster"]["desired"], start=1)
+    ]
+    converged["node_options"] = {"pve-1": {"enable": 1}, "pve-2": {"enable": 1}}
+    converged["node_rules"] = {
+        "pve-1": [{**rule, "pos": 1, "digest": "fixture"}
+                   for rule in first["nodes"]["pve-1"]["desired"]],
+        "pve-2": [],
+    }
+    repeat = run_plan(converged)
+    check("a repeat baseline run is converged", repeat["changed"], False)
+    check("a converged run creates no datacenter rules", repeat["cluster"]["create"], [])
+    check("a converged run removes no node rules", {
+        node: state["delete"] for node, state in repeat["nodes"].items()
+    }, {"pve-1": [], "pve-2": []})
+
+    management_rule = next(
+        rule for rule in first["cluster"]["desired"]
+        if rule["comment"] == "homelab-infra: base management-ssh-1")
+    peer_rule = next(
+        rule for rule in first["cluster"]["desired"]
+        if rule["comment"] == "homelab-infra: base cluster-pve-1-to-pve-2")
+    rule_match_rejects_extra_fields()
+    for field, value in (("dest", "192.0.2.99"), ("iface", "vmbr0"),
+                         ("macro", "SSH")):
+        narrowed_owned_rule_is_replaced(
+            converged, management_rule, field, value, "management SSH")
+    for field, value in (("proto", "tcp"), ("dport", "22"), ("iface", "vmbr0"),
+                         ("macro", "SSH")):
+        narrowed_owned_rule_is_replaced(
+            converged, peer_rule, field, value, "cluster peer")
+
+    no_op = copy.deepcopy(empty)
+    no_op["proxmox"]["firewall"]["enabled"] = False
+    disabled = run_plan(no_op)
+    check("disabled firewall config changes nothing", disabled["changed"], False)
+    check("disabled firewall config emits no rules", disabled["cluster"]["create"], [])
+    disabled_playbook_noop()
+    invalid_enabled = copy.deepcopy(no_op)
+    invalid_enabled["proxmox"]["firewall"]["enabled"] = "false"
+    run_plan(invalid_enabled, expect_success=False)
+    delete_rule_retries_digest_races()
+    api_health_check_uses_configured_token()
+    quorum_guard_accepts_aligned_output()
+    rollback_cancellation_is_guarded_and_idempotent()
+
+    legacy = copy.deepcopy(empty)
+    legacy["node_rules"] = {
+        "pve-1": [
+            {"pos": 1, "type": "in", "action": "ACCEPT", "proto": "tcp",
+             "dport": "22,8006,3128", "source": "198.51.100.0/24", "enable": 1},
+            {"pos": 2, "type": "in", "action": "ACCEPT", "proto": "icmp",
+             "source": "198.51.100.0/24", "enable": 1},
+            {"pos": 3, "type": "in", "action": "ACCEPT", "proto": "tcp",
+             "dport": "60000:60050", "source": "192.0.2.12", "enable": 1},
+            {"pos": 4, "type": "in", "action": "ACCEPT", "proto": "udp",
+             "dport": "5405:5412", "source": "192.0.2.12", "enable": 1},
+            {"pos": 5, "type": "in", "action": "ACCEPT", "proto": "tcp",
+             "dport": "22,111,2049,3260", "source": "203.0.113.22", "enable": 1},
+            {"pos": 6, "type": "in", "action": "ACCEPT", "proto": "tcp",
+             "dport": "8080", "source": "203.0.113.99", "enable": 1},
+            {"pos": 7, "type": "in", "action": "ACCEPT", "proto": "udp",
+             "dport": "5405:5412", "source": "203.0.113.22", "enable": 1},
+            {"pos": 8, "type": "in", "action": "ACCEPT", "proto": "tcp",
+             "dport": "8006", "source": "192.0.2.12", "enable": 1,
+             "comment": "homelab-infra: pdm pdm-proxmox-api"},
+        ],
+        "pve-2": [],
+    }
+    migrated = run_plan(legacy)
+    check("only the exact legacy helper rules are removed",
+          {rule["pos"] for rule in migrated["nodes"]["pve-1"]["delete"]},
+          {1, 2, 3, 4, 5})
+    check("foreign unowned host rules survive takeover",
+          any(rule.get("dport") == "8080"
+              for rule in legacy["node_rules"]["pve-1"]
+              if rule["pos"] not in {item["pos"] for item in migrated["nodes"]["pve-1"]["delete"]}),
+          True)
+    check("PDM API rule survives takeover",
+          any(rule.get("comment") == "homelab-infra: pdm pdm-proxmox-api"
+              for rule in legacy["node_rules"]["pve-1"]
+              if rule["pos"] not in {item["pos"] for item in migrated["nodes"]["pve-1"]["delete"]}),
+          True)
+    check("peer-shaped rules from non-node storage clients are preserved",
+          any(rule.get("source") == "203.0.113.22"
+              and rule.get("dport") == "5405:5412"
+              for rule in legacy["node_rules"]["pve-1"]
+              if rule["pos"] not in {item["pos"]
+                                      for item in migrated["nodes"]["pve-1"]["delete"]}),
+          True)
+
+    broad_legacy = copy.deepcopy(empty)
+    broad_legacy["proxmox"]["firewall"]["storage_clients"] = ["203.0.113.0/24"]
+    broad_legacy["node_rules"] = {
+        "pve-1": [{
+            "pos": 1, "type": "in", "action": "ACCEPT", "proto": "tcp",
+            "dport": "22,111,2049,3260", "source": "203.0.113.22", "enable": 1,
+        }],
+        "pve-2": [],
+    }
+    broad_plan = run_plan(broad_legacy)
+    check("a broad storage subnet does not claim an ambiguous unowned host rule",
+          broad_plan["nodes"]["pve-1"]["delete"], [])
+
+    valid_doctor = doctor({
+        "storage_nodes": ["fixture-storage-node"],
+        "firewall": {
+            "enabled": True,
+            "management_sources": ["198.51.100.0/24"],
+            "storage_clients": ["203.0.113.0/24"],
+        },
+    })
+    check("Config Doctor accepts enabled documented firewall inputs",
+          "ERROR" not in valid_doctor, True)
+    invalid_doctor = doctor({
+        "storage_nodes": ["missing-node"],
+        "firewall": {
+            "enabled": True,
+            "management_sources": ["not-a-cidr"],
+            "storage_clients": [],
+        },
+    }, invalid=True)
+    check("Config Doctor names invalid firewall CIDRs and storage nodes",
+          "proxmox.firewall.management_sources.0" in invalid_doctor
+          and "proxmox.storage_nodes" in invalid_doctor, True)
+
+    if FAILURES:
+        print("Proxmox firewall baseline: FAILED")
+        print("\n".join(f"- {failure}" for failure in FAILURES))
+        return 1
+    print("Proxmox firewall baseline renders, migrates only owned rules, and converges")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

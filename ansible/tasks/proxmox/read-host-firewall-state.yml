@@ -1,0 +1,88 @@
+---
+- name: Proxmox host firewall | Read datacenter options
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/firewall/options
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_cluster_options_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Read datacenter rules
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/firewall/rules
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_cluster_rules_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Read node rules
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ item }}/firewall/rules"
+      - --output-format
+      - json
+  loop: "{{ _pve_fw_members }}"
+  loop_control:
+    label: Proxmox node host rules
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_node_rules_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Read node options
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ item }}/firewall/options"
+      - --output-format
+      - json
+  loop: "{{ _pve_fw_members }}"
+  loop_control:
+    label: Proxmox node firewall options
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_node_options_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Assemble current node rules
+  ansible.builtin.set_fact:
+    _pve_fw_node_rules: "{{ _pve_fw_node_rules_json | from_json }}"
+  vars:
+    _pve_fw_node_rules_json: >-
+      {%- set result = {} -%}
+      {%- for item in _pve_fw_node_rules_read.results -%}
+      {%- set _ = result.update({item.item: item.stdout | from_json}) -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
+
+- name: Proxmox host firewall | Assemble current node options
+  ansible.builtin.set_fact:
+    _pve_fw_node_options: "{{ _pve_fw_node_options_json | from_json }}"
+  vars:
+    _pve_fw_node_options_json: >-
+      {%- set result = {} -%}
+      {%- for item in _pve_fw_node_options_read.results -%}
+      {%- set _ = result.update({item.item: item.stdout | from_json}) -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
+
+- name: Proxmox host firewall | Save current datacenter state
+  ansible.builtin.set_fact:
+    _pve_fw_cluster_options: "{{ _pve_fw_cluster_options_read.stdout | from_json }}"
+    _pve_fw_cluster_rules: "{{ _pve_fw_cluster_rules_read.stdout | from_json }}"
+  no_log: true

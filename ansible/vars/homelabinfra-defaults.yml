@@ -73,6 +73,10 @@ homelabinfra_defaults:
     # attachment may refer to the same physical unit; the map is intentionally empty until
     # the operator declares the node's hardware in config/proxmox.yml.
     devices: {}
+    firewall:
+      enabled: false
+      management_sources: []
+      storage_clients: []
     lxc:
       # Repository fallback for native LXC and Docker stack hosts. The lab overrides it
       # in config/proxmox.yml; a native instance may override it with proxmox.ostemplate

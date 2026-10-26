@@ -9,6 +9,28 @@ Provisioning plays run on `localhost` and use Proxmox API modules. A task that r
 Proxmox node. Do not target all `proxmox_nodes` and use `run_once` to choose a node; facts
 set by that pattern belong to the selected inventory host rather than to `localhost`.
 
+## Datacenter and host firewall baseline
+
+`playbooks/maintenance/reconcile-proxmox-host-firewall.yml` manages the opt-in baseline
+from `proxmox.firewall`. With `enabled` absent or false it is a no-op, so ordinary Deploy
+continues to add only the per-app host rules it already owns. When enabled, the playbook
+allows configured management CIDRs to SSH and the API, allows each configured node address
+to reach every other peer address, and opens NFS TCP 111 and 2049 from `storage_clients`
+on `proxmox.storage_nodes` (or `node_roles.storage`, falling back to `proxmox.node`).
+Datacenter and host rules carry `homelab-infra: base <name>` comments. A configured joining
+node is opened as a datacenter peer before it joins; run the playbook again after it joins
+to add any host-specific rules.
+
+The playbook adds the managed rules before removing stale baseline rules, and removes only
+its comment namespace plus exact legacy rule shapes emitted by `host-firewall.py`. Other
+unowned rules and per-app rules such as PDM's are preserved. Legacy NFS/peer rules are
+recognized only when `storage_clients` names their exact source hosts (`/32` or `/128`),
+so a broad client subnet cannot cause an unrelated hand-written rule to be removed.
+Before a change it arms `homelab-infra-fw-rollback` on `proxmox.node`; it cancels that
+timer only after API and SSH access to every current node, cluster quorum, and NFS mounts
+on compute nodes pass. A failed verification leaves the timer armed to disable the
+datacenter firewall after ten minutes.
+
 The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.yml`.
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path. The clone task finds an existing VM's live Proxmox node before selecting
