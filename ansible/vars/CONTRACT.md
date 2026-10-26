@@ -442,9 +442,12 @@ Aliases removed from `firewall.base.aliases` remain in OPNsense; remove an unuse
 A rule with multiple `ports` emits one filter rule per port, adding `port <number>` to its
 description to keep each rule identifiable. The first enabled run replaces only rules with
 the legacy `Green lab: ` description prefix; the temporary `Green lab: operator to Caddy`
-rules remain untouched. The playbook creates a filter savepoint before writes, applies the
-revision, verifies the management API still answers, then confirms the change. A failed
-verification leaves OPNsense's timed rollback armed.
+rules remain untouched. Before the first write, the playbook records the newest local
+config-backup ID with the `homelab-infra/firewall-admin` API key. After writes it applies
+the filter rules and verifies that owned rules read back as rendered. If a write, apply or
+readback fails while the management API answers, it restores that backup and applies the
+restored config before failing the run. If the API stops answering, the failure names the
+backup ID for console recovery.
 
 #### Stack identity and estate isolation
 
@@ -629,6 +632,7 @@ The canonical top-level items are:
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
 | `homelab-infra/firewall` | `api_key`, `api_secret` |
+| `homelab-infra/firewall-admin` | `api_key`, `api_secret` — used only to list and restore OPNsense config backups |
 | `homelab-infra/mail` | `password` — shared relay credential used by every estate without a scoped override |
 | `homelab-infra/estates/<estate>/mail` | `password` — optional estate-specific relay credential; Store Secret is the post-cutover write path |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |

@@ -240,113 +240,48 @@
          or (_fw_base_legacy_to_delete | length > 0) }}
   changed_when: false
 
-- name: Firewall base | Create a rollback savepoint before any firewall writes
-  ansible.builtin.uri:
-    url: "{{ fw_base }}/api/firewall/filter/savepoint"
-    method: POST
-    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
-    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
-    force_basic_auth: true
-    validate_certs: "{{ fw_validate | bool }}"
-    body_format: json
-    body: {}
-    status_code: 200
-  register: _fw_base_prewrite_savepoint
-  changed_when: false
-  failed_when: >-
-    _fw_base_prewrite_savepoint.json.status | default('error') | trim | lower != 'ok'
-    or _fw_base_prewrite_savepoint.json.revision | default('') | string | length == 0
-  no_log: true
-  when: _fw_base_changed | bool
-
-- name: Firewall base | Add missing aliases
-  ansible.builtin.uri:
-    url: "{{ fw_base }}/api/firewall/alias/addItem"
-    method: POST
-    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
-    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
-    force_basic_auth: true
-    validate_certs: "{{ fw_validate | bool }}"
-    body_format: json
-    body: "{{ {'alias': item} }}"
-    status_code: 200
-  loop: "{{ _fw_base_alias_plan.add }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: _fw_base_alias_add
-  changed_when: true
-  failed_when: _fw_base_alias_add.json.result | default('') != 'saved'
-  no_log: true
-  when: _fw_base_changed | bool
-
-- name: Firewall base | Update drifted aliases
-  ansible.builtin.uri:
-    url: "{{ fw_base }}/api/firewall/alias/setItem/{{ item.uuid }}"
-    method: POST
-    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
-    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
-    force_basic_auth: true
-    validate_certs: "{{ fw_validate | bool }}"
-    body_format: json
-    body: "{{ {'alias': item.payload} }}"
-    status_code: 200
-  loop: "{{ _fw_base_alias_plan.set }}"
-  loop_control:
-    label: "{{ item.payload.name }}"
-  register: _fw_base_alias_set
-  changed_when: true
-  failed_when: _fw_base_alias_set.json.result | default('') != 'saved'
-  no_log: true
-  when: _fw_base_changed | bool
-
-- name: Firewall base | Reconcile owned filter rules
-  ansible.builtin.include_tasks: opnsense-reconcile.yml
+- name: Firewall base | Require the OPNsense backup API credential
+  ansible.builtin.include_tasks: ../bitwarden/required-item.yml
   vars:
-    fw_model: filter
-    fw_desc_field: description
-    fw_desired: "{{ _fw_base_filter_desired }}"
-    fw_plan_only: false
+    vault_required_item: homelab-infra/firewall-admin
+    vault_required_fields: [api_key, api_secret]
   when: _fw_base_changed | bool
 
-- name: Firewall base | Delete replaced Green lab rules
+- name: Firewall base | Record the newest config backup before writes
   ansible.builtin.uri:
-    url: "{{ fw_base }}/api/firewall/filter/delRule/{{ item.uuid }}"
-    method: POST
-    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
-    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    url: "{{ fw_base }}/api/core/backup/backups/this"
+    method: GET
+    url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+    url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
     force_basic_auth: true
     validate_certs: "{{ fw_validate | bool }}"
-    body_format: json
-    body: {}
     status_code: 200
-  loop: "{{ _fw_base_legacy_to_delete }}"
-  loop_control:
-    label: "{{ item.description }}"
-  register: _fw_base_legacy_delete
-  changed_when: true
-  failed_when: _fw_base_legacy_delete.json.result | default('') not in ['deleted', 'saved']
-  no_log: true
-  when: _fw_base_changed | bool
-
-- name: Firewall base | Reload changed aliases
-  ansible.builtin.uri:
-    url: "{{ fw_base }}/api/firewall/alias/reconfigure"
-    method: POST
-    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
-    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
-    force_basic_auth: true
-    validate_certs: "{{ fw_validate | bool }}"
-    body_format: json
-    body: {}
-    status_code: 200
-  register: _fw_base_alias_reload
+  register: _fw_base_backup_list
   changed_when: false
-  failed_when: _fw_base_alias_reload.json.status | default('') | trim | lower != 'ok'
   no_log: true
-  when:
-    - _fw_base_changed | bool
-    - (_fw_base_alias_plan.add | length > 0) or (_fw_base_alias_plan.set | length > 0)
+  when: _fw_base_changed | bool
 
-- name: Firewall base | Apply the reconciled ruleset with rollback
+- name: Firewall base | Validate a newest local config backup is available
+  ansible.builtin.assert:
+    that:
+      - _fw_base_backup_list.status | default(0) | int == 200
+      - _fw_base_backup_list.json is defined
+      - _fw_base_backup_list.json['items'] is defined
+      - _fw_base_backup_list.json['items'] | type_debug == 'list'
+      - _fw_base_backup_list.json['items'] | length > 0
+      - _fw_base_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
+    fail_msg: >-
+      OPNsense did not return a newest local config backup ID. No base firewall
+      writes were attempted.
+  when: _fw_base_changed | bool
+
+- name: Firewall base | Remember the pre-write config backup ID
+  ansible.builtin.set_fact:
+    _fw_base_prewrite_backup_id: "{{ _fw_base_backup_list.json['items'][0].id }}"
+  changed_when: false
+  no_log: true
+  when: _fw_base_changed | bool
+
+- name: Firewall base | Reconcile and apply the ruleset with backup rollback
   ansible.builtin.include_tasks: opnsense-apply-base.yml
   when: _fw_base_changed | bool

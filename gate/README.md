@@ -88,7 +88,7 @@ templates.
   replacement restores the original `wp-content` tree and database. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
-- `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and leave a failed apply's timed rollback armed.
+- `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
 
 On a Windows checkout accessed through WSL, wrap each command:
