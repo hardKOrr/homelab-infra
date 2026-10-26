@@ -171,7 +171,7 @@ dns:
 #
 # api_key/api_secret are read from the homelab-infra/firewall vault item (Store Secret
 # job). Give that OPNsense account only the "Firewall: Rules [new]", "Firewall: NAT:
-# Destination NAT", and "Firewall: Aliases" privileges.
+# Destination NAT", and "Firewall: Alias: Edit" privileges.
 #
 # `host` is the address the runner reaches the OPNsense API on. Use the address your
 # runner is allowed to open HTTPS to (the same one `dns.host` uses), not the gateway

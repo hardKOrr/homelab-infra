@@ -93,7 +93,7 @@
     fail_msg: >-
       OPNsense alias search returned an unexpected shape (HTTP
       {{ _k3s_firewall_alias_search.status | default('?') }}). Check that the
-      homelab-infra/firewall API key holds the 'Firewall: Aliases' privilege.
+      homelab-infra/firewall API key holds the 'Firewall: Alias: Edit' privilege.
 
 - name: k3s firewall alias | Select exact-name matches
   ansible.builtin.set_fact:
@@ -141,10 +141,12 @@
     validate_certs: "{{ _k3s_firewall_validate | bool }}"
     body_format: json
     body: "{{ {'alias': _k3s_firewall_alias_desired} }}"
-    status_code: 200
+    status_code: [200, 401, 403]
   register: _k3s_firewall_alias_add
   changed_when: true
-  failed_when: _k3s_firewall_alias_add.json.result | default('') != 'saved'
+  failed_when:
+    - _k3s_firewall_alias_add.status not in [401, 403]
+    - _k3s_firewall_alias_add.json.result | default('') != 'saved'
   no_log: true
   when:
     - firewall_k3s_alias_state == 'present'
@@ -160,10 +162,12 @@
     validate_certs: "{{ _k3s_firewall_validate | bool }}"
     body_format: json
     body: "{{ {'alias': _k3s_firewall_alias_desired} }}"
-    status_code: 200
+    status_code: [200, 401, 403]
   register: _k3s_firewall_alias_set
   changed_when: true
-  failed_when: _k3s_firewall_alias_set.json.result | default('') != 'saved'
+  failed_when:
+    - _k3s_firewall_alias_set.status not in [401, 403]
+    - _k3s_firewall_alias_set.json.result | default('') != 'saved'
   no_log: true
   when:
     - firewall_k3s_alias_state == 'present'
@@ -180,10 +184,12 @@
     validate_certs: "{{ _k3s_firewall_validate | bool }}"
     body_format: json
     body: {}
-    status_code: 200
+    status_code: [200, 401, 403]
   register: _k3s_firewall_alias_delete
   changed_when: true
-  failed_when: _k3s_firewall_alias_delete.json.result | default('') not in ['deleted', 'saved']
+  failed_when:
+    - _k3s_firewall_alias_delete.status not in [401, 403]
+    - _k3s_firewall_alias_delete.json.result | default('') not in ['deleted', 'saved']
   no_log: true
   when:
     - firewall_k3s_alias_state == 'absent'
@@ -199,9 +205,24 @@
     validate_certs: "{{ _k3s_firewall_validate | bool }}"
     body_format: json
     body: {}
-    status_code: 200
+    status_code: [200, 401, 403]
   register: _k3s_firewall_alias_reload
   changed_when: true
-  failed_when: _k3s_firewall_alias_reload.json.status | default('') != 'ok'
+  failed_when:
+    - _k3s_firewall_alias_reload.status not in [401, 403]
+    - _k3s_firewall_alias_reload.json.status | default('') != 'ok'
   no_log: true
   when: _k3s_firewall_alias_changed | bool
+
+# The writes above let a 401/403 through so this assert can name the status; no_log
+# hides it on the write tasks themselves.
+- name: k3s firewall alias | Refuse an ACL denial on an alias write
+  ansible.builtin.assert:
+    that:
+      - _k3s_firewall_alias_add.status | default(200) not in [401, 403]
+      - _k3s_firewall_alias_set.status | default(200) not in [401, 403]
+      - _k3s_firewall_alias_delete.status | default(200) not in [401, 403]
+      - _k3s_firewall_alias_reload.status | default(200) not in [401, 403]
+    fail_msg: >-
+      OPNsense denied an alias write. Check that the homelab-infra/firewall API key holds
+      the 'Firewall: Alias: Edit' privilege; 'Firewall: Aliases' allows only reads.
