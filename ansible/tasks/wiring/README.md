@@ -11,10 +11,14 @@ random, unusable interactive password on OPNsense and never reads or writes that
 Account management uses the separate canonical Vaultwarden item
 `homelab-infra/firewall-admin` (`api_key`, `api_secret`). That admin API key is used only by
 this task. The existing `homelab-infra/firewall` item remains the credential for firewall
-rules and aliases. Unbound records use `homelab-infra/dns` (`api_key`, `api_secret`). On an
-already installed firewall, seed `firewall-admin` once by creating an OPNsense API key over
-the management SSH path and storing its pair in that item. New OPNsense instances receive
-the three API credential pairs through their generated bootstrap configuration.
+rules and aliases. Unbound records use `homelab-infra/dns` (`api_key`, `api_secret`). The
+`firewall-admin` item must be seeded before any Deploy: this task consumes that pair but
+does not create it or seed it into OPNsense. On the existing green firewall, create the
+admin API key over the management SSH path and store its pair in that item. For a new
+firewall, provision and store the pair through OPNsense's local administration path before
+using this task. Issue [#566](https://github.com/hardKOrr/homelab-infra/issues/566) tracks
+a future generated-`config.xml` bootstrap that will seed these credentials; the current
+OPNsense playbook still uses the interactive installer and does not do that bootstrap.
 
 When the owned user is first created, OPNsense returns its API key and secret once; the task
 upserts both hidden fields into `homelab-infra/dns` before the app's record is written.
