@@ -8,7 +8,9 @@ credentials for its apex (`@`) and wildcard (`*`) records. See the
 When the default estate's `dns_challenge` has no provider, it inherits the lab's
 `reverse_proxy.dns_challenge`; estate-specific fields such as Vault-provided credentials
 override inherited values. Other estates continue to use only their own challenge
-configuration.
+configuration. Public DNS does not inherit the legacy `app_config.app.dns_challenge`
+input retained for TLS; configure the shared challenge under
+`infrastructure.reverse_proxy.dns_challenge` for it to apply to public records.
 
 For `static` and `lookup` sources, the role installs the pinned
 [`caddy-dynamicdns`](https://github.com/mholt/caddy-dynamicdns/tree/67d107a42c0279f6e6d58a6afe646745c8b44f78)
