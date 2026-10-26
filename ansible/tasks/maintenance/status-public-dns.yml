@@ -69,6 +69,8 @@
     loop_var: status_public_dns_instance
     label: "{{ status_public_dns_instance }}"
 
+# The contract makes address and families lab-wide; per-estate settings only opt in
+# and select provider/adoption behavior. See ansible/vars/CONTRACT.md.
 - name: Public DNS status | Check enabled estates through public resolvers
   lab_public_dns_status:
     enabled: true
