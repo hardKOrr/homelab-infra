@@ -420,6 +420,31 @@
   when: _opn_dns_issued_key is changed
   no_log: true
 
+- name: OPNsense DNS account | Revoke prior keys after an explicit rotation
+  ansible.builtin.uri:
+    url: >-
+      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.key | b64encode | urlencode }}
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _opn_dns_prior_key_revocation
+  changed_when: true
+  failed_when: _opn_dns_prior_key_revocation.json.result | default('') != 'deleted'
+  loop: "{{ _opn_dns_account_api_keys | default([]) }}"
+  loop_control:
+    label: prior DNS key
+  when:
+    - _opn_dns_issued_key is changed
+    - _opn_dns_rotate_requested | bool
+    - item.username | default('') == _opn_dns_account_name
+    - item.key | default('') | length > 0
+  no_log: true
+
 - name: OPNsense DNS account | Verify the stored key is Unbound-only
   ansible.builtin.assert:
     that:

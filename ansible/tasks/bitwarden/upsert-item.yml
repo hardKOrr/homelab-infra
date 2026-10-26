@@ -22,7 +22,9 @@
   no_log: true
 
 - name: Vault | Verify the execution session
-  ansible.builtin.import_tasks: authenticate.yml
+  # This file can be included beneath a provider path resolved from host facts. Keep
+  # nested includes dynamic so a static import does not try to re-resolve that parent.
+  ansible.builtin.include_tasks: authenticate.yml
 
 - name: Vault | List accessible organizations
   ansible.builtin.command:

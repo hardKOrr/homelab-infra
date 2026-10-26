@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 from urllib.error import HTTPError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 import yaml
@@ -124,6 +124,17 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 self.server.mutations.append("user/set")
                 self._record(username, 200)
                 return self._reply(200, {"result": "saved"})
+            if len(path) == 5 and path[2:4] == ["user", "del_api_key"]:
+                key = base64.b64decode(unquote(path[4])).decode()
+                index = next((index for index, item in enumerate(self.server.api_keys)
+                              if item["key"] == key), None)
+                if index is None:
+                    self._record(username, 404)
+                    return self._reply(404, {"result": "not found"})
+                self.server.api_keys.pop(index)
+                self.server.mutations.append("user/del_api_key")
+                self._record(username, 200)
+                return self._reply(200, {"result": "deleted"})
             if len(path) == 5 and path[2:4] == ["user", "add_api_key"]:
                 target = self.server.users.get(path[4])
                 if target is None:
@@ -271,27 +282,51 @@ def initial_opnsense(*, owned=False, foreign=False, legacy=False, existing_key=F
 def run_account(server, directory, item_fields, *, rotate=False):
     state_path, binary_dir = make_fake_bw(directory)
     state_path.write_text(json.dumps(make_bw_state(item_fields)))
-    play = [{
-        "name": "Exercise OPNsense DNS account",
-        "hosts": "localhost",
-        "gather_facts": False,
-        "vars": {
-            "homelabinfra_infra": {
-                "dns": {
-                    "host": f"http://127.0.0.1:{server.server_port}",
-                    "api_key": item_fields.get("api_key", ""),
-                    "api_secret": item_fields.get("api_secret", ""),
-                    "validate_certs": False,
+    wiring_dir = directory / "wiring"
+    wiring_dir.mkdir()
+    (wiring_dir / "opnsense.yml").write_text(yaml.safe_dump([{
+        "ansible.builtin.include_tasks": str(
+            repo / "ansible/tasks/wiring/opnsense-dns-account.yml"),
+    }]))
+    play = [
+        {
+            "name": "Load runtime firewall facts",
+            "hosts": "localhost",
+            "gather_facts": False,
+            "tasks": [{
+                "ansible.builtin.set_fact": {
+                    "homelabinfra_infra": {
+                        "dns": {
+                            "provider": "opnsense",
+                            "host": f"http://127.0.0.1:{server.server_port}",
+                            "api_key": item_fields.get("api_key", ""),
+                            "api_secret": item_fields.get("api_secret", ""),
+                            "validate_certs": False,
+                        },
+                        "firewall-admin": {
+                            "api_key": admin_key,
+                            "api_secret": admin_secret,
+                        },
+                    },
+                    "_opn_base": f"http://127.0.0.1:{server.server_port}",
+                    "_opn_validate": False,
+                    "opnsense_dns_rotate_key": rotate,
                 },
-                "firewall-admin": {"api_key": admin_key, "api_secret": admin_secret},
-            },
-            "_opn_base": f"http://127.0.0.1:{server.server_port}",
-            "_opn_validate": False,
-            "opnsense_dns_rotate_key": rotate,
+                "no_log": True,
+                "changed_when": False,
+            }],
         },
-        "tasks": [{"ansible.builtin.include_tasks": str(
-            repo / "ansible/tasks/wiring/opnsense-dns-account.yml")}],
-    }]
+        {
+            "name": "Exercise OPNsense DNS account through the dynamic wiring path",
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {"wiring_dir": str(wiring_dir)},
+            "tasks": [{
+                "ansible.builtin.include_tasks":
+                    "{{ wiring_dir }}/{{ homelabinfra_infra.dns.provider }}.yml",
+            }],
+        },
+    ]
     play_path = directory / "play.yml"
     play_path.write_text(yaml.safe_dump(play))
     env = os.environ.copy()
@@ -432,6 +467,8 @@ def main():
               mismatch.returncode != 0 and "opnsense_dns_rotate_key=true" in mismatch.stdout)
         check("mismatched key is not rotated implicitly",
               "user/add_api_key" not in server.mutations)
+        check("mismatched key is not revoked without explicit rotation",
+              "user/del_api_key" not in server.mutations)
         check("mismatch output does not print credentials",
               all(value not in mismatch.stdout + mismatch.stderr
                   for value in (admin_secret, old_secret, "fixture-owned-secret")))
@@ -451,6 +488,11 @@ def main():
               rotated.returncode == 0
               and rotated_fields.get("api_key") == new_owned_key.get("key")
               and rotated_fields.get("api_secret") == new_owned_key.get("secret"))
+        check("explicit rotation revokes only prior keys for the DNS account",
+              [value["key"] for value in server.api_keys
+               if value["username"] == account_name] == [new_owned_key.get("key")]
+              and any(value["username"] == "homelab-green-dns"
+                      and value["key"] == old_key for value in server.api_keys))
         check("rotated run does not print fixture credentials",
               all(value not in rotated.stdout + rotated.stderr
                   for value in (admin_secret, old_secret,
