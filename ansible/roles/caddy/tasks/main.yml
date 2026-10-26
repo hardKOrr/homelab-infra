@@ -40,6 +40,31 @@
 - name: Validate public DNS config
   ansible.builtin.include_tasks: public-dns-contract.yml
 
+- name: Preflight public DNS addresses and existing provider records
+  public_dns_preflight:
+    operation: preflight
+    public_dns: "{{ _caddy_public_dns_config }}"
+    estates: "{{ _caddy_public_dns_enabled_estates }}"
+  register: _caddy_public_dns_preflight
+  when: _caddy_public_dns_enabled_estates | length > 0
+  no_log: true
+
+- name: Refuse unsafe public DNS preflight results
+  ansible.builtin.assert:
+    that:
+      - _caddy_public_dns_preflight.safe_error | default('') | length == 0
+    fail_msg: "{{ _caddy_public_dns_preflight.safe_error | default('Public DNS preflight failed.') }}"
+  when: _caddy_public_dns_enabled_estates | length > 0
+
+- name: Warn that public DNS will publish a restricted address by explicit request
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: public DNS is configured to publish a private, loopback, link-local,
+      or CGNAT address because public_dns.allow_private is true.
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.private_override_used | default(false) | bool
+
 # ── Install ───────────────────────────────────────────────────────────────────
 - name: Install apt repository prerequisites
   ansible.builtin.apt:
@@ -496,6 +521,27 @@
     - _caddy_dns_records_running.status == 200
   changed_when: true
   no_log: true
+
+- name: Mark newly created Cloudflare public DNS records
+  public_dns_preflight:
+    operation: mark
+    public_dns: "{{ _caddy_public_dns_config }}"
+    estates: "{{ _caddy_public_dns_enabled_estates }}"
+    records_to_mark: "{{ _caddy_public_dns_preflight.records_to_mark | default([]) }}"
+  register: _caddy_public_dns_mark_result
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.records_to_mark | default([]) | length > 0
+  no_log: true
+
+- name: Report a safe public DNS ownership comment failure
+  ansible.builtin.assert:
+    that:
+      - _caddy_public_dns_mark_result.safe_error | default('') | length == 0
+    fail_msg: "{{ _caddy_public_dns_mark_result.safe_error | default('Could not mark new public DNS records.') }}"
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.records_to_mark | default([]) | length > 0
 
 # ── Reconcile the subtrees this role owns ─────────────────────────────────────
 - name: Read the running http server config
