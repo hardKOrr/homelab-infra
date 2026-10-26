@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 
 PUBLIC_DNS_KEYS = {"ttl", "families", "allow_private", "address"}
-ESTATE_PUBLIC_DNS_KEYS = {"enabled", "provider"}
+ESTATE_PUBLIC_DNS_KEYS = {"enabled", "provider", "adopt_existing"}
 ADDRESS_KEYS = {"source", "address", "urls", "target"}
 DNS_PROVIDER_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
 HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
@@ -83,6 +83,10 @@ def _estate_public_dns(estate):
     enabled = config.get("enabled", False)
     if not isinstance(enabled, bool):
         return path, None, f"{path}.enabled must be true or false."
+
+    adopt_existing = config.get("adopt_existing", False)
+    if not isinstance(adopt_existing, bool):
+        return path, None, f"{path}.adopt_existing must be true or false."
 
     provider = config.get("provider")
     if provider is not None and (

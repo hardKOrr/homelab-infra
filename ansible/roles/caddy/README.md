@@ -41,9 +41,22 @@ preflight must run before first publish. Provider `SetRecords` behavior may have
 provider-specific effects at those same record names. The `static` IP source returns
 the configured address, while the app still checks at its `check_interval` (30 minutes
 by default); only the CNAME app has no polling loop.
-The pinned dynamic DNS app has no ownership or adoption option. This role rejects
-`adopt_existing` until the first-publish preflight in follow-up issue #528 consumes it;
-the preflight must be in place before public DNS is first deployed.
+Before Caddy can publish a public DNS app, the role runs a read-only preflight on the
+Caddy guest. For `lookup`, it queries every configured HTTPS endpoint for each enabled IP
+family, matching the pinned updater's address-family behavior; failed endpoints are skipped,
+but successful answers for the same family must agree. It then lists A, AAAA, and CNAME at
+each enabled estate's apex and wildcard through the estate's provider API. A different
+same-type value is refused unless the record already has homelab-infra's Cloudflare
+ownership comment or `adopt_existing: true`; an address/CNAME type conflict always fails.
+Error messages name the record type and name while redacting its value and the provider
+token.
+
+The read-only provider adapter currently supports Cloudflare and fails closed for other
+provider modules. After a successful preflight, records that were absent and Caddy creates
+are marked through Cloudflare's record comment API as `Managed by homelab-infra public DNS`.
+Existing equal records are allowed without being marked or adopted. Set
+`allow_private: true` only when private, loopback, link-local, or CGNAT publication is
+intentional; the deploy prints a warning when that override is used.
 
 When a dynamic DNS provider write fails, the module logs the error without crashing
 Caddy, but caches the attempted address. It tries again after the address changes or

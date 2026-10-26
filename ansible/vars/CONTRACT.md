@@ -406,7 +406,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `domains.<estate>.public_dns` | optional | turns public apex and wildcard resolution on for this estate; absent or disabled is inert |
 | `domains.<estate>.public_dns.enabled` | optional, default `false` | when enabled, publish only `<ESTATE-domain>` and `*.<ESTATE-domain>` at the lab-wide address; there are no per-app records |
 | `domains.<estate>.public_dns.provider` | optional | `github.com/caddy-dns/<provider>` module name; defaults to this estate's `dns_challenge.provider` and uses that challenge's credentials |
-| `domains.<estate>.public_dns.adopt_existing` | rejected until follow-up #528 | the Caddy apps have no adoption control; the first-publish preflight will add and consume this option |
+| `domains.<estate>.public_dns.adopt_existing` | optional, default `false` | allow a different existing record of the desired type to be updated; it never overrides an A/AAAA versus CNAME conflict |
 | `domains.<estate>.public_dns` unknown keys | rejected | `ttl`, `families`, `allow_private` and `address` are lab-wide and belong in top-level `public_dns` |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
@@ -759,10 +759,20 @@ WAN port forwards. The lab has one WAN behind one firewall, so the address setti
 lab-wide in top-level `public_dns`, like the Caddy guest itself; each estate only opts in
 and names its provider. It is off unless that estate sets `public_dns.enabled: true`; the
 DNS-01 provider credentials already loaded for that estate are reused, with no second
-token in `public_dns`. The Caddy apps do not expose record-ownership controls, so
-`adopt_existing` is rejected until the first-publish preflight in follow-up #528 is
-implemented. Private, loopback, link-local and CGNAT addresses are refused unless
-`allow_private: true`; inbound ports remain an explicit `firewall.inbound` choice.
+token in `public_dns`. Before Caddy can publish records, a read-only preflight checks the
+address from the Caddy guest and lists A, AAAA, and CNAME records for the estate apex and
+wildcard through its provider API. Different same-type records fail with their type and
+name shown and value redacted unless they already carry homelab-infra's Cloudflare
+ownership comment or `adopt_existing: true`; an A/AAAA versus CNAME conflict always fails.
+Private, loopback, link-local and CGNAT addresses are refused unless `allow_private: true`,
+which prints a warning. Inbound ports remain an explicit `firewall.inbound` choice.
+
+The preflight currently has a read adapter for Cloudflare and fails closed for providers
+without one. The Cloudflare API token must allow Zone Read and DNS Edit. Records created
+after an empty preflight are marked with the Cloudflare comment `Managed by homelab-infra
+public DNS`; the preflight uses that marker to recognize homelab-infra's records when an
+address later changes. A pre-existing matching record is allowed but is not marked or
+adopted automatically.
 
 Caddy's dynamic DNS app keeps `static` and `lookup` records current. When a provider write
 fails it logs the error but does not retry until the WAN address changes or the Caddy
