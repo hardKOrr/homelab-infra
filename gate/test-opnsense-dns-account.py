@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 from urllib.error import HTTPError
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import yaml
@@ -137,15 +137,16 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 self.server.mutations.append("user/set")
                 self._record(username, 200)
                 return self._reply(200, {"result": "saved"})
-            if len(path) == 5 and path[2:4] == ["user", "del_api_key"]:
-                key = base64.b64decode(unquote(path[4])).decode()
-                index = next((index for index, item in enumerate(self.server.api_keys)
-                              if item["key"] == key), None)
-                if index is None:
+            if len(path) == 5 and path[2:4] == ["user", "del"]:
+                target_name = next((name for name, user in self.server.users.items()
+                                    if user.get("uuid") == path[4]), None)
+                if target_name is None:
                     self._record(username, 404)
                     return self._reply(404, {"result": "not found"})
-                self.server.api_keys.pop(index)
-                self.server.mutations.append("user/del_api_key")
+                self.server.users.pop(target_name)
+                self.server.api_keys = [item for item in self.server.api_keys
+                                        if item["username"] != target_name]
+                self.server.mutations.append("user/del")
                 self._record(username, 200)
                 return self._reply(200, {"result": "deleted"})
             if len(path) == 5 and path[2:4] == ["user", "add_api_key"]:
@@ -519,7 +520,7 @@ def main():
         check("mismatched key is not rotated implicitly",
               "user/add_api_key" not in server.mutations)
         check("mismatched key is not revoked without explicit rotation",
-              "user/del_api_key" not in server.mutations)
+              "user/del" not in server.mutations)
         check("mismatch output does not print credentials",
               all(value not in mismatch.stdout + mismatch.stderr
                   for value in (admin_key, admin_secret, old_key, old_secret,
@@ -539,11 +540,11 @@ def main():
                     last_task = task.group(1)
                 if "FAILED!" in line or "fatal:" in line or "ERROR!" in line:
                     print(f"rotation failed task: {last_task}")
-                if "OPNsense did not revoke prior DNS API keys" in line:
+                if "OPNsense does not show exactly one API key" in line:
                     print(f"rotation diagnostic: {line.strip()}")
-                if "HTTP statuses=" in line or "results=" in line:
+                if "rotation" in line.lower() and "result" in line.lower():
                     print(f"rotation status: {line.strip()}")
-                if "TASK [OPNsense DNS account | Verify prior keys were revoked]" in line:
+                if "TASK [OPNsense DNS account | Validate API-key search after creation or rotation]" in line:
                     for detail in diagnostic_lines[index:index + 15]:
                         for secret in (admin_key, admin_secret, old_key, old_secret,
                                        existing_owned_key, "fixture-owned-secret"):
@@ -566,7 +567,11 @@ def main():
               [value["key"] for value in server.api_keys
                if value["username"] == account_name] == [new_owned_key.get("key")]
               and any(value["username"] == "homelab-green-dns"
-                      and value["key"] == old_key for value in server.api_keys))
+                      and value["key"] == old_key for value in server.api_keys)
+              and status_for_dns_key(
+                  server, existing_owned_key, "fixture-owned-secret",
+                  f"http://127.0.0.1:{server.server_port}/api/unbound/settings/searchHostOverride",
+              ) == 401)
         check("rotation probes Unbound and firewall denial with the replacement key",
               any(path.endswith("/api/unbound/settings/searchHostOverride")
                   and username == account_name and status == 200
@@ -576,10 +581,14 @@ def main():
                       and username == account_name and status == 403
                       and key_fingerprint == new_key_fingerprint
                       for _method, path, username, status, key_fingerprint in server.calls))
-        check("prior key path encodes reserved URL characters",
-              any("/api/auth/user/del_api_key/" in path
-                  and "%2B" in path and "%2F" in path
-                  for _method, path, _username, _status, _fingerprint in server.calls))
+        check("explicit rotation deletes and recreates only the owned DNS user",
+              server.mutations.count("user/del") == 1
+              and server.mutations.count("user/add") == 1
+              and any(path.endswith("/api/auth/user/del/dns-user-id")
+                      and username == "admin" and status == 200
+                      for _method, path, username, status, _fingerprint in server.calls)
+              and server.users.get("homelab-green-dns", {}).get("descr")
+                  == legacy_user()["descr"])
         check("rotated run does not print fixture credentials",
               all(value not in rotated.stdout + rotated.stderr
                   for value in (admin_key, admin_secret, existing_owned_key,

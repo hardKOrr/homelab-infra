@@ -26,8 +26,9 @@ Later Deploys verify the stored pair still authenticates as this user and keep t
 An exact-name user with another description is foreign and stops the Deploy without being
 changed. If an owned user's stored key is missing or no longer authenticates, the Deploy
 fails without rotating it. To rotate deliberately, pass
-`-e opnsense_dns_rotate_key=true` for one run; the new pair is stored and verified before
-the DNS record task proceeds. Remove that extra var from subsequent runs.
+`-e opnsense_dns_rotate_key=true` for one run. This deletes and recreates only the owned
+DNS user, which revokes all of its prior API keys; the replacement pair is stored and
+verified before the DNS record task proceeds. Remove that extra var from subsequent runs.
 
 Changing API credentials leaves existing Unbound records in place. A failed Vaultwarden
 write stops before record wiring. If the one-time secret was lost with that failed write,

@@ -311,11 +311,6 @@
 
 - name: OPNsense DNS account | Select this user's API keys
   ansible.builtin.set_fact:
-    _opn_dns_account_api_keys: >-
-      {{ _opn_dns_key_search.json.rows | default([])
-         | selectattr('username', 'defined')
-         | selectattr('username', 'equalto', _opn_dns_account_name)
-         | list }}
     _opn_dns_saved_key_matches_account: >-
       {{ (_opn_dns_key_search.json.rows | default([])
           | selectattr('username', 'defined')
@@ -326,26 +321,6 @@
          and _opn_dns_saved_key | length > 0 }}
   changed_when: false
   when: _opn_dns_user_create is not changed
-  no_log: true
-
-- name: OPNsense DNS account | Require delete identifiers before rotation
-  ansible.builtin.assert:
-    that:
-      - >-
-        (_opn_dns_account_api_keys | default([])
-         | selectattr('id', 'defined') | list | length)
-        == (_opn_dns_account_api_keys | default([]) | length)
-      - >-
-        (_opn_dns_account_api_keys | default([])
-         | selectattr('id', 'defined')
-         | rejectattr('id', 'equalto', '') | list | length)
-        == (_opn_dns_account_api_keys | default([]) | length)
-    fail_msg: >-
-      OPNsense API-key search did not return delete identifiers for every key owned by
-      homelab-infra-dns; no key was rotated.
-  when:
-    - _opn_dns_user_create is not changed
-    - _opn_dns_rotate_requested | bool
   no_log: true
 
 - name: OPNsense DNS account | Probe the stored DNS key
@@ -403,6 +378,71 @@
       homelab-infra-dns. No key was changed. Review the account, then rerun once with
       -e opnsense_dns_rotate_key=true to rotate it.
   when: _opn_dns_user_create is not changed
+
+- name: OPNsense DNS account | Delete the owned user for explicit rotation
+  ansible.builtin.uri:
+    url: >-
+      {{ _opn_base }}/api/auth/user/del/{{ _opn_dns_account_user.uuid
+         | default(_opn_dns_account_user.id) }}
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _opn_dns_rotation_user_delete
+  changed_when: true
+  when:
+    - _opn_dns_rotate_requested | bool
+    - _opn_dns_user_create is not changed
+  no_log: true
+
+- name: OPNsense DNS account | Verify the owned user was deleted for rotation
+  ansible.builtin.assert:
+    that: _opn_dns_rotation_user_delete.json.result | default('') == 'deleted'
+    fail_msg: >-
+      OPNsense did not remove the owned DNS account for explicit rotation; no replacement
+      account or key was created.
+  when: _opn_dns_rotation_user_delete is changed
+  no_log: true
+
+- name: OPNsense DNS account | Recreate the owned user after explicit rotation
+  ansible.builtin.uri:
+    url: "{{ _opn_base }}/api/auth/user/add"
+    method: POST
+    url_username: "{{ _opn_dns_admin_credential.api_key }}"
+    url_password: "{{ _opn_dns_admin_credential.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _opn_validate | bool }}"
+    body_format: json
+    body:
+      user:
+        name: "{{ _opn_dns_account_name }}"
+        descr: "{{ _opn_dns_account_description }}"
+        scope: user
+        disabled: "0"
+        expires: ""
+        shell: ""
+        authorizedkeys: ""
+        priv: "{{ _opn_dns_account_privilege }}"
+        group_memberships: ""
+        scrambled_password: "1"
+    status_code: 200
+  register: _opn_dns_rotation_user_create
+  changed_when: true
+  when: _opn_dns_rotation_user_delete is changed
+  no_log: true
+
+- name: OPNsense DNS account | Verify the owned user was recreated for rotation
+  ansible.builtin.assert:
+    that: _opn_dns_rotation_user_create.json.result | default('') == 'saved'
+    fail_msg: >-
+      OPNsense did not recreate homelab-infra-dns after rotation; existing DNS records
+      remain, but the DNS API account needs repair before Deploy can continue.
+  when: _opn_dns_rotation_user_create is changed
+  no_log: true
 
 - name: OPNsense DNS account | Generate a key for a new or explicitly rotated account
   ansible.builtin.uri:
@@ -483,57 +523,45 @@
   when: _opn_dns_issued_key is changed
   no_log: true
 
-- name: OPNsense DNS account | Revoke prior keys after an explicit rotation
+- name: OPNsense DNS account | Search API keys after account creation or rotation
   ansible.builtin.uri:
-    url: >-
-      {{ _opn_base }}/api/auth/user/del_api_key/{{ item.id
-         | replace('+', '%2B') | replace('/', '%2F') | replace('=', '%3D') }}
-    method: POST
+    url: "{{ _opn_base }}/api/auth/user/search_api_key?current=1&rowCount=1000"
+    method: GET
     url_username: "{{ _opn_dns_admin_credential.api_key }}"
     url_password: "{{ _opn_dns_admin_credential.api_secret }}"
     force_basic_auth: true
     validate_certs: "{{ _opn_validate | bool }}"
-    body_format: json
-    body: {}
     status_code: 200
-  register: _opn_dns_prior_key_revocation
-  changed_when: true
-  failed_when: false
-  loop: "{{ _opn_dns_account_api_keys | default([]) }}"
-  loop_control:
-    label: prior DNS key
-  when:
-    - _opn_dns_issued_key is changed
-    - _opn_dns_rotate_requested | bool
-    - item.username | default('') == _opn_dns_account_name
-    - item.key | default('') | length > 0
-    - item.id | default('') | length > 0
+  register: _opn_dns_final_key_search
+  changed_when: false
+  when: _opn_dns_issued_key is changed
   no_log: true
 
-- name: OPNsense DNS account | Verify prior keys were revoked
+- name: OPNsense DNS account | Validate API-key search after creation or rotation
   ansible.builtin.assert:
     that:
+      - _opn_dns_final_key_search.json is defined
+      - _opn_dns_final_key_search.json is mapping
+      - _opn_dns_final_key_search.json.rows is defined
+      - _opn_dns_final_key_search.json.rows | type_debug == 'list'
+      - _opn_dns_final_key_search.json.rows | select('mapping') | list | length == _opn_dns_final_key_search.json.rows | length
       - >-
-        (_opn_dns_prior_key_revocation.results | default([])
-         | rejectattr('skipped', 'defined')
-         | selectattr('json', 'defined')
-         | selectattr('json.result', 'defined')
-         | selectattr('json.result', 'equalto', 'deleted') | list | length)
-        ==
-        (_opn_dns_prior_key_revocation.results | default([])
-         | rejectattr('skipped', 'defined') | list | length)
+        (_opn_dns_final_key_search.json.rows | default([])
+         | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', _opn_dns_account_name)
+         | list | length) == 1
+      - >-
+        (_opn_dns_final_key_search.json.rows | default([])
+         | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', _opn_dns_account_name)
+         | selectattr('key', 'defined')
+         | selectattr('key', 'equalto', _opn_dns_active_key)
+         | list | length) == 1
     fail_msg: >-
-      OPNsense did not revoke prior DNS API keys after explicit rotation
-      (HTTP statuses={{ _opn_dns_prior_key_revocation.results | default([])
-                        | map(attribute='status') | list }};
-      results={{ _opn_dns_prior_key_revocation.results | default([])
-                 | selectattr('json', 'defined')
-                 | selectattr('json.result', 'defined')
-                 | map(attribute='json.result') | list }}).
-  no_log: false
-  when:
-    - _opn_dns_issued_key is changed
-    - _opn_dns_rotate_requested | bool
+      OPNsense does not show exactly one API key for homelab-infra-dns matching the
+      newly stored credential after account creation or rotation.
+  when: _opn_dns_issued_key is changed
+  no_log: true
 
 - name: OPNsense DNS account | Verify the stored key is Unbound-only
   ansible.builtin.assert:
