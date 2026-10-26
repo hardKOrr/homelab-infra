@@ -438,16 +438,22 @@ destroy either native guest type when `destroy_guest: true` is paired with
 `firewall.base`. With the flag absent or false it is inert; ordinary app Deploy and Remove
 continue to manage only their `homelab-infra: <instance>` rules. When enabled, declared
 aliases are named `hli_<name>` and owned rules are described `homelab-infra: base <name>`.
+The runner must retain access to the firewall management API under the declared policy;
+when a private-deny rule covers its VLAN, include a narrow runner-to-firewall API pass
+ahead of that deny.
 Aliases removed from `firewall.base.aliases` remain in OPNsense; remove an unused `hli_<name>` alias manually after checking its references.
 A rule with multiple `ports` emits one filter rule per port, adding `port <number>` to its
 description to keep each rule identifiable. The first enabled run replaces only rules with
 the legacy `Green lab: ` description prefix; the temporary `Green lab: operator to Caddy`
-rules remain untouched. Before the first write, the playbook records the newest local
-config-backup ID with the `homelab-infra/firewall-admin` API key. After writes it applies
-the filter rules and verifies that owned rules read back as rendered. If a write, apply or
-readback fails while the management API answers, it restores that backup and applies the
-restored config before failing the run. If the API stops answering, the failure names the
-backup ID for console recovery.
+rules remain untouched. To keep rollback backups inside OPNsense's 100-entry history, the
+playbook uses two transactions, each capped at 80 model writes: reconcile and verify the
+owned aliases/rules, then remove and verify the replaced legacy rules. It records a fresh
+newest local config-backup ID immediately before each transaction with the
+`homelab-infra/firewall-admin` API key. If a write, apply or readback fails while the
+management API answers, it restores that transaction's backup and applies the restored
+config before failing the run. A failure in legacy cleanup therefore leaves the verified
+owned rules and the original legacy rules together. If the API stops answering, the failure
+names that transaction's backup ID for console recovery.
 
 #### Stack identity and estate isolation
 

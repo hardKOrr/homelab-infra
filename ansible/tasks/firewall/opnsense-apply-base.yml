@@ -1,17 +1,19 @@
 ---
-# Apply and verify a base ruleset using the pre-write OPNsense config backup.
-# The admin firewall credential is limited to backup listing/revert; rule and apply
-# operations use the regular homelab-infra/firewall credential.
+# Apply one bounded base-firewall transaction. The caller captures the newest backup
+# immediately before each phase. Owned aliases/rules are installed first; legacy rules
+# are removed only after those rules have applied and read back correctly.
 
-- name: Firewall base | Require a pre-write config backup ID
+- name: Firewall base | Require a pre-write config backup ID for this transaction
   ansible.builtin.assert:
     that:
-      - _fw_base_prewrite_backup_id is defined
-      - _fw_base_prewrite_backup_id is match('^config-[0-9._-]+[.]xml$')
+      - _fw_base_apply_phase in ['rules', 'legacy']
+      - _fw_base_apply_backup_id is defined
+      - _fw_base_apply_backup_id is match('^config-[0-9._-]+[.]xml$')
     fail_msg: >-
-      The base firewall change has no valid pre-write config backup ID; no writes were attempted.
+      The base firewall transaction has no valid pre-write config backup ID; no writes
+      were attempted.
 
-- name: Firewall base | Write, apply and verify the reconciled ruleset
+- name: Firewall base | Write, apply and verify {{ _fw_base_apply_phase }} transaction
   block:
     - name: Firewall base | Add missing aliases
       ansible.builtin.uri:
@@ -31,6 +33,7 @@
       changed_when: true
       failed_when: _fw_base_alias_add.json.result | default('') != 'saved'
       no_log: true
+      when: _fw_base_apply_phase == 'rules'
 
     - name: Firewall base | Update drifted aliases
       ansible.builtin.uri:
@@ -50,6 +53,7 @@
       changed_when: true
       failed_when: _fw_base_alias_set.json.result | default('') != 'saved'
       no_log: true
+      when: _fw_base_apply_phase == 'rules'
 
     - name: Firewall base | Reconcile owned filter rules
       ansible.builtin.include_tasks: opnsense-reconcile.yml
@@ -58,6 +62,7 @@
         fw_desc_field: description
         fw_desired: "{{ _fw_base_filter_desired }}"
         fw_plan_only: false
+      when: _fw_base_apply_phase == 'rules'
 
     - name: Firewall base | Delete replaced Green lab rules
       ansible.builtin.uri:
@@ -77,6 +82,7 @@
       changed_when: true
       failed_when: _fw_base_legacy_delete.json.result | default('') not in ['deleted', 'saved']
       no_log: true
+      when: _fw_base_apply_phase == 'legacy'
 
     - name: Firewall base | Reload changed aliases
       ansible.builtin.uri:
@@ -93,7 +99,9 @@
       changed_when: false
       failed_when: _fw_base_alias_reload.json.status | default('') | trim | lower != 'ok'
       no_log: true
-      when: (_fw_base_alias_plan.add | length > 0) or (_fw_base_alias_plan.set | length > 0)
+      when:
+        - _fw_base_apply_phase == 'rules'
+        - (_fw_base_alias_plan.add | length > 0) or (_fw_base_alias_plan.set | length > 0)
 
     - name: Firewall base | Apply the OPNsense ruleset
       ansible.builtin.uri:
@@ -111,6 +119,34 @@
       failed_when: _fw_base_apply.json.status | default('') | trim | lower != 'ok'
       no_log: true
 
+    - name: Firewall base | Verify the management API answers after apply
+      ansible.builtin.uri:
+        url: "{{ fw_base }}/api/firewall/filter/searchRule"
+        method: POST
+        url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+        url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ fw_validate | bool }}"
+        body_format: json
+        body: {current: 1, rowCount: 1, searchPhrase: "homelab-infra: base"}
+        timeout: "{{ fw_base_api_timeout | default(30) | int }}"
+        status_code: 200
+      register: _fw_base_api_after_apply
+      changed_when: false
+      failed_when: false
+      until: _fw_base_api_after_apply.status | default(0) | int == 200
+      retries: "{{ fw_base_verify_retries | default(12) | int }}"
+      delay: "{{ fw_base_verify_delay | default(4) | int }}"
+      no_log: true
+
+    - name: Firewall base | Require the management API after apply
+      ansible.builtin.assert:
+        that:
+          - _fw_base_api_after_apply.status | default(0) | int == 200
+          - _fw_base_api_after_apply.json is defined
+          - _fw_base_api_after_apply.json is mapping
+        fail_msg: OPNsense management API did not answer after applying the base firewall rules.
+
     - name: Firewall base | Verify owned filter rules read back as rendered
       ansible.builtin.include_tasks: opnsense-reconcile.yml
       vars:
@@ -125,6 +161,48 @@
           - not (_fw_model_changed | bool)
         fail_msg: >-
           OPNsense did not read back the base filter rules as rendered.
+
+    - name: Firewall base | Read back legacy rules after cleanup
+      ansible.builtin.uri:
+        url: "{{ fw_base }}/api/firewall/filter/searchRule"
+        method: POST
+        url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+        url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ fw_validate | bool }}"
+        body_format: json
+        body: {current: 1, rowCount: 1000, searchPhrase: "Green lab: "}
+        status_code: [200, 401, 403]
+      register: _fw_base_legacy_after
+      changed_when: false
+      no_log: true
+      when: _fw_base_apply_phase == 'legacy'
+
+    - name: Firewall base | Validate legacy-rule readback
+      ansible.builtin.assert:
+        that:
+          - _fw_base_legacy_after.status | default(0) | int == 200
+          - _fw_base_legacy_after.json is defined
+          - _fw_base_legacy_after.json is mapping
+          - _fw_base_legacy_after.json.rows is defined
+          - _fw_base_legacy_after.json.rows | type_debug == 'list'
+          - _fw_base_legacy_after.json.total | default(0) | int <= _fw_base_legacy_after.json.rows | length
+        fail_msg: OPNsense did not return a complete legacy-rule readback after cleanup.
+      when: _fw_base_apply_phase == 'legacy'
+
+    - name: Firewall base | Refuse to leave other Green lab rules
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_fw_base_legacy_after.json.rows
+             | selectattr('description', 'defined')
+             | selectattr('description', 'match', '^Green lab: ')
+             | rejectattr('description', 'match', '^Green lab: operator to Caddy(?: port [0-9]+)?$')
+             | list | length) == 0
+        fail_msg: >-
+          Legacy cleanup left a Green lab rule outside the temporary operator-to-Caddy
+          path.
+      when: _fw_base_apply_phase == 'legacy'
 
   rescue:
     - name: Firewall base | Check whether the management API still answers
@@ -153,15 +231,16 @@
     - name: Firewall base | Require console recovery when the API stopped answering
       ansible.builtin.fail:
         msg: >-
-          Base firewall write/apply/readback failed and the OPNsense management API stopped
-          answering. Restore pre-write config backup {{ _fw_base_prewrite_backup_id }}
-          from the local console, then apply the restored firewall configuration.
+          Base firewall {{ _fw_base_apply_phase }} write/apply/readback failed and the
+          OPNsense management API stopped answering. Restore pre-write config backup
+          {{ _fw_base_apply_backup_id }} from the local console, then apply the restored
+          firewall configuration.
       when: _fw_base_api_recovery_check.status | default(0) | int <= 0
 
     - name: Firewall base | Revert the pre-write config backup
       ansible.builtin.uri:
         url: >-
-          {{ fw_base }}/api/core/backup/revertBackup/{{ _fw_base_prewrite_backup_id }}
+          {{ fw_base }}/api/core/backup/revertBackup/{{ _fw_base_apply_backup_id }}
         method: POST
         url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
         url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
@@ -183,8 +262,8 @@
           - _fw_base_backup_revert.json.status | default('') | trim | lower == 'reverted'
         fail_msg: >-
           OPNsense could not confirm restoring pre-write config backup
-          {{ _fw_base_prewrite_backup_id }}. Restore that backup manually and apply
-          the restored firewall configuration.
+          {{ _fw_base_apply_backup_id }}. Restore that backup manually and apply the
+          restored firewall configuration.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0
 
     - name: Firewall base | Apply the restored OPNsense configuration
@@ -210,8 +289,8 @@
           - _fw_base_restore_apply.status | default(0) | int == 200
           - _fw_base_restore_apply.json.status | default('') | trim | lower == 'ok'
         fail_msg: >-
-          Config backup {{ _fw_base_prewrite_backup_id }} was restored, but the
-          firewall did not confirm the apply. Apply the restored configuration manually.
+          Config backup {{ _fw_base_apply_backup_id }} was restored, but the firewall
+          did not confirm the apply. Apply the restored configuration manually.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0
 
     - name: Firewall base | Verify the management API after restoring the backup
@@ -242,14 +321,14 @@
           - _fw_base_restore_api_verify.json is defined
           - _fw_base_restore_api_verify.json is mapping
         fail_msg: >-
-          Config backup {{ _fw_base_prewrite_backup_id }} was restored and applied,
-          but the management API did not answer afterward.
+          Config backup {{ _fw_base_apply_backup_id }} was restored and applied, but the
+          management API did not answer afterward.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0
 
     - name: Firewall base | Fail after restoring the pre-write configuration
       ansible.builtin.fail:
         msg: >-
-          Base firewall write/apply/readback failed while the management API answered.
-          Config backup {{ _fw_base_prewrite_backup_id }} was restored and applied;
-          fix the reported base rule issue before retrying.
+          Base firewall {{ _fw_base_apply_phase }} write/apply/readback failed while the
+          management API answered. Config backup {{ _fw_base_apply_backup_id }} was
+          restored and applied; fix the reported base rule issue before retrying.
       when: _fw_base_api_recovery_check.status | default(0) | int > 0

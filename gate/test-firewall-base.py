@@ -52,7 +52,14 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
             return self.reply(401, {})
         if self.path != "/api/core/backup/backups/this":
             return self.reply(404, {})
-        return self.reply(200, {"items": [{"id": self.server.backup_id}]})
+        self.server.backup_reads.append({
+            "id": self.server.backup_id,
+            "ids": [backup["id"] for backup in self.server.backup_history],
+            "rules": copy.deepcopy(self.server.rules),
+            "aliases": copy.deepcopy(self.server.aliases),
+        })
+        return self.reply(200, {"items": [{"id": backup["id"]}
+                                             for backup in self.server.backup_history]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -68,10 +75,12 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
             return self.reply(401, {})
 
         if model == "backup":
-            if action != "revertBackup" or role != "admin" or parts[4] != self.server.backup_id:
+            backup = next((backup for backup in self.server.backup_history
+                           if backup["id"] == parts[4]), None)
+            if action != "revertBackup" or role != "admin" or backup is None:
                 return self.reply(404, {})
-            self.server.rules = copy.deepcopy(self.server.backup_rules)
-            self.server.aliases = copy.deepcopy(self.server.backup_aliases)
+            self.server.rules = copy.deepcopy(backup["rules"])
+            self.server.aliases = copy.deepcopy(backup["aliases"])
             self.server.reverted = True
             return self.reply(200, {"status": "reverted"})
 
@@ -84,9 +93,11 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 return self.reply(200, {"rows": rows, "total": len(rows)})
             if action == "addItem":
                 aliases[str(uuid.uuid4())] = flatten(body["alias"])
+                self.server.record_backup()
                 return self.reply(200, {"result": "saved"})
             if action == "setItem":
                 aliases[parts[4]] = flatten(body["alias"])
+                self.server.record_backup()
                 return self.reply(200, {"result": "saved"})
             if action == "reconfigure":
                 return self.reply(200, {"status": "ok"})
@@ -96,7 +107,7 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
             return self.reply(404, {})
 
         if action == "searchRule":
-            if self.server.verify_failed and self.server.applied \
+            if self.server.verify_failed_phase == "rules" and self.server.applied \
                     and body.get("searchPhrase") == "homelab-infra: base ":
                 return self.reply(503, {"error": "unavailable"})
             if self.server.api_down_after_failure and self.server.applied \
@@ -106,16 +117,25 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
             phrase = body.get("searchPhrase", "")
             rows = [dict(uuid=key, **value) for key, value in self.server.rules.items()
                     if phrase in str(value.get("description", ""))]
+            if (self.server.legacy_verify_failed and self.server.legacy_delete_started
+                    and self.server.applied and phrase == "Green lab: "):
+                rows.append({"uuid": "legacy-readback-failure",
+                             "description": "Green lab: injected readback mismatch"})
             rows.append({"description": "automatic rule", "is_automatic": True})
             return self.reply(200, {"rows": rows, "total": len(rows)})
         if action == "addRule":
             self.server.rules[str(uuid.uuid4())] = flatten(body["rule"])
+            self.server.record_backup()
             return self.reply(200, {"result": "saved"})
         if action == "setRule":
             self.server.rules[parts[4]] = flatten(body["rule"])
+            self.server.record_backup()
             return self.reply(200, {"result": "saved"})
         if action == "delRule":
-            self.server.rules.pop(parts[4], None)
+            removed = self.server.rules.pop(parts[4], None)
+            if removed and str(removed.get("description", "")).startswith("Green lab: "):
+                self.server.legacy_delete_started = True
+            self.server.record_backup()
             return self.reply(200, {"result": "deleted"})
         if action == "apply":
             self.server.applied = True
@@ -156,23 +176,53 @@ def play_config(server, base, enabled=True, *, retries=12, delay=4):
     }
 
 
-def configure_server(server, rules, aliases, *, verify_failed=False, api_down_after_failure=False):
+def configure_server(server, rules, aliases, *, verify_failed_phase="", legacy_verify_failed=False,
+                     api_down_after_failure=False):
     server.regular_auth = "Basic " + base64.b64encode(
         b"fixture-key:fixture-secret").decode()
     server.admin_auth = "Basic " + base64.b64encode(
         b"fixture-admin-key:fixture-admin-secret").decode()
     server.rules = copy.deepcopy(rules)
     server.aliases = copy.deepcopy(aliases)
-    server.backup_id = "config-2026-10-26_00.00.00.xml"
-    server.backup_rules = copy.deepcopy(rules)
-    server.backup_aliases = copy.deepcopy(aliases)
+    server.backup_counter = 0
+    server.backup_history = [{
+        "id": "config-2026-10-26_00.00.00.xml",
+        "rules": copy.deepcopy(rules),
+        "aliases": copy.deepcopy(aliases),
+    }]
+    server.backup_id = server.backup_history[0]["id"]
+    def record_backup():
+        server.backup_counter += 1
+        backup_id = f"config-2026-10-26_00.00.00-{server.backup_counter:04}.xml"
+        server.backup_history.insert(0, {
+            "id": backup_id,
+            "rules": copy.deepcopy(server.rules),
+            "aliases": copy.deepcopy(server.aliases),
+        })
+        server.backup_history = server.backup_history[:100]
+        server.backup_id = server.backup_history[0]["id"]
+
+    server.record_backup = record_backup
     server.calls = []
     server.request_log = []
     server.auth_log = []
-    server.verify_failed = verify_failed
+    server.backup_reads = []
+    server.verify_failed_phase = verify_failed_phase
+    server.legacy_verify_failed = legacy_verify_failed
+    server.legacy_delete_started = False
     server.api_down_after_failure = api_down_after_failure
     server.applied = False
     server.reverted = False
+
+
+def model_write_requests(request_log):
+    writes = {"/api/firewall/alias/addItem", "/api/firewall/filter/addRule"}
+    write_prefixes = ("/api/firewall/alias/setItem/",
+                      "/api/firewall/filter/setRule/",
+                      "/api/firewall/filter/delRule/")
+    return [request for request in request_log
+            if request[0] == "POST" and
+            (request[1] in writes or request[1].startswith(write_prefixes))]
 
 
 def run_base(server, root, base, enabled=True, *, retries=12, delay=4, expect_failure=False):
@@ -257,15 +307,20 @@ def main():
           "ICMP rules cannot mix IPv4 and IPv6 aliases"
           in mixed_icmp_result.stdout + mixed_icmp_result.stderr, True)
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
-    configure_server(server, {
-        "legacy-runner": {"description": "Green lab: runner to Proxmox"},
-        "legacy-vlan": {"description": "Green lab: VLAN 20 packages"},
+    initial_rules = {
+        f"legacy-{index}": {"description": f"Green lab: migrated rule {index}"}
+        for index in range(70)
+    }
+    initial_rules.update({
         "caddy-80": {"description": "Green lab: operator to Caddy port 80"},
         "caddy-443": {"description": "Green lab: operator to Caddy port 443"},
+        "caddy-unrecognized": {
+            "description": "Green lab: operator to Caddy unexpected legacy rule"},
         "manual": {"description": "operator hand test rule", "interface": "lan"},
         "app-rule": {"description": "homelab-infra: slskd egress peers", "interface": "opt4"},
-    }, {
+    })
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
+    configure_server(server, initial_rules, {
         "foreign": {"name": "hli_operator", "enabled": "1", "type": "host",
                     "content": "192.0.2.250", "description": "operator-owned"},
     })
@@ -279,6 +334,14 @@ def main():
         check("first run reloads aliases", calls.count("alias/reconfigure"), 1)
         check("first run creates five rendered filter rules",
               calls.count("filter/addRule"), 5)
+        check("first run captures separate owned-rule and legacy-cleanup backups",
+              calls.count("core/backup/backups"), 2)
+        check("the second phase starts from a new config backup",
+              len(server.backup_reads) == 2
+              and server.backup_reads[0]["id"] != server.backup_reads[1]["id"], True)
+        check("the first rollback ID stays in history through owned-rule writes",
+              len(server.backup_reads) == 2
+              and server.backup_reads[0]["id"] in server.backup_reads[1]["ids"], True)
         check("legacy Green lab rules are removed except the Caddy drill path",
               {key for key, rule in server.rules.items()
                if rule.get("description", "").startswith("Green lab: ")},
@@ -309,12 +372,23 @@ def main():
                              and i > apply_index), -1)
         check("apply is followed by an owned-rule readback", apply_index >= 0 and
               verify_index > apply_index, True)
-        check("admin credential is used only for the backup list",
+        check("admin credential is used only for backup-list calls",
               [(path, role) for path, role in server.auth_log if role == "admin"],
-              [("/api/core/backup/backups/this", "admin")])
+              [("/api/core/backup/backups/this", "admin"),
+               ("/api/core/backup/backups/this", "admin")])
         check("regular firewall credential is used for rule/apply APIs",
               all(role == "regular" for path, role in server.auth_log
                   if not path.startswith("/api/core/backup/")), True)
+        backup_positions = [i for i, request in enumerate(server.request_log)
+                            if request[0] == "GET"
+                            and request[1] == "/api/core/backup/backups/this"]
+        write_positions = [i for i, request in enumerate(server.request_log)
+                           if request in model_write_requests([request])]
+        phase_writes = [sum(start < i < end for i in write_positions)
+                        for start, end in zip(backup_positions,
+                                              backup_positions[1:] + [len(server.request_log)])]
+        check("each migration phase stays below the 80-write backup-retention guard",
+              phase_writes, [10, 71])
 
         aliases = {value["name"]: value for value in server.aliases.values()}
         check("documented host alias renders its address",
@@ -373,6 +447,18 @@ def main():
         check("OPNsense alias ordering and IPv6 case differences do not cause drift",
               "alias/setItem" in repeat_calls, False)
 
+        overflow_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
+        configure_server(overflow_server, {
+            f"legacy-{index}": {"description": f"Green lab: migrated rule {index}"}
+            for index in range(81)
+        }, {})
+        threading.Thread(target=overflow_server.serve_forever, daemon=True).start()
+        _, overflow_calls = run_base(overflow_server, root, base, expect_failure=True)
+        check("over-80 legacy writes are refused before backup or model writes",
+              ("core/backup/backups" in overflow_calls,
+               len(model_write_requests(overflow_server.request_log))), (False, 0))
+        overflow_server.shutdown()
+
         disabled = copy.deepcopy(base)
         disabled["enabled"] = False
         _, disabled_calls = run_base(server, root, disabled, enabled=False)
@@ -381,7 +467,7 @@ def main():
         failure_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
         configure_server(failure_server,
                          {"legacy": {"description": "Green lab: legacy"}}, {},
-                         verify_failed=True)
+                         verify_failed_phase="rules")
         threading.Thread(target=failure_server.serve_forever, daemon=True).start()
         failed_result, failed_calls = run_base(failure_server, root, base, retries=1, delay=0,
                                                expect_failure=True)
@@ -392,26 +478,61 @@ def main():
         check("admin credential is used only for backup list and revert",
               [(path, role) for path, role in failure_server.auth_log if role == "admin"],
               [("/api/core/backup/backups/this", "admin"),
-               (f"/api/core/backup/revertBackup/{failure_server.backup_id}", "admin")])
+               (f"/api/core/backup/revertBackup/{failure_server.backup_reads[0]['id']}",
+                "admin")])
         check("failed readback restores the full pre-write state",
               (failure_server.rules, failure_server.aliases),
-              (failure_server.backup_rules, failure_server.backup_aliases))
+              (failure_server.backup_reads[0]["rules"],
+               failure_server.backup_reads[0]["aliases"]))
         check("failed readback reports that its backup was restored",
               ("was restored and applied" in failed_result.stdout + failed_result.stderr)
               and failure_server.reverted, True)
         failure_server.shutdown()
 
+        legacy_failure_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
+        legacy_rules = {
+            f"legacy-{index}": {"description": f"Green lab: migrated rule {index}"}
+            for index in range(70)
+        }
+        legacy_rules.update({
+            "caddy": {"description": "Green lab: operator to Caddy port 443"},
+            "manual": {"description": "operator hand test rule", "interface": "lan"},
+        })
+        configure_server(legacy_failure_server, legacy_rules, {}, legacy_verify_failed=True)
+        threading.Thread(target=legacy_failure_server.serve_forever, daemon=True).start()
+        failed_result, legacy_failure_calls = run_base(
+            legacy_failure_server, root, base, retries=1, delay=0, expect_failure=True)
+        check("legacy cleanup rollback uses its own pre-delete backup",
+              [(path, role) for path, role in legacy_failure_server.auth_log
+               if role == "admin" and "revertBackup" in path],
+              [(f"/api/core/backup/revertBackup/"
+                f"{legacy_failure_server.backup_reads[1]['id']}", "admin")])
+        check("legacy cleanup rollback restores verified owned rules and original legacy rules",
+              (legacy_failure_server.rules, legacy_failure_server.aliases),
+              (legacy_failure_server.backup_reads[1]["rules"],
+               legacy_failure_server.backup_reads[1]["aliases"]))
+        check("legacy cleanup failure applies the restored snapshot and reports its ID",
+              (legacy_failure_calls.count("filter/apply"),
+               legacy_failure_server.reverted,
+               legacy_failure_server.backup_reads[1]["id"]
+               in failed_result.stdout + failed_result.stderr), (3, True, True))
+        check("both phase backup IDs survive the bounded migration history",
+              all(backup["id"] in [item["id"] for item in legacy_failure_server.backup_history]
+                  for backup in legacy_failure_server.backup_reads), True)
+        legacy_failure_server.shutdown()
+
         unreachable_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOPNsense)
         configure_server(unreachable_server,
                          {"legacy": {"description": "Green lab: legacy"}}, {},
-                         verify_failed=True, api_down_after_failure=True)
+                         api_down_after_failure=True)
         threading.Thread(target=unreachable_server.serve_forever, daemon=True).start()
         failed_result, unreachable_calls = run_base(
             unreachable_server, root, base, retries=1, delay=0, expect_failure=True)
         check("unreachable management API does not call revert",
               "backup/revertBackup" in unreachable_calls, False)
         check("unreachable management API failure names the backup ID",
-              unreachable_server.backup_id in failed_result.stdout + failed_result.stderr, True)
+              unreachable_server.backup_reads[0]["id"]
+              in failed_result.stdout + failed_result.stderr, True)
         unreachable_server.shutdown()
 
     server.shutdown()

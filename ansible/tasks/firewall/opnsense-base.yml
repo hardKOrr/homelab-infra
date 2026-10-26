@@ -2,7 +2,9 @@
 # Reconcile the explicitly enabled OPNsense base firewall contract. This is separate
 # from app wiring: only descriptions beginning "homelab-infra: base " and legacy
 # "Green lab: " filter rules are considered, with the temporary operator-to-Caddy rules
-# excluded from the legacy migration.
+# excluded from the legacy migration. Install and verify owned rules first, then remove
+# legacy rules in a second backup transaction so neither rollback ID ages out of OPNsense's
+# 100-entry backup history.
 #
 # Inputs come from config/infrastructure.yml and the homelab-infra/firewall vault item.
 # The caller gates this task on firewall.base.enabled so an unset/false flag is inert.
@@ -190,6 +192,8 @@
 - name: Firewall base | Remember the filter rule plan
   ansible.builtin.set_fact:
     _fw_base_filter_changed: "{{ _fw_model_changed | bool }}"
+    _fw_base_filter_write_count: >-
+      {{ (_fw_plan.add | length) + (_fw_plan.set | length) + (_fw_plan.del | length) }}
   changed_when: false
 
 - name: Firewall base | Search legacy Green lab rules
@@ -231,13 +235,34 @@
          | list }}
   changed_when: false
 
-- name: Firewall base | Determine whether an OPNsense write is needed
+- name: Firewall base | Determine the bounded OPNsense transactions
   ansible.builtin.set_fact:
-    _fw_base_changed: >-
+    _fw_base_rules_changed: >-
       {{ (_fw_base_alias_plan.add | length > 0)
          or (_fw_base_alias_plan.set | length > 0)
-         or (_fw_base_filter_changed | bool)
-         or (_fw_base_legacy_to_delete | length > 0) }}
+         or (_fw_base_filter_changed | bool) }}
+    _fw_base_legacy_changed: "{{ _fw_base_legacy_to_delete | length > 0 }}"
+    _fw_base_rules_write_count: >-
+      {{ (_fw_base_alias_plan.add | length) + (_fw_base_alias_plan.set | length)
+         + (_fw_base_filter_write_count | int) }}
+    _fw_base_legacy_write_count: "{{ _fw_base_legacy_to_delete | length }}"
+  changed_when: false
+
+- name: Firewall base | Keep each transaction within backup retention
+  ansible.builtin.assert:
+    that:
+      - not (_fw_base_rules_changed | bool) or _fw_base_rules_write_count | int <= 80
+      - not (_fw_base_legacy_changed | bool) or _fw_base_legacy_write_count | int <= 80
+    fail_msg: >-
+      Refusing a base firewall transaction with more than 80 model writes. Split the
+      change so its pre-write backup remains available through the OPNsense 100-backup
+      retention window.
+  when: (_fw_base_rules_changed | bool) or (_fw_base_legacy_changed | bool)
+
+- name: Firewall base | Determine whether either OPNsense transaction is needed
+  ansible.builtin.set_fact:
+    _fw_base_changed: >-
+      {{ (_fw_base_rules_changed | bool) or (_fw_base_legacy_changed | bool) }}
   changed_when: false
 
 - name: Firewall base | Require the OPNsense backup API credential
@@ -247,7 +272,7 @@
     vault_required_fields: [api_key, api_secret]
   when: _fw_base_changed | bool
 
-- name: Firewall base | Record the newest config backup before writes
+- name: Firewall base | Record the newest config backup before owned-rule writes
   ansible.builtin.uri:
     url: "{{ fw_base }}/api/core/backup/backups/this"
     method: GET
@@ -256,32 +281,77 @@
     force_basic_auth: true
     validate_certs: "{{ fw_validate | bool }}"
     status_code: 200
-  register: _fw_base_backup_list
+  register: _fw_base_rules_backup_list
   changed_when: false
   no_log: true
-  when: _fw_base_changed | bool
+  when: _fw_base_rules_changed | bool
 
-- name: Firewall base | Validate a newest local config backup is available
+- name: Firewall base | Validate a newest local config backup is available for owned rules
   ansible.builtin.assert:
     that:
-      - _fw_base_backup_list.status | default(0) | int == 200
-      - _fw_base_backup_list.json is defined
-      - _fw_base_backup_list.json['items'] is defined
-      - _fw_base_backup_list.json['items'] | type_debug == 'list'
-      - _fw_base_backup_list.json['items'] | length > 0
-      - _fw_base_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
+      - _fw_base_rules_backup_list.status | default(0) | int == 200
+      - _fw_base_rules_backup_list.json is defined
+      - _fw_base_rules_backup_list.json['items'] is defined
+      - _fw_base_rules_backup_list.json['items'] | type_debug == 'list'
+      - _fw_base_rules_backup_list.json['items'] | length > 0
+      - _fw_base_rules_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
     fail_msg: >-
       OPNsense did not return a newest local config backup ID. No base firewall
       writes were attempted.
-  when: _fw_base_changed | bool
+  when: _fw_base_rules_changed | bool
 
-- name: Firewall base | Remember the pre-write config backup ID
+- name: Firewall base | Remember the pre-write config backup ID for owned rules
   ansible.builtin.set_fact:
-    _fw_base_prewrite_backup_id: "{{ _fw_base_backup_list.json['items'][0].id }}"
+    _fw_base_rules_backup_id: "{{ _fw_base_rules_backup_list.json['items'][0].id }}"
   changed_when: false
   no_log: true
-  when: _fw_base_changed | bool
+  when: _fw_base_rules_changed | bool
 
-- name: Firewall base | Reconcile and apply the ruleset with backup rollback
+- name: Firewall base | Reconcile owned aliases and rules with backup rollback
   ansible.builtin.include_tasks: opnsense-apply-base.yml
-  when: _fw_base_changed | bool
+  vars:
+    _fw_base_apply_phase: rules
+    _fw_base_apply_backup_id: "{{ _fw_base_rules_backup_id }}"
+  when: _fw_base_rules_changed | bool
+
+- name: Firewall base | Record the newest config backup before legacy cleanup
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/core/backup/backups/this"
+    method: GET
+    url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+    url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    status_code: 200
+  register: _fw_base_legacy_backup_list
+  changed_when: false
+  no_log: true
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Validate a newest local config backup is available for legacy cleanup
+  ansible.builtin.assert:
+    that:
+      - _fw_base_legacy_backup_list.status | default(0) | int == 200
+      - _fw_base_legacy_backup_list.json is defined
+      - _fw_base_legacy_backup_list.json['items'] is defined
+      - _fw_base_legacy_backup_list.json['items'] | type_debug == 'list'
+      - _fw_base_legacy_backup_list.json['items'] | length > 0
+      - _fw_base_legacy_backup_list.json['items'][0].id | default('') is match('^config-[0-9._-]+[.]xml$')
+    fail_msg: >-
+      OPNsense did not return a newest local config backup ID. Legacy rules were not
+      deleted.
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Remember the pre-write config backup ID for legacy cleanup
+  ansible.builtin.set_fact:
+    _fw_base_legacy_backup_id: "{{ _fw_base_legacy_backup_list.json['items'][0].id }}"
+  changed_when: false
+  no_log: true
+  when: _fw_base_legacy_changed | bool
+
+- name: Firewall base | Delete legacy rules after owned rules verify
+  ansible.builtin.include_tasks: opnsense-apply-base.yml
+  vars:
+    _fw_base_apply_phase: legacy
+    _fw_base_apply_backup_id: "{{ _fw_base_legacy_backup_id }}"
+  when: _fw_base_legacy_changed | bool
