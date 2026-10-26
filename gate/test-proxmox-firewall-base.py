@@ -2,11 +2,15 @@
 """Render and compare the documented Proxmox host-firewall baseline."""
 
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import yaml
 
@@ -72,6 +76,72 @@ def disabled_playbook_noop():
         )
         check("disabled baseline playbook exits successfully", result.returncode, 0)
         check("disabled baseline reports no changed tasks", "changed=0" in result.stdout, True)
+
+
+def delete_rule_retries_digest_races():
+    task = yaml.safe_load(
+        (ROOT / "ansible/tasks/proxmox/delete-host-firewall-rule.yml").read_text())[0]
+    script = task["ansible.builtin.command"]["argv"][2]
+    expected = {
+        "type": "in", "action": "ACCEPT", "proto": "tcp", "dport": "111,2049",
+        "source": "203.0.113.22/32", "enable": 1, "comment": "",
+        "pos": 7,
+    }
+    reads = 0
+    deletes = []
+
+    def fake_run(argv, **kwargs):
+        nonlocal reads
+        if argv[1] == "get":
+            reads += 1
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps([{**expected, "digest": "old" if reads == 1 else "new"}]),
+                stderr="",
+            )
+        deletes.append(argv)
+        if len(deletes) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr="digest mismatch")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    output = io.StringIO()
+    namespace = {}
+    with patch("sys.stdin", io.StringIO(json.dumps({
+            "path": "/nodes/pve-1/firewall/rules", "rule": expected}))), \
+            patch("subprocess.run", side_effect=fake_run), patch("time.sleep"), \
+            contextlib.redirect_stdout(output):
+        try:
+            exec(script, namespace)
+        except SystemExit as exc:
+            check("digest-race delete exits successfully", exc.code, 0)
+
+    check("digest-race deletion refreshes the rule digest", [call[-1] for call in deletes],
+          ["old", "new"])
+    check("digest-race deletion reports the removed rule",
+          json.loads(output.getvalue()), {"deleted": True})
+
+    foreign_reads = []
+
+    def foreign_rule(argv, **kwargs):
+        foreign_reads.append(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([{**expected, "comment": "operator-owned"}]),
+            stderr="",
+        )
+
+    foreign_output = io.StringIO()
+    with patch("sys.stdin", io.StringIO(json.dumps({
+            "path": "/nodes/pve-1/firewall/rules", "rule": expected}))), \
+            patch("subprocess.run", side_effect=foreign_rule), \
+            contextlib.redirect_stdout(foreign_output):
+        try:
+            exec(script, {})
+        except SystemExit as exc:
+            check("changed rule signature is left in place", exc.code, 0)
+    check("foreign rule is not deleted", len(foreign_reads), 1)
+    check("foreign rule is reported absent from the owned signature",
+          json.loads(foreign_output.getvalue()), {"deleted": False})
 
 
 def main():
@@ -177,6 +247,7 @@ def main():
     invalid_enabled = copy.deepcopy(no_op)
     invalid_enabled["proxmox"]["firewall"]["enabled"] = "false"
     run_plan(invalid_enabled, expect_success=False)
+    delete_rule_retries_digest_races()
 
     legacy = copy.deepcopy(empty)
     legacy["node_rules"] = {
