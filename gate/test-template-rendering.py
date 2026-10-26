@@ -436,14 +436,14 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
                 "address": {"source": "static", "address": "203.0.113.10"},
             },
             "domains": {
-                "alpha": {
-                    "default": True,
-                    "domain": "alpha.example.test",
-                    "public_dns": {"enabled": True},
-                },
                 "beta": {
                     "domain": "beta.example.test",
                     "public_dns": {"enabled": False},
+                },
+                "alpha": {
+                    "default": "true",
+                    "domain": "alpha.example.test",
+                    "public_dns": {"enabled": True},
                 },
             },
         }

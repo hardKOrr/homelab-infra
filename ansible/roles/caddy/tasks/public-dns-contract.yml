@@ -18,7 +18,7 @@
       {%- set domains = homelabinfra_config.infrastructure.domains | default({}) -%}
       {%- set default_names = domains | dict2items
             | selectattr('value.default', 'defined')
-            | selectattr('value.default', 'equalto', true)
+            | selectattr('value.default')
             | map(attribute='key') | list -%}
       {%- set default_name = (default_names | first)
             | default(domains.keys() | list | first | default(''), true) -%}
