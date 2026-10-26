@@ -31,6 +31,24 @@ class FakeCloudflare:
         self.records = {}
         self.calls = []
         self.patches = []
+        self.delayed_records = {}
+        self.record_reads = {}
+
+    def delay_record(
+        self, record_type, owner, value, *, reads_before_visible=2, record_id
+    ):
+        key = (record_type, owner)
+        self.delayed_records[key] = (
+            {
+                "id": record_id,
+                "type": record_type,
+                "name": owner,
+                "content": value,
+                "comment": None,
+            },
+            reads_before_visible,
+        )
+        self.record_reads[key] = 0
 
     def request(self, url, method, headers, payload):
         self.calls.append((url, method))
@@ -56,7 +74,15 @@ class FakeCloudflare:
             query = parse_qs(parsed.query)
             record_type = query["type"][0]
             owner = query["name"][0]
-            records = self.records.get((record_type, owner), [])
+            key = (record_type, owner)
+            delayed = self.delayed_records.get(key)
+            if delayed:
+                record, reads_before_visible = delayed
+                self.record_reads[key] += 1
+                if self.record_reads[key] >= reads_before_visible:
+                    self.records[key] = [record]
+                    del self.delayed_records[key]
+            records = self.records.get(key, [])
             return 200, json.dumps({
                 "success": True,
                 "result": records,
@@ -339,6 +365,62 @@ def test_cloudflare_marks_only_preflight_absences():
     assert equal_server.patches == []
 
 
+def test_cloudflare_mark_waits_for_async_records_and_times_out_safely():
+    server = FakeCloudflare()
+    preflight_result = run_preflight(static_config(), server=server)
+    candidates = preflight_result["records_to_mark"]
+    for index, candidate in enumerate(candidates):
+        server.delay_record(
+            candidate["type"],
+            candidate["name"],
+            ADDRESS,
+            reads_before_visible=2,
+            record_id=f"delayed-{index}",
+        )
+
+    sleeps = []
+    marked = public_dns.mark_created_records(
+        static_config(),
+        [estate()],
+        candidates,
+        requester=server.request,
+        api_base=API_BASE,
+        attempts=3,
+        retry_delay=5,
+        sleep_fn=sleeps.append,
+    )
+    assert marked == 2
+    assert sleeps == [5]
+    assert len(server.patches) == 2
+    assert all(
+        record["comment"] == public_dns.OWNERSHIP_COMMENT
+        for records in server.records.values()
+        for record in records
+    )
+
+    missing_server = FakeCloudflare()
+    missing_preflight = run_preflight(static_config(), server=missing_server)
+    missing_sleeps = []
+    message = expect_error(
+        lambda: public_dns.mark_created_records(
+            static_config(),
+            [estate()],
+            missing_preflight["records_to_mark"],
+            requester=missing_server.request,
+            api_base=API_BASE,
+            attempts=3,
+            retry_delay=5,
+            sleep_fn=missing_sleeps.append,
+        ),
+        "records not created before timeout",
+    )
+    assert "did not return all newly published DNS records" in message
+    assert TOKEN not in message
+    assert ADDRESS not in message and OTHER_ADDRESS not in message
+    assert missing_sleeps == [5, 5]
+    assert missing_server.patches == []
+
+
 def test_role_preflights_before_publication_and_marks_after():
     tasks = yaml.safe_load((repo / "ansible/roles/caddy/tasks/main.yml").read_text())
     names = [task.get("name") for task in tasks]
@@ -359,6 +441,7 @@ def main():
     test_cname_wrong_address_type_and_adoption()
     test_provider_read_failures_are_scrubbed()
     test_cloudflare_marks_only_preflight_absences()
+    test_cloudflare_mark_waits_for_async_records_and_times_out_safely()
     test_role_preflights_before_publication_and_marks_after()
     print("Public DNS preflight: fake lookup and Cloudflare API checks passed")
 

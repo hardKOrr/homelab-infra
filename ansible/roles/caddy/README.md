@@ -54,7 +54,9 @@ token.
 The read-only provider adapter currently supports Cloudflare and fails closed for other
 provider modules. After a successful preflight, records that were absent and Caddy creates
 are marked through Cloudflare's record comment API as `Managed by homelab-infra public DNS`.
-Existing equal records are allowed without being marked or adopted. Set
+The role retries marking for up to 12 provider reads, with a five-second wait between
+attempts, and fails safely if a candidate record never appears. Existing equal records are
+allowed without being marked or adopted. Set
 `allow_private: true` only when private, loopback, link-local, or CGNAT publication is
 intentional; the deploy prints a warning when that override is used.
 

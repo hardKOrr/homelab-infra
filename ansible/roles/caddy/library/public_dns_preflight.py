@@ -6,6 +6,7 @@ import ipaddress
 import json
 import socket
 import ssl
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -15,6 +16,8 @@ from ansible.module_utils.basic import AnsibleModule
 
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 OWNERSHIP_COMMENT = "Managed by homelab-infra public DNS"
+MARK_RETRY_ATTEMPTS = 12
+MARK_RETRY_DELAY_SECONDS = 5
 RESTRICTED_NETWORKS = tuple(
     ipaddress.ip_network(network)
     for network in (
@@ -449,58 +452,97 @@ def preflight(public_dns, estates, requester=None, echo_fetcher=None, api_base=C
 
 
 def mark_created_records(
-    public_dns, estates, candidates, requester=None, echo_fetcher=None, api_base=CLOUDFLARE_API
+    public_dns,
+    estates,
+    candidates,
+    requester=None,
+    echo_fetcher=None,
+    api_base=CLOUDFLARE_API,
+    attempts=MARK_RETRY_ATTEMPTS,
+    retry_delay=MARK_RETRY_DELAY_SECONDS,
+    sleep_fn=None,
 ):
-    """Tag only records absent at preflight that Caddy has since created as desired."""
+    """Tag preflight-absent records after Caddy creates them, with a bounded wait."""
     if requester is None:
         requester = _http_request
     if not candidates:
         return 0
+    if sleep_fn is None:
+        sleep_fn = time.sleep
 
     expected, _private_override_used = _desired_values(public_dns, echo_fetcher)
     estates_by_name = {estate.get("name"): estate for estate in estates}
     marked = 0
     zone_ids = {}
-    for candidate in candidates:
-        estate = estates_by_name.get(candidate.get("estate"))
-        if not estate:
-            continue
-        record_type = candidate.get("type")
-        name = candidate.get("name")
-        desired = expected.get(record_type)
-        if desired is None or record_type not in ("A", "AAAA", "CNAME"):
-            continue
-        if estate.get("name") not in zone_ids:
-            token, zone_id = _cloudflare_context(estate, requester, api_base)
-            zone_ids[estate.get("name")] = (token, zone_id)
-        token, zone_id = zone_ids[estate.get("name")]
-        records = _cloudflare_records(
-            zone_id, name, record_type, token, requester, api_base
-        )
-        for record in records:
-            if record["value"] != desired or record.get("comment"):
-                continue
-            record_id = record.get("id")
-            if not isinstance(record_id, str) or not record_id:
+    pending = list(candidates)
+
+    for attempt in range(attempts):
+        remaining = []
+        for candidate in pending:
+            estate_name = candidate.get("estate")
+            estate = estates_by_name.get(estate_name)
+            if not estate:
                 raise PublicDNSPreflightError(
-                    "Cloudflare API returned a malformed DNS record while setting its ownership comment."
+                    "Public DNS preflight could not identify a candidate estate while setting ownership comments."
                 )
-            url = (
-                api_base.rstrip("/")
-                + "/zones/"
-                + quote(zone_id, safe="")
-                + "/dns_records/"
-                + quote(record_id, safe="")
+            record_type = candidate.get("type")
+            name = candidate.get("name")
+            desired = expected.get(record_type)
+            if desired is None or record_type not in ("A", "AAAA", "CNAME"):
+                raise PublicDNSPreflightError(
+                    "Public DNS preflight received an invalid candidate while setting ownership comments."
+                )
+            if estate_name not in zone_ids:
+                token, zone_id = _cloudflare_context(estate, requester, api_base)
+                zone_ids[estate_name] = (token, zone_id)
+            token, zone_id = zone_ids[estate_name]
+            records = _cloudflare_records(
+                zone_id, name, record_type, token, requester, api_base
             )
-            _api_json(
-                requester,
-                url,
-                token,
-                method="PATCH",
-                payload={"comment": OWNERSHIP_COMMENT},
-            )
-            marked += 1
-    return marked
+
+            found = False
+            for record in records:
+                if record["value"] != desired:
+                    continue
+                if record.get("comment") == OWNERSHIP_COMMENT:
+                    found = True
+                    continue
+                if record.get("comment"):
+                    continue
+                record_id = record.get("id")
+                if not isinstance(record_id, str) or not record_id:
+                    raise PublicDNSPreflightError(
+                        "Cloudflare API returned a malformed DNS record while setting its ownership comment."
+                    )
+                url = (
+                    api_base.rstrip("/")
+                    + "/zones/"
+                    + quote(zone_id, safe="")
+                    + "/dns_records/"
+                    + quote(record_id, safe="")
+                )
+                _api_json(
+                    requester,
+                    url,
+                    token,
+                    method="PATCH",
+                    payload={"comment": OWNERSHIP_COMMENT},
+                )
+                marked += 1
+                found = True
+
+            if not found:
+                remaining.append(candidate)
+
+        if not remaining:
+            return marked
+        pending = remaining
+        if attempt + 1 < attempts:
+            sleep_fn(retry_delay)
+
+    raise PublicDNSPreflightError(
+        "Cloudflare did not return all newly published DNS records before the ownership comment wait expired."
+    )
 
 
 def main():
