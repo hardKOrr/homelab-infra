@@ -1,0 +1,52 @@
+---
+# Match the deployed instance to the most specific app default, just as the Caddy route
+# rebuild does, then report only the effective access flag and instance name.
+- name: Public DNS status | Match app instance to its defaults
+  ansible.builtin.set_fact:
+    _st_public_app_candidates: >-
+      {%- set matches = [] -%}
+      {%- for slug in _st_public_dns_app_slugs -%}
+      {%- if status_public_dns_instance == slug
+            or status_public_dns_instance.startswith(slug ~ '-') -%}
+      {%- set _ = matches.append({'slug': slug, 'length': slug | length}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ matches | sort(attribute='length', reverse=true) }}
+
+- name: Public DNS status | Load the matching app defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/app-defaults/{{ _st_public_app_slug }}.yml"
+    name: _st_public_app_defaults_file
+  when: _st_public_app_candidates | length > 0
+  no_log: true
+  vars:
+    _st_public_app_slug: "{{ (_st_public_app_candidates | first).slug }}"
+
+- name: Public DNS status | Read the optional instance config
+  ansible.builtin.set_fact:
+    _st_public_app_instance_config: >-
+      {{ (lookup('ansible.builtin.file',
+                 _luv_config_dir ~ '/apps/' ~ status_public_dns_instance ~ '.yml',
+                 errors='ignore') | from_yaml) | default({}, true) }}
+  when: _st_public_app_candidates | length > 0
+  no_log: true
+
+- name: Public DNS status | Add public app to its estate
+  ansible.builtin.set_fact:
+    _st_public_dns_apps: "{{ _st_public_dns_apps + [_st_public_app_row] }}"
+  vars:
+    _st_public_app_slug: "{{ (_st_public_app_candidates | first).slug }}"
+    _st_public_app_defaults: >-
+      {{ _st_public_app_defaults_file[(_st_public_app_slug | replace('-', '_')) ~ '_defaults']
+         | default({}) }}
+    _st_public_app_routing: >-
+      {{ _st_public_app_defaults.routing | default({})
+         | combine(_st_public_app_instance_config.routing | default({}), recursive=True) }}
+    _st_public_app_estate: >-
+      {{ _st_public_app_routing.estate | default(_st_public_dns_default_estate, true) }}
+    _st_public_app_row: >-
+      {{ {'name': status_public_dns_instance, 'estate': _st_public_app_estate} }}
+  when:
+    - _st_public_app_candidates | length > 0
+    - _st_public_app_routing.access | default('internal') == 'public'
+  no_log: true

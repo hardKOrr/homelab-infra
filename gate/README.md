@@ -37,6 +37,7 @@ templates.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
 - `test-public-dns-preflight.py`: public address lookup agreement, unsafe address refusal, Cloudflare record ownership preflight, adoption, safe API failures, delayed record marking and its bounded timeout.
+- `test-public-dns-status.py`: public resolver matches, drift, missing answers, resolver failure, disabled estates and unchanged output when public DNS is not configured.
 - `test-kometa-config.py`: optional operator-owned collection YAML stays in the Kubernetes Secret and mounts read-only only when configured.
 - `test-database-facts.py`: generated database registry cleanup, PostgreSQL privilege/extension setup and delete/redeploy cluster lifecycle.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
