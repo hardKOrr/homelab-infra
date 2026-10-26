@@ -572,6 +572,37 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
             f"{task_name} compares current and desired app config"
         )
 
+    for running_var, enabled_var, task_name in (
+        (
+            "_caddy_dynamic_dns_running",
+            "_caddy_dynamic_dns_enabled",
+            "Remove the Caddy dynamic DNS app when no estate uses it",
+        ),
+        (
+            "_caddy_dns_records_running",
+            "_caddy_dns_records_enabled",
+            "Remove the Caddy static DNS records app when no estate uses it",
+        ),
+    ):
+        task = task_named(self.tasks, task_name)
+
+        def should_remove(response):
+            variables = {running_var: response, enabled_var: False}
+            return all(
+                bool(render("{{ " + condition + " }}", variables))
+                for condition in task["when"]
+            )
+
+        assert not should_remove({"status": 200, "json": None}), (
+            f"{task_name} skips Caddy's HTTP 200 JSON null for an absent app"
+        )
+        assert not should_remove({"status": 404, "json": None}), (
+            f"{task_name} skips a Caddy 404 response"
+        )
+        assert should_remove({"status": 200, "json": {"providers": []}}), (
+            f"{task_name} removes an existing Caddy app config"
+        )
+
 
 def caddy_explicit_estate_options_are_isolated_and_provider_fields_preserved(self):
     estates = self.collect_domains(
