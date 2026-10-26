@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -38,6 +39,33 @@ def run_plan(payload, *, expect_success=True):
             f"planner returned {result.returncode}: {result.stdout[-2000:]} {result.stderr[-2000:]}"
         )
     return json.loads(result.stdout) if result.returncode == 0 else {}
+
+
+def rule_match_rejects_extra_fields():
+    matcher = runpy.run_path(str(PLANNER))["_rule_matches"]
+    desired = {"type": "in", "action": "ACCEPT", "enable": 1,
+               "comment": "homelab-infra: base synthetic"}
+    optional_fields = ("dest", "iface", "macro", "proto", "dport", "source")
+    for field in optional_fields:
+        live = {**desired, field: "extra-match"}
+        check(f"rule matcher rejects extra {field} match field",
+              matcher(live, desired), False)
+        blank_live = {**desired, field: ""}
+        check(f"rule matcher accepts empty optional {field} field",
+              matcher(blank_live, desired), True)
+
+
+def narrowed_owned_rule_is_replaced(payload, desired, field, value, label):
+    drifted = copy.deepcopy(payload)
+    target = next(rule for rule in drifted["cluster_rules"]
+                  if rule["comment"] == desired["comment"])
+    target[field] = value
+    plan = run_plan(drifted)
+    check(f"{label} with extra {field} is recreated",
+          desired in plan["cluster"]["create"], True)
+    check(f"{label} with extra {field} is removed",
+          any(rule.get("comment") == desired["comment"]
+              for rule in plan["cluster"]["delete"]), True)
 
 
 def doctor(proxmox, invalid=False):
@@ -293,6 +321,22 @@ def main():
     check("a converged run removes no node rules", {
         node: state["delete"] for node, state in repeat["nodes"].items()
     }, {"pve-1": [], "pve-2": []})
+
+    management_rule = next(
+        rule for rule in first["cluster"]["desired"]
+        if rule["comment"] == "homelab-infra: base management-ssh-1")
+    peer_rule = next(
+        rule for rule in first["cluster"]["desired"]
+        if rule["comment"] == "homelab-infra: base cluster-pve-1-to-pve-2")
+    rule_match_rejects_extra_fields()
+    for field, value in (("dest", "192.0.2.99"), ("iface", "vmbr0"),
+                         ("macro", "SSH")):
+        narrowed_owned_rule_is_replaced(
+            converged, management_rule, field, value, "management SSH")
+    for field, value in (("proto", "tcp"), ("dport", "22"), ("iface", "vmbr0"),
+                         ("macro", "SSH")):
+        narrowed_owned_rule_is_replaced(
+            converged, peer_rule, field, value, "cluster peer")
 
     no_op = copy.deepcopy(empty)
     no_op["proxmox"]["firewall"]["enabled"] = False

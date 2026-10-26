@@ -8,6 +8,7 @@ import sys
 
 
 BASE_COMMENT = "homelab-infra: base "
+RULE_MATCH_FIELDS = ("dest", "iface", "macro", "proto", "dport", "source")
 
 
 def _fail(message):
@@ -53,6 +54,9 @@ def _normalize(value):
 
 
 def _rule_matches(live, wanted):
+    if any(key not in wanted and str(live.get(key) or "").strip()
+           for key in RULE_MATCH_FIELDS):
+        return False
     for key, value in wanted.items():
         actual = live.get(key)
         if key == "enable":
