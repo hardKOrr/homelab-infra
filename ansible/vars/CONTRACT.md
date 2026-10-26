@@ -438,6 +438,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 `firewall.base`. With the flag absent or false it is inert; ordinary app Deploy and Remove
 continue to manage only their `homelab-infra: <instance>` rules. When enabled, declared
 aliases are named `hli_<name>` and owned rules are described `homelab-infra: base <name>`.
+Aliases removed from `firewall.base.aliases` remain in OPNsense; remove an unused `hli_<name>` alias manually after checking its references.
 A rule with multiple `ports` emits one filter rule per port, adding `port <number>` to its
 description to keep each rule identifiable. The first enabled run replaces only rules with
 the legacy `Green lab: ` description prefix; the temporary `Green lab: operator to Caddy`

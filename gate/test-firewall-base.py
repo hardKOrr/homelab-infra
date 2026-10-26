@@ -297,6 +297,9 @@ def main():
                   "action": "block", "destination_net": "hli_example_private", "sequence": "300",
               })
 
+        resolver_alias = next(value for value in server.aliases.values()
+                              if value.get("name") == "hli_example_resolvers")
+        resolver_alias["content"] = "2001:DB8::53\r\n192.0.2.53"
         result, repeat_calls = run_base(server, root, base)
         write_calls = [call for call in repeat_calls if call in (
             "alias/addItem", "alias/setItem", "alias/delItem", "alias/reconfigure",
@@ -304,6 +307,8 @@ def main():
             "filter/apply", "filter/cancelRollback")]
         check("repeat run makes no writes or apply", write_calls, [])
         check("repeat run reports no changes", "changed=0" in result.stdout, True)
+        check("OPNsense alias ordering and IPv6 case differences do not cause drift",
+              "alias/setItem" in repeat_calls, False)
 
         disabled = copy.deepcopy(base)
         disabled["enabled"] = False

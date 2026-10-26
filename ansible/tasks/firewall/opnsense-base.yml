@@ -119,9 +119,15 @@
       {%-     set _ = plan.add.append(wanted) -%}
       {%-   else -%}
       {%-     set current = found[0] -%}
+      {%-     set current_content = current.content | default('')
+                | split('\n') | map('trim')
+                | reject('equalto', '') | map('lower') | unique | sort | list -%}
+      {%-     set wanted_content = wanted.content | default('')
+                | split('\n') | map('trim')
+                | reject('equalto', '') | map('lower') | unique | sort | list -%}
       {%-     if (current.enabled | default('') | string) != wanted.enabled
                 or (current.type | default('')) != wanted.type
-                or (current.content | default('')) != wanted.content
+                or current_content != wanted_content
                 or (current.description | default('')) != wanted.description -%}
       {%-       set _ = plan.set.append({'uuid': current.uuid, 'payload': wanted}) -%}
       {%-     endif -%}
