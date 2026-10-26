@@ -1,8 +1,12 @@
 # Resolve the lab-wide address settings and each estate's opt-in without replacing
 # sibling infrastructure fields. The values include DNS provider credentials.
-- name: Resolve public DNS config for each estate
+- name: Read lab-wide public DNS input
   ansible.builtin.set_fact:
     _caddy_public_dns_input: "{{ homelabinfra_config.infrastructure.public_dns | default({}) }}"
+  no_log: true
+
+- name: Resolve public DNS config for each estate
+  ansible.builtin.set_fact:
     _caddy_public_dns_config: >-
       {{ {'ttl': 300, 'families': ['ipv4'], 'allow_private': false}
          | combine(_caddy_public_dns_input if _caddy_public_dns_input is mapping else {},
@@ -11,8 +15,22 @@
   vars:
     _caddy_public_dns_estates_json: >-
       {%- set result = [] -%}
-      {%- for estate in (homelabinfra_config.infrastructure.domains | default({}) | dict2items) -%}
-      {%- set challenge = estate.value.dns_challenge | default({}) -%}
+      {%- set domains = homelabinfra_config.infrastructure.domains | default({}) -%}
+      {%- set default_names = domains | dict2items
+            | selectattr('value.default', 'defined')
+            | selectattr('value.default')
+            | map(attribute='key') | list -%}
+      {%- set default_name = (default_names | first)
+            | default(domains.keys() | list | first | default(''), true) -%}
+      {%- set default_challenge = homelabinfra_config.infrastructure.reverse_proxy.dns_challenge
+            | default({}, true) -%}
+      {%- for estate in (domains | dict2items) -%}
+      {%- set challenge = estate.value.dns_challenge | default({}, true) -%}
+      {%- if estate.key == default_name and challenge is mapping
+             and challenge.provider is not defined -%}
+      {%- set challenge = (default_challenge if default_challenge is mapping else {})
+            | combine(challenge, recursive=True) -%}
+      {%- endif -%}
       {%- set challenge_values = challenge | dict2items if challenge is mapping else [] -%}
       {%- set credentials = challenge_values
             | rejectattr('key', 'in', ['provider', 'resolvers', 'ttl', 'propagation_delay',

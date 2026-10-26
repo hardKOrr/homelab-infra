@@ -483,6 +483,7 @@
   when:
     - not (_caddy_dynamic_dns_enabled | bool)
     - _caddy_dynamic_dns_running.status == 200
+    - (_caddy_dynamic_dns_running.json | default(None)) is mapping
   changed_when: true
   no_log: true
 
@@ -519,6 +520,7 @@
   when:
     - not (_caddy_dns_records_enabled | bool)
     - _caddy_dns_records_running.status == 200
+    - (_caddy_dns_records_running.json | default(None)) is mapping
   changed_when: true
   no_log: true
 

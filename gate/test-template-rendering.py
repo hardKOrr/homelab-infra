@@ -62,6 +62,9 @@ class CaddyRendering:
         self.policy_vars = self.policy_task["vars"]
         self.base_vars = self.base_task["vars"]
         self.content_expression = self.write_task["ansible.builtin.copy"]["content"]
+        self.public_dns_input_task = task_named(
+            self.public_dns_tasks, "Read lab-wide public DNS input"
+        )
         self.public_dns_resolve_task = task_named(
             self.public_dns_tasks, "Resolve public DNS config for each estate"
         )
@@ -111,8 +114,11 @@ class CaddyRendering:
         )
 
     def resolve_public_dns(self, infrastructure):
-        task = self.public_dns_resolve_task
+        input_task = self.public_dns_input_task
         variables = {"homelabinfra_config": {"infrastructure": infrastructure}}
+        for key, expression in input_task["ansible.builtin.set_fact"].items():
+            variables[key] = render(expression, variables)
+        task = self.public_dns_resolve_task
         for key, expression in task["vars"].items():
             variables[key] = render(expression, variables)
         for key, expression in task["ansible.builtin.set_fact"].items():
@@ -418,6 +424,82 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
         "a second public DNS render is identical"
     )
 
+    inherited_default = self.build_public_dns_apps(
+        {
+            "reverse_proxy": {
+                "dns_challenge": {
+                    "provider": "cloudflare",
+                    "api_token": "fixture-default-token",
+                }
+            },
+            "public_dns": {
+                "address": {"source": "static", "address": "203.0.113.10"},
+            },
+            "domains": {
+                "beta": {
+                    "domain": "beta.example.test",
+                    "public_dns": {"enabled": False},
+                },
+                "alpha": {
+                    "default": "true",
+                    "domain": "alpha.example.test",
+                    "public_dns": {"enabled": True},
+                },
+            },
+        }
+    )
+    assert inherited_default["_caddy_public_dns_apps"]["dynamic_dns"]["providers"] == [
+        {
+            "dns_provider": {
+                "name": "cloudflare",
+                "api_token": "fixture-default-token",
+            },
+            "domains": {"alpha.example.test": ["@", "*"]},
+        },
+    ], "the default estate inherits the lab's DNS-01 challenge for public DNS"
+    beta_inherited = next(
+        estate for estate in inherited_default["_caddy_public_dns_estates"]
+        if estate["name"] == "beta"
+    )
+    assert beta_inherited["dns_challenge_provider"] == "" and not beta_inherited["has_dns_challenge_credentials"], (
+        "the default estate's DNS-01 credentials do not leak to another estate"
+    )
+
+    inherited_with_estate_credentials = self.build_public_dns_apps(
+        {
+            "reverse_proxy": {
+                "dns_challenge": {
+                    "provider": "cloudflare",
+                    "api_token": "fixture-global-token",
+                }
+            },
+            "public_dns": {
+                "address": {"source": "static", "address": "203.0.113.10"},
+            },
+            "domains": {
+                "alpha": {
+                    "default": True,
+                    "domain": "alpha.example.test",
+                    "dns_challenge": {"api_token": "fixture-estate-token"},
+                    "public_dns": {"enabled": True},
+                },
+                "beta": {
+                    "domain": "beta.example.test",
+                    "public_dns": {"enabled": False},
+                },
+            },
+        }
+    )
+    assert inherited_with_estate_credentials["_caddy_public_dns_apps"]["dynamic_dns"]["providers"] == [
+        {
+            "dns_provider": {
+                "name": "cloudflare",
+                "api_token": "fixture-estate-token",
+            },
+            "domains": {"alpha.example.test": ["@", "*"]},
+        },
+    ], "the default estate's Vault credential overlays the inherited DNS-01 challenge"
+
     static_infra = {
         "domains": {"alpha": alpha},
         "public_dns": {
@@ -488,6 +570,37 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
         task = task_named(self.tasks, task_name)
         assert "_running.status != 200" in task["when"][-1], (
             f"{task_name} compares current and desired app config"
+        )
+
+    for running_var, enabled_var, task_name in (
+        (
+            "_caddy_dynamic_dns_running",
+            "_caddy_dynamic_dns_enabled",
+            "Remove the Caddy dynamic DNS app when no estate uses it",
+        ),
+        (
+            "_caddy_dns_records_running",
+            "_caddy_dns_records_enabled",
+            "Remove the Caddy static DNS records app when no estate uses it",
+        ),
+    ):
+        task = task_named(self.tasks, task_name)
+
+        def should_remove(response):
+            variables = {running_var: response, enabled_var: False}
+            return all(
+                bool(render("{{ " + condition + " }}", variables))
+                for condition in task["when"]
+            )
+
+        assert not should_remove({"status": 200, "json": None}), (
+            f"{task_name} skips Caddy's HTTP 200 JSON null for an absent app"
+        )
+        assert not should_remove({"status": 404, "json": None}), (
+            f"{task_name} skips a Caddy 404 response"
+        )
+        assert should_remove({"status": 200, "json": {"providers": []}}), (
+            f"{task_name} removes an existing Caddy app config"
         )
 
 
