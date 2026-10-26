@@ -62,6 +62,9 @@ class CaddyRendering:
         self.policy_vars = self.policy_task["vars"]
         self.base_vars = self.base_task["vars"]
         self.content_expression = self.write_task["ansible.builtin.copy"]["content"]
+        self.public_dns_input_task = task_named(
+            self.public_dns_tasks, "Read lab-wide public DNS input"
+        )
         self.public_dns_resolve_task = task_named(
             self.public_dns_tasks, "Resolve public DNS config for each estate"
         )
@@ -111,8 +114,11 @@ class CaddyRendering:
         )
 
     def resolve_public_dns(self, infrastructure):
-        task = self.public_dns_resolve_task
+        input_task = self.public_dns_input_task
         variables = {"homelabinfra_config": {"infrastructure": infrastructure}}
+        for key, expression in input_task["ansible.builtin.set_fact"].items():
+            variables[key] = render(expression, variables)
+        task = self.public_dns_resolve_task
         for key, expression in task["vars"].items():
             variables[key] = render(expression, variables)
         for key, expression in task["ansible.builtin.set_fact"].items():

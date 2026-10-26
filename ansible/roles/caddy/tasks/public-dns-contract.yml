@@ -1,8 +1,12 @@
 # Resolve the lab-wide address settings and each estate's opt-in without replacing
 # sibling infrastructure fields. The values include DNS provider credentials.
-- name: Resolve public DNS config for each estate
+- name: Read lab-wide public DNS input
   ansible.builtin.set_fact:
     _caddy_public_dns_input: "{{ homelabinfra_config.infrastructure.public_dns | default({}) }}"
+  no_log: true
+
+- name: Resolve public DNS config for each estate
+  ansible.builtin.set_fact:
     _caddy_public_dns_config: >-
       {{ {'ttl': 300, 'families': ['ipv4'], 'allow_private': false}
          | combine(_caddy_public_dns_input if _caddy_public_dns_input is mapping else {},
