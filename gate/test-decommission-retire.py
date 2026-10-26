@@ -38,7 +38,7 @@ class Retirement(unittest.TestCase):
         for kind, rows in self.state.items():
             for row in rows:
                 ident = lab.identity(kind, row)
-                stamp = {'source': lab.SOURCES[kind], 'identity': ident,
+                stamp = {'source': lab.SOURCES[kind][0], 'identity': ident,
                          'signature': lab.signature(kind, row)}
                 stamps[kind + ':' + ident] = stamp
                 targets.append({'kind': kind, 'identity': ident, 'signature': stamp['signature']})
@@ -162,6 +162,19 @@ class Retirement(unittest.TestCase):
                     self.execute()
                 self.assertEqual(self.files[lab.RECORD], encoded(invalid))
                 self.assertNotIn('storage:pbs-homelab', self.read(self.journal, {'completed': []})['completed'])
+
+    def test_second_copy_storage_uses_its_own_creation_seam(self):
+        copy_storage = {'storage': 'pbs-copy', 'type': 'pbs', 'server': '192.0.2.11',
+                        'datastore': 'copy', 'username': 'backup@pbs', 'fingerprint': 'copy'}
+        state = copy.deepcopy(self.state)
+        state['storage'].append(copy_storage)
+
+        lab.record('storage', 'pbs-copy', 'configure-pbs-second-copy', self.node, state=state)
+
+        records = self.read(lab.RECORD)
+        self.assertTrue(lab.owned_object('storage', copy_storage, records))
+        with self.assertRaisesRegex(lab.Refused, 'Unknown owning creation seam'):
+            lab.record('storage', 'pbs-other', 'configure-pbs-unrelated', self.node, state=state)
 
     def test_other_pbs_identity_refused_before_deletion(self):
         self.state['storage'][0]['storage'] = 'pbs-other'
