@@ -53,6 +53,9 @@
          | default(wiring_upstream_host | default(''), true) }}
     _opn_validate: "{{ homelabinfra_infra.dns.validate_certs | default(false) }}"
   block:
+    - name: Wire OPNsense | Ensure the owned DNS API account
+      ansible.builtin.include_tasks: opnsense-dns-account.yml
+
     - name: Wire OPNsense | Assert wiring contract vars
       ansible.builtin.assert:
         that:

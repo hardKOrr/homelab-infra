@@ -638,7 +638,7 @@ The canonical top-level items are:
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
 | `homelab-infra/firewall` | `api_key`, `api_secret` |
-| `homelab-infra/firewall-admin` | `api_key`, `api_secret` — used only to list and restore OPNsense config backups |
+| `homelab-infra/firewall-admin` | `api_key`, `api_secret` — OPNsense account management and config-backup listing/restoration |
 | `homelab-infra/mail` | `password` — shared relay credential used by every estate without a scoped override |
 | `homelab-infra/estates/<estate>/mail` | `password` — optional estate-specific relay credential; Store Secret is the post-cutover write path |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
