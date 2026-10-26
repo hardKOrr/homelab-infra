@@ -52,7 +52,7 @@
       OPNsense {{ fw_model }} searchRule returned an unexpected shape (HTTP
       {{ _fw_search.status | default('?') }}). Check that the homelab-infra/firewall API
       key holds the 'Firewall: Rules [new]', 'Firewall: NAT: Destination NAT' and
-      'Firewall: Aliases' privileges.
+      'Firewall: Alias: Edit' privileges.
 
 - name: Firewall | Plan {{ fw_model }} changes
   ansible.builtin.set_fact:

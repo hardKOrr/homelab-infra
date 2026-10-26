@@ -127,7 +127,7 @@ and read only by that provider's wiring tasks:
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
-| `firewall` | `api_key`, `api_secret` | opnsense | OPNsense API key/secret for an account holding only the `Firewall: Rules [new]`, `Firewall: NAT: Destination NAT`, and `Firewall: Aliases` privileges; a separate account from the Unbound-only DNS key |
+| `firewall` | `api_key`, `api_secret` | opnsense | OPNsense API key/secret for an account holding only the `Firewall: Rules [new]`, `Firewall: NAT: Destination NAT`, and `Firewall: Alias: Edit` privileges; a separate account from the Unbound-only DNS key |
 | `mail` | `password` | smtp | Shared SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
 | `estates.<estate>.mail` | `password` | smtp | Optional estate-specific SMTP AUTH password; selected only for that estate, never authored |
 
