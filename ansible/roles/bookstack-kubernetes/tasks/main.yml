@@ -1,0 +1,239 @@
+---
+# BookStack's Kubernetes adapter. The instance owns one namespace and one /config PVC;
+# the named MariaDB/MySQL database remains on its separately managed backend.
+
+- name: BookStack Kubernetes | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: BookStack Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: BookStack Kubernetes | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: BookStack Kubernetes | Resolve and store canonical credentials
+  ansible.builtin.include_role:
+    name: bookstack
+    tasks_from: resolve-credentials.yml
+
+- name: BookStack Kubernetes | Sync the application environment
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data:
+      APP_URL: "https://{{ bookstack_fqdn }}"
+      APP_KEY: "{{ _bookstack_app_key }}"
+      APP_ENV: production
+      APP_DEBUG: "false"
+      PUID: "{{ app_config.app.puid | string }}"
+      PGID: "{{ app_config.app.pgid | string }}"
+      TZ: "{{ homelabinfra_config.timezone | default('UTC') }}"
+      DB_CONNECTION: mysql
+      DB_HOST: "{{ app_config.app.database_host }}"
+      DB_PORT: "{{ app_config.app.database_port | string }}"
+      DB_DATABASE: "{{ app_config.app.database.name }}"
+      DB_USERNAME: "{{ app_config.app.database_user }}"
+      DB_PASSWORD: "{{ app_config.app.database_password }}"
+      MAIL_DRIVER: "{{ 'smtp' if wiring_mail.enabled else 'log' }}"
+      MAIL_FROM: "{{ wiring_mail.from_address | default('bookstack@example.invalid', true) }}"
+      MAIL_FROM_NAME: "{{ wiring_mail.from_name | default('BookStack', true) }}"
+      MAIL_HOST: "{{ wiring_mail.host | default('localhost', true) }}"
+      MAIL_PORT: "{{ wiring_mail.port | default(25) | string }}"
+      MAIL_USERNAME: "{{ wiring_mail.username | default('', true) }}"
+      MAIL_PASSWORD: "{{ wiring_mail.password | default('', true) }}"
+      MAIL_ENCRYPTION: "{{ wiring_mail.encryption | default('', true) }}"
+
+- name: BookStack Kubernetes | Read the shared recovery helper
+  ansible.builtin.set_fact:
+    _bookstack_recovery_script: >-
+      {{ lookup('ansible.builtin.file', role_path ~ '/../bookstack/files/bookstack-recovery') }}
+
+- name: BookStack Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _bookstack_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: BookStack Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _bookstack_k8s_manifest }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 600
+
+- name: BookStack Kubernetes | Check administrator initialization marker
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - test
+      - -f
+      - /config/.homelab-infra-admin
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bookstack_k8s_admin_marker
+  failed_when: false
+  changed_when: false
+
+- name: BookStack Kubernetes | Read administrator initialization marker
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - cat
+      - /config/.homelab-infra-admin
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bookstack_k8s_admin_marker_content
+  when: _bookstack_k8s_admin_marker.rc == 0
+  changed_when: false
+  no_log: true
+
+- name: BookStack Kubernetes | Validate existing administrator credentials
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default('', true) | length > 0)
+        and (_bookstack_k8s_admin_marker_content.stdout | trim == app_config.app.admin_user)
+    fail_msg: >-
+      BookStack {{ instance }} is initialized but its administrator password is missing
+      from Vaultwarden item homelab-infra/apps/{{ instance }}, or app.admin_user no longer
+      matches the initial administrator recorded in /config/.homelab-infra-admin.
+  when: _bookstack_k8s_admin_marker.rc == 0
+  no_log: true
+
+- name: BookStack Kubernetes | Initialize the administrator
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - php
+      - /app/www/artisan
+      - bookstack:create-admin
+      - --initial
+      - "--email={{ app_config.app.admin_user }}"
+      - "--name={{ app_config.app.admin_name }}"
+      - "--password={{ _bookstack_admin_password }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bookstack_k8s_admin_create
+  changed_when: _bookstack_k8s_admin_create.rc == 0
+  failed_when: _bookstack_k8s_admin_create.rc not in [0, 2]
+  when: _bookstack_k8s_admin_marker.rc != 0
+  no_log: true
+
+- name: BookStack Kubernetes | Record administrator initialization
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - -i
+      - "deployment/{{ instance }}"
+      - --
+      - sh
+      - -c
+      - "umask 077; cat > /config/.homelab-infra-admin; chown {{ app_config.app.puid }}:{{ app_config.app.pgid }} /config/.homelab-infra-admin"
+    stdin: "{{ app_config.app.admin_user }}\n"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when:
+    - _bookstack_k8s_admin_marker.rc != 0
+    - _bookstack_k8s_admin_create.rc | default(2) == 0
+  changed_when: true
+  no_log: true
+
+- name: BookStack Kubernetes | Report unavailable PBS target
+  ansible.builtin.debug:
+    msg: >-
+      BookStack backup is enabled but this lab has no usable PBS target; deployment will
+      continue without a recovery schedule. Deploy PBS and rerun BookStack to enable
+      application-consistent recovery.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (bookstack_pbs_available | default(false) | bool)
+
+- name: BookStack Kubernetes | Configure application-consistent backups
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - bookstack_pbs_available | default(false) | bool
+  block:
+    - name: BookStack Kubernetes | Resolve backup identity and timezone
+      ansible.builtin.set_fact:
+        _bookstack_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _bookstack_backup_timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+
+    - name: BookStack Kubernetes | Sync recovery credentials into the namespace
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-recovery"
+        k8s_secret_data:
+          db-password: "{{ app_config.app.database_password }}"
+          pbs-password: "{{ bookstack_pbs_password }}"
+
+    - name: BookStack Kubernetes | Render the backup CronJob
+      ansible.builtin.set_fact:
+        _bookstack_backup_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
+
+    - name: BookStack Kubernetes | Apply the backup CronJob
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ _bookstack_backup_manifest }}"
+
+    - name: BookStack Kubernetes | State the backup contract
+      ansible.builtin.debug:
+        msg:
+          - "Backup: the named database and /config are written together to PBS as host/{{ _bookstack_backup_id }}."
+          - "Schedule: {{ app_config.backup.schedule }} ({{ _bookstack_backup_timezone }}); retention {{ app_config.backup.retention_days }} days."
+          - "Run one now with playbooks/maintenance/bookstack-backup.yml -e instance={{ instance }}."
+
+- name: BookStack Kubernetes | Remove an unavailable or disabled backup schedule
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - cronjob
+      - "{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bookstack_backup_removed
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (bookstack_pbs_available | default(false) | bool))
+  changed_when: "'deleted' in (_bookstack_backup_removed.stdout | default(''))"
+
+- name: BookStack Kubernetes | Remove stale recovery credentials when backups are disabled
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - secret/{{ instance }}-recovery
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bookstack_recovery_secret_removed
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (bookstack_pbs_available | default(false) | bool))
+  changed_when: "'deleted' in (_bookstack_recovery_secret_removed.stdout | default(''))"

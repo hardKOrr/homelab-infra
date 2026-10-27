@@ -19,35 +19,8 @@
 - name: BookStack | Resolve platform mail
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
 
-- name: BookStack | Resolve generated and reused application credentials
-  ansible.builtin.set_fact:
-    _bookstack_app_key: >-
-      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).app_key
-         | default('base64:' ~ (lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode), true) }}
-    _bookstack_admin_password: >-
-      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
-         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-  no_log: true
-
-- name: BookStack | Store application and database credentials in Vaultwarden
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/apps/{{ instance }}"
-    vault_item_merge: true
-    vault_item_fields:
-      provider: bookstack
-      instance: "{{ instance }}"
-      admin_user: "{{ app_config.app.admin_user }}"
-      admin_password: "{{ _bookstack_admin_password }}"
-      app_key: "{{ _bookstack_app_key }}"
-      database_provider: "{{ app_config.app.database.provider }}"
-      database_host: "{{ app_config.app.database_host }}"
-      database_port: "{{ app_config.app.database_port }}"
-      database_name: "{{ app_config.app.database.name }}"
-      database_user: "{{ app_config.app.database_user }}"
-      database_password: "{{ app_config.app.database_password }}"
-    vault_item_secret_fields: [admin_password, app_key, database_password]
-  no_log: true
+- name: BookStack | Resolve and store application credentials
+  ansible.builtin.include_tasks: resolve-credentials.yml
 
 - name: BookStack | Render environment file
   ansible.builtin.template:

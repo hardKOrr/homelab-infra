@@ -1,0 +1,106 @@
+{% set b = app_config.backup %}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+{% endset %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ b.schedule }}"
+  timeZone: "{{ _bookstack_backup_timezone }}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ b.timeout_seconds | default(3600) | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          serviceAccountName: {{ instance }}-recovery
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: {{ b.client.image | default('debian:bookworm-slim') }}
+              imagePullPolicy: IfNotPresent
+              command: [/bin/sh, -c]
+              args:
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+                  # Never enable shell tracing: PBS and database passwords are in env.
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends bash ca-certificates curl python3 >/dev/null
+                  install -d -m 0755 /etc/apt/keyrings
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  if [ "${BOOKSTACK_DB_PROVIDER}" = mysql ]; then
+                    DB_CLIENT_PACKAGE=default-mysql-client
+                  else
+                    DB_CLIENT_PACKAGE=mariadb-client
+                  fi
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client "$DB_CLIENT_PACKAGE" >/dev/null
+                  exec /bin/bash /usr/local/sbin/bookstack-recovery --backup
+              env:
+                - {name: BOOKSTACK_BACKEND, value: kubernetes}
+                - {name: BOOKSTACK_INSTANCE, value: "{{ instance }}"}
+                - {name: BOOKSTACK_SERVICE, value: "{{ instance }}"}
+                - {name: BOOKSTACK_NAMESPACE, value: "{{ k8s_namespace }}"}
+                - {name: BOOKSTACK_DATA_PATH, value: /config}
+                - {name: BOOKSTACK_DB_PROVIDER, value: "{{ app_config.app.database.provider }}"}
+                - {name: BOOKSTACK_DB_HOST, value: "{{ app_config.app.database_host }}"}
+                - {name: BOOKSTACK_DB_PORT, value: "{{ app_config.app.database_port | string }}"}
+                - {name: BOOKSTACK_DB_NAME, value: "{{ app_config.app.database.name }}"}
+                - {name: BOOKSTACK_DB_USER, value: "{{ app_config.app.database_user }}"}
+                - name: BOOKSTACK_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: {{ instance }}-recovery, key: db-password}
+                - {name: PBS_REPOSITORY, value: "{{ bookstack_pbs_repository }}"}
+                - {name: PBS_FINGERPRINT, value: "{{ bookstack_pbs_fingerprint }}"}
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: {{ instance }}-recovery, key: pbs-password}
+                - {name: PBS_BACKUP_ID, value: "{{ _bookstack_backup_id }}"}
+                - {name: PBS_RETENTION_DAYS, value: "{{ b.retention_days | int }}"}
+                - {name: PBS_KEY_URL, value: "{{ b.client.key_url }}"}
+                - {name: PBS_APT_REPO, value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"}
+              volumeMounts:
+                - name: recovery-script
+                  mountPath: /usr/local/sbin/bookstack-recovery
+                  subPath: bookstack-recovery
+                  readOnly: true
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: scratch
+                  mountPath: /var/tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+          volumes:
+            - name: recovery-script
+              configMap:
+                name: {{ instance }}-recovery
+                defaultMode: 0750
+            - name: config
+              persistentVolumeClaim:
+                claimName: {{ instance }}-config
+                readOnly: true
+            - name: scratch
+              emptyDir:
+                sizeLimit: {{ b.scratch_size | default(5) | int }}Gi

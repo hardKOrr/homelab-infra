@@ -1218,7 +1218,22 @@ def mail_consumers_open_smtp_egress():
                                "wiring_mail": {"enabled": True, "port": "465"}})
     assert both["egress"] == declared["egress"] + [{"name": "smtp", "protocol": "TCP", "port": "465"}], both
     for app in ("mautic", "odoo", "bookstack"):
-        names = [play["name"] for play in yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))]
+        plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
+        names = [play["name"] for play in plays]
+        if app == "bookstack":
+            docker_open = names.index("BookStack | Open Docker network access")
+            docker_deploy = names.index("BookStack | Deploy on Docker")
+            kubernetes_open = names.index("BookStack | Open Kubernetes network access")
+            kubernetes_deploy = names.index("BookStack | Deploy on Kubernetes")
+            assert docker_open < docker_deploy, names
+            assert kubernetes_open < kubernetes_deploy, names
+            docker_task = task_named(plays[docker_open]["tasks"],
+                                     "Open the app's declared access and SMTP egress from its Docker host")
+            kubernetes_task = task_named(plays[kubernetes_open]["tasks"],
+                                         "Open the app's declared access and SMTP egress from every cluster node")
+            assert docker_task["vars"]["firewall_sends_mail"] is True
+            assert kubernetes_task["vars"]["firewall_sends_mail"] is True
+            continue
         opened = [i for i, n in enumerate(names) if n.endswith("| Open network access")]
         deployed = [i for i, n in enumerate(names) if n.endswith("| Deploy")]
         assert opened and opened[0] < deployed[0], (app, names)
@@ -1652,11 +1667,18 @@ def backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored, in
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
     templates = [ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"]
-    for template in templates:
+    bookstack_kubernetes = ROOT / "ansible/roles/bookstack-kubernetes/templates/backup-cronjob.yaml.j2"
+    assert bookstack_kubernetes.is_file(), "BookStack Kubernetes backup template is missing"
+    templates_with_inline_pruning = templates
+    for template in templates_with_inline_pruning:
         assert "proxmox-backup-client prune" in template.read_text(), f"{template} has no prune"
+    bookstack_recovery = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
+    recovery_text = bookstack_recovery.read_text()
+    assert "proxmox-backup-client prune" in recovery_text
+    assert "--keep-last 2 --keep-daily" in recovery_text
     scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
                if path.is_file() and "--keep-daily" in path.read_text(errors="ignore")]
-    assert len(scripts) > len(templates), scripts
+    assert len(scripts) > len(templates_with_inline_pruning), scripts
     for script in scripts:
         contents = script.read_text()
         command_argvs = []

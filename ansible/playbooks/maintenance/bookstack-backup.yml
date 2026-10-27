@@ -1,9 +1,7 @@
 ---
-# Run the installed BookStack application-consistent backup immediately.
-#
-# The scheduled and on-demand paths call the same root-owned helper on the services stack
-# host. It stops only BookStack, dumps only its named database, and sends the dump plus
-# /config to one PBS snapshot. It never stops or mutates the shared backend guest.
+# Run BookStack's application-consistent recovery helper on the hosting backend selected
+# for this instance. Both the scheduled and on-demand Kubernetes paths use the same
+# CronJob pod template; both backends briefly stop only this BookStack instance.
 
 - name: "BookStack Backup | Resolve"
   hosts: localhost
@@ -25,17 +23,39 @@
         name: homelabinfra_infra
       failed_when: false
     - ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.bookstack_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.bookstack_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+      no_log: true
+    - ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: bookstack
   tasks:
-    - name: Resolve the existing services stack host
+    - name: Resolve the existing Docker stack host
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
         resolve_stack_app_instance: "{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
-- name: "BookStack Backup | Run"
+    - name: Resolve the PBS target for a Kubernetes backup
+      ansible.builtin.include_tasks: ../../tasks/backup/resolve-pbs-target.yml
+      vars:
+        k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('', true) }}"
+      when:
+        - app_config.hosting.method == 'kubernetes'
+        - app_config.backup.enabled | default(false) | bool
+
+    - name: Run the Kubernetes BookStack backup from its deployed CronJob
+      ansible.builtin.include_role:
+        name: bookstack-kubernetes
+        tasks_from: backup.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+- name: "BookStack Backup | Run on Docker"
   hosts: "bookstack_recovery_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
@@ -47,6 +67,7 @@
         BOOKSTACK_INSTANCE: "{{ instance }}"
       register: bookstack_backup_result
       changed_when: true
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "BookStack Backup | Notify"
   hosts: localhost
@@ -62,8 +83,18 @@
       vars:
         notify_title: "{{ instance }} backed up"
         notify_message: "Application-consistent BookStack backup for {{ instance }} was written to PBS."
-      when: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0
+      when: >-
+        (app_config.hosting.method == 'docker'
+         and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0)
+        or
+        (app_config.hosting.method == 'kubernetes'
+         and bookstack_backup_result.rc | default(1) == 0)
     - name: Fail if BookStack backup did not complete
       ansible.builtin.assert:
-        that: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0
+        that: >-
+          (app_config.hosting.method == 'docker'
+           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0)
+          or
+          (app_config.hosting.method == 'kubernetes'
+           and bookstack_backup_result.rc | default(1) == 0)
         fail_msg: "BookStack backup failed; no success notification was sent."

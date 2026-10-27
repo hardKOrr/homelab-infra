@@ -1,12 +1,7 @@
 ---
-# Plan or perform a restore of one BookStack instance from its own PBS snapshot.
-#
-# overwrite=false (the default) is read-only. overwrite=true requires a distinct,
-# verified pre_restore_point from a backup of this instance made within the last hour.
-# Restore stops only the named BookStack service, replaces its /config data and named
-# database and leaves the shared backend and every other application untouched. On
-# failure the helper restores the original data and database before starting the service.
-# If rollback fails, it preserves the rollback files and leaves BookStack stopped.
+# Plan or perform a restore through the hosting backend selected by the target instance.
+# overwrite=false (default) is read-only. An overwrite requires a distinct, verified
+# pre_restore_point from a backup of this instance made within the last hour.
 
 - name: "BookStack Restore | Resolve"
   hosts: localhost
@@ -37,7 +32,14 @@
         name: homelabinfra_infra
       failed_when: false
     - ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.bookstack_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.bookstack_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+      no_log: true
+    - ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: bookstack
     - name: Validate the BookStack safety snapshot belongs to this recovery group
       ansible.builtin.assert:
         that:
@@ -46,15 +48,16 @@
           The pre_restore_point must be a readable snapshot from this BookStack instance's
           configured backup group. Back up this exact target and pass that recovery point.
   tasks:
-    - name: Resolve the existing services stack host
+    - name: Resolve the existing Docker stack host
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
         resolve_stack_app_instance: "{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
-- name: "BookStack Restore | Run"
+- name: "BookStack Restore | Run on Docker"
   hosts: "bookstack_recovery_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
@@ -70,7 +73,9 @@
         BOOKSTACK_INSTANCE: "{{ instance }}"
       register: bookstack_restore_plan_result
       changed_when: false
-      when: not (overwrite | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - not (overwrite | default(false) | bool)
 
     - name: Run the destructive BookStack restore
       ansible.builtin.command:
@@ -85,7 +90,19 @@
         BOOKSTACK_INSTANCE: "{{ instance }}"
       register: bookstack_restore_result
       changed_when: true
-      when: overwrite | default(false) | bool
+      when:
+        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - overwrite | default(false) | bool
+
+- name: "BookStack Restore | Run on Kubernetes"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Run the Kubernetes BookStack restore plan or Job
+      ansible.builtin.include_role:
+        name: bookstack-kubernetes
+        tasks_from: restore.yml
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
 - name: "BookStack Restore | Notify"
   hosts: localhost
@@ -101,17 +118,25 @@
       vars:
         notify_title: "{{ instance }} restored"
         notify_message: "BookStack {{ instance }} was restored from its application-consistent PBS snapshot."
-      when:
-        - overwrite | default(false) | bool
-        - hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
+      when: >-
+        (overwrite | default(false) | bool)
+        and ((app_config.hosting.method == 'docker'
+              and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
+             or (app_config.hosting.method == 'kubernetes'
+                 and bookstack_restore_result.rc | default(1) == 0))
     - name: Fail if BookStack restore did not complete
       ansible.builtin.assert:
         that: >-
-          (overwrite | default(false) | bool and
-          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
+          (app_config.hosting.method == 'docker'
+           and overwrite | default(false) | bool
+           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
           or
-          (not (overwrite | default(false) | bool) and
-          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_plan_result.rc | default(1) == 0)
+          (app_config.hosting.method == 'docker'
+           and not (overwrite | default(false) | bool)
+           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_plan_result.rc | default(1) == 0)
+          or
+          (app_config.hosting.method == 'kubernetes'
+           and bookstack_restore_result.rc | default(1) == 0)
         fail_msg: >-
           BookStack restore did not complete. It either rejected the recovery inputs before
           changing the target or restored the original data and database after an in-place

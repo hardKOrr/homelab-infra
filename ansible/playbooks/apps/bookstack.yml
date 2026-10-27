@@ -1,14 +1,11 @@
 ---
-# Deploy an instanced BookStack service on the services Docker stack.
+# Deploy BookStack through the hosting method selected by hosting.method. Existing configs
+# keep Docker on the services VM; Kubernetes has no per-app guest.
 #
-# Usage:
-#   ansible-playbook -i inventory/ playbooks/apps/bookstack.yml -e instance=bookstack
-#
-# The named MariaDB/MySQL backend must already be deployed. Database provisioning writes
-# the generated application role password to Vaultwarden before changing the backend; the
-# BookStack role does the same for its APP_KEY and initial administrator password.
+# The named MariaDB/MySQL backend must already be deployed. Database provisioning records
+# its generated role password before either application backend receives it.
 
-- name: "BookStack | Provision"
+- name: "BookStack | Resolve and provision"
   hosts: localhost
   become: false
   gather_facts: false
@@ -39,7 +36,8 @@
           {{ _app_defaults.bookstack_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
-    - name: Validate supported hosting method
+      no_log: true
+    - name: Validate supported hosting method before provisioning resources
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: bookstack
@@ -72,39 +70,47 @@
           }}, recursive=True) }}
       no_log: true
 
-    # The resolver is shared with the Kubernetes recovery implementation because it is the
-    # one place that turns the registry's PBS entry into a verified client endpoint. The
-    # BookStack role receives these values from localhost; no secret enters generated facts.
     - name: Resolve the lab PBS target for application-consistent recovery
       ansible.builtin.include_tasks: ../../tasks/backup/resolve-pbs-target.yml
       vars:
         k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('', true) }}"
       when: app_config.backup.enabled | default(false) | bool
 
-    - name: Find or create services stack host
+    - name: Find or create the Docker stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
-# Before Deploy: the declared access plus SMTP egress to the platform relay, which
-# BookStack needs to send mail (tasks/firewall/open-app-access.yml).
-- name: "BookStack | Open network access"
+- name: "BookStack | Open Docker network access"
   hosts: localhost
   gather_facts: false
-  vars:
-    _bks_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
-    app_config: "{{ _bks_fw_host.app_config }}"
-    wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _bks_fw_host.ansible_host }}"
-    wiring_firewall: "{{ _bks_fw_host.app_config.firewall | default({}) }}"
-    firewall_sends_mail: true
   tasks:
-    - name: Open the app's network access
+    - name: Open the app's declared access and SMTP egress from its Docker host
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        _bks_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}"
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        wiring_app_name: "{{ instance }}"
+        wiring_upstream_host: "{{ _bks_fw_host.ansible_host }}"
+        wiring_firewall: "{{ app_config.firewall | default({}) }}"
+        firewall_sends_mail: true
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-- name: "BookStack | Deploy"
+- name: "BookStack | Open Kubernetes network access"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Open the app's declared access and SMTP egress from every cluster node
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        firewall_sends_mail: true
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
+
+- name: "BookStack | Deploy on Docker"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -117,7 +123,7 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Deploy BookStack
@@ -129,22 +135,44 @@
         bookstack_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
         bookstack_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
         bookstack_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "BookStack | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy BookStack into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: bookstack-kubernetes
+      vars:
+        bookstack_fqdn: "{{ hostvars['localhost'].bookstack_fqdn }}"
+        bookstack_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"
+        bookstack_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
+        bookstack_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
+        bookstack_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
 - name: "BookStack | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _bookstack_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    app_config: "{{ hostvars['localhost'].app_config }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _bookstack_host.ansible_host }}"
-    wiring_upstream_port: "{{ _bookstack_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
+    wiring_upstream_port: >-
+      {{ app_config.app.container_port if app_config.hosting.method == 'kubernetes'
+         else app_config.app.port }}
     wiring_subdomain: "{{ hostvars['localhost'].bookstack_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].bookstack_fqdn }}"
     wiring_app_display: "BookStack ({{ instance }})"
     wiring_monitor_url: "https://{{ hostvars['localhost'].bookstack_fqdn }}/login"
     wiring_auth_group: homelab-users
-    wiring_identity_mode: "{{ _bookstack_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _bookstack_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
   tasks:
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
@@ -160,12 +188,22 @@
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
       when: homelabinfra_infra.dns.provider | default('none') != 'none'
-    - name: Record BookStack on its stack host
+    - name: Record BookStack on its Docker stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_names: ["{{ _bookstack_host.inventory_hostname }}"]
+        record_guest_names: ["{{ hostvars[groups['deploy_' ~ instance][0]].inventory_hostname }}"]
         record_guest_kind: docker
         record_guest_url: "https://{{ hostvars['localhost'].bookstack_fqdn }}"
+      when: app_config.hosting.method == 'docker'
+    - name: Record BookStack on each Kubernetes node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].bookstack_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
