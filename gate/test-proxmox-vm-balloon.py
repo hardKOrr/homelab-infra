@@ -76,6 +76,8 @@ assert template_resolver < template_validation < task_index(
 
 installer = load_tasks(task_dir / "create-installer-vm.yml")
 installer_validation = include_index(installer, "validate-vm-balloon.yml")
+# An unset balloon reaches the seam as "" (rendered `default(none)`), so empty skips validation.
+assert installer[installer_validation]["when"] == "installer_vm.balloon | default(none, true) is not none"
 for name in (
     "Installer VM | Create project-owned appliance VM",
     "Installer VM | Update changed managed appliance configuration",
@@ -89,7 +91,7 @@ match_expression = str(
         "ansible.builtin.set_fact"
     ]["_installer_vm_configuration_matches"]
 )
-assert "installer_vm.balloon is none" in match_expression
+assert "installer_vm.balloon | default(none, true) is none" in match_expression
 assert "_installer_vm_current_config.balloon" in match_expression
 
 ensure = load_tasks(task_dir / "ensure-guest-running.yml")
