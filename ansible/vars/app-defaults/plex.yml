@@ -3,6 +3,10 @@
 # The claim token is intentionally absent: store it as the hidden `claim_token`
 # field of Vaultwarden item homelab-infra/apps/<instance> before the first deploy.
 plex_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
   recovery:
     methods: [native]

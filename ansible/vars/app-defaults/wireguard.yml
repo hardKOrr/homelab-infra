@@ -2,6 +2,10 @@
 # Inbound WireGuard uses upstream's package-supported wg-quick service.  It is a
 # UDP endpoint, deliberately outside routing.proxy and Caddy.
 wireguard_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   proxmox:
     type: lxc
     boot_order: 30

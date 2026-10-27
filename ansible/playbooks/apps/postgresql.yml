@@ -23,6 +23,10 @@
     - name: Merge app config
       ansible.builtin.set_fact:
         app_config: "{{ _app_defaults.postgresql_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: postgresql
   tasks:
     - name: Refresh inventory
       ansible.builtin.meta: refresh_inventory

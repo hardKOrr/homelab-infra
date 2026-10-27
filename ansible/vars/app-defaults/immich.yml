@@ -4,6 +4,10 @@
 # The media mount is deliberately empty here: an instance must name the exact existing host
 # directory it owns in config/apps/<instance>.yml.
 immich_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: photos
 
   recovery:

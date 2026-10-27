@@ -19,7 +19,7 @@
   no_log: true
 
 - name: Decommission | Preserve independently retained Kubernetes volumes
-  when: app_config.hosting | default('') == 'kubernetes'
+  when: app_config.hosting.method | default('') == 'kubernetes'
   block:
     - name: Decommission | Remove owned namespace through existing retention seam
       ansible.builtin.include_tasks: ../unwiring/kubernetes.yml

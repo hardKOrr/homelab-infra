@@ -1,0 +1,7 @@
+---
+- name: Validate hosting contract for {{ hosting_app_slug }}
+  ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+
+- name: Report rendered hosting combination
+  ansible.builtin.debug:
+    msg: "HOSTING_RENDERED {{ hosting_app_slug }}={{ _hosting_combination }}"

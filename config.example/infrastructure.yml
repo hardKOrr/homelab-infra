@@ -469,6 +469,7 @@ vaultwarden:
 #   monitoring:
 #     memory: 8192
 #   media:
+#     guest_type: vm              # lxc | vm; defaults to vm
 #     pool: media
 #     node: <pve-node-3>          # optional pin for a new stack VM
 #     storage: <vm-image-store>  # optional Proxmox VM image storage
@@ -477,7 +478,7 @@ vaultwarden:
 #     disk_size: 64
 
 # ── Frigate recording storage (optional) ───────────────────────────────────────
-# Frigate is a dedicated Docker-on-LXC guest with continuous recording writes. The
+# Frigate is a dedicated Docker-on-VM guest with continuous recording writes. The
 # node-side path must already be mounted and have capacity for the configured retention
 # period; the deploy checks minimum_free_gb before attaching it and never formats it.
 #
@@ -485,7 +486,7 @@ vaultwarden:
 #   mounts:
 #     - host: /mnt/frigate-recordings   # existing path on the target Proxmox node
 #       path: /mnt/frigate-recordings   # path visible in stack-frigate and the container
-#   owner:                              # same identity on node and in the unprivileged LXC
+#   owner:                              # same identity on the node and in the VM/container
 #     user: homelab-infra
 #     uid: 1313
 #     gid: 1313

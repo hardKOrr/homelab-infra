@@ -36,6 +36,36 @@ configuration, a cached fact or a service-registry field; see
 | `config/.generated/facts.yml` | none | generated base of `homelabinfra_infra`; Vaultwarden runtime fields overlay it recursively | written incrementally by `write-generated-facts.yml` |
 | `user_vars_file` (back-compat) | `homelabinfra_config:` | `homelabinfra_config` | legacy single-file path; already self-wrapping |
 
+## 2.1 App hosting contract
+
+Every app defaults block declares its current hosting form and the combinations its deploy
+supports. An instance may select only `hosting.method`; the supported and impossible lists
+remain app-owned declarations and cannot be overridden in `config/apps/<instance>.yml`.
+Deploy resolves one of `docker-lxc`, `docker-vm`, `kubernetes`, `native-lxc`, or
+`native-vm` before any task that changes state, then refuses a combination absent from the
+app's `hosting.supported`. If the combination is in `hosting.impossible`, the failure also
+shows the app's technical reason.
+
+```yaml
+example_defaults:
+  hosting:
+    method: docker             # docker | kubernetes | native
+    supported: [docker-vm]     # current default form; expand only with an implemented path
+    impossible: {}             # combination: technical reason, when truly impossible
+```
+
+For a stack-backed Docker app, guest type comes from the effective stack's
+`stack_defaults.<stack>.guest_type`; `stack_defaults._default.guest_type` is `vm`, and
+`infrastructure.stacks.<stack>.guest_type` overrides it for that runner. A standalone
+Docker app keeps the VM shape in its app defaults. A native app uses the merged
+`proxmox.guest_type` when present, then the app's existing `proxmox.type` or guest block.
+Kubernetes is the cluster form and has no guest suffix.
+
+Appliance VMs and the k3s cluster use `native-vm`. Each lists the other four combinations
+in `hosting.impossible` with a reason; other apps leave that mapping empty until a
+technical impossibility is established. Unsupported but possible forms stay out of
+`hosting.supported` without inventing a `todo` status.
+
 ## 3. Canonical `homelabinfra_infra` shape
 
 The registry is role-keyed and provider-agnostic. Consumers build derived values
@@ -549,9 +579,10 @@ fresh-recreation limits.
 ### Recovery contract
 
 `recovery:` is an explicit capability declaration in each app's defaults block. It is
-merged with the instance file in the same recursive app-layer merge as `backup:` and
-`hosting:`. A missing method is not inferred from a missing playbook: it means that method
-is not declared and a recovery request fails with a missing-capability error.
+merged with the instance file in the same recursive app-layer merge as `backup:` and the
+app's selected `hosting.method`. A missing method is not inferred from a missing playbook:
+it means
+that method is not declared and a recovery request fails with a missing-capability error.
 
 ```yaml
 mixpost_defaults:
@@ -608,7 +639,7 @@ A consumer owns only its named database and role. Backup and restore use a named
 
 ### LiteLLM external-state contract
 
-LiteLLM declares `hosting: kubernetes` and `app.database` as a named PostgreSQL consumer.
+LiteLLM declares `hosting.method: kubernetes` and `app.database` as a named PostgreSQL consumer.
 Its `app.models` list is routing configuration; a model's optional `litellm_params.api_key_env`
 must name an `app.credentials` entry of `ENVIRONMENT_NAME: vaultwarden_field_name`.
 Only the field name is authored in `config/apps/<instance>.yml`; the value is a hidden field

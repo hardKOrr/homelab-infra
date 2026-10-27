@@ -59,6 +59,10 @@
           {{ _app_defaults.flaresolverr_defaults
              | combine(_instance_config | default({}), recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: flaresolverr
   tasks:
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory

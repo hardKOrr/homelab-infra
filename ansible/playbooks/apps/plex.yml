@@ -27,6 +27,10 @@
           {{ _app_defaults.plex_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: plex
   tasks:
     - name: Validate Plex GPU placement declaration
       ansible.builtin.assert:

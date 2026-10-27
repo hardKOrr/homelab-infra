@@ -56,6 +56,10 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: vaultwarden
   tasks:
     # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
     # find-or-create-host.yml: an existing `_<instance>` host is reused so

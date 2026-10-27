@@ -2,6 +2,10 @@
 # Default configuration for BookStack on the services Docker stack. The application
 # database is deliberately external: deploy the named MariaDB/MySQL backend first.
 bookstack_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
 
   app:

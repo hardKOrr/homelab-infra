@@ -116,7 +116,7 @@
     mode: "0750"
   when: app_config.app.recordings_path | default('', true) | length > 0
 
-- name: Frigate | Verify the recording mount is visible in the Docker LXC
+- name: Frigate | Verify the recording mount is visible in the Docker VM
   ansible.builtin.stat:
     path: "{{ app_config.app.recordings_path }}"
   register: _frigate_recordings_path

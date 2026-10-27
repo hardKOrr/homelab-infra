@@ -30,6 +30,10 @@
         app_config: >-
           {{ _homepage_defaults.homepage_defaults
              | combine(_homepage_instance_config | default({}), recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: homepage
   tasks:
     - name: Resolve the dashboard estate
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml

@@ -31,11 +31,10 @@ schema_version: 2
 #   actions   explicit action list, replacing derivation entirely. Use only when the
 #             hosting kind genuinely does not describe the thing (the k3s cluster).
 #
-# HOSTING IS NOT DECLARED HERE. Which day-2 actions exist is derived from
-# ansible/vars/app-defaults/<slug>.yml — `hosting:` when present, otherwise the presence of
-# `stack:` tells Docker from native, exactly as the rest of the platform decides it. That
-# keeps one source of truth. Deriving the ACTION SET from hosting is not the same thing as
-# grouping by hosting, which this file still forbids.
+# HOSTING IS NOT DECLARED HERE. Which day-2 actions exist are derived from
+# `hosting.method` in ansible/vars/app-defaults/<slug>.yml, with ISO-installed native
+# appliances retaining their separate action family. Deriving the ACTION SET from
+# hosting is not the same thing as grouping by hosting, which this file still forbids.
 
 applications:
   authentik:

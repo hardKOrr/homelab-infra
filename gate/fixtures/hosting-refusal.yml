@@ -1,0 +1,32 @@
+---
+- name: Refuse an impossible hosting combination before a state change
+  hosts: localhost
+  gather_facts: false
+  vars:
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    homelabinfra_config:
+      infrastructure:
+        stacks:
+          contract-test:
+            guest_type: lxc
+  tasks:
+    - name: Load appliance defaults
+      ansible.builtin.set_fact:
+        _hosting_gate_appliance_defaults: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../ansible/vars/app-defaults/opnsense.yml')
+              | from_yaml).opnsense_defaults }}
+
+    - name: Validate the deliberately unsupported selection
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: opnsense
+        hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/opnsense.yml"
+        hosting_app_config: >-
+          {{ _hosting_gate_appliance_defaults
+             | combine({'hosting': _hosting_gate_appliance_defaults.hosting
+                | combine({'method': 'docker'}), 'stack': 'contract-test'}, recursive=True) }}
+
+    - name: State change must remain unreachable after the failed validation
+      ansible.builtin.file:
+        path: "{{ hosting_marker_path }}"
+        state: touch

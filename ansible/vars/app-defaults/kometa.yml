@@ -11,7 +11,10 @@
 # mounted from one Kubernetes Secret for each CronJob run.
 
 kometa_defaults:
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   app:
     image: "kometateam/kometa:latest"

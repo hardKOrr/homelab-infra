@@ -62,6 +62,10 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: lidarr
   tasks:
     # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
     # The stack host is found (or created) by tag. The app is deployed in Play 2.

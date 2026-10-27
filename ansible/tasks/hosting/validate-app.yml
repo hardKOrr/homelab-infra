@@ -1,0 +1,123 @@
+---
+# Refuse an app hosting combination its defaults do not support. Call this after the
+# instance config has been recursively merged and before the first state-changing task.
+#
+# Inputs:
+#   hosting_app_slug          — defaults filename without `.yml`
+#   hosting_app_config        — optional merged config; defaults to `app_config`
+#   hosting_app_defaults_file — optional override for isolated gate fixtures
+#
+# Stack guest type comes from stack_defaults plus this runner's infrastructure.stacks
+# override. Standalone Docker guests keep their declared Proxmox guest shape. Native
+# guests use proxmox.guest_type first (the database-backend knob), then the defaults'
+# existing proxmox.type or nested guest shape.
+- name: Hosting | Load the app's capability declaration
+  ansible.builtin.include_vars:
+    file: >-
+      {{ hosting_app_defaults_file
+         | default(playbook_dir ~ '/../../vars/app-defaults/' ~ hosting_app_slug ~ '.yml') }}
+    name: _hosting_defaults_file
+  no_log: true
+
+- name: Hosting | Read the defaults declaration
+  ansible.builtin.set_fact:
+    _hosting_input: "{{ hosting_app_config | default(app_config | default(k8s_cluster_config | default(pdm_config | default({})))) }}"
+    _hosting_defaults_key: "{{ (hosting_app_slug | replace('-', '_')) ~ '_defaults' }}"
+    _hosting_capabilities: >-
+      {{ _hosting_defaults_file[(hosting_app_slug | replace('-', '_')) ~ '_defaults'].hosting }}
+    _hosting_instance_name: "{{ instance | default(hosting_app_slug) }}"
+  no_log: true
+
+- name: Hosting | Require an instance hosting method and preserve app capabilities
+  ansible.builtin.assert:
+    that:
+      - _hosting_input is mapping
+      - _hosting_input.get('hosting', {}) is mapping
+      - _hosting_input.get('hosting', {}).get('method') in ['docker', 'kubernetes', 'native']
+      - _hosting_capabilities.method is defined
+      - _hosting_capabilities.supported is sequence
+      - _hosting_capabilities.supported is not string
+      - _hosting_capabilities.impossible is mapping
+      - >-
+        (_hosting_input.get('hosting', {}).get('supported', _hosting_capabilities.supported))
+        == _hosting_capabilities.supported
+      - >-
+        (_hosting_input.get('hosting', {}).get('impossible', _hosting_capabilities.impossible))
+        == _hosting_capabilities.impossible
+    fail_msg: >-
+      {{ _hosting_instance_name }} must select hosting.method docker, kubernetes or native;
+      hosting.supported and hosting.impossible are fixed app declarations and cannot be
+      changed by an instance config.
+  no_log: true
+
+- name: Hosting | Resolve the requested method and guest shape
+  ansible.builtin.set_fact:
+    _hosting_method: "{{ _hosting_input.get('hosting', {}).get('method', '') }}"
+    _hosting_requested_stack: "{{ _hosting_input.get('stack', '') | default('', true) }}"
+    _hosting_native_guest_type: >-
+      {{ _hosting_proxmox.get('guest_type')
+         | default(_hosting_proxmox.get('type'), true)
+                   | default('vm' if _hosting_proxmox.get('vm') is mapping
+                            else 'lxc' if _hosting_proxmox.get('lxc') is mapping
+                            else 'vm', true) }}
+  vars:
+    _hosting_input: "{{ hosting_app_config | default(app_config | default(k8s_cluster_config | default(pdm_config | default({})))) }}"
+    _hosting_proxmox: "{{ _hosting_input.get('proxmox', {}) }}"
+  no_log: true
+
+- name: Hosting | Load the shared stack defaults
+  ansible.builtin.include_vars:
+    file: >-
+      {{ hosting_stack_defaults_file
+         | default(playbook_dir ~ '/../../vars/stack-defaults.yml') }}
+    name: _hosting_stack_defaults_file
+
+- name: Hosting | Resolve the effective stack
+  ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
+  vars:
+    stack_resolution_config: "{{ hosting_app_config | default(app_config | default(k8s_cluster_config | default(pdm_config | default({})))) }}"
+    stack_resolution_default_name: "{{ (hosting_app_config | default(app_config | default(k8s_cluster_config | default(pdm_config | default({}))))).get('stack', '') }}"
+
+- name: Hosting | Resolve guest type and combination
+  ansible.builtin.set_fact:
+    _hosting_stack_name: >-
+      {{ _stack_resolution_name if _hosting_requested_stack | length > 0 else '' }}
+    _hosting_stack_config: >-
+      {{ (_hosting_stack_defaults_file.stack_defaults._default | default({}))
+         | combine(_hosting_stack_defaults_file.stack_defaults.get(_stack_resolution_name, {}), recursive=True)
+         | combine(((homelabinfra_config | default({})).get('infrastructure', {})).get('stacks', {}).get(_stack_resolution_name, {}), recursive=True) }}
+  no_log: true
+
+- name: Hosting | Select the resolved guest type
+  ansible.builtin.set_fact:
+    _hosting_guest_type: >-
+      {{ _hosting_stack_config.guest_type | default('vm')
+         if _hosting_method == 'docker' and _hosting_stack_name | length > 0
+         else _hosting_native_guest_type
+         if _hosting_method in ['docker', 'native']
+         else '' }}
+  no_log: true
+
+- name: Hosting | Require a supported guest type
+  ansible.builtin.assert:
+    that:
+      - _hosting_method == 'kubernetes' or _hosting_guest_type in ['lxc', 'vm']
+    fail_msg: >-
+      {{ _hosting_instance_name }} resolves to invalid hosting guest type
+      '{{ _hosting_guest_type }}'; choose lxc or vm.
+
+- name: Hosting | Build the resolved combination
+  ansible.builtin.set_fact:
+    _hosting_combination: >-
+      {{ 'kubernetes' if _hosting_method == 'kubernetes'
+         else _hosting_method ~ '-' ~ _hosting_guest_type }}
+  no_log: true
+
+- name: Hosting | Refuse an unsupported combination
+  ansible.builtin.assert:
+    that: _hosting_combination in _hosting_capabilities.supported
+    fail_msg: >-
+      {{ _hosting_instance_name }} resolves to unsupported hosting combination
+      '{{ _hosting_combination }}'.
+      {{ _hosting_capabilities.impossible.get(_hosting_combination, '')
+         | default('Supported combinations: ' ~ (_hosting_capabilities.supported | join(', ')), true) }}

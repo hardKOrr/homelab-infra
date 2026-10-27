@@ -230,7 +230,7 @@
     - name: Resolve the hosting kind
       ansible.builtin.set_fact:
         _ra_kind: >-
-          {{ app_config.hosting
+          {{ app_config.hosting.method
              | default('docker' if app_config.stack is defined else 'native', true) }}
         _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
         _ra_source_instance: "{{ instance }}"

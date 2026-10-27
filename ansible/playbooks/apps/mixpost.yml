@@ -55,6 +55,10 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: mixpost
   tasks:
     # The estate overlay has to run before the FQDN is built, not after: a multi-domain lab
     # resolves `routing.estate` into the domain, SSO and DNS this app is published under,

@@ -1,8 +1,8 @@
 ---
 # Deploy Immich on its effective Docker stack (the GPU owner's stack when app.gpu_device is set).
 #
-# The hosting unit is an LXC stack host, not a VM. The exact shared render node is
-# declared in config/proxmox.yml under proxmox.devices with mode: shared. The durable
+# The hosting unit is the Docker stack VM. The exact shared render node is declared in
+# config/proxmox.yml under proxmox.devices with mode: shared. The durable
 # originals/thumbnails mount and its owner are supplied by this Immich instance config;
 # no existing global media library is inherited.
 
@@ -45,6 +45,10 @@
         _immich_mounts: "{{ (_app_defaults.immich_defaults.media_storage.mounts | default([])) }}"
       no_log: true
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: immich
     - name: Require exactly one new durable Immich media mount
       ansible.builtin.assert:
         that:

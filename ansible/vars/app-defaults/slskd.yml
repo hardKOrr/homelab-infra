@@ -9,6 +9,10 @@
 # Deemix's ARL (ansible/roles/deemix/tasks/main.yml,
 # vars/app-defaults/deemix.yml).
 slskd_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   app:

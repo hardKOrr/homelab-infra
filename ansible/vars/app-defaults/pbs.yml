@@ -9,6 +9,10 @@
 # Proxmox's apt repository — cleaner to control, and no manual ISO step.
 
 pbs_defaults:
+  hosting:
+    method: native
+    supported: [native-vm]
+    impossible: {}
   proxmox:
     type: vm
     vm:

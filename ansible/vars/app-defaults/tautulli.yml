@@ -2,6 +2,10 @@
 # Tautulli observes one Plex server. Its server token is published by the Plex
 # role to Vaultwarden, never authored in this file or an instance config.
 tautulli_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   recovery:

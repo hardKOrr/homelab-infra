@@ -3,6 +3,10 @@
 # its `database.instance` configuration; this role does not silently create one as
 # a Compose sidecar.
 postgresql_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   recovery:
     methods: [native]
     native:

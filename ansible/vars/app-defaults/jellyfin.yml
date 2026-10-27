@@ -5,6 +5,10 @@
 # This file is git-managed — git pull may update these defaults.
 
 jellyfin_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   # Jellyfin keeps its users, libraries and server settings in its application

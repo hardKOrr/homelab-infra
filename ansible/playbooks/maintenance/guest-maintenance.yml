@@ -76,6 +76,11 @@
           {{ (ansible_all_ipv4_addresses | default([]))
              + (ansible_all_ipv6_addresses | default([])) }}
 
+    - name: Load the application catalog for instance defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../catalog/applications.yml"
+        name: _gm_application_catalog
+
     # Instance files are the authored half of an app's schedule. The filename IS the
     # instance name, which is also what the guest's `_<instance>` tag records, so the
     # two join without any registry lookup.
@@ -87,9 +92,26 @@
         _gm_instances_json: >-
           {%- set out = {} -%}
           {%- for path in query('ansible.builtin.fileglob', _gm_config_dir ~ '/apps/*.yml') -%}
-            {%- set cfg = lookup('ansible.builtin.file', path) | from_yaml -%}
-            {%- set _ = out.update({(path | basename | splitext | first):
-                                    (cfg if cfg is mapping else {})}) -%}
+            {%- set instance_name = path | basename | splitext | first -%}
+            {%- set instance_config = lookup('ansible.builtin.file', path) | from_yaml -%}
+            {%- set instance_config = instance_config if instance_config is mapping else {} -%}
+            {%- set owner = namespace(slug='') -%}
+            {%- for slug in _gm_application_catalog.applications.keys() -%}
+              {%- if (instance_name == slug or instance_name.startswith(slug ~ '-'))
+                    and slug | length > owner.slug | length -%}
+                {%- set owner.slug = slug -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if owner.slug | length > 0 -%}
+              {%- set defaults_file = lookup('ansible.builtin.file',
+                    playbook_dir ~ '/../../../ansible/vars/app-defaults/' ~ owner.slug ~ '.yml') | from_yaml -%}
+              {%- set defaults = defaults_file[(owner.slug | replace('-', '_')) ~ '_defaults'] -%}
+              {%- set hosting = defaults.hosting
+                    | combine(instance_config.get('hosting', {}), recursive=True) -%}
+              {%- set instance_config = instance_config
+                    | combine({'hosting': hosting}, recursive=True) -%}
+            {%- endif -%}
+            {%- set _ = out.update({instance_name: instance_config}) -%}
           {%- endfor -%}
           {{ out | to_json }}
 

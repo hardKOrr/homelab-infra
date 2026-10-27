@@ -80,7 +80,7 @@
     - name: Resolve the hosting kind
       ansible.builtin.set_fact:
         _ba_kind: >-
-          {{ app_config.hosting
+          {{ app_config.hosting.method
              | default('docker' if app_config.stack is defined else 'native', true) }}
 
     # Name the existing CronJob/role path as the native method. Product-specific

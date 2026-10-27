@@ -2,6 +2,10 @@
 # The registration token is intentionally absent. An operator creates it for this
 # named runner in Forgejo and stores it in Vaultwarden under the runner app item.
 forgejo_runner_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
   app:
     image: data.forgejo.org/forgejo/runner:13

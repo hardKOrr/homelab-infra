@@ -4,6 +4,10 @@
 # This file is git-managed — git pull may update these defaults.
 
 caddy_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   # Recovery disposition: PBS guest only. Caddy is a native, lab-wide LXC, so the
   # shared backup-guest/restore-guest jobs are the supported method for both new and
   # existing destinations. There is intentionally no application-native or

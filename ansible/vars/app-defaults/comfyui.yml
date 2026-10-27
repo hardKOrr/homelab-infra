@@ -5,7 +5,10 @@
 # separate Compose mounts so checkpoints, custom nodes, inputs, and outputs survive image
 # replacement and are covered by the application archive.
 comfyui_defaults:
-  hosting: docker
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
 
   recovery:
     methods: [native]

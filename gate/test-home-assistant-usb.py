@@ -87,7 +87,7 @@ def main():
         provision["pre_tasks"], "Assert the explicit VM and optional USB contract"
     )["ansible.builtin.assert"]["that"]
     vm_contract = " ".join(provision_assertion)
-    assert "app_config.hosting == 'docker'" in vm_contract
+    assert "app_config.hosting.method == 'docker'" in vm_contract
     assert "app_config.proxmox.vm is mapping" in vm_contract
     assert "app_config.app.usb_mapping | default('', true) | length == 0" in vm_contract
 

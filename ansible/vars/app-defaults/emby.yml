@@ -2,6 +2,10 @@
 # Emby is an independent media-server option on the shared media stack. It does
 # not participate in the Servarr API registry and is never selected by default.
 emby_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
   # Recovery is owned by this deployment slice: the complete Emby config
   # database, including its own users and library definitions, is archived as

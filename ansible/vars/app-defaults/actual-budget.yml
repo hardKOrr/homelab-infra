@@ -8,6 +8,10 @@
 # The role generates the Actual server password once and keeps its canonical copy in the
 # Vaultwarden item homelab-infra/apps/<instance>.
 actual_budget_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
 
   recovery:

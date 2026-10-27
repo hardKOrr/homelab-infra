@@ -44,10 +44,14 @@
              | combine(_instance_config | default({}), recursive=True) }}
       no_log: true
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: comfyui
     - name: Assert the VM, accelerator, and model-storage contract
       ansible.builtin.assert:
         that:
-          - app_config.hosting == 'docker'
+          - app_config.hosting.method == 'docker'
           - app_config.proxmox.vm is mapping
           - app_config.app.accelerator | default('cuda') in ['cuda', 'cpu']
           - >-

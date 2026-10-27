@@ -4,6 +4,10 @@
 # explicit recovery units. Version 2 is selected because its stable HTTP API,
 # setup endpoint, and package-managed service are supported by upstream.
 influxdb_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   recovery:
     methods: [native]
     native:

@@ -4,6 +4,10 @@
 # explicitly name at least one already-deployed Ollama and/or LiteLLM instance in its
 # config/apps/<instance>.yml file.
 open_webui_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: ai
 
   recovery:

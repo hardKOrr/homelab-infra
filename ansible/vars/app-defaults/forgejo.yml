@@ -1,5 +1,9 @@
 ---
 forgejo_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
 
   recovery:

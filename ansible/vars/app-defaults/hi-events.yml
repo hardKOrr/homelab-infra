@@ -27,7 +27,10 @@
 #      degrading to "no email sent" the way a lower-stakes app might.
 hi_events_defaults:
 
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   recovery:
     methods: [native]

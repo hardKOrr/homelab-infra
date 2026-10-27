@@ -47,6 +47,10 @@
                }, recursive=True)
              | combine(_instance_config | default({}), recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: frigate
     - name: Assert Frigate has an explicit detector and recording-storage contract
       ansible.builtin.assert:
         that:
@@ -198,7 +202,7 @@
       failed_when: false
 
   tasks:
-    - name: Bootstrap the Frigate LXC
+    - name: Bootstrap the Frigate VM
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 

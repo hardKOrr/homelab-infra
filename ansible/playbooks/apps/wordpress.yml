@@ -39,6 +39,10 @@
           {{ _app_defaults.wordpress_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: wordpress
   tasks:
     - name: Require the named MariaDB backend
       ansible.builtin.assert:

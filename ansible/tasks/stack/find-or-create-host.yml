@@ -35,8 +35,8 @@
 #   homelabinfra_config.proxmox.*       — API connection + floating VM placement
 #   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
 #   homelabinfra_config.infrastructure.stacks.<resolved_stack_name>
-#                                       — optional; sizing, `shared: true`, `node` and
-#                                         `storage`, plus `network`, `pool` and `ip_address`
+#                                       — optional; `guest_type`, sizing, `shared: true`,
+#                                         `node` and `storage`, plus `network`, `pool` and `ip_address`
 #                                         for this stack host (create path)
 #   homelabinfra_config.infrastructure.domains
 #                                       — optional; the estates this lab declares
@@ -252,6 +252,8 @@
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
+    # guest_type selects the hosting combination during app preflight; it is not a
+    # Proxmox VM parameter and must stay out of the generated proxmox.vm mapping.
     - name: Set stack VM identity and sizing
       ansible.builtin.set_fact:
         homelabinfra_config: >-
@@ -259,12 +261,16 @@
             homelabinfra_config | combine(
               {
                 'proxmox': {
-                  'vm': _stack_sizing | combine({
-                    'name': 'stack-' ~ _stack_id,
-                    'tags': _stack_tags,
-                    'stack_tag': _stack_tag,
-                    'stack_id': _stack_id
-                  }, recursive=True)
+                'vm': (
+                  _stack_sizing | dict2items
+                  | rejectattr('key', 'equalto', 'guest_type')
+                  | list | items2dict
+                ) | combine({
+                  'name': 'stack-' ~ _stack_id,
+                  'tags': _stack_tags,
+                  'stack_tag': _stack_tag,
+                  'stack_id': _stack_id
+                }, recursive=True)
                 }
               },
               recursive=True

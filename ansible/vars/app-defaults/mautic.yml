@@ -9,6 +9,10 @@
 # tasks/mail/resolve-mail.yml — the same two seams roles/odoo/tasks/main.yml already
 # proved for PostgreSQL.
 mautic_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
 
   recovery:

@@ -127,18 +127,28 @@ def app_defaults_of(slug: str) -> dict:
 
 
 def hosting_of(defaults: dict, slug: str) -> tuple[str, str]:
-    """Hosting kind and stack tag for an application, read from its own defaults.
+    """Day-2 action family and stack tag for an application, read from its defaults.
 
-    This is the platform's existing rule, not a second one: an explicit `hosting:` wins,
-    otherwise the presence of `stack:` is what tells a Docker app from a native LXC app.
+    `hosting.method` is the deployment contract. ISO-installed appliances remain a
+    separate action family because they do not have the SSH and guest-agent interface
+    used by ordinary native guests.
     """
     stack = defaults.get("stack") or ""
-    hosting = defaults.get("hosting") or ("docker" if stack else "native")
-    if hosting not in HOSTING_KINDS:
+    declaration = defaults.get("hosting") or {}
+    method = declaration.get("method") if isinstance(declaration, dict) else declaration
+    method = method or ("docker" if stack else "native")
+    if method not in {"native", "docker", "kubernetes"}:
         raise ValueError(
-            f"{APP_DEFAULTS / (slug + '.yml')}: hosting {hosting!r} is not one of {HOSTING_KINDS}"
+            f"{APP_DEFAULTS / (slug + '.yml')}: hosting.method {method!r} is not one of "
+            "('native', 'docker', 'kubernetes')"
         )
-    return hosting, str(stack)
+    proxmox = defaults.get("proxmox") or {}
+    install = defaults.get("install") or {}
+    is_appliance = bool(proxmox.get("installer")) or install.get("method") == "official-iso"
+    action_family = "appliance" if method == "native" and is_appliance else method
+    if action_family not in HOSTING_KINDS:
+        raise ValueError(f"{APP_DEFAULTS / (slug + '.yml')}: unsupported action family {action_family!r}")
+    return action_family, str(stack)
 
 
 def estate_context() -> dict:

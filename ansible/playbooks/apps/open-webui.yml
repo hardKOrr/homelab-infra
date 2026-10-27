@@ -35,6 +35,10 @@
           {{ _app_defaults.open_webui_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: open-webui
     - name: Resolve the named deployed upstreams before provisioning
       ansible.builtin.import_tasks: ../../tasks/app-wiring/open-webui-upstreams.yml
   tasks:
