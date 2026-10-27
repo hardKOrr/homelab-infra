@@ -19,6 +19,9 @@ STACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/stack-defaults.yml").read_
 ]
 COMBINATIONS = {"docker-lxc", "docker-vm", "kubernetes", "native-lxc", "native-vm"}
 METHODS = {"docker", "kubernetes", "native"}
+# The lab's named MariaDB backends can be configured as VMs by the database placement
+# policy; its apt/systemd role supports that instance override as well as the LXC default.
+EXTRA_IMPLEMENTED = {"mariadb": {"native-vm"}}
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
 
 
@@ -143,6 +146,7 @@ def check_declarations(paths):
         expected = current_combination(slug, defaults)
         _, source = app_source(slug)
         implemented = implemented_combinations(expected, source)
+        implemented |= EXTRA_IMPLEMENTED.get(slug, set())
         assert set(supported) == implemented, (
             f"{path}: declared combinations {supported} differ from implemented paths "
             f"{sorted(implemented)}"
@@ -204,12 +208,20 @@ def check_unsupported_fails_before_state_change():
         assert not marker.exists(), "a state-changing task ran after unsupported hosting was selected"
 
 
+def check_mariadb_vm_instance_override():
+    result = run_ansible("hosting-mariadb-vm.yml")
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"MariaDB VM hosting override failed preflight:\n{output}"
+    assert "MARIADB_VM_HOSTING_PASS" in output, output
+
+
 def main():
     paths = sorted(path for path in APP_DEFAULTS.glob("*.yml") if path.name != "_template.yml")
     assert paths, "no application defaults were found"
     expected_by_slug = check_declarations(paths)
     check_rendered_defaults(expected_by_slug)
     check_unsupported_fails_before_state_change()
+    check_mariadb_vm_instance_override()
     print(f"Hosting contract passed for {len(paths)} app defaults and preflight refusal.")
 
 
