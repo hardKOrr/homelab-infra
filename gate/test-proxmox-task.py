@@ -124,13 +124,6 @@ def main():
                 {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
             ]))
-            if fact == "_rg_restore_task_upid":
-                normalization_cases.append((register, json.dumps({"data": upid}), [
-                    {"ansible.builtin.set_fact": normalize_task["ansible.builtin.set_fact"]},
-                    {"ansible.builtin.assert": cardinality_task["ansible.builtin.assert"]},
-                    {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
-                    {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
-                ]))
 
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
@@ -192,6 +185,29 @@ def main():
                 env=env, text=True, capture_output=True, check=False,
             )
             assert normalized.returncode == 0, normalized.stdout + normalized.stderr
+
+        restore_response_selection = named_task(
+            playbooks["restore-guest.yml"], "Select the guest restore task response")
+        selector_playbook = root / "restore-selector.yml"
+        for target_type, expected_stdout in (("qemu", "qemu-result"), ("lxc", "lxc-result")):
+            selector_playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {
+                    "_rg_execute": True,
+                    "_rg_target_type": target_type,
+                    "_rg_restore_vm_task": {"stdout": "qemu-result"},
+                    "_rg_restore_lxc_task": {"stdout": "lxc-result"},
+                },
+                "tasks": [restore_response_selection, {
+                    "ansible.builtin.assert": {"that": [
+                        f"_rg_restore_task.stdout == {json.dumps(expected_stdout)}"]}
+                }],
+            }]))
+            selected = subprocess.run(
+                [str(ansible), "-i", str(inventory), str(selector_playbook)],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            assert selected.returncode == 0, selected.stdout + selected.stderr
         requests = [json.loads(line) for line in log.read_text().splitlines()]
         assert requests == expected, requests
     print("Proxmox: callers extract one wrapped UPID; invalid output fails before polling")

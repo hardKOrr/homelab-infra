@@ -678,8 +678,14 @@ assert "_rg_pre_task_upid" in pre_restore_wait["vars"]["proxmox_task_upid"]
 assert "_rg_pre_task_upid | length > 0" in str(pre_restore_wait["when"])
 assert task(pre_restore_tasks, "Require a successful synchronous target recovery point")["ansible.builtin.assert"]["that"]
 restore_tasks = task(restore_tasks, "Restore the guest without activating the target")["block"]
+assert task(restore_tasks, "Restore a VM from the native PBS artifact")["register"] == "_rg_restore_vm_task"
+assert task(restore_tasks, "Restore an LXC from the native PBS artifact")["register"] == "_rg_restore_lxc_task"
+restore_response_selection = task(restore_tasks, "Select the guest restore task response")
+restore_selected_result = restore_response_selection["ansible.builtin.set_fact"]["_rg_restore_task"]
+assert "_rg_target_type == 'qemu'" in restore_selected_result
+assert "_rg_restore_vm_task" in restore_selected_result and "_rg_restore_lxc_task" in restore_selected_result
 restore_response = task(restore_tasks, "Normalize the guest restore task response")
-assert "regex_findall('UPID:" in restore_response["ansible.builtin.set_fact"]["_rg_restore_task_upids"]
+assert "regex_findall('(?m)" in restore_response["ansible.builtin.set_fact"]["_rg_restore_task_upids"]
 assert task(restore_tasks, "Require exactly one guest restore task identity")["ansible.builtin.assert"]["that"] == "_rg_restore_task_upids | length == 1"
 restore_wait = task(restore_tasks, "Wait for the guest restore task")
 assert "_rg_restore_task_upid" in restore_wait["vars"]["proxmox_task_upid"]

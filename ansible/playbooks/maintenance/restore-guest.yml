@@ -543,7 +543,7 @@
                   '--force', '0' if _rg_destination == 'new' else '1',
                   '--start', '0'] + _rg_restore_bwlimit_args }}
           delegate_to: "{{ _rg_target_node }}"
-          register: _rg_restore_task
+          register: _rg_restore_vm_task
           changed_when: true
           when:
             - _rg_execute | bool
@@ -561,17 +561,25 @@
                   '--force', '0' if _rg_destination == 'new' else '1',
                   '--start', '0'] + _rg_restore_bwlimit_args }}
           delegate_to: "{{ _rg_target_node }}"
-          register: _rg_restore_task
+          register: _rg_restore_lxc_task
           changed_when: true
           when:
             - _rg_execute | bool
             - _rg_target_type == 'lxc'
 
+        - name: Select the guest restore task response
+          ansible.builtin.set_fact:
+            # The later skipped restore task must not replace the executed task's result.
+            _rg_restore_task: >-
+              {{ _rg_restore_vm_task if _rg_target_type == 'qemu'
+                 else _rg_restore_lxc_task }}
+          when: _rg_execute | bool
+
         - name: Normalize the guest restore task response
           ansible.builtin.set_fact:
             _rg_restore_task_upids: >-
               {{ _rg_restore_task.stdout | default('')
-                 | regex_findall('UPID:[^\s"\\]+:') }}
+                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
           when: _rg_execute | bool
 
         - name: Require exactly one guest restore task identity
