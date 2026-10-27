@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "ansible/scripts/vault-runtime.py"
@@ -38,6 +40,26 @@ def main():
     assert invalid.returncode == 2
     assert "Bitwarden item input must be valid base64" in invalid.stderr
     assert "not-base64" not in invalid.stderr
+
+    newline = subprocess.run(
+        [sys.executable, str(RUNTIME), "--base64-stdin"],
+        input=base64.b64encode(source.encode()).decode() + "\n", text=True,
+        capture_output=True, check=False,
+    )
+    assert newline.returncode == 2
+    assert "Bitwarden item input must be valid base64" in newline.stderr
+
+    restore = yaml.safe_load(
+        (ROOT / "ansible/playbooks/maintenance/restore-app.yml").read_text()
+    )[0]
+    parser_task = next(
+        task for task in restore["pre_tasks"]
+        if task.get("name") == "Parse the refreshed Vaultwarden runtime contract"
+    )
+    parser_command = parser_task["ansible.builtin.command"]
+    assert parser_command["stdin_add_newline"] is False
+    assert parser_command["argv"][-1] == "--base64-stdin"
+    assert "| b64encode" in parser_command["stdin"]
     print("Vault runtime stdin input checks passed")
 
 

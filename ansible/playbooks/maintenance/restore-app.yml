@@ -641,6 +641,7 @@
           - "{{ playbook_dir }}/../../scripts/vault-runtime.py"
           - --base64-stdin
         stdin: "{{ _ra_refreshed_vault_items.stdout | b64encode }}"
+        stdin_add_newline: false
       register: _ra_refreshed_vault_runtime
       changed_when: false
       delegate_to: localhost
