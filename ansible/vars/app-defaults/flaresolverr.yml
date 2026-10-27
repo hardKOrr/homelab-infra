@@ -48,7 +48,10 @@
 
 flaresolverr_defaults:
 
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY. See the identical comment in
   # vars/app-defaults/jellyseerr.yml — the resolver has no per-app selector yet.

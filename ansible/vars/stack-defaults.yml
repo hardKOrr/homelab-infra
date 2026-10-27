@@ -1,5 +1,5 @@
 ---
-# Sizing for the VM that hosts each Docker stack.
+# Guest type and sizing for the host that runs each Docker stack.
 #
 # A stack host is shared: several apps land on one guest, and the first app to deploy
 # is the one that creates it. Sizing therefore belongs to the STACK, not to whichever app
@@ -7,7 +7,8 @@
 # every app on a stack has to repeat the same numbers to keep that order from mattering.
 #
 # A stack host runs a Docker engine plus every container its tenants bring, so it starts
-# from these VM sizes instead of the smaller native-guest defaults.
+# from these defaults instead of the smaller native-guest defaults. Guest type defaults to
+# `vm`; an individual stack can override it to `lxc` when its supported app set allows.
 #
 # This file is git-managed — git pull may update these defaults. To override for one lab,
 # add a `stacks:` map to config/infrastructure.yml; it is deep-merged over these:
@@ -16,6 +17,7 @@
 #     monitoring:
 #       memory: 8192
 #     media:
+#       guest_type: vm        # lxc | vm; defaults to vm
 #       node: <pve-node-3>       # optional pin for a new stack VM
 #       storage: <vm-image-store> # optional Proxmox VM image storage
 #
@@ -50,6 +52,7 @@ stack_defaults:
   # Applied to any stack without an entry of its own, so a new stack works before anyone
   # has decided what it should be.
   _default:
+    guest_type: vm
     cores: 2
     memory: 2048
     disk_size: 16

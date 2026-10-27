@@ -12,6 +12,11 @@
     - ansible.builtin.include_vars: {file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml", name: _pdm_instance}
     - ansible.builtin.set_fact:
         pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance | default({}), recursive=True) }}"
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: proxmox-datacenter-manager
+        hosting_app_config: "{{ pdm_config }}"
     - ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
         resolve_estate_name: "{{ pdm_config.routing.estate | default('') }}"

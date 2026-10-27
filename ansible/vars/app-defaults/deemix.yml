@@ -3,6 +3,10 @@
 # an operator-provided ARL in homelab-infra/apps/<instance>; the platform never
 # generates that session cookie.
 deemix_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   recovery:

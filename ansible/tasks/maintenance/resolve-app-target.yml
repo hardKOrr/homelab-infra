@@ -66,8 +66,8 @@
           | default({}))
          | combine(_rat_instance_config | default({}), recursive=True) }}
     _rat_declared_hosting: >-
-      {{ (_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
-          | default({})).hosting | default('') }}
+      {{ ((_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
+          | default({})).hosting | default({})).method | default('') }}
 
 - name: Resolve app target | Resolve the GPU stack
   ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
@@ -85,13 +85,17 @@
   ansible.builtin.set_fact:
     _rat_stack: "{{ app_config.stack | default('', true) }}"
 
-# The platform's one rule, not a second one: an explicit `hosting:` wins, otherwise the
-# presence of `stack:` is what tells a Docker app from a native LXC app.
+# `hosting.method` is the application contract. Keep the ISO appliance action family
+# separate because those guests do not expose the SSH and guest-agent interface.
 - name: Resolve app target | Decide the hosting kind
   ansible.builtin.set_fact:
     _rat_kind: >-
-      {{ _rat_declared_hosting
-         | default('docker' if _rat_stack | length > 0 else 'native', true) }}
+      {{ 'appliance'
+         if (app_config.get('proxmox', {}).get('installer')
+             or app_config.get('install', {}).get('method') == 'official-iso')
+         else (app_config.get('hosting', {}).get('method')
+               | default(_rat_declared_hosting
+                         | default('docker' if _rat_stack | length > 0 else 'native', true), true)) }}
 
 - name: Resolve app target | Refuse an action this hosting kind does not implement
   ansible.builtin.assert:

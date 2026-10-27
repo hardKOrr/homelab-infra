@@ -53,10 +53,15 @@
 - name: Rebuild Caddy route | Resolve route settings from app records
   ansible.builtin.set_fact:
     _caddy_rebuild_app_config:
-      hosting: >-
-        {{ _caddy_rebuild_instance_config.hosting
-           | default(_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].hosting
-                     | default('')) }}
+      hosting_method: >-
+        {{ _caddy_rebuild_instance_config.get('hosting', {}).get('method')
+           | default(_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
+                     .hosting.method, true) }}
+      appliance: >-
+        {{ (_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
+            .get('proxmox', {}).get('installer')
+            or _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
+               .get('install', {}).get('method') == 'official-iso') | bool }}
       routing: >-
         {{ _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].routing
            | default({})
@@ -73,7 +78,7 @@
     _caddy_rebuild_route_enabled: >-
       {{ ((_caddy_rebuild_app_config.routing | default({})).proxy | default('internal')) != 'none'
          and (_caddy_rebuild_app_port | string | length > 0)
-         and (_caddy_rebuild_app_config.hosting | default('')) != 'appliance' }}
+         and not (_caddy_rebuild_app_config.appliance | default(false) | bool) }}
 
 - name: Rebuild Caddy route | Resolve estate facts
   ansible.builtin.include_tasks: ../resolve-estate.yml
@@ -97,14 +102,14 @@
     tag_group_tag: "_{{ caddy_rebuild_instance }}"
   when:
     - _caddy_rebuild_route_enabled | bool
-    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+    - _caddy_rebuild_app_config.hosting_method != 'kubernetes'
 
 - name: Rebuild Caddy route | Collect hosting group members
   ansible.builtin.set_fact:
     _caddy_rebuild_app_hosts: "{{ groups[tag_group_name] | default([]) }}"
   when:
     - _caddy_rebuild_route_enabled | bool
-    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+    - _caddy_rebuild_app_config.hosting_method != 'kubernetes'
 
 - name: Rebuild Caddy route | Require one reachable host for HTTP applications
   ansible.builtin.assert:
@@ -116,7 +121,7 @@
       route needs exactly one owned non-Kubernetes host with an address.
   when:
     - _caddy_rebuild_route_enabled | bool
-    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+    - _caddy_rebuild_app_config.hosting_method != 'kubernetes'
 
 - name: Rebuild Caddy route | Require the Kubernetes ingress address
   ansible.builtin.assert:
@@ -127,16 +132,16 @@
       Kubernetes ingress VIP.
   when:
     - _caddy_rebuild_route_enabled | bool
-    - (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+    - _caddy_rebuild_app_config.hosting_method == 'kubernetes'
 
 - name: Rebuild Caddy route | Build the route upstream
   ansible.builtin.set_fact:
     _caddy_rebuild_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip
-         if (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+         if _caddy_rebuild_app_config.hosting_method == 'kubernetes'
          else hostvars[_caddy_rebuild_app_hosts[0]].ansible_host }}
     _caddy_rebuild_upstream_port: >-
-      {{ 80 if (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+      {{ 80 if _caddy_rebuild_app_config.hosting_method == 'kubernetes'
          else _caddy_rebuild_app_port }}
   when: _caddy_rebuild_route_enabled | bool
 

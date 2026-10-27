@@ -23,6 +23,10 @@
     - name: Merge appliance config
       ansible.builtin.set_fact:
         app_config: "{{ _app_defaults.opnsense_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: opnsense
   tasks:
     - name: Assert appliance VMID and bridges are configured
       ansible.builtin.assert:

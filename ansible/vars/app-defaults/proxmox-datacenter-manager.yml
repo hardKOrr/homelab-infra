@@ -1,8 +1,19 @@
 ---
 # Official-ISO appliance: no cloud-init image, guest agent, or unattended install.
 proxmox_datacenter_manager_defaults:
-  # `appliance` means an ISO-installed VM: no cloud-init, SSH, or guest-agent contract.
-  hosting: appliance
+  # This native-vm guest is ISO-installed: no cloud-init, SSH, or guest-agent contract.
+  hosting:
+    method: native
+    supported: [native-vm]
+    impossible:
+      docker-lxc: >-
+        The official ISO installer boots a complete appliance OS, which Proxmox LXC cannot boot or host as a Docker guest.
+      docker-vm: >-
+        This deploy installs an appliance VM from its official ISO; it does not install Docker or deploy an OCI workload.
+      kubernetes: >-
+        The official ISO installs a standalone appliance VM; this product has no supported Kubernetes workload installer.
+      native-lxc: >-
+        The official ISO installer requires a complete VM boot environment and appliance network devices, which an LXC container does not provide.
   install: {method: official-iso, iso: ''}
   proxmox:
     vm: {cores: 2, memory: 4096, disk_size: 40, tags: [_+lab]}

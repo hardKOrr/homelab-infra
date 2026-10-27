@@ -6,10 +6,9 @@
 #
 # WHAT MAKES THIS A KUBERNETES APP
 #
-# `hosting: kubernetes` is the only hosting kind that must be declared rather than
-# inferred. Native LXC and Docker are told apart by the presence of `stack:`; this one
-# has neither a stack nor a guest of its own — its config volume and web front end live in
-# a namespace on a cluster that outlives any single deployment of it.
+# `hosting.method: kubernetes` records its namespace-based path. Jellyseerr has neither
+# a stack nor a guest of its own — its config volume and web front end live in a namespace
+# on a cluster that outlives any single deployment of it.
 #
 # SIMPLER THAN MIXPOST, DELIBERATELY
 #
@@ -27,7 +26,10 @@
 
 jellyseerr_defaults:
 
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   recovery:
     methods: [native]

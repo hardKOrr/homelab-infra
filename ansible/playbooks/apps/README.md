@@ -101,9 +101,8 @@ execution detail. Add jobs that act on the lab rather than on one application to
 The entry produces the whole folder, not just the Deploy job: `render-job.py` projects the
 group `<root>/<category>/<type>/<name>` and expands every applicable day-2 template into
 `<that group>/Maintenance`. Which actions apply is read from
-`vars/app-defaults/<app>.yml` — an explicit `hosting:` wins, otherwise the presence of
-`stack:` tells Docker from native — so **Step 4 is what decides the app's Maintenance
-folder**, and nothing here has to list its jobs.
+`vars/app-defaults/<app>.yml` using `hosting.method`, so **Step 4 is what decides the app's
+Maintenance folder**, and nothing here has to list its jobs.
 
 Two optional fields:
 
@@ -119,7 +118,7 @@ its classification, a template no application selects, and any UUID collision.
 
 ## Step 4 — Fill in the blanks
 
-For the template-backed Docker-on-LXC and native-LXC paths:
+For the current Docker-on-VM stack and native-LXC paths:
 
 **`vars/app-defaults/sonarr.yml`**
 - Set `cores`, `memory` to realistic values for this app

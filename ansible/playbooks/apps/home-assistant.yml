@@ -44,10 +44,14 @@
              | combine(_instance_config | default({}), recursive=True) }}
       no_log: true
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: home-assistant
     - name: Assert the explicit VM and optional USB contract
       ansible.builtin.assert:
         that:
-          - app_config.hosting == 'docker'
+          - app_config.hosting.method == 'docker'
           - app_config.proxmox.vm is mapping
           - >-
             (app_config.app.usb_mapping | default('', true) | length == 0)

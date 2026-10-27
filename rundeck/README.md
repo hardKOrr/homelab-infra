@@ -252,9 +252,10 @@ The renderer resolves values the platform already knows from
 | `source_config_path` (Migrate) | defaulted to `/var/lib/<app>` |
 
 `app-actions.yml` declares which actions apply to each hosting kind and any application
-exceptions. The renderer reads an explicit `hosting:` first; otherwise the presence of
-`stack:` distinguishes Docker from native LXC. Catalog `extra:` entries opt an application
-into an action that hosting kind alone does not select.
+exceptions. The renderer reads `hosting.method` from app defaults. ISO-installed native
+appliances keep their existing appliance action family because they do not expose the
+ordinary guest interface. Catalog `extra:` entries opt an application into an action that
+hosting kind alone does not select.
 
 An action absent from a folder is absent because it is not implemented safely. Most Docker
 apps rely on the shared guest's PBS backup and therefore get no per-application Backup or

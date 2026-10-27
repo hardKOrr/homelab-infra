@@ -4,6 +4,10 @@
 # directory is application-owned; the music library remains operator-owned and
 # is never written by this role.
 navidrome_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
   media_storage: {}
 

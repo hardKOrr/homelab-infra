@@ -31,6 +31,10 @@
           {{ _app_defaults.odoo_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: odoo
   tasks:
     - name: Provision the named PostgreSQL database and role
       ansible.builtin.include_tasks: ../../tasks/database/provision.yml

@@ -4,6 +4,10 @@
 # This file is git-managed — git pull may update these defaults.
 
 uptime_kuma_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   # Uptime Kuma owns the monitor database, login account and settings for every app.
   # Its complete data directory is quiesced as one native recovery unit.
   recovery:

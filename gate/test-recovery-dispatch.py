@@ -127,7 +127,56 @@ def check(playbook, task_name, inputs, expected):
         assert result.returncode == 0, result.stdout + result.stderr
 
 
+def check_iso_appliance_recovery_dispatch():
+    for app in ["opnsense", "proxmox-datacenter-manager"]:
+        defaults_key = app.replace("-", "_") + "_defaults"
+        defaults_path = repo / f"ansible/vars/app-defaults/{app}.yml"
+        app_config = yaml.safe_load(defaults_path.read_text())[defaults_key]
+
+        for playbook, kind_fact in [
+            ("backup-app.yml", "_ba_kind"),
+            ("restore-app.yml", "_ra_kind"),
+        ]:
+            source = yaml.safe_load(
+                (repo / "ansible/playbooks/maintenance" / playbook).read_text()
+            )[0]
+            resolve_kind = next(
+                task for task in source["pre_tasks"]
+                if task.get("name") == "Resolve the hosting kind"
+            )
+            plays = [{
+                "name": f"Resolve {app} {playbook} hosting kind",
+                "hosts": "localhost",
+                "gather_facts": False,
+                "connection": "local",
+                "vars": {
+                    "app_config": app_config,
+                    "homelabinfra_infra": {"databases": {}},
+                    "instance": app,
+                },
+                "tasks": [
+                    resolve_kind,
+                    {"ansible.builtin.assert": {
+                        "that": [f"{kind_fact} == 'appliance'"]
+                    }},
+                ],
+            }]
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "appliance-recovery-dispatch.yml"
+                path.write_text(yaml.safe_dump(plays))
+                env = os.environ | {
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                    "ANSIBLE_NOCOLOR": "1",
+                }
+                result = subprocess.run(
+                    [str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                    env=env, text=True, capture_output=True, check=False,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+
+
 def main():
+    check_iso_appliance_recovery_dispatch()
     check_native_restore_storage_scopes()
 
     # Role metadata dependencies run before the selected backup/restore task file.

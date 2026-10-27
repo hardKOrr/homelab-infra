@@ -1,5 +1,9 @@
 ---
 bazarr_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
   recovery:
     methods: [native]

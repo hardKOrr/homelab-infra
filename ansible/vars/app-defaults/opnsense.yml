@@ -1,8 +1,19 @@
 ---
 # OPNsense is an ISO-installed appliance, not a Debian guest.
 opnsense_defaults:
-  # `appliance` is an ISO-installed VM with no guest-agent or SSH contract.
-  hosting: appliance
+  # This native-vm guest is ISO-installed and has no guest-agent or SSH contract.
+  hosting:
+    method: native
+    supported: [native-vm]
+    impossible:
+      docker-lxc: >-
+        The official ISO installer boots a complete appliance OS, which Proxmox LXC cannot boot or host as a Docker guest.
+      docker-vm: >-
+        This deploy installs an appliance VM from its official ISO; it does not install Docker or deploy an OCI workload.
+      kubernetes: >-
+        The official ISO installs a standalone appliance VM; this product has no supported Kubernetes workload installer.
+      native-lxc: >-
+        The official ISO installer requires a complete VM boot environment and appliance network devices, which an LXC container does not provide.
   proxmox:
     vm:
       cores: 2

@@ -9,6 +9,11 @@
 
 APP_NAME_defaults:
 
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
+
   # ── Proxmox resources ───────────────────────────────────────────────────────
   # NATIVE LXC apps: fill in the full block below.
   # DOCKER apps: replace with a single `stack:` key (see Docker section below).

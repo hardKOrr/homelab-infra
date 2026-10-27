@@ -2,6 +2,10 @@
 # MySQL is an instanced, shared backend. Applications select it through the
 # backend-independent `database` configuration; it is never a Compose sidecar.
 mysql_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   recovery:
     methods: [native]
     native:

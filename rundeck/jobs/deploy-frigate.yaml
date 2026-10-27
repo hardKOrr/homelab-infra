@@ -4,7 +4,7 @@
   name: Deploy Frigate
   group: Applications/Media & Entertainment/Video Surveillance/Frigate
   description: |-
-    Deploy or converge Frigate on its own Docker-on-LXC guest.
+    Deploy or converge Frigate on its own Docker-on-VM guest.
 
     - **Dedicated guest:** Frigate uses the frigate stack host and is never placed beside
       unrelated media or services applications.

@@ -28,7 +28,10 @@ Synthetic owner addresses do not require working mail.
 The authoritative schema and merge behavior are in
 [`../ansible/vars/CONTRACT.md`](../ansible/vars/CONTRACT.md). Application defaults live in
 `ansible/vars/app-defaults/`. An instance file should contain only values that differ from
-those defaults.
+those defaults. The `hosting.method` override selects `docker`, `kubernetes`, or `native`;
+Deploy checks its resolved combination against the app's fixed `hosting.supported` list
+before changing state. For stack-backed Docker apps, `stacks.<stack>.guest_type` in
+`infrastructure.yml` selects `lxc` or `vm` and defaults to `vm`.
 
 ## Public DNS
 

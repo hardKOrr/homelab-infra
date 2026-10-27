@@ -2,7 +2,10 @@
 # Home Assistant is Docker on a dedicated Debian VM. The VM boundary is required by
 # the dedicated USB/Zigbee mapping; Docker itself is the ordinary application runtime.
 home_assistant_defaults:
-  hosting: docker
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
 
   recovery:
     methods: [native]

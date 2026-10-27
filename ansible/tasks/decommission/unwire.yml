@@ -67,7 +67,7 @@
       ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml
       vars:
         k8s_namespace_for: "{{ instance }}"
-      when: app_config.hosting | default('') == 'kubernetes'
+      when: app_config.hosting.method | default('') == 'kubernetes'
 
     - name: Decommission | Resolve exact consumer wiring effects without secrets
       ansible.builtin.set_fact:
@@ -86,7 +86,7 @@
                  'monitoring': homelabinfra_infra.monitoring.host | default(''),
                  'dns': homelabinfra_infra.dns.host | default(''),
                  'firewall': homelabinfra_infra.firewall.host | default('')},
-               'namespace': k8s_namespace if app_config.hosting | default('') == 'kubernetes' else '',
+               'namespace': k8s_namespace if app_config.hosting.method | default('') == 'kubernetes' else '',
                'forgejo': app_config.app.forgejo.instance if decommission_app.app == 'forgejo-runner' else '',
                'forgejo_endpoint': _dc_forgejo_endpoint,
                'effect': 'remove only the instance route/SSO/monitor/DNS/firewall records and owned namespace; preserve dependencies and external data'

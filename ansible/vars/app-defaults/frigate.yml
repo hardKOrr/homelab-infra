@@ -2,6 +2,10 @@
 # Frigate defaults to a one-tenant Docker-on-VM stack. A declared GPU can route it to the
 # stack that owns that device; its recordings stay on the existing external storage mount.
 frigate_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: frigate
 
   recovery:

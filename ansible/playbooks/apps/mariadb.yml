@@ -16,6 +16,10 @@
       failed_when: false
     - ansible.builtin.set_fact:
         app_config: "{{ _app_defaults.mariadb_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: mariadb
   tasks:
     - ansible.builtin.meta: refresh_inventory
     - ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml

@@ -3,6 +3,10 @@
 # application on the services Docker stack. Karakeep owns its SQLite database and
 # Meilisearch index; it does not need a platform database backend.
 karakeep_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: services
 
   recovery:
@@ -23,7 +27,7 @@ karakeep_defaults:
     # disable further local signups after that account exists.
     disable_signups: false
     # The application uses SQLite. WAL mode is appropriate for the local filesystem on
-    # the Docker LXC and avoids readers blocking normal crawler writes.
+    # the Docker stack guest and avoids readers blocking normal crawler writes.
     db_wal_mode: true
 
   routing:

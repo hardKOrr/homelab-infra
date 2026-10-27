@@ -1,0 +1,23 @@
+---
+- name: Render every application's default hosting combination
+  hosts: localhost
+  gather_facts: false
+  vars:
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    hosting_default_files: >-
+      {{ lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../ansible/vars/app-defaults/*.yml', wantlist=True)
+         | reject('search', '/_template.yml$') | list }}
+  tasks:
+    - name: Validate each app's merged defaults
+      ansible.builtin.include_tasks: hosting-render-one.yml
+      loop: "{{ hosting_default_files }}"
+      loop_control:
+        loop_var: hosting_default_path
+        label: "{{ hosting_default_path | basename }}"
+      vars:
+        instance: "{{ hosting_app_slug }}"
+        hosting_app_slug: "{{ hosting_default_path | basename | regex_replace('\\.yml$', '') }}"
+        hosting_app_defaults_file: "{{ hosting_default_path }}"
+        hosting_app_config: >-
+          {{ (lookup('ansible.builtin.file', hosting_default_path) | from_yaml)
+             [(hosting_app_slug | replace('-', '_')) ~ '_defaults'] }}

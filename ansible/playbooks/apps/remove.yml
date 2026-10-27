@@ -940,8 +940,11 @@
       ansible.builtin.set_fact:
         _rm_destroy_guest_host: ""
         _rm_kind: >-
-          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance', 'docker']
-             else ('docker' if app_config.stack is defined else 'native') }}
+          {{ 'appliance'
+             if (app_config.get('proxmox', {}).get('installer')
+                 or app_config.get('install', {}).get('method') == 'official-iso')
+             else app_config.hosting.method
+                  | default('docker' if app_config.stack is defined else 'native', true) }}
 
     - name: Refresh inventory before validating an explicit guest destruction request
       ansible.builtin.meta: refresh_inventory
@@ -1158,8 +1161,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
-    # Explicit hosting wins. Docker and native are still told apart by the presence of
-    # `stack:`. An ISO appliance has no SSH service contract, so it is stopped through
+    # `hosting.method` selects the app contract. Docker and native are still told apart by
+    # the presence of `stack:` for the host target. An ISO appliance has no SSH service
+    # contract, so it is stopped through
     # Proxmox rather than being treated as a native LXC.
     #
     # A Kubernetes app has NO Proxmox guest of its own. Its resources live in a namespace

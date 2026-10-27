@@ -31,7 +31,10 @@ searxng_defaults:
   # export/import artifact and this role creates no persistent volume; a redeploy restores
   # the declared configuration and starts an empty limiter cache.
 
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
   # vars/app-defaults/jellyseerr.yml. The resolver has no per-app selector to read it.

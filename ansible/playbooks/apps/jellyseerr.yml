@@ -61,6 +61,10 @@
           {{ _app_defaults.jellyseerr_defaults
              | combine(_instance_config | default({}), recursive=True) }}
 
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: jellyseerr
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml

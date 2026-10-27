@@ -24,6 +24,10 @@
       ansible.builtin.set_fact:
         app_config: >-
           {{ _app_defaults.unpackerr_defaults | combine({'media_storage': homelabinfra_config.infrastructure.media_storage | default({})}, recursive=True) | combine(_instance_config | default({}), recursive=True) }}
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: unpackerr
   tasks:
     - name: Find or create the media stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml

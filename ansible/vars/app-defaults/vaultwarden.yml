@@ -4,6 +4,10 @@
 # This file is git-managed — git pull may update these defaults.
 
 vaultwarden_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   recovery:
     methods: [native]
     native:

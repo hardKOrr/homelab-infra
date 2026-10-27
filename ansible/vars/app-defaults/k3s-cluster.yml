@@ -26,6 +26,18 @@
 # sizes, the taint, the ingress choice and the storage class.
 
 k3s_cluster_defaults:
+  hosting:
+    method: native
+    supported: [native-vm]
+    impossible:
+      docker-lxc: >-
+        The cluster role provisions QEMU VM nodes and configures k3s; it has no Docker-on-LXC node path.
+      docker-vm: >-
+        The cluster is the k3s control plane and node set, not a Docker Compose workload; the cluster role does not install Docker.
+      kubernetes: >-
+        The cluster provides the Kubernetes API used by workloads; hosting the cluster as a workload in itself would make bootstrap circular.
+      native-lxc: >-
+        The cluster role creates QEMU VM nodes on distinct Proxmox hosts and has no LXC node path; LXC nodes would also share the host kernel.
 
   # ── Cluster topology ────────────────────────────────────────────────────────
   cluster:

@@ -80,8 +80,11 @@
     - name: Resolve the hosting kind
       ansible.builtin.set_fact:
         _ba_kind: >-
-          {{ app_config.hosting
-             | default('docker' if app_config.stack is defined else 'native', true) }}
+          {{ 'appliance'
+             if (app_config.get('proxmox', {}).get('installer')
+                 or app_config.get('install', {}).get('method') == 'official-iso')
+             else (app_config.get('hosting', {}).get('method')
+                   | default('docker' if app_config.stack is defined else 'native', true)) }}
 
     # Name the existing CronJob/role path as the native method. Product-specific
     # non-Kubernetes exporters can declare another backup_playbook and use this same

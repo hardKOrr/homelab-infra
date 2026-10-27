@@ -22,8 +22,8 @@
 # by the reboot. Neither is expected to move a pod anywhere.
 #
 # The cluster's schedule is the intersection of the schedules of every app in it, exactly
-# as a shared stack host's is. A cluster app is recorded in config/apps/<instance>.yml
-# with `hosting: kubernetes`, so the same instance files feed the same resolver.
+# as a shared stack host's is. Guest Maintenance resolves each instance's app defaults and
+# merges its config, so hosting.method works even when the instance inherits it unchanged.
 #
 # Inputs:
 #   _gm_instances, _gm_cluster_nodes, dry_run, force — see decide-one-guest.yml
@@ -40,7 +40,7 @@
     _cr_apps_json: >-
       {%- set out = [] -%}
       {%- for name, cfg in (_gm_instances | dictsort) -%}
-        {%- if (cfg.hosting | default('')) == 'kubernetes' -%}
+        {%- if ((cfg.hosting | default({})).method | default('')) == 'kubernetes' -%}
           {%- set _ = out.append({
                 'name': name,
                 'estate': (cfg.routing | default({})).estate | default('', true),

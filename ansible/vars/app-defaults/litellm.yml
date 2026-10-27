@@ -16,7 +16,10 @@
 
 litellm_defaults:
 
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
 
   recovery:
     methods: [native]

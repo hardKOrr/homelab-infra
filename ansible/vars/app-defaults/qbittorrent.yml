@@ -4,6 +4,10 @@
 # This file is git-managed — git pull may update these defaults.
 
 qbittorrent_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   recovery:

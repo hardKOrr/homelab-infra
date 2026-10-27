@@ -8,6 +8,10 @@
 # the playbooks differ. See roles/servarr/tasks/main.yml for why.
 
 sonarr_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   stack: media

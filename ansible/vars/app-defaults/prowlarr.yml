@@ -11,6 +11,10 @@
 # Application entry. A media stack with no Prowlarr wires nothing.
 
 prowlarr_defaults:
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
   stack: media
 
   recovery:

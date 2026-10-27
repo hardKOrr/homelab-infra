@@ -1,5 +1,9 @@
 ---
 redis_defaults:
+  hosting:
+    method: native
+    supported: [native-lxc]
+    impossible: {}
   recovery:
     methods: [native]
     native:

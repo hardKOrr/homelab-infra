@@ -2,7 +2,10 @@
 # Homepage is a stateless, lab-wide dashboard. Its service entries are generated from the
 # topology facts that deployments already write; this file deliberately contains no URLs.
 homepage_defaults:
-  hosting: kubernetes
+  hosting:
+    method: kubernetes
+    supported: [kubernetes]
+    impossible: {}
   cluster: k3s-cluster
 
   app:

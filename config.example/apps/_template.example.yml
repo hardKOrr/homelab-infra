@@ -7,6 +7,12 @@
 # Filename = instance name. The filename you choose becomes the hostname,
 # Caddy subdomain (APP_NAME.yourdomain.com), and Authentik app name.
 
+# ── Hosting method (only when different from the app default) ──────────────────
+# Deploy checks this against hosting.supported in vars/app-defaults/APP_NAME.yml
+# before changing state. Apps currently declare one supported combination.
+# hosting:
+#   method: native  # docker | kubernetes | native
+
 # ── Proxmox resource overrides ─────────────────────────────────────────────────
 # Uncomment and change only what you need. All values have sensible defaults.
 # proxmox:

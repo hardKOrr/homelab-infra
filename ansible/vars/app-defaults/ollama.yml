@@ -6,7 +6,10 @@
 # exposes one persistent model-storage mount to Compose so model blobs and Ollama's
 # metadata survive image replacement and are covered by the application archive.
 ollama_defaults:
-  hosting: docker
+  hosting:
+    method: docker
+    supported: [docker-vm]
+    impossible: {}
 
   recovery:
     methods: [native]

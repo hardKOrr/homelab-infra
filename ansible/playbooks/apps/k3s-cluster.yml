@@ -71,6 +71,11 @@
              | combine(_instance_config | default({}), recursive=True) }}
 
     # The defaults carry no lab topology; storage falls back to the lab-wide pool.
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: k3s-cluster
+        hosting_app_config: "{{ k8s_cluster_config }}"
     - name: Use the lab-wide storage unless the cluster names its own
       ansible.builtin.set_fact:
         k8s_cluster_config: >-
