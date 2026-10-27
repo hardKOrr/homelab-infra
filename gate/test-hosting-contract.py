@@ -73,6 +73,14 @@ def current_combination(slug, defaults):
     return "kubernetes" if method == "kubernetes" else f"{method}-{guest_type}"
 
 
+def implemented_combinations(expected, source):
+    """Return combinations backed by the app's current path and explicit adapters."""
+    implemented = {expected}
+    if "tasks/kubernetes/open-app-access.yml" in source or "kubernetes.core." in source:
+        implemented.add("kubernetes")
+    return implemented
+
+
 def validate_deploy_preflight(slug):
     playbook, _ = app_source(slug)
     plays = yaml.safe_load(playbook.read_text())
@@ -130,8 +138,11 @@ def check_declarations(paths):
             )
 
         expected = current_combination(slug, defaults)
-        assert supported == [expected], (
-            f"{path}: expected exactly today's combination [{expected}], got {supported}"
+        _, source = app_source(slug)
+        implemented = implemented_combinations(expected, source)
+        assert set(supported) == implemented, (
+            f"{path}: declared combinations {supported} differ from implemented paths "
+            f"{sorted(implemented)}"
         )
         assert method == expected.split("-", 1)[0], (
             f"{path}: default method {method!r} differs from current {expected} behavior"

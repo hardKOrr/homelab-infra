@@ -1,0 +1,117 @@
+{#
+  n8n's Kubernetes resources. Its data directory is a default-StorageClass PVC;
+  workflows and credentials live in the separately managed PostgreSQL database.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-storage
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: n8n
+          image: {{ app_config.app.image }}
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/node/.n8n
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ app_config.app.port }}
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ app_config.app.port }}
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ app_config.app.port }}
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ n8n_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}
