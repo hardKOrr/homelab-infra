@@ -72,7 +72,9 @@ stopped=0
 restart_on_failure=0
 restore_active=0
 original_data_saved=0
+original_data_stash_complete=0
 original_data_path=
+original_data_layout=
 keep_work=0
 
 kube_api_request() {
@@ -152,6 +154,104 @@ mysql_config_path() {
   fi
 }
 
+stash_bookstack_data() {
+  local data_path entry rollback_name
+  local -a entries
+  if [[ "$BOOKSTACK_BACKEND" == docker ]]; then
+    original_data_layout=directory
+    original_data_path=$(mktemp -d -- "${BOOKSTACK_DATA_PATH}.pre-restore.XXXXXX")
+    rmdir -- "$original_data_path"
+    mv -T -- "$BOOKSTACK_DATA_PATH" "$original_data_path"
+    original_data_saved=1
+    mkdir "$BOOKSTACK_DATA_PATH"
+    return 0
+  fi
+
+  original_data_layout=contents
+  data_path=${BOOKSTACK_DATA_PATH%/}
+  [[ -n "$data_path" ]] || data_path=/
+  while :; do
+    original_data_path=$(mktemp -d -- "$data_path/.pre-restore.XXXXXX")
+    rollback_name=${original_data_path##*/}
+    if [[ ! -e "$work/storage/$rollback_name" && ! -L "$work/storage/$rollback_name" ]]; then
+      break
+    fi
+    rmdir -- "$original_data_path"
+  done
+  original_data_saved=1
+
+  # Keep the mount root in place. A PVC cannot be renamed or replaced, so save its
+  # contents in a temporary directory on the same mounted filesystem instead.
+  shopt -s dotglob nullglob
+  entries=("$data_path"/*)
+  shopt -u dotglob nullglob
+  for entry in "${entries[@]}"; do
+    [[ "$entry" == "$original_data_path" ]] && continue
+    mv -- "$entry" "$original_data_path/"
+  done
+  original_data_stash_complete=1
+}
+
+restore_bookstack_data() {
+  local data_path entry
+  local -a entries
+  if [[ "$original_data_layout" == directory ]]; then
+    rm -rf -- "$BOOKSTACK_DATA_PATH" || return 1
+    mv -T -- "$original_data_path" "$BOOKSTACK_DATA_PATH" || return 1
+    original_data_saved=0
+    original_data_path=
+    original_data_layout=
+    return 0
+  fi
+
+  data_path=${BOOKSTACK_DATA_PATH%/}
+  [[ -n "$data_path" ]] || data_path=/
+
+  # If stashing failed part way through, the remaining entries are still original
+  # data; leave them in place and move back only the entries already stashed.
+  if [[ "$original_data_stash_complete" == 1 ]]; then
+    shopt -s dotglob nullglob
+    entries=("$data_path"/*)
+    shopt -u dotglob nullglob
+    for entry in "${entries[@]}"; do
+      [[ "$entry" == "$original_data_path" ]] && continue
+      rm -rf -- "$entry" || return 1
+    done
+  fi
+
+  shopt -s dotglob nullglob
+  entries=("$original_data_path"/*)
+  shopt -u dotglob nullglob
+  for entry in "${entries[@]}"; do
+    mv -- "$entry" "$data_path/" || return 1
+  done
+  rmdir -- "$original_data_path" || return 1
+  original_data_saved=0
+  original_data_stash_complete=0
+  original_data_path=
+  original_data_layout=
+}
+
+copy_restored_bookstack_data() {
+  local data_path entry
+  local -a entries
+  if [[ "$BOOKSTACK_BACKEND" == docker ]]; then
+    cp -a "$work/storage/." "$BOOKSTACK_DATA_PATH/"
+    chown "$original_data_owner" "$BOOKSTACK_DATA_PATH"
+    chmod "$original_data_mode" "$BOOKSTACK_DATA_PATH"
+    return 0
+  fi
+
+  data_path=${BOOKSTACK_DATA_PATH%/}
+  [[ -n "$data_path" ]] || data_path=/
+  shopt -s dotglob nullglob
+  entries=("$work/storage"/*)
+  shopt -u dotglob nullglob
+  for entry in "${entries[@]}"; do
+    cp -a -- "$entry" "$data_path/"
+  done
+}
+
 finish() {
   local rc=$?
   local rollback_ok=1
@@ -166,12 +266,10 @@ finish() {
     else
       stopped=1
       if [[ "$original_data_saved" == 1 ]]; then
-        if rm -rf -- "$BOOKSTACK_DATA_PATH" &&
-          mv -T -- "$original_data_path" "$BOOKSTACK_DATA_PATH"; then
-          original_data_saved=0
-          original_data_path=
+        if restore_bookstack_data; then
+          :
         else
-          echo "Could not restore the original BookStack data directory at $original_data_path." >&2
+          echo "Could not restore the original BookStack data contents from $original_data_path." >&2
           rollback_ok=0
         fi
       fi
@@ -334,8 +432,10 @@ restore() {
     echo "BookStack data path must be an existing directory before restore: $BOOKSTACK_DATA_PATH" >&2
     exit 1
   }
-  original_data_owner=$(stat -c '%u:%g' "$BOOKSTACK_DATA_PATH")
-  original_data_mode=$(stat -c '%a' "$BOOKSTACK_DATA_PATH")
+  if [[ "$BOOKSTACK_BACKEND" == docker ]]; then
+    original_data_owner=$(stat -c '%u:%g' "$BOOKSTACK_DATA_PATH")
+    original_data_mode=$(stat -c '%a' "$BOOKSTACK_DATA_PATH")
+  fi
   write_client_config
   mysql_config=$(mysql_config_path)
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
@@ -347,9 +447,8 @@ restore() {
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
     storage.pxar "$work/storage"
 
-  # Rollback state is captured before either copy is changed. The data directory is
-  # renamed beside itself so the move stays on the same filesystem; the database dump
-  # lives in the private work directory and is removed only after success or rollback.
+  # Rollback state is captured before either copy is changed. The database dump lives
+  # in the private work directory and is removed only after success or rollback.
   stop_bookstack
   mkdir -p "$work/original"
   mysql_client mysqldump \
@@ -358,14 +457,8 @@ restore() {
     --single-transaction --routines --triggers --events --hex-blob \
     --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/original/database.sql"
   restore_active=1
-  original_data_path=$(mktemp -d "${BOOKSTACK_DATA_PATH}.pre-restore.XXXXXX")
-  rmdir -- "$original_data_path"
-  mv -T -- "$BOOKSTACK_DATA_PATH" "$original_data_path"
-  original_data_saved=1
-  mkdir "$BOOKSTACK_DATA_PATH"
-  cp -a "$work/storage/." "$BOOKSTACK_DATA_PATH/"
-  chown "$original_data_owner" "$BOOKSTACK_DATA_PATH"
-  chmod "$original_data_mode" "$BOOKSTACK_DATA_PATH"
+  stash_bookstack_data
+  copy_restored_bookstack_data
 
   # The application role has ALL only on this named database. Clear its existing tables
   # through that grant instead of requesting backend-admin credentials or touching any
@@ -377,6 +470,9 @@ restore() {
   restore_active=0
   if ! rm -rf -- "$original_data_path"; then
     echo "BookStack restore succeeded; prior data remains at $original_data_path." >&2
+  else
+    original_data_saved=0
+    original_data_stash_complete=0
   fi
   original_data_path=
 }

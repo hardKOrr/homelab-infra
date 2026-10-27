@@ -292,9 +292,11 @@ def kubernetes_recovery_environment(root, case="success"):
     write_executable(bin_dir / "mariadb-dump", FAKE_MARIADB_DUMP)
     write_executable(bin_dir / "proxmox-backup-client", FAKE_PBS)
 
-    data = root / "config"
-    data.mkdir()
+    data = root / "pvc" / "config"
+    data.mkdir(parents=True)
+    data.chmod(0o750)
     (data / "canary.txt").write_text("original canary\n", encoding="utf-8")
+    (data / ".original-hidden").write_text("original hidden\n", encoding="utf-8")
     database = root / "database-state.sql"
     database.write_text("ORIGINAL-DATABASE\n", encoding="utf-8")
     snapshot_database = root / "snapshot-database"
@@ -303,6 +305,7 @@ def kubernetes_recovery_environment(root, case="success"):
     snapshot_storage = root / "snapshot-storage"
     snapshot_storage.mkdir()
     (snapshot_storage / "restored.txt").write_text("restored canary\n", encoding="utf-8")
+    (snapshot_storage / ".restored-hidden").write_text("restored hidden\n", encoding="utf-8")
 
     token = root / "service-account-token"
     token.write_text("test-token\n", encoding="utf-8")
@@ -367,6 +370,7 @@ def check_kubernetes_restore(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-k8s-restore-test-") as temporary:
         root = Path(temporary)
         environment, data, database, api_log, _, safety_point = kubernetes_recovery_environment(root, case)
+        original_data_stat = data.stat()
         result = subprocess.run(
             [str(ROOT / "ansible/roles/bookstack/files/bookstack-recovery"),
              "--restore", "--snapshot", "host/bookstack/2026-10-27T07:30:00Z",
@@ -380,17 +384,26 @@ def check_kubernetes_restore(case):
         if case == "success":
             assert result.returncode == 0, result.stdout + result.stderr
             assert (data / "restored.txt").read_text(encoding="utf-8") == "restored canary\n"
+            assert (data / ".restored-hidden").read_text(encoding="utf-8") == "restored hidden\n"
             assert not (data / "canary.txt").exists()
+            assert not (data / ".original-hidden").exists()
             assert database.read_text(encoding="utf-8") == "SNAPSHOT-DATABASE\n"
             assert api.count('"replicas":0') == 1 and '"replicas":1' in api, api
         else:
             assert result.returncode != 0, result.stdout + result.stderr
             assert "BookStack rollback restored the previous data and database." in result.stderr
             assert (data / "canary.txt").read_text(encoding="utf-8") == "original canary\n"
+            assert (data / ".original-hidden").read_text(encoding="utf-8") == "original hidden\n"
             assert not (data / "restored.txt").exists()
+            assert not (data / ".restored-hidden").exists()
             assert database.read_text(encoding="utf-8") == "ORIGINAL-DATABASE\n"
             assert api.count('"replicas":0') == 2 and '"replicas":1' in api, api
-        assert not list(root.glob("config.pre-restore.*"))
+        final_data_stat = data.stat()
+        assert final_data_stat.st_ino == original_data_stat.st_ino
+        assert final_data_stat.st_uid == original_data_stat.st_uid
+        assert final_data_stat.st_gid == original_data_stat.st_gid
+        assert final_data_stat.st_mode == original_data_stat.st_mode
+        assert not list(data.glob(".pre-restore.*"))
 
 
 def check_kubernetes_recovery():
