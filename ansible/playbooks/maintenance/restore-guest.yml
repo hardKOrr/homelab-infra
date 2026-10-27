@@ -10,6 +10,8 @@
 #
 # Shared contract inputs:
 #   instance/source_vmid  source VMID recorded in the native artifact (source need not run)
+#   backup_storage        PVE PBS storage ID; default pbs-homelab. Select the second copy
+#                         explicitly with backup_storage=pbs-homelab-copy.
 #   destination           new|existing (default existing)
 #   target                target name (new) or target VMID alias; exact target_vmid wins
 #   recovery_point        PBS native backup volume path

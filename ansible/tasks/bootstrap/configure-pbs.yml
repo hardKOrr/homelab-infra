@@ -2,8 +2,9 @@
 # Configure Proxmox Backup Server after its VM is deployed (bootstrap step 7).
 # Runs in a localhost play after PBS is deployed.
 #
-# Architecture note: PBS cannot pull guest backups from PVE (PBS "remotes" are
-# other PBS instances, used for sync). The working direction is:
+# Architecture note: PBS cannot pull guest backups from PVE. Remote sync jobs use other
+# PBS instances; an optional local sync job can copy between datastores on this PBS.
+# The primary configuration direction is:
 #   PBS side (REST API, port 8007 — NOT the PVE API):
 #     1. Ensure datastore exists at infrastructure.backups.datastore_path
 #     2. Apply the garbage-collection schedule on the datastore
@@ -571,6 +572,57 @@
       PVE storage pbs-homelab is not active with the current PBS address, fingerprint and
       API token. PBS deployment cannot report success while scheduled backups are unable
       to reach the datastore.
+
+- name: PBS | Configure the optional second-copy datastore and restore source
+  ansible.builtin.include_tasks: configure-pbs-second-copy.yml
+  when: pbs_second_copy.enabled | default(false) | bool
+
+- name: PBS | Read the managed second-copy sync job when the option is disabled
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/sync"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_sync_jobs_when_disabled
+  changed_when: false
+  when: not (pbs_second_copy.enabled | default(false) | bool)
+
+- name: PBS | Resolve the managed second-copy sync job when the option is disabled
+  ansible.builtin.set_fact:
+    _pbs_second_copy_disabled_jobs: >-
+      {{ _pbs_second_copy_sync_jobs_when_disabled.json.data
+         | selectattr('id', 'equalto', 'homelab-infra-second-copy') | list }}
+  changed_when: false
+  when: not (pbs_second_copy.enabled | default(false) | bool)
+
+- name: PBS | Validate the managed second-copy sync job before disabling it
+  ansible.builtin.assert:
+    that:
+      - _pbs_second_copy_disabled_jobs | length <= 1
+      - >-
+        _pbs_second_copy_disabled_jobs | length == 0
+        or (_pbs_second_copy_disabled_jobs | first).store
+           == (pbs_second_copy.datastore_name | default('homelab-copy'))
+      - >-
+        _pbs_second_copy_disabled_jobs | length == 0
+        or (_pbs_second_copy_disabled_jobs | first)['remote-store'] == _pbs_datastore
+      - >-
+        _pbs_second_copy_disabled_jobs | length == 0
+        or ((_pbs_second_copy_disabled_jobs | first).remote | default('') | length) == 0
+    fail_msg: >-
+      PBS sync job homelab-infra-second-copy is not the managed local second-copy job;
+      refusing to remove it.
+  when: not (pbs_second_copy.enabled | default(false) | bool)
+
+- name: PBS | Remove the managed second-copy sync schedule when the option is disabled
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/sync/homelab-infra-second-copy"
+    method: DELETE
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  no_log: true
+  when:
+    - not (pbs_second_copy.enabled | default(false) | bool)
+    - _pbs_second_copy_disabled_jobs | length == 1
 
 - name: PBS | Refresh managed backup job from current guests
   ansible.builtin.include_tasks: ../proxmox/refresh-backup-job.yml

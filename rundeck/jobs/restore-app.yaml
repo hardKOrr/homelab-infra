@@ -66,6 +66,10 @@
     description: 'Artifact identifier for the selected method. **Blank:** list available
       recovery points and change nothing.'
     required: false
+  - name: backup_datastore
+    description: 'PBS datastore to read from. **Blank:** use this app''s configured default.
+      Select `homelab-copy` to restore from the optional PBS second copy.'
+    required: false
   - name: snapshot
     description: 'Compatibility alias for the PBS recovery point, such as
       `host/%SLUG%/2026-08-19T03:00:00Z`. **Blank:** list available snapshots and change nothing.'
@@ -106,6 +110,9 @@
           fi
           if [ -n "${RD_OPTION_RECOVERY_POINT:-}" ]; then
             ARGS+=(-e "recovery_point=$RD_OPTION_RECOVERY_POINT")
+          fi
+          if [ -n "${RD_OPTION_BACKUP_DATASTORE:-}" ]; then
+            ARGS+=(-e "backup_datastore=$RD_OPTION_BACKUP_DATASTORE")
           fi
           if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
             ARGS+=(-e "pre_restore_point=$RD_OPTION_PRE_RESTORE_POINT")

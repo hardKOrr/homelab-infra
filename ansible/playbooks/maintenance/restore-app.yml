@@ -17,6 +17,7 @@
 #                which means restoring the application over itself.
 #   recovery_point — artifact identifier; blank lists what PBS holds and changes nothing.
 #   snapshot   — compatibility alias for recovery_point.
+#   backup_datastore — optional PBS datastore name; blank uses the configured default.
 #   overwrite  — false (default) plans and writes nothing. true performs the restore.
 #   pre_restore_point — independent recovery point for an existing target replacement.
 #
@@ -117,6 +118,7 @@
     _ra_destination: "{{ destination | default('existing', true) }}"
     # snapshot remains an additive compatibility alias for existing callers.
     _ra_recovery_point: "{{ recovery_point | default(snapshot | default('', true), true) }}"
+    _ra_backup_datastore: "{{ backup_datastore | default('', true) }}"
     _ra_overwrite: "{{ overwrite | default(false) | bool }}"
     _ra_pre_restore_point: "{{ pre_restore_point | default('', true) }}"
 
@@ -130,6 +132,14 @@
         fail_msg: >-
           Provide the instance that owns the backup: -e instance=mixpost
 
+    - name: Validate an explicitly selected PBS datastore
+      ansible.builtin.assert:
+        that: _ra_backup_datastore is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+        fail_msg: >-
+          backup_datastore must be a PBS datastore name. Omit it to use the app's configured
+          default datastore.
+      when: _ra_backup_datastore | length > 0
+
     - name: Publish the application restore dispatch across plays
       ansible.builtin.set_fact:
         _ra_app: "{{ _ra_app }}"
@@ -137,6 +147,7 @@
         _ra_method: "{{ _ra_method }}"
         _ra_destination: "{{ _ra_destination }}"
         _ra_recovery_point: "{{ _ra_recovery_point }}"
+        _ra_backup_datastore: "{{ _ra_backup_datastore }}"
         _ra_overwrite: "{{ _ra_overwrite }}"
         _ra_pre_restore_point: "{{ _ra_pre_restore_point }}"
 
@@ -193,6 +204,15 @@
         # The same key derivation playbooks/apps/remove.yml uses: an app whose file name
         # carries a hyphen declares its defaults under an underscored name.
         _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+
+    - name: Apply the selected PBS datastore to this restore only
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+        restore_target_config: >-
+          {{ restore_target_config
+             | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+      when: _ra_backup_datastore | length > 0
 
     - name: Resolve the restore target's GPU stack
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
@@ -619,7 +639,9 @@
         argv:
           - python3
           - "{{ playbook_dir }}/../../scripts/vault-runtime.py"
-        stdin: "{{ _ra_refreshed_vault_items.stdout }}"
+          - --base64-stdin
+        stdin: "{{ _ra_refreshed_vault_items.stdout | b64encode }}"
+        stdin_add_newline: false
       register: _ra_refreshed_vault_runtime
       changed_when: false
       delegate_to: localhost
@@ -652,6 +674,16 @@
       when:
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
+
+    - name: Reapply the selected PBS datastore after target provisioning
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ restore_target_config
+             | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+        - _ra_backup_datastore | length > 0
 
     - name: Re-resolve the provisioned restore target's GPU stack
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
@@ -878,7 +910,7 @@
     - name: Reconcile the restored target's intended connections
       ansible.builtin.command:
         argv:
-          - ansible-playbook
+          - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
           - -i
           - inventory/
           - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"

@@ -1,0 +1,480 @@
+---
+# Configure the opt-in local PBS datastore copy. The local sync job deliberately has no
+# remote field: PBS pulls from the primary datastore on this same server. The PVE storage
+# registration exposes the copy only as a selectable Restore Guest source; the scheduled
+# vzdump job continues to write to the primary datastore.
+
+- name: PBS second copy | Resolve managed names and effective retention
+  ansible.builtin.set_fact:
+    _pbs_second_copy_datastore: "{{ pbs_second_copy.datastore_name }}"
+    _pbs_second_copy_path: "{{ pbs_second_copy.datastore_path }}"
+    _pbs_second_copy_pve_storage_id: "{{ pbs_second_copy.pve_storage_id }}"
+    _pbs_second_copy_prune_job_id: "homelab-infra-{{ pbs_second_copy.datastore_name }}"
+    _pbs_second_copy_sync_job_id: homelab-infra-second-copy
+    _pbs_second_copy_schedule: "{{ pbs_second_copy.schedule }}"
+    _pbs_second_copy_retention: >-
+      {{ pbs_second_copy.retention
+         if pbs_second_copy.retention | default({}) | length > 0
+         else _pbs_retention }}
+    _pbs_second_copy_gc_schedule: "{{ _pbs_gc_schedule }}"
+
+- name: PBS second copy | Resolve retention options for the prune job
+  ansible.builtin.set_fact:
+    _pbs_second_copy_keep: >-
+      {{ dict(_pbs_second_copy_retention | dict2items
+              | selectattr('key', 'match', '^keep_')
+              | map(attribute='key') | map('replace', '_', '-')
+              | zip(_pbs_second_copy_retention | dict2items
+                   | selectattr('key', 'match', '^keep_') | map(attribute='value'))) }}
+
+- name: PBS second copy | List existing datastores
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_datastores
+
+- name: PBS second copy | Validate retained datastore identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_second_copy_registered | length <= 1
+      - >-
+        _pbs_second_copy_registered | length == 0
+        or (((_pbs_second_copy_registered | first).path | default(''))
+            | regex_replace('(?<=.)/+$', ''))
+           == (_pbs_second_copy_path | regex_replace('(?<=.)/+$', ''))
+      - >-
+        pbs_second_copy_datastore_mode | default(pbs_datastore_mode | default('create')) != 'reuse'
+        or _pbs_second_copy_registered | length == 1
+    fail_msg: >-
+      PBS second-copy datastore {{ _pbs_second_copy_datastore }} does not have the expected
+      retained registration at {{ _pbs_second_copy_path }}. Reuse requires the existing
+      registration; refusing to initialise a different path.
+  vars:
+    _pbs_second_copy_registered: >-
+      {{ _pbs_second_copy_datastores.json.data
+         | selectattr('name', 'equalto', _pbs_second_copy_datastore) | list }}
+
+- name: PBS second copy | Create datastore
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore"
+    method: POST
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      name: "{{ _pbs_second_copy_datastore }}"
+      path: "{{ _pbs_second_copy_path }}"
+    validate_certs: false
+  when:
+    - pbs_second_copy_datastore_mode | default(pbs_datastore_mode | default('create')) == 'create'
+    - >-
+      _pbs_second_copy_datastores.json.data | map(attribute='name') | list
+      is not contains(_pbs_second_copy_datastore)
+
+- name: PBS second copy | Wait for the datastore to serve
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/admin/datastore"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_ready
+  until: >-
+    _pbs_second_copy_ready.json.data | default([])
+    | map(attribute='store') | list is contains(_pbs_second_copy_datastore)
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: PBS second copy | Read current datastore configuration
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_second_copy_datastore }}"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_datastore_config
+
+- name: PBS second copy | Apply a drifted garbage-collection schedule
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_second_copy_datastore }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      gc-schedule: "{{ _pbs_second_copy_gc_schedule }}"
+    validate_certs: false
+  when: >-
+    (_pbs_second_copy_datastore_config.json.data['gc-schedule'] | default(none) | string)
+    != (_pbs_second_copy_gc_schedule | string)
+
+- name: PBS second copy | Build desired prune-job configuration
+  ansible.builtin.set_fact:
+    _pbs_second_copy_prune_config: >-
+      {{ {'store': _pbs_second_copy_datastore, 'schedule': _pbs_prune_schedule}
+         | combine(_pbs_second_copy_keep, recursive=True) }}
+
+- name: PBS second copy | Read configured prune jobs
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_prune_jobs
+
+- name: PBS second copy | Resolve managed prune job
+  ansible.builtin.set_fact:
+    _pbs_second_copy_managed_prune_jobs: >-
+      {{ _pbs_second_copy_prune_jobs.json.data
+         | selectattr('id', 'equalto', _pbs_second_copy_prune_job_id) | list }}
+  changed_when: false
+
+- name: PBS second copy | Validate managed prune-job identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_second_copy_managed_prune_jobs | length <= 1
+      - >-
+        _pbs_second_copy_managed_prune_jobs | length == 0
+        or (_pbs_second_copy_managed_prune_jobs | first).store == _pbs_second_copy_datastore
+    fail_msg: >-
+      PBS second-copy prune job {{ _pbs_second_copy_prune_job_id }} already belongs to a
+      different datastore; refusing to overwrite it.
+
+- name: PBS second copy | Create scheduled prune job
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune"
+    method: POST
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ _pbs_second_copy_prune_config | combine({'id': _pbs_second_copy_prune_job_id}) }}"
+    validate_certs: false
+  when: _pbs_second_copy_managed_prune_jobs | length == 0
+
+- name: PBS second copy | Update drifted prune-job settings
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune/{{ _pbs_second_copy_prune_job_id }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ {item.key: item.value} }}"
+    validate_certs: false
+  loop: "{{ _pbs_second_copy_prune_config | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _pbs_second_copy_managed_prune_jobs | length == 1
+    - >-
+      ((_pbs_second_copy_managed_prune_jobs | first)[item.key] | default(none) | string)
+      != (item.value | string)
+
+- name: PBS second copy | Resolve stale prune retention options
+  ansible.builtin.set_fact:
+    _pbs_second_copy_stale_keep_keys: >-
+      {{ ((_pbs_second_copy_managed_prune_jobs | first).keys()
+          | select('match', '^keep-')
+          | difference(_pbs_second_copy_keep.keys() | list)
+          | list)
+         if _pbs_second_copy_managed_prune_jobs | length == 1 else [] }}
+  changed_when: false
+
+- name: PBS second copy | Remove stale prune retention options
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune/{{ _pbs_second_copy_prune_job_id }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      delete: "{{ item }}"
+    validate_certs: false
+  loop: "{{ _pbs_second_copy_stale_keep_keys }}"
+  loop_control:
+    label: "{{ item }}"
+  when: _pbs_second_copy_managed_prune_jobs | length == 1
+
+- name: PBS second copy | Build desired local sync-job configuration
+  ansible.builtin.set_fact:
+    _pbs_second_copy_sync_config:
+      store: "{{ _pbs_second_copy_datastore }}"
+      remote-store: "{{ _pbs_datastore }}"
+      schedule: "{{ _pbs_second_copy_schedule }}"
+      remove-vanished: 0
+      sync-direction: pull
+
+- name: PBS second copy | Read configured sync jobs
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/sync"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_sync_jobs
+
+- name: PBS second copy | Resolve managed sync job
+  ansible.builtin.set_fact:
+    _pbs_second_copy_managed_sync_jobs: >-
+      {{ _pbs_second_copy_sync_jobs.json.data
+         | selectattr('id', 'equalto', _pbs_second_copy_sync_job_id) | list }}
+  changed_when: false
+
+- name: PBS second copy | Validate local sync-job identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_second_copy_managed_sync_jobs | length <= 1
+      - >-
+        _pbs_second_copy_managed_sync_jobs | length == 0
+        or ((_pbs_second_copy_managed_sync_jobs | first).store
+            | default('')) == _pbs_second_copy_datastore
+      - >-
+        _pbs_second_copy_managed_sync_jobs | length == 0
+        or ((_pbs_second_copy_managed_sync_jobs | first)['remote-store']
+            | default('')) == _pbs_datastore
+      - >-
+        _pbs_second_copy_managed_sync_jobs | length == 0
+        or ((_pbs_second_copy_managed_sync_jobs | first).remote | default('') | length) == 0
+    fail_msg: >-
+      PBS sync job {{ _pbs_second_copy_sync_job_id }} is not the local primary-to-copy job
+      expected by this prototype. Refusing to replace a remote or differently scoped job.
+
+- name: PBS second copy | Create scheduled local sync job
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/sync"
+    method: POST
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ _pbs_second_copy_sync_config | combine({'id': _pbs_second_copy_sync_job_id}) }}"
+    validate_certs: false
+  no_log: true
+  when: _pbs_second_copy_managed_sync_jobs | length == 0
+
+- name: PBS second copy | Update drifted local sync-job settings
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/sync/{{ _pbs_second_copy_sync_job_id }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ {item.key: item.value} }}"
+    validate_certs: false
+  no_log: true
+  loop: "{{ _pbs_second_copy_sync_config | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _pbs_second_copy_managed_sync_jobs | length == 1
+    - >-
+      ((_pbs_second_copy_managed_sync_jobs | first)[item.key] | default(none) | string)
+      != (item.value | string)
+      if item.key != 'remove-vanished'
+      else (((_pbs_second_copy_managed_sync_jobs | first)[item.key]
+             | default(0) | int) != (item.value | int))
+
+- name: PBS second copy | List PVE storage backends
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_pve_storages
+  no_log: true
+
+- name: PBS second copy | Resolve existing PVE storage entry
+  ansible.builtin.set_fact:
+    _pbs_second_copy_server: "{{ _pbs_pve_server }}"
+    _pbs_second_copy_fingerprint: "{{ _pbs_pve_fingerprint }}"
+    _pbs_second_copy_existing_storage: >-
+      {{ _pbs_second_copy_pve_storages.json.data
+         | selectattr('storage', 'equalto', _pbs_second_copy_pve_storage_id) | list }}
+
+- name: PBS second copy | Validate PVE storage identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_second_copy_existing_storage | length <= 1
+      - >-
+        _pbs_second_copy_existing_storage | length == 0
+        or (_pbs_second_copy_existing_storage | first).type == 'pbs'
+      - >-
+        _pbs_second_copy_existing_storage | length == 0
+        or (_pbs_second_copy_existing_storage | first).datastore | default('')
+           == _pbs_second_copy_datastore
+    fail_msg: >-
+      PVE storage {{ _pbs_second_copy_pve_storage_id }} is ambiguous or points to another
+      datastore. Refusing to replace its configuration.
+
+- name: PBS second copy | Detect changed PVE storage endpoint
+  ansible.builtin.set_fact:
+    _pbs_second_copy_endpoint_changed: >-
+      {{ _pbs_second_copy_existing_storage | length == 1
+         and (_pbs_second_copy_existing_storage | first).server | default('')
+             != _pbs_second_copy_server }}
+
+- name: PBS second copy | Read existing PVE storage health
+  ansible.builtin.uri:
+    url: >-
+      {{ _pve_url }}/nodes/{{ homelabinfra_config.proxmox.node }}/storage/{{
+        _pbs_second_copy_pve_storage_id }}/status
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+    status_code: [200, 400, 500]
+  register: _pbs_second_copy_pve_status_before
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - _pbs_second_copy_existing_storage | length == 1
+    - not (_pbs_second_copy_endpoint_changed | bool)
+
+- name: PBS second copy | Decide whether the PVE storage entry needs repair
+  ansible.builtin.set_fact:
+    _pbs_second_copy_storage_needs_update: >-
+      {{ _pbs_second_copy_existing_storage | length == 1
+         and not (_pbs_second_copy_endpoint_changed | bool)
+         and (
+           (pbs_token_rotated | default(false) | bool)
+           or (_pbs_second_copy_existing_storage | first).username | default('') != pbs_api_token_id
+           or (_pbs_second_copy_existing_storage | first).fingerprint | default('') != _pbs_second_copy_fingerprint
+           or 'backup' not in ((_pbs_second_copy_existing_storage | first).content | default('')).split(',')
+           or not (_pbs_second_copy_pve_status_before.json.data.active | default(0) | int == 1)
+         ) }}
+
+- name: PBS second copy | Read running PVE backup tasks before replacing the storage entry
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/tasks, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pbs_second_copy_running_tasks_before_replace
+  changed_when: false
+  failed_when: false
+  become: false
+  no_log: true
+  when: _pbs_second_copy_endpoint_changed | bool
+
+- name: PBS second copy | Require the PVE backup task query to succeed
+  ansible.builtin.assert:
+    that: _pbs_second_copy_running_tasks_before_replace.rc | default(1) | int == 0
+    fail_msg: PBS task query failed before replacing the second-copy storage endpoint.
+  when: _pbs_second_copy_endpoint_changed | bool
+
+- name: PBS second copy | Resolve running PVE backup tasks
+  ansible.builtin.set_fact:
+    _pbs_second_copy_running_backup_tasks: >-
+      {{ _pbs_second_copy_running_tasks_before_replace.stdout | from_json
+         | selectattr('type', 'equalto', 'vzdump')
+         | selectattr('endtime', 'undefined') | list }}
+  no_log: true
+  when: _pbs_second_copy_endpoint_changed | bool
+
+- name: PBS second copy | Refuse to replace the storage entry during a backup
+  ansible.builtin.assert:
+    that: _pbs_second_copy_running_backup_tasks | length == 0
+    fail_msg: >-
+      A PVE vzdump task is running. Wait for it to finish before replacing the PBS storage
+      endpoint.
+  when: _pbs_second_copy_endpoint_changed | bool
+
+- name: PBS second copy | Remove old PVE storage endpoint
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage/{{ _pbs_second_copy_pve_storage_id }}"
+    method: DELETE
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  no_log: true
+  when: _pbs_second_copy_endpoint_changed | bool
+
+- name: PBS second copy | Register PVE storage backend for restores
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    method: POST
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      storage: "{{ _pbs_second_copy_pve_storage_id }}"
+      type: pbs
+      server: "{{ _pbs_second_copy_server }}"
+      datastore: "{{ _pbs_second_copy_datastore }}"
+      username: "{{ pbs_api_token_id }}"
+      password: "{{ pbs_api_token_secret }}"
+      fingerprint: "{{ _pbs_second_copy_fingerprint }}"
+      content: backup
+    validate_certs: false
+  no_log: true
+  when: >-
+    _pbs_second_copy_existing_storage | length == 0
+    or (_pbs_second_copy_endpoint_changed | bool)
+
+- name: PBS second copy | Repair PVE storage credentials and fingerprint
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage/{{ _pbs_second_copy_pve_storage_id }}"
+    method: PUT
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      username: "{{ pbs_api_token_id }}"
+      password: "{{ pbs_api_token_secret }}"
+      fingerprint: "{{ _pbs_second_copy_fingerprint }}"
+      content: backup
+      disable: 0
+    validate_certs: false
+  no_log: true
+  when: _pbs_second_copy_storage_needs_update | default(false) | bool
+
+- name: PBS second copy | Confirm one PVE storage entry for the copy datastore
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pbs_second_copy_storages_after
+  no_log: true
+
+- name: PBS second copy | Verify PVE storage identity
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_second_copy_storages_after.json.data
+        | selectattr('storage', 'equalto', _pbs_second_copy_pve_storage_id) | list | length == 1
+      - >-
+        (_pbs_second_copy_storages_after.json.data
+         | selectattr('storage', 'equalto', _pbs_second_copy_pve_storage_id) | first).type == 'pbs'
+      - >-
+        (_pbs_second_copy_storages_after.json.data
+         | selectattr('storage', 'equalto', _pbs_second_copy_pve_storage_id) | first).server
+        == _pbs_second_copy_server
+      - >-
+        (_pbs_second_copy_storages_after.json.data
+         | selectattr('storage', 'equalto', _pbs_second_copy_pve_storage_id) | first).datastore
+        == _pbs_second_copy_datastore
+    fail_msg: >-
+      PVE storage {{ _pbs_second_copy_pve_storage_id }} does not point to the configured
+      PBS endpoint and second-copy datastore.
+
+- name: PBS second copy | Register provenance delegation
+  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
+  when: _pbs_second_copy_existing_storage | length == 0
+
+- name: PBS second copy | Record new PVE storage identity
+  ansible.builtin.script:
+    cmd: >-
+      {{ (_luv_vars_file | dirname | dirname) ~ "/files/decommission/lab.py" | quote }}
+      --node {{ homelabinfra_config.proxmox.node | quote }}
+      --record storage --identity {{ _pbs_second_copy_pve_storage_id | quote }}
+      --source configure-pbs-second-copy
+    executable: python3
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  when: _pbs_second_copy_existing_storage | length == 0
+
+- name: PBS second copy | Wait for the PVE restore source to be active
+  ansible.builtin.uri:
+    url: >-
+      {{ _pve_url }}/nodes/{{ homelabinfra_config.proxmox.node }}/storage/{{
+        _pbs_second_copy_pve_storage_id }}/status
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+    status_code: [200, 400, 500]
+  register: _pbs_second_copy_pve_status_after
+  changed_when: false
+  failed_when: false
+  until: >-
+    _pbs_second_copy_pve_status_after.status | default(0) == 200
+    and (_pbs_second_copy_pve_status_after.json.data.active | default(0) | int == 1)
+  retries: 12
+  delay: 5
+  no_log: true
+
+- name: PBS second copy | Require the PVE restore source to be active
+  ansible.builtin.assert:
+    that: >-
+      _pbs_second_copy_pve_status_after.status | default(0) == 200
+      and (_pbs_second_copy_pve_status_after.json.data.active | default(0) | int == 1)
+    fail_msg: >-
+      PVE storage {{ _pbs_second_copy_pve_storage_id }} is not active with the current PBS
+      endpoint, fingerprint and API token.

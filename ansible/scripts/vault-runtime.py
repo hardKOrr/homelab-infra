@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import sys
 
@@ -56,9 +58,21 @@ def build_contract(items: list[dict]) -> tuple[dict, set[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--require", action="append", default=[])
+    parser.add_argument(
+        "--base64-stdin",
+        action="store_true",
+        help="decode stdin from base64 before parsing the JSON item list",
+    )
     args = parser.parse_args()
     try:
-        source = json.load(sys.stdin)
+        if args.base64_stdin:
+            try:
+                raw = base64.b64decode(sys.stdin.buffer.read(), validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("Bitwarden item input must be valid base64") from exc
+            source = json.loads(raw)
+        else:
+            source = json.load(sys.stdin)
         if not isinstance(source, list):
             raise ValueError("Bitwarden item input must be a JSON list")
         contract, found = build_contract(source)

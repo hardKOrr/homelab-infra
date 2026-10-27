@@ -95,7 +95,7 @@
       required: true
       value: pbs-homelab
       regex: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
-      description: PBS storage ID visible from target_node.
+      description: PBS storage ID visible from target_node. Use `pbs-homelab-copy` for the optional second copy.
     - name: recovery_point
       required: true
       description: Native PBS volume path, for example backup/vm/420/vzdump-qemu-420-....

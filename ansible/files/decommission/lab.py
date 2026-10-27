@@ -21,9 +21,9 @@ RECORD = Path('/var/lib/homelab-infra/decommission-ownership.json')
 KEYS = Path('/root/.ssh/authorized_keys')
 OWNER = '_+lab'
 KEY_COMMENT = 'homelab-infra platform key'
-SOURCES = {'storage': 'configure-pbs', 'role': 'bootstrap-rundeck',
-           'user': 'bootstrap-rundeck', 'token': 'bootstrap-rundeck',
-           'acl': 'bootstrap-rundeck'}
+SOURCES = {'storage': ('configure-pbs', 'configure-pbs-second-copy'),
+           'role': ('bootstrap-rundeck',), 'user': ('bootstrap-rundeck',),
+           'token': ('bootstrap-rundeck',), 'acl': ('bootstrap-rundeck',)}
 SAFE = re.compile(r'^[A-Za-z0-9_.@!+-]+$')
 
 
@@ -115,7 +115,7 @@ def signature(kind, row):
 
 
 def record(kind, ident, source, node, state=None):
-    require(SOURCES.get(kind) == source, 'Unknown owning creation seam.')
+    require(source in SOURCES.get(kind, ()), 'Unknown owning creation seam.')
     state = objects() if state is None else state
     matches = [r for r in state[kind] if identity(kind, r) == ident]
     require(len(matches) == 1, 'Creation identity is absent or ambiguous.')
@@ -132,7 +132,7 @@ def record(kind, ident, source, node, state=None):
 def owned_object(kind, row, records):
     ident = identity(kind, row)
     stamp = records.get('objects', {}).get(kind + ':' + ident, {})
-    return (stamp.get('source') == SOURCES.get(kind) and stamp.get('identity') == ident
+    return (stamp.get('source') in SOURCES.get(kind, ()) and stamp.get('identity') == ident
             and stamp.get('signature') == signature(kind, row))
 
 

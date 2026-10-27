@@ -74,6 +74,25 @@
 #   # Use pbs-enterprise instead if this lab has a Proxmox subscription.
 #   apt_repo_component: pbs-no-subscription
 
+# ── Optional second copy ──────────────────────────────────────────────────────
+# This stays off unless enabled. The local PBS sync job copies the primary datastore
+# into a second datastore on the PBS guest, on its own disk. Select a Proxmox storage
+# pool different from the one in proxmox.vm.datastore_disk.storage. The second volume
+# uses datastore_disk.source_vmid with disk slot 2; no extra volume-owner VMID is needed.
+# second_copy:
+#   enabled: true
+#   storage: <different-pve-storage>
+#   size: 160             # GiB
+#   schedule: 'daily'     # PBS calendar event for the local sync job
+#   retention:            # optional; same keep_* keys as infrastructure.backups.retention
+#     keep_last: 3
+#   # Stable internal names, used when selecting this source for restores:
+#   # datastore_name: homelab-copy
+#   # pve_storage_id: pbs-homelab-copy
+#   # datastore_path: /mnt/homelab-copy
+#   # Setting enabled=false later removes only the managed sync schedule; the datastore,
+#   # restore source, prune policy and existing data remain available.
+
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal

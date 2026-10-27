@@ -29,6 +29,7 @@ def task(tasks, name):
 
 defaults = load_yaml("ansible/vars/app-defaults/pbs.yml")["pbs_defaults"]
 assert "datastore_disk" not in defaults["proxmox"]["vm"]
+assert defaults["second_copy"]["enabled"] is False
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
 
@@ -130,6 +131,12 @@ assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.bui
 assert provision_tasks.index(owner_guard) < clone_index
 existing_disk_include = task(provision_tasks, "Attach the retained PBS datastore disk to the existing guest")
 assert "ansible_host" in existing_disk_include["vars"]["pbs_disk_guest_ip"]
+assert existing_disk_include["vars"]["pbs_disk_index"] == 1
+existing_copy_disk_include = task(provision_tasks, "Attach the retained PBS second-copy disk to the existing guest")
+assert existing_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
+assert existing_copy_disk_include["vars"]["pbs_disk_index"] == 2
+assert existing_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
+assert "second_copy.enabled" in str(existing_copy_disk_include["when"])
 provision_block = task(provision_tasks, "Provision new VM")["block"]
 derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
 avoid_vmid = task(provision_block, "Avoid colliding with the retained PBS datastore VMID")
@@ -139,6 +146,11 @@ assert provision_block.index(
 ) > provision_block.index(avoid_vmid)
 new_disk_include = task(provision_block, "Attach the retained PBS datastore disk to the new guest")
 assert "vm_ansible_host" in new_disk_include["vars"]["pbs_disk_guest_ip"]
+assert new_disk_include["vars"]["pbs_disk_index"] == 1
+new_copy_disk_include = task(provision_block, "Attach the retained PBS second-copy disk to the new guest")
+assert new_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
+assert new_copy_disk_include["vars"]["pbs_disk_index"] == 2
+assert new_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
 avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
 assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
     task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
@@ -156,11 +168,11 @@ assert find_free_vmid.first_free_vmid([], 200, 201) == 200
 assert find_free_vmid.first_free_vmid([{"vmid": 999_999_999}], 1_000_000_000, 100) == 101
 
 ensure_disk = load_yaml("ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml")
-allocate_disk = task(ensure_disk, "PBS disk | Allocate the first datastore volume")
+allocate_disk = task(ensure_disk, "PBS disk | Allocate the retained datastore volume")
 allocate_argv = allocate_disk["ansible.builtin.command"]["argv"]
 assert allocate_argv[:2] == ["pvesm", "alloc"]
 assert any("_pbs_disk_source_vmid" in arg for arg in allocate_argv)
-assert "vm-{{ _pbs_disk_source_vmid }}-disk-1" in allocate_argv
+assert "vm-{{ _pbs_disk_source_vmid }}-disk-{{ _pbs_disk_index }}" in allocate_argv
 active_config = task(ensure_disk, "PBS disk | Read active target VM configuration from PVE")
 assert active_config["ansible.builtin.command"]["argv"][-1] == "--current"
 assert active_config["no_log"] is True
@@ -178,8 +190,8 @@ update_args = str(enable_discard["ansible.builtin.command"]["argv"][-1])
 assert "_pbs_disk_current_config.split(',')" in update_args
 assert "discard=on" in update_args
 assert "_pbs_disk_current | length > 0" in str(enable_discard["when"])
-assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and reject a different scsi1 disk"))
-disk_config = task(ensure_disk, "PBS disk | Confirm volume, backup exclusion, stable guest serial and discard")
+assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and reject a different disk in the selected slot"))
+disk_config = task(ensure_disk, "PBS disk | Confirm volume, backup exclusion, guest serial and discard")
 assert "backup=0" in str(disk_config)
 assert "discard=on" in str(disk_config)
 readback = task(ensure_disk, "PBS disk | Read back the attached disk configuration")
@@ -215,6 +227,12 @@ assert trim_timer["ansible.builtin.systemd"]["enabled"] is True
 assert "datastore_disk is defined" in str(trim_timer["when"])
 active_discard_check = task(pbs_role, "Confirm discard is active on the retained PBS datastore disk")
 assert "discard=on" in str(active_discard_check["ansible.builtin.assert"]["that"])
+copy_disk_role_include = task(pbs_role, "Configure the optional PBS second-copy datastore disk")
+assert "app_config.second_copy.enabled" in str(copy_disk_role_include["when"])
+assert "pbs_second_copy_mount_mode" in copy_disk_role_include["vars"]["pbs_datastore_disk_mode"]
+assert copy_disk_role_include["vars"]["pbs_datastore_disk_serial"] == "homelab-pbs-copy"
+assert "second_copy.datastore_path" in copy_disk_role_include["vars"]["pbs_datastore_disk_path"]
+assert "scsi2" in str(task(pbs_role, "Confirm discard is active on the retained PBS second-copy disk")["ansible.builtin.assert"]["that"])
 register_reuse = task(pbs_role, "Register the retained datastore without initialising it")
 assert "reuse" in str(register_reuse["when"])
 
@@ -237,6 +255,9 @@ assert "--checksum" in str(task(disk_tasks, "PBS datastore disk | Verify the cop
 assert "RequiresMountsFor" in task(disk_tasks, "PBS datastore disk | Make both PBS services require the datastore mount")["ansible.builtin.copy"]["content"]
 assert "_pbs_datastore_path_before.stat.uid" in str(task(disk_tasks, "PBS datastore disk | Preserve datastore root ownership and mode"))
 assert task(pbs_role, "Give PBS ownership of an empty datastore directory")["ansible.builtin.file"]["owner"] == "backup"
+assert "attach" in str(task(disk_tasks, "PBS datastore disk | Validate the path and mode")["ansible.builtin.assert"]["that"])
+attach_guard = task(disk_tasks, "PBS datastore disk | Refuse to hide existing data when attaching a retained disk")
+assert "pbs_datastore_disk_mode == 'attach'" in str(attach_guard["when"])
 
 register_tasks = load_yaml("ansible/roles/pbs/tasks/register-reused-datastore.yml")
 register_existing = task(register_tasks, "PBS datastore reuse | Register the retained directory without initialising it")

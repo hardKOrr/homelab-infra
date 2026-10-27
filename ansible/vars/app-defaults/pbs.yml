@@ -75,6 +75,16 @@ pbs_defaults:
     service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
                                          # name; playbooks/apps/remove.yml stops this
 
+  # Optional local copy on a second Proxmox storage pool. Its retained volume shares the
+  # reserved source_vmid above and uses disk slot 2; the operator chooses the storage ID
+  # and schedule while the PBS/PVE datastore identities stay stable.
+  second_copy:
+    enabled: false
+    datastore_name: homelab-copy
+    datastore_path: /mnt/homelab-copy
+    pve_storage_id: pbs-homelab-copy
+    retention: {}
+
   routing:
     subdomain: pbs                         # hostname on the estate domain, independent of the instance name
     proxy: internal
