@@ -639,7 +639,8 @@
         argv:
           - python3
           - "{{ playbook_dir }}/../../scripts/vault-runtime.py"
-        stdin: "{{ _ra_refreshed_vault_items.stdout }}"
+          - --base64-stdin
+        stdin: "{{ _ra_refreshed_vault_items.stdout | b64encode }}"
       register: _ra_refreshed_vault_runtime
       changed_when: false
       delegate_to: localhost
