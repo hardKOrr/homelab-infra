@@ -230,8 +230,11 @@
     - name: Resolve the hosting kind
       ansible.builtin.set_fact:
         _ra_kind: >-
-          {{ app_config.hosting.method
-             | default('docker' if app_config.stack is defined else 'native', true) }}
+          {{ 'appliance'
+             if (app_config.get('proxmox', {}).get('installer')
+                 or app_config.get('install', {}).get('method') == 'official-iso')
+             else (app_config.get('hosting', {}).get('method')
+                   | default('docker' if app_config.stack is defined else 'native', true)) }}
         _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
         _ra_source_instance: "{{ instance }}"
         # Safe identity only. Product restore tasks may use this to reject a new target
