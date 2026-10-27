@@ -2,6 +2,7 @@
 """Check BookStack's Kubernetes hosting and recovery templates and dispatch."""
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,11 @@ from ansible.template import Templar
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
 ROLE = ROOT / "ansible/roles/bookstack-kubernetes"
+
+
+def recent_recovery_point():
+    timestamp = datetime.now(timezone.utc) - timedelta(minutes=5)
+    return "host/bookstack/" + timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def render(path, variables):
@@ -69,7 +75,7 @@ def fixture():
         "_bookstack_backup_id": "bookstack",
         "_bookstack_restore_mode": "plan",
         "_bookstack_restore_snapshot": "host/bookstack/2026-10-15T00:00:00Z",
-        "_bookstack_restore_safety_point": "host/bookstack/2026-10-15T00:30:00Z",
+        "_bookstack_restore_safety_point": recent_recovery_point(),
         "_bookstack_restore_secret": "bookstack-restore",
         "_bookstack_restore_job_name": "bookstack-restore-plan",
         "_bookstack_restore_backup_id": "bookstack",
@@ -198,7 +204,10 @@ def check_backup_and_restore_jobs():
     run_pod = overwrite["spec"]["template"]["spec"]
     run_container = run_pod["containers"][0]
     assert "--restore --snapshot 'host/bookstack/2026-10-15T00:00:00Z'" in run_container["args"][0]
-    assert "--pre-restore-point 'host/bookstack/2026-10-15T00:30:00Z'" in run_container["args"][0]
+    assert (
+        f"--pre-restore-point '{context['_bookstack_restore_safety_point']}'"
+        in run_container["args"][0]
+    )
     assert any(volume.get("persistentVolumeClaim", {}).get("claimName") == "bookstack-config"
                for volume in run_pod["volumes"])
 
@@ -299,7 +308,7 @@ def kubernetes_recovery_environment(root, case="success"):
     token.write_text("test-token\n", encoding="utf-8")
     ca = root / "service-account-ca"
     ca.write_text("test-ca\n", encoding="utf-8")
-    now_point = "host/bookstack/2026-10-27T08:00:00Z"
+    now_point = recent_recovery_point()
     environment = os.environ | {
         "BOOKSTACK_BACKEND": "kubernetes",
         "BOOKSTACK_INSTANCE": "bookstack",
