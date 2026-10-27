@@ -104,8 +104,11 @@ checkout update; the Reimport Jobs path also refreshes before importing job defi
 
 The drill proves deploy, convergence and native recovery for one instance. Running it
 authorizes every step below on the issue's target instance, including Remove with
-`delete_data=true` and overwrite Restore. Go straight through. Stop only for an ownership
-mismatch, a safety guard that trips, or a failure the issue's scope cannot fix. Read
+`delete_data=true` and overwrite Restore. Go straight through. A lab-owned resource in the
+way, such as another instance of the same application, a shared backend or a failed run's
+leftovers, is yours to remove, redeploy or reconfigure; redeploy any instance you removed
+once the drill ends. Stop only for a guest without the `_+lab` tag, a safety guard that
+trips, or a failure the issue's scope cannot fix. Read
 inputs from the playbook headers and the application's documentation; Rundeck options map
 to the same inputs.
 
