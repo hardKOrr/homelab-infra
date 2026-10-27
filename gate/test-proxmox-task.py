@@ -124,6 +124,13 @@ def main():
                 {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
             ]))
+            if fact == "_rg_restore_task_upid":
+                normalization_cases.append((register, json.dumps({"data": upid}), [
+                    {"ansible.builtin.set_fact": normalize_task["ansible.builtin.set_fact"]},
+                    {"ansible.builtin.assert": cardinality_task["ansible.builtin.assert"]},
+                    {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
+                    {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
+                ]))
 
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
