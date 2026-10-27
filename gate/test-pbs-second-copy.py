@@ -95,6 +95,20 @@ assert sync_values["remote-store"] == "{{ _pbs_datastore }}"
 assert "remote" not in sync_values
 assert sync_values["sync-direction"] == "pull"
 assert sync_values["remove-vanished"] == 0
+prune_config = task(copy_tasks, "PBS second copy | Build desired prune-job configuration")
+assert "_pbs_second_copy_keep" in str(prune_config["ansible.builtin.set_fact"])
+stale_keep = task(copy_tasks, "PBS second copy | Resolve stale prune retention options")
+stale_keep_expression = str(
+    stale_keep["ansible.builtin.set_fact"]["_pbs_second_copy_stale_keep_keys"]
+)
+assert "select('match', '^keep-')" in stale_keep_expression
+assert "difference(_pbs_second_copy_keep.keys() | list)" in stale_keep_expression
+remove_stale_keep = task(copy_tasks, "PBS second copy | Remove stale prune retention options")
+remove_stale_uri = remove_stale_keep["ansible.builtin.uri"]
+assert remove_stale_uri["url"] == "{{ _pbs_url }}/config/prune/{{ _pbs_second_copy_prune_job_id }}"
+assert remove_stale_uri["method"] == "PUT"
+assert remove_stale_uri["body"] == {"delete": "{{ item }}"}
+assert remove_stale_keep["loop"] == "{{ _pbs_second_copy_stale_keep_keys }}"
 create_sync = task(copy_tasks, "PBS second copy | Create scheduled local sync job")
 assert "config/sync" in create_sync["ansible.builtin.uri"]["url"]
 assert create_sync["no_log"] is True

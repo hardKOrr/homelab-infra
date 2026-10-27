@@ -162,6 +162,30 @@
       ((_pbs_second_copy_managed_prune_jobs | first)[item.key] | default(none) | string)
       != (item.value | string)
 
+- name: PBS second copy | Resolve stale prune retention options
+  ansible.builtin.set_fact:
+    _pbs_second_copy_stale_keep_keys: >-
+      {{ ((_pbs_second_copy_managed_prune_jobs | first).keys()
+          | select('match', '^keep-')
+          | difference(_pbs_second_copy_keep.keys() | list)
+          | list)
+         if _pbs_second_copy_managed_prune_jobs | length == 1 else [] }}
+  changed_when: false
+
+- name: PBS second copy | Remove stale prune retention options
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune/{{ _pbs_second_copy_prune_job_id }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      delete: "{{ item }}"
+    validate_certs: false
+  loop: "{{ _pbs_second_copy_stale_keep_keys }}"
+  loop_control:
+    label: "{{ item }}"
+  when: _pbs_second_copy_managed_prune_jobs | length == 1
+
 - name: PBS second copy | Build desired local sync-job configuration
   ansible.builtin.set_fact:
     _pbs_second_copy_sync_config:
