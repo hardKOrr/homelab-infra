@@ -910,7 +910,7 @@
     - name: Reconcile the restored target's intended connections
       ansible.builtin.command:
         argv:
-          - ansible-playbook
+          - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
           - -i
           - inventory/
           - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"

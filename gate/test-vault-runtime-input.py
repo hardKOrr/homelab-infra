@@ -60,6 +60,21 @@ def main():
     assert parser_command["stdin_add_newline"] is False
     assert parser_command["argv"][-1] == "--base64-stdin"
     assert "| b64encode" in parser_command["stdin"]
+
+    plays = yaml.safe_load(
+        (ROOT / "ansible/playbooks/maintenance/restore-app.yml").read_text()
+    )
+    reconcile_play = next(
+        play for play in plays
+        if play.get("name") == "Restore App | Establish intended connections after a verified new restore"
+    )
+    reconcile_task = next(
+        task for task in reconcile_play["tasks"]
+        if task.get("name") == "Reconcile the restored target's intended connections"
+    )
+    assert reconcile_task["ansible.builtin.command"]["argv"][0] == (
+        "{{ ansible_playbook_python | dirname }}/ansible-playbook"
+    )
     print("Vault runtime stdin input checks passed")
 
 
