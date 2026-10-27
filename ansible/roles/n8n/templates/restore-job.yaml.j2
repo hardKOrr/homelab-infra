@@ -1,0 +1,138 @@
+{#
+  The n8n side of one paired PBS recovery point. Plan mode reads only; restore mode runs
+  after the deployment has been stopped by tasks/restore-kubernetes.yml.
+#}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _n8n_k8s_r_job_name }}
+  labels:
+    app.kubernetes.io/instance: {{ _n8n_k8s_r_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: restore
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _n8n_k8s_r_timeout }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ _n8n_k8s_r_target }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: {{ app_config.backup.client.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -ceu]
+          args:
+            - |
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              install -d -m 0755 /etc/apt/keyrings /restore/database /restore/data /restore/tmp
+              curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                > /etc/apt/sources.list.d/pbs-client.list
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                -o /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+              . /etc/os-release
+              echo "deb http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+                > /etc/apt/sources.list.d/postgresql.list
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client \
+                "postgresql-client-${PG_CLIENT_VERSION}" >/dev/null
+{% if _n8n_k8s_r_mode == 'plan' %}
+              echo "=== snapshots in host/${BACKUP_ID} ==="
+              proxmox-backup-client snapshot list "host/${BACKUP_ID}"
+              if [ -n "${SNAPSHOT}" ]; then
+                echo
+                echo "=== selected recovery point ==="
+                proxmox-backup-client snapshot files "${SNAPSHOT}"
+                echo
+                echo "=== target database (read only) ==="
+                psql --no-psqlrc --tuples-only --no-align \
+                  --command="SELECT current_database(), count(*) FROM pg_tables WHERE schemaname = 'public'"
+                echo
+                echo "=== target data volume ==="
+                du -sh /app-data 2>/dev/null || true
+              else
+                echo "Name a recovery point to inspect its contents and the target state."
+              fi
+{% else %}
+              echo "restoring ${SNAPSHOT}"
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
+              proxmox-backup-client restore "${SNAPSHOT}" data.pxar /restore/data
+              test -s "/restore/database/${PGDATABASE}.dump"
+              test -d /restore/data
+              echo "restoring database ${PGDATABASE}"
+              pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
+                --host="${PGHOST}" --port="${PGPORT}" --username="${PGUSER}" \
+                --dbname="${PGDATABASE}" "/restore/database/${PGDATABASE}.dump"
+              echo "replacing n8n data volume"
+              find /app-data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+              cp -a /restore/data/. /app-data/
+              chown -R 1000:1000 /app-data
+              echo "n8n database and data restore complete"
+{% endif %}
+          env:
+            - name: PBS_REPOSITORY
+              value: "{{ k8s_pbs_repository }}"
+            - name: PBS_FINGERPRINT
+              value: "{{ k8s_pbs_fingerprint }}"
+            - name: PBS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ _n8n_k8s_r_secret }}
+                  key: pbs-password
+            - name: BACKUP_ID
+              value: "{{ _n8n_k8s_r_backup_id }}"
+            - name: SNAPSHOT
+              value: "{{ _n8n_k8s_r_snapshot }}"
+            - name: PBS_KEY_URL
+              value: "{{ app_config.backup.client.key_url }}"
+            - name: PBS_APT_REPO
+              value: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+            - name: PGHOST
+              value: "{{ _n8n_k8s_r_database_host }}"
+            - name: PGPORT
+              value: "{{ _n8n_k8s_r_database_port | string }}"
+            - name: PGDATABASE
+              value: "{{ _n8n_k8s_r_database_name }}"
+            - name: PGUSER
+              value: "{{ _n8n_k8s_r_database_user }}"
+            - name: PG_CLIENT_VERSION
+              value: "{{ _n8n_k8s_r_pg_client_version }}"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ _n8n_k8s_r_secret }}
+                  key: db-password
+            - name: TMPDIR
+              value: /restore/tmp
+          volumeMounts:
+            - name: pbs-tmp
+              mountPath: /root/.cache
+            - name: restore
+              mountPath: /restore
+            - name: app-data
+              mountPath: /app-data
+              readOnly: {{ 'true' if _n8n_k8s_r_mode == 'plan' else 'false' }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: pbs-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: restore
+          emptyDir:
+            sizeLimit: {{ app_config.backup.scratch_size | int }}Gi
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: {{ _n8n_k8s_r_target }}-storage
+{% if _n8n_k8s_r_mode == 'plan' %}
+            readOnly: true
+{% endif %}

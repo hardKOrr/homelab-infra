@@ -2,7 +2,7 @@
 n8n_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -16,12 +16,21 @@ n8n_defaults:
     image: docker.n8n.io/n8nio/n8n:1.104.2
     port: 5678
     data_path: "/opt/{{ instance }}/data"
+    storage: 5
     database:
       provider: postgresql
       instance: postgresql-n8n
       version: "16"
       name: n8n
       role: n8n
+  # The Kubernetes pod reaches this named backend through the cluster-node firewall
+  # alias. Docker deployments keep using their existing guest access path.
+  firewall:
+    egress:
+      - name: postgresql
+        protocol: TCP
+        port: "{{ app_config.app.database_port | default(5432) }}"
+        destination: "{{ app_config.app.database_host | default('') }}"
   routing:
     subdomain: n8n
     proxy: internal
