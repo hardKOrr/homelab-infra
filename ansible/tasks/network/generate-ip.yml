@@ -125,6 +125,24 @@
         proxmox_client_ips: >-
           {{ proxmox_client_ips | default([]) | reject('equalto', '') | list }}
 
+    # A guest that sets its own address (an ISO appliance such as PBS) shows none in its
+    # Proxmox config, so the entries above miss it. Its VMID still encodes the address
+    # (ip-to-vmid-guest.yml), and handing that address out again derives the same VMID.
+    - name: Reserve the addresses existing VMIDs encode on this network
+      ansible.builtin.set_fact:
+        proxmox_client_ips: "{{ proxmox_client_ips + [_vmid_ip] }}"
+      loop: "{{ groups['proxmox_clients'] | default([]) }}"
+      vars:
+        _base: "{{ (network_config.cidr | string).split('/')[0].split('.') }}"
+        _prefix: "{{ _base[1] if (_base[1] | int) != 0 else _base[0] }}"
+        _vmid: "{{ hostvars[item].proxmox_vmid | default('') | string }}"
+        _vmid_ip: >-
+          {{ _base[0] ~ '.' ~ _base[1] ~ '.' ~ (_vmid[-6:-3] | int) ~ '.' ~ (_vmid[-3:] | int) }}
+      when:
+        - _vmid | length > 6
+        - _vmid[:-6] == _prefix | string
+        - (_vmid[-6:-3] | int) <= 255 and (_vmid[-3:] | int) <= 255
+
     # A pool named in config is a requirement; a pool inherited from the app's stack
     # is advisory. That asymmetry is what lets a lab adopt pools one band at a time
     # while every stack keeps deploying, and still refuses a config that names a pool

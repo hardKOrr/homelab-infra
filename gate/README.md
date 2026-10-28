@@ -34,6 +34,7 @@ three shards on separate runners. The suites exercise production logic, expressi
 templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
+- `test-generate-ip-vmid.py`: `generate-ip.yml` never reallocates the address an existing guest's VMID encodes, such as an ISO appliance whose config shows no address.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-instance-guest-reuse.py`: `resolve-instance-guest.yml` reuses the one unclaimed same-name guest Remove kept, refuses ambiguous, wrong-type or claimed guests, and every own-guest playbook selects its guest through it.
 - `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
