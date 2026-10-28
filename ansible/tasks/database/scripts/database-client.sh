@@ -19,7 +19,7 @@
 #          load leaves the previous contents.
 #          MariaDB/MySQL: recreates the database with its previous character set and
 #          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
-# inspect  Read only: lists the tables a restore would replace, for a restore preview.
+# inspect  Read only: one line counting the tables and rows a restore would replace.
 set -eu
 
 action=${1:-}
@@ -52,8 +52,8 @@ postgresql() {
   export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGDATABASE="$DB_NAME"
   export PGPASSWORD="$DB_PASSWORD"
   if [ "$action" = inspect ]; then
-    psql --no-psqlrc --tuples-only --no-align --command="SELECT tablename FROM pg_tables
-      WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename"
+    psql --no-psqlrc --tuples-only --no-align --command="SELECT count(*) || ' tables, '
+      || coalesce(sum(n_live_tup), 0) || ' rows (estimated)' FROM pg_stat_user_tables"
     return
   fi
   if [ "$action" = dump ]; then
@@ -87,8 +87,9 @@ mysql_compatible() {
   printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport=%s\n' \
     "$DB_USER" "$DB_PASSWORD" "$DB_HOST" "$DB_PORT" > "$work/client.cnf"
   if [ "$action" = inspect ]; then
-    "$client" --defaults-extra-file="$work/client.cnf" --table --execute="SELECT TABLE_NAME,
-      TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$DB_NAME' ORDER BY TABLE_NAME"
+    "$client" --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
+      --execute="SELECT CONCAT(COUNT(*), ' tables, ', COALESCE(SUM(TABLE_ROWS), 0),
+        ' rows (estimated)') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$DB_NAME'"
     return
   fi
   if [ "$action" = dump ]; then
