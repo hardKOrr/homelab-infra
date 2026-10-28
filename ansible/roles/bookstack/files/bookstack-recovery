@@ -20,7 +20,7 @@ set +a
 
 for required in BOOKSTACK_PROJECT_DIR BOOKSTACK_SERVICE BOOKSTACK_DATA_PATH \
   BOOKSTACK_DB_PROVIDER BOOKSTACK_DB_HOST BOOKSTACK_DB_PORT BOOKSTACK_DB_NAME BOOKSTACK_DB_USER \
-  BOOKSTACK_DB_PASSWORD BOOKSTACK_DB_CLIENT_IMAGE PBS_REPOSITORY PBS_FINGERPRINT \
+  BOOKSTACK_DB_PASSWORD BOOKSTACK_DB_CLIENT_IMAGE DATABASE_CLIENT_SCRIPT PBS_REPOSITORY PBS_FINGERPRINT \
   PBS_PASSWORD PBS_BACKUP_ID PBS_RETENTION_DAYS; do
   [[ -n "${!required:-}" ]] || { echo "BookStack recovery configuration is incomplete: $required" >&2; exit 1; }
 done
@@ -93,63 +93,32 @@ finish() {
 }
 trap finish EXIT
 
-mysql_client() {
-  local command=$1
-  shift
-  if [[ "$BOOKSTACK_DB_PROVIDER" == mariadb ]]; then
-    case "$command" in
-      mysql) command=mariadb ;;
-      mysqldump) command=mariadb-dump ;;
-    esac
-  fi
-  docker run --rm --network host -i \
-    -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
-    --entrypoint "$command" "$BOOKSTACK_DB_CLIENT_IMAGE" "$@"
-}
-
-write_client_config() {
-  umask 077
-  cat > "$work/my.cnf" <<CNF
-[client]
-user=$BOOKSTACK_DB_USER
-password=$BOOKSTACK_DB_PASSWORD
-CNF
+# Dump or load the named database with the shared client (tasks/database/scripts/
+# database-client.sh) in the server-matched image, as the application's own login.
+database_client() {
+  local action=$1 file=$2
+  DB_ENGINE="$BOOKSTACK_DB_PROVIDER" DB_HOST="$BOOKSTACK_DB_HOST" DB_PORT="$BOOKSTACK_DB_PORT" \
+    DB_NAME="$BOOKSTACK_DB_NAME" DB_USER="$BOOKSTACK_DB_USER" DB_PASSWORD="$BOOKSTACK_DB_PASSWORD" \
+    docker run --rm --network host \
+    -v "$(dirname -- "$file"):/work" \
+    -v "$DATABASE_CLIENT_SCRIPT:/usr/local/bin/database-client.sh:ro" \
+    -e DB_ENGINE -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
+    --entrypoint /bin/sh "$BOOKSTACK_DB_CLIENT_IMAGE" \
+    /usr/local/bin/database-client.sh "$action" "/work/$(basename -- "$file")"
 }
 
 replace_database_from_dump() {
-  local dump=$1 table_sql
-  table_sql=$(mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" --batch --skip-column-names \
-    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', CHAR(96), REPLACE(TABLE_NAME, CHAR(96), CONCAT(CHAR(96), CHAR(96))), CHAR(96), ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$BOOKSTACK_DB_NAME';") || return
-  if [[ -n "$table_sql" ]]; then
-    {
-      # BookStack's InnoDB schema has foreign keys; clear its tables in one client
-      # session with checks disabled so the database's table order cannot block restore
-      # or rollback. The client exits before the known-good dump is imported.
-      printf 'SET FOREIGN_KEY_CHECKS=0;\n'
-      printf '%s\n' "$table_sql"
-    } | mysql_client mysql \
-      --defaults-extra-file=/run/secrets/my.cnf --host="$BOOKSTACK_DB_HOST" \
-      --port="$BOOKSTACK_DB_PORT" --database="$BOOKSTACK_DB_NAME" || return
-  fi
-  mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --database="$BOOKSTACK_DB_NAME" < "$dump"
+  database_client restore "$1"
 }
 
 backup() {
-  write_client_config
   # BookStack is stopped before the dump and the archive. The external backend remains
   # available to every other application on it; only this application's writes pause.
   "${compose[@]}" stop "$BOOKSTACK_SERVICE" >/dev/null
   stopped=1
   restart_on_failure=1
   mkdir -p "$work/database"
-  mysql_client mysqldump \
-    --defaults-extra-file=/run/secrets/my.cnf \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --single-transaction --routines --triggers --events --hex-blob \
-    --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/database/database.sql"
+  database_client dump "$work/database/database.sql"
   echo "dumped BookStack database $BOOKSTACK_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client backup \
@@ -219,7 +188,6 @@ restore() {
   }
   original_data_owner=$(stat -c '%u:%g' "$BOOKSTACK_DATA_PATH")
   original_data_mode=$(stat -c '%a' "$BOOKSTACK_DATA_PATH")
-  write_client_config
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
@@ -236,11 +204,7 @@ restore() {
   stopped=1
   restart_on_failure=1
   mkdir -p "$work/original"
-  mysql_client mysqldump \
-    --defaults-extra-file=/run/secrets/my.cnf \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --single-transaction --routines --triggers --events --hex-blob \
-    --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/original/database.sql"
+  database_client dump "$work/original/database.sql"
   restore_active=1
   original_data_path=$(mktemp -d "${BOOKSTACK_DATA_PATH}.pre-restore.XXXXXX")
   rmdir -- "$original_data_path"
@@ -251,9 +215,9 @@ restore() {
   chown "$original_data_owner" "$BOOKSTACK_DATA_PATH"
   chmod "$original_data_mode" "$BOOKSTACK_DATA_PATH"
 
-  # The application role has ALL only on this named database. Clear its existing tables
-  # through that grant instead of requesting backend-admin credentials or touching any
-  # other database on the shared MariaDB/MySQL guest.
+  # The application role has ALL only on this named database. The shared client replaces
+  # it through that grant, without backend-admin credentials or touching any other
+  # database on the shared MariaDB/MySQL guest.
   replace_database_from_dump "$work/database/database.sql"
   echo "BookStack database and /config data restored from $SNAPSHOT"
   "${compose[@]}" start "$BOOKSTACK_SERVICE" >/dev/null

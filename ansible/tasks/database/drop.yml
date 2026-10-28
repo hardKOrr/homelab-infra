@@ -1,0 +1,73 @@
+---
+# Drop one application's named database and login from its registered backend.
+#
+# Inputs:
+#   database_app_instance  application instance
+#   database_app_config    the app's `app.database` mapping
+#
+# Runs from the controller and delegates to the backend guest, so it works after the
+# application guest or namespace is already gone. The backend guest and every other
+# database on it stay. A second run finds nothing to drop and changes nothing.
+- name: Database drop | Resolve the application's database
+  ansible.builtin.include_tasks: resolve-app-database.yml
+
+- name: Database drop | Check ownership before deleting
+  ansible.builtin.include_tasks: guard-app-database.yml
+
+- name: Database drop | Drop the PostgreSQL database and role
+  when: database_app_target.provider == 'postgresql'
+  block:
+    - name: Database drop | Drop the PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - psql
+          - --set=ON_ERROR_STOP=1
+          - --username=postgres
+          - --dbname=postgres
+          - "--port={{ database_app_target.port }}"
+          - "--command=DROP DATABASE {{ database_app_target.name }} WITH (FORCE)"
+      delegate_to: database_app_target
+      become: true
+      become_user: postgres
+      changed_when: true
+      when: _database_guard_owner.stdout | trim != 'missing'
+
+    - name: Database drop | Drop the PostgreSQL role
+      ansible.builtin.command:
+        argv:
+          - psql
+          - --set=ON_ERROR_STOP=1
+          - --tuples-only
+          - --no-align
+          - --username=postgres
+          - --dbname=postgres
+          - "--port={{ database_app_target.port }}"
+          - >-
+            --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname =
+            '{{ database_app_target.role }}') THEN 'dropped' ELSE 'missing' END
+          - "--command=DROP ROLE IF EXISTS {{ database_app_target.role }}"
+      delegate_to: database_app_target
+      become: true
+      become_user: postgres
+      register: _database_drop_role
+      changed_when: "'dropped' in _database_drop_role.stdout"
+
+- name: Database drop | Drop the MariaDB/MySQL database
+  community.mysql.mysql_db:
+    name: "{{ database_app_target.name }}"
+    state: absent
+    login_unix_socket: /run/mysqld/mysqld.sock
+  delegate_to: database_app_target
+  become: true
+  when: database_app_target.provider in ['mariadb', 'mysql']
+
+- name: Database drop | Drop the MariaDB/MySQL login on every permitted client network
+  community.mysql.mysql_user:
+    name: "{{ database_app_target.role }}"
+    host: "{{ item }}"
+    state: absent
+    login_unix_socket: /run/mysqld/mysqld.sock
+  loop: "{{ database_app_target.client_hosts }}"
+  delegate_to: database_app_target
+  become: true
+  when: database_app_target.provider in ['mariadb', 'mysql']

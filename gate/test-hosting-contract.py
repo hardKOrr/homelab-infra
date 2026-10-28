@@ -78,6 +78,9 @@ def implemented_combinations(expected, source):
     implemented = {expected}
     if "tasks/kubernetes/open-app-access.yml" in source or "kubernetes.core." in source:
         implemented.add("kubernetes")
+    # Database backends take their guest type per instance (proxmox.guest_type).
+    if "tasks/database/resolve-backend-placement.yml" in source:
+        implemented |= {"native-lxc", "native-vm"}
     return implemented
 
 

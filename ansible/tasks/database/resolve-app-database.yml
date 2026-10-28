@@ -1,0 +1,116 @@
+---
+# Resolve one application's named database on its registered backend.
+#
+# Inputs:
+#   database_app_instance  application instance (its Vaultwarden item owner)
+#   database_app_config    the app's `app.database` mapping: {provider, instance, name, role}
+#
+# Sets:
+#   database_app_target    {provider, instance, host, port, name, role, client_hosts,
+#                           password, server_version, client_image}
+#   database_app_target    is also added as an inventory host, so the caller's next task
+#                          can delegate to the backend guest. It is reachable from the
+#                          controller even when the application guest is gone.
+#
+# client_image is the official client image for the server's own major (MariaDB/MySQL:
+# major.minor) read from the running server, so a dump or restore never uses an older or
+# newer client than the server it talks to.
+- name: Database target | Assert the application database request
+  ansible.builtin.assert:
+    that:
+      - database_app_instance | default('') is match('^[A-Za-z0-9_.-]+$')
+      - database_app_config is mapping
+      - database_app_config.provider | default('') in ['postgresql', 'mariadb', 'mysql']
+      - database_app_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
+      - database_app_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - database_app_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+    fail_msg: >-
+      {{ database_app_instance | default('the application') }} has no registered-backend
+      database with a supported provider and safe instance, name and role values.
+
+- name: Database target | Resolve the registered backend
+  ansible.builtin.set_fact:
+    _database_app_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(database_app_config.instance, {}) }}
+
+- name: Database target | Assert the backend is registered for this provider
+  ansible.builtin.assert:
+    that:
+      - _database_app_backend.provider | default('') == database_app_config.provider
+      - _database_app_backend.host | default('') | length > 0
+      - _database_app_backend.port | default(0) | int > 0
+      - database_app_config.provider == 'postgresql' or (_database_app_backend.client_hosts | default([]) | length > 0)
+    fail_msg: >-
+      {{ database_app_config.provider }} backend {{ database_app_config.instance }} is not
+      registered with a host, port and (MariaDB/MySQL) client networks.
+
+- name: Database target | Add the backend guest as a delegation target
+  ansible.builtin.add_host:
+    name: database_app_target
+    ansible_host: "{{ _database_app_backend.host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: database_app_targets
+  changed_when: false
+
+- name: Database target | Read the PostgreSQL server version
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_app_backend.port }}"
+      - --command=SHOW server_version_num
+  delegate_to: database_app_target
+  become: true
+  become_user: postgres
+  changed_when: false
+  register: _database_app_pg_version
+  when: database_app_config.provider == 'postgresql'
+
+- name: Database target | Read the MariaDB/MySQL server version
+  ansible.builtin.command:
+    argv:
+      - "{{ 'mariadb' if database_app_config.provider == 'mariadb' else 'mysql' }}"
+      - --socket=/run/mysqld/mysqld.sock
+      - --batch
+      - --skip-column-names
+      - --execute=SELECT VERSION()
+  delegate_to: database_app_target
+  become: true
+  changed_when: false
+  register: _database_app_mysql_version
+  when: database_app_config.provider in ['mariadb', 'mysql']
+
+- name: Database target | Record the target and its matching client image
+  vars:
+    _server_version: >-
+      {{ ((_database_app_pg_version.stdout | trim | int) // 10000) | string
+         if database_app_config.provider == 'postgresql'
+         else _database_app_mysql_version.stdout | trim | regex_search('^[0-9]+[.][0-9]+') | default('', true) }}
+  ansible.builtin.set_fact:
+    database_app_target:
+      provider: "{{ database_app_config.provider }}"
+      instance: "{{ database_app_config.instance }}"
+      host: "{{ _database_app_backend.host }}"
+      port: "{{ _database_app_backend.port | int }}"
+      name: "{{ database_app_config.name }}"
+      role: "{{ database_app_config.role }}"
+      client_hosts: "{{ _database_app_backend.client_hosts | default([]) }}"
+      password: >-
+        {{ (homelabinfra_vault.apps | default({})).get(database_app_instance, {}).database_password
+           | default('', true) }}
+      server_version: "{{ _server_version }}"
+      client_image: >-
+        {{ {'postgresql': 'docker.io/library/postgres:' ~ _server_version ~ '-alpine',
+            'mariadb': 'docker.io/library/mariadb:' ~ _server_version,
+            'mysql': 'docker.io/library/mysql:' ~ _server_version}[database_app_config.provider] }}
+  no_log: true
+
+- name: Database target | Assert the server version was read
+  ansible.builtin.assert:
+    that: database_app_target.server_version is match('^[0-9]+([.][0-9]+)?$') and database_app_target.server_version != '0'
+    fail_msg: >-
+      Could not read the server version of {{ database_app_config.provider }} backend
+      {{ database_app_config.instance }}; refusing to pick a client of unknown major.

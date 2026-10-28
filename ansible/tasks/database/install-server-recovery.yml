@@ -1,0 +1,23 @@
+---
+# Install scripts/server-recovery.py on a MariaDB or MySQL backend guest. The backend
+# role's backup.yml and restore.yml run it with the engine as the first argument.
+#
+# Sets:
+#   database_server_recovery_script  its path on the current host
+- name: Database server recovery | Record the script path
+  ansible.builtin.set_fact:
+    database_server_recovery_script: /usr/local/sbin/homelab-database-server-recovery
+
+- name: Database server recovery | Install the shared script
+  ansible.builtin.copy:
+    src: scripts/server-recovery.py
+    dest: "{{ database_server_recovery_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Database server recovery | Remove the per-engine script it replaces
+  ansible.builtin.file:
+    path: "/usr/local/sbin/homelab-{{ item }}-recovery"
+    state: absent
+  loop: [mariadb, mysql]

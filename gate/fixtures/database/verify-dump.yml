@@ -1,0 +1,12 @@
+---
+# Gate stand-in for ansible/tasks/database/verify-dump.yml. A role test puts a `database-fixture`
+# stub on PATH that plays the database; it receives the same inputs the shared file gets.
+- name: Database fixture | verify-dump
+  ansible.builtin.command:
+    argv:
+      - database-fixture
+      - verify-dump
+      - "{{ database_restore_file }}"
+      - "{{ database_app_instance }}"
+      - "{{ database_app_config.name }}"
+  changed_when: true

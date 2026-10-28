@@ -71,4 +71,3 @@ immich_defaults:
       repository: "http://download.proxmox.com/debian/pbs-client"
       suite: bookworm
       component: main
-    postgres_client_image: postgres:16-alpine

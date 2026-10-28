@@ -212,7 +212,6 @@
       - (app_config.backup.schedule | string).split() | length == 5
       - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
       - app_config.backup.client.image | length > 0
-      - app_config.backup.postgres_client_image | length > 0
       - app_config.backup.redis_client_image | length > 0
     fail_msg: >-
       Plane backup.schedule must be a five-field cron expression and all native recovery
@@ -230,6 +229,17 @@
     - app_config.backup.enabled | default(false) | bool
     - not (recovery_isolated | default(false) | bool)
     - not (k8s_pbs_available | default(false) | bool)
+
+- name: Plane | Resolve the server-matched database client
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+  when: _plane_backup_timer_enabled | default(false) | bool
+
+- name: Plane | Install the shared database client
+  ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
+  when: _plane_backup_timer_enabled | default(false) | bool
 
 - name: Plane | Install the shared recurring/manual recovery helper
   ansible.builtin.copy:

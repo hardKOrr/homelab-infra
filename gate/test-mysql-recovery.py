@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check MySQL's declared PBS contract and exercise its native recovery helper."""
+"""Check MySQL's declared PBS contract and the shared server recovery script's reload restore."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import os
@@ -11,8 +11,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible/roles/mysql"
-HELPER_PATH = ROLE / "files/mysql-recovery.py"
-SPEC = spec_from_file_location("mysql_recovery", HELPER_PATH)
+HELPER_PATH = ROOT / "ansible/tasks/database/scripts/server-recovery.py"
+SPEC = spec_from_file_location("server_recovery", HELPER_PATH)
 MYSQL_RECOVERY = module_from_spec(SPEC)
 SPEC.loader.exec_module(MYSQL_RECOVERY)
 
@@ -79,8 +79,11 @@ def fixture_environment(bin_dir, capture, version="8.4.5"):
     os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
     os.environ["MYSQL_FIXTURE_CAPTURE"] = str(capture)
     os.environ["MYSQL_FIXTURE_VERSION"] = version
-    os.environ["MYSQL_RECOVERY_SOCKET"] = "/run/mysql-fixture.sock"
-    MYSQL_RECOVERY.SOCKET = os.environ["MYSQL_RECOVERY_SOCKET"]
+    os.environ["DATABASE_RECOVERY_SOCKET"] = "/run/mysql-fixture.sock"
+
+
+def server():
+    return MYSQL_RECOVERY.Server("mysql")
 
 
 def mode(path):
@@ -113,9 +116,10 @@ def check_contract():
 
     pbs_install = task_named(main, "MySQL | Install the PBS backup client")
     assert pbs_install["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
-    helper_install = task_named(main, "MySQL | Install the native recovery helper")
-    assert helper_install["ansible.builtin.copy"]["src"] == "mysql-recovery.py"
-    assert helper_install["ansible.builtin.copy"]["mode"] == "0750"
+    helper_install = task_named(main, "MySQL | Install the shared server recovery script")
+    assert helper_install["ansible.builtin.include_tasks"].endswith(
+        "tasks/database/install-server-recovery.yml"
+    )
 
     backup = task_tree(ROLE / "tasks/backup.yml")
     assert any(
@@ -138,7 +142,9 @@ def check_contract():
     assert task_named(restore, "MySQL restore | Require the existing-target point to belong to its backup group")
     assert task_named(restore, "MySQL restore | Verify the independent pre-restore archive")
     importer = task_named(restore, "MySQL restore | Import the point and retain rollback state until verified")
-    assert "homelab-mysql-recovery" in str(importer["ansible.builtin.command"]["argv"])
+    assert "database_server_recovery_script, 'mysql', 'restore'" in str(
+        importer["ansible.builtin.command"]["argv"]
+    )
     assert task_named(restore, "MySQL restore | Remove private staging data")
 
     remove = task_tree(ROOT / "ansible/playbooks/apps/remove.yml")
@@ -163,6 +169,7 @@ def check_contract():
 
 
 def bundle(path, dump, version="8.4.5"):
+    """A point in the format taken before the shared script: mysql-version.txt, no manifest."""
     path.mkdir(mode=0o700)
     (path / "mysql.sql").write_text(dump, encoding="utf-8")
     (path / "mysql-version.txt").write_text(version + "\n", encoding="utf-8")
@@ -179,15 +186,16 @@ def check_private_consistent_backup():
         staging = root / "staging"
         staging.mkdir(mode=0o755)
 
-        MYSQL_RECOVERY.backup(staging)
+        MYSQL_RECOVERY.backup(server(), staging)
 
         dump = staging / "mysql.sql"
-        version = staging / "mysql-version.txt"
+        manifest = staging / "mysql-manifest.json"
         assert dump.read_text(encoding="utf-8") == "fixture logical dump\n"
-        assert version.read_text(encoding="utf-8") == "8.4.5\n"
+        assert MYSQL_RECOVERY.read_bundle(server(), staging) == (dump, "8.4.5")
         assert mode(staging) == 0o700
         assert mode(dump) == 0o600
-        assert mode(version) == 0o600
+        assert mode(manifest) == 0o600
+        assert "--set-gtid-purged=OFF" in (capture / "dump-args").read_text(encoding="utf-8")
         arguments = (capture / "dump-args").read_text(encoding="utf-8")
         for option in [
             "--all-databases",
@@ -213,7 +221,7 @@ def check_restore_and_rollback():
         bundle(safety, "safety recovery dump\n")
 
         try:
-            MYSQL_RECOVERY.restore(source, safety)
+            MYSQL_RECOVERY.restore(server(), source, safety, "/var/lib/mysql", "mysql")
         except MYSQL_RECOVERY.RecoveryError as error:
             assert "pre-restore point was reapplied" in str(error)
         else:
@@ -234,7 +242,7 @@ def check_version_guard():
         bundle(source, "source dump\n", version="8.3.2")
 
         try:
-            MYSQL_RECOVERY.restore(source)
+            MYSQL_RECOVERY.restore(server(), source, None, "/var/lib/mysql", "mysql")
         except MYSQL_RECOVERY.RecoveryError as error:
             assert "major/minor versions do not match" in str(error)
         else:
@@ -247,7 +255,7 @@ def main():
     check_private_consistent_backup()
     check_restore_and_rollback()
     check_version_guard()
-    print("MySQL native recovery contract and helper checks passed.")
+    print("MySQL native recovery contract and reload restore checks passed.")
 
 
 if __name__ == "__main__":

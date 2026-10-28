@@ -1,0 +1,31 @@
+---
+# Restore a dump from dump.yml into one application's named database.
+#
+# Inputs:
+#   database_app_instance  application instance
+#   database_app_config    the app's `app.database` mapping, as given to provision.yml
+#   database_restore_file  absolute path on the current host of a dump from dump.yml (or an
+#                          older per-app dump in the same format)
+#
+# Checks ownership, then runs provision.yml with the stored credential so the database,
+# login, grants and extensions exist exactly as a deploy creates them, then replaces the
+# database's contents as the application's login (see scripts/database-client.sh). Stop
+# the application's writers first; keep a pre-restore dump if the caller needs rollback.
+- name: Database restore | Resolve the application's database
+  ansible.builtin.include_tasks: resolve-app-database.yml
+
+- name: Database restore | Check ownership before replacing contents
+  ansible.builtin.include_tasks: guard-app-database.yml
+
+- name: Database restore | Create the database, login, grants and extensions
+  ansible.builtin.include_tasks: provision.yml
+  vars:
+    database_provision_app_instance: "{{ database_app_instance }}"
+    database_provision_config: "{{ database_app_config | combine({'credential_action': 'reuse'}) }}"
+
+- name: Database restore | Replace the database contents with the dump
+  ansible.builtin.include_tasks: run-client.yml
+  vars:
+    database_client_action: restore
+    database_client_file: "{{ database_restore_file }}"
+    database_client_password: "{{ database_provision_connection.password }}"

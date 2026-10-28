@@ -84,40 +84,11 @@
         services: [odoo]
 
     - name: Odoo backup | Dump the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _odoo_backup_scratch.path }}:/backup"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
-            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" --file=/backup/odoo.dump
-      environment:
-        DB_HOST: "{{ _odoo_backup_database_backend.host }}"
-        DB_PORT: "{{ _odoo_backup_database_backend.port }}"
-        DB_NAME: "{{ _odoo_backup_database_name }}"
-        DB_USER: "{{ _odoo_backup_database_user }}"
-        DB_PASSWORD: "{{ _odoo_backup_database_password }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+      vars:
+        database_app_instance: "{{ instance }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_dump_file: "{{ _odoo_backup_scratch.path }}/odoo.dump"
 
     - name: Odoo backup | Push the paired database and filestore snapshot to PBS
       ansible.builtin.command:

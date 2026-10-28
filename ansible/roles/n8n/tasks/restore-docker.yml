@@ -234,40 +234,11 @@
       no_log: true
 
     - name: n8n restore | Restore the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _n8n_restore_scratch.path }}/database:/restore:ro"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_restore --clean --if-exists --no-owner --no-acl
-            --exit-on-error --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" /restore/n8n.dump
-      environment:
-        DB_HOST: "{{ _n8n_restore_database_backend.host }}"
-        DB_PORT: "{{ _n8n_restore_database_backend.port }}"
-        DB_NAME: "{{ _n8n_restore_database_name }}"
-        DB_USER: "{{ _n8n_restore_database_user }}"
-        DB_PASSWORD: "{{ _n8n_restore_database_password }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+      vars:
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _n8n_restore_scratch.path }}/database/n8n.dump"
 
     # A new target was provisioned with its own generated key. The restored database's
     # encrypted credentials require the source key, so carry it into the target's

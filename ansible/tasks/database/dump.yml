@@ -1,0 +1,29 @@
+---
+# Dump one application's named database to a file on the current host.
+#
+# Inputs:
+#   database_app_instance  application instance
+#   database_app_config    the app's `app.database` mapping
+#   database_dump_file     absolute path on the current host for the dump; its directory
+#                          must exist. The caller's backup path archives this file.
+#
+# Runs scripts/database-client.sh with Docker on the current host, in the client image
+# that matches the server major, as the application's own login. The dump is PostgreSQL
+# custom format or MariaDB/MySQL SQL; restore.yml loads either.
+- name: Database dump | Resolve the application's database
+  ansible.builtin.include_tasks: resolve-app-database.yml
+
+- name: Database dump | Require the application's database password
+  ansible.builtin.assert:
+    that: database_app_target.password | length > 0
+    fail_msg: >-
+      {{ database_app_instance }} has no database_password in its canonical item;
+      deploy it before taking a database dump.
+  no_log: true
+
+- name: Database dump | Dump the named database
+  ansible.builtin.include_tasks: run-client.yml
+  vars:
+    database_client_action: dump
+    database_client_file: "{{ database_dump_file }}"
+    database_client_password: "{{ database_app_target.password }}"
