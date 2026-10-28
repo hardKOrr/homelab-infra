@@ -375,7 +375,7 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     ]
     assert "_rm_delete_data | bool" in drop["when"]
     assert "^[0-9]+[ ]+" in resolve["loop"] and "^[0-9]+[ ]+" in drop["loop"]
-    assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data path"))
+    assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data and cache paths"))
 
     # Remove App withdraws guest records before it stops services. PostgreSQL's LXC survives
     # removal, so its identity must be retained through cluster teardown for the next Deploy
