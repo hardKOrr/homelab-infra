@@ -15,6 +15,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
+REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
@@ -102,6 +104,38 @@ def tasks_recursive(value):
             yield from tasks_recursive(value.get(key, []))
 
 
+def check_remove_contract():
+    tasks = list(tasks_recursive(REMOVE))
+    database = BOOKSTACK_DEFAULTS["app"]["database"]
+    assert database["provider"] == "mariadb"
+    assert database["instance"]
+    assert database["name"] and database["role"]
+
+    decision = next(task for task in tasks
+                    if task.get("name") == "Decide whether Remove drops a named database")
+    expression = str(decision["ansible.builtin.set_fact"]["_rm_drops_database"])
+    assert "delete_data" in expression
+    assert "app_config.app.database.provider" in expression
+    assert "app_config.app.database.instance" in expression
+
+    resolve = next(task for task in tasks
+                   if task.get("name") == "Resolve the app's named database before unwiring")
+    assert resolve["ansible.builtin.include_tasks"].endswith("database/resolve-app-database.yml")
+    guard = next(task for task in tasks
+                 if task.get("name") == "Check the app's named database ownership before unwiring")
+    assert guard["ansible.builtin.include_tasks"].endswith("database/guard-app-database.yml")
+
+    drop = next(task for task in tasks
+                if task.get("name") == "Drop the app's named database and login")
+    assert drop["ansible.builtin.include_tasks"].endswith("database/drop.yml")
+    assert "_rm_drops_database" in str(drop["when"])
+    drop_play = next(play for play in REMOVE
+                     if play.get("name") == "Remove App | Drop its named database")
+    assert drop_play["hosts"] == "localhost"
+    assert REMOVE.index(drop_play) > next(
+        index for index, play in enumerate(REMOVE)
+        if play.get("name", "").startswith("Remove App | Stop ")
+    )
 def check_admin_email_contract():
     task = next(task for task in BOOKSTACK_ROLE
                 if task.get("name") == "BookStack | Validate administrator email")
@@ -276,6 +310,7 @@ def check(case):
 
 
 def main():
+    check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()
     check_pre_restore_point_contract()
