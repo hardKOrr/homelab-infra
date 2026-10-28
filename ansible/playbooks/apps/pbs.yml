@@ -273,6 +273,7 @@
           PBS reuse volume is absent or ambiguous on {{ _pbs_disk_preflight_node }}. The
           existing guest remains untouched; restore the exact retained volume before retrying Deploy PBS.
       when: app_config.app.datastore_mode | default('create') == 'reuse'
+
     - name: Check the retained PBS second-copy volume before creating a replacement guest
       ansible.builtin.command:
         argv:
