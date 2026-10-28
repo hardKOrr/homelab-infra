@@ -71,13 +71,21 @@ def verify_virtiofs_mount_contract():
         task for task in tasks
         if task.get("name") == "VM host mounts | Create only missing directory mappings"
     )
-    mapping_id_task = next(
+    index_task = next(
         task for task in tasks
-        if task.get("name") == "VM host mounts | Build stable directory mapping IDs"
+        if task.get("name") == "VM host mounts | Index existing mappings by node and path"
     )
-    mapping_verify_task = next(
+    choose_task = next(
         task for task in tasks
-        if task.get("name") == "VM host mounts | Refuse an existing mapping with a different compute path"
+        if task.get("name") == "VM host mounts | Choose each host path's directory mapping"
+    )
+    extend_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Add new compute nodes to a mapping homelab-infra created"
+    )
+    refuse_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Refuse an operator mapping that lacks a compute node"
     )
     device_scan_task = next(
         task for task in tasks
@@ -114,9 +122,8 @@ def verify_virtiofs_mount_contract():
             "hosts": "localhost",
             "gather_facts": False,
             "vars": {
-                "_vmfs_directory_mappings": [{"id": "d123", "host": "/mnt/media"}],
+                "_vmfs_directory_mappings": [{"id": "d123", "host": "/mnt/media", "exists": False}],
                 "_vmfs_compute_nodes": ["compute-3", "compute-2"],
-                "_vmfs_mapping_list": {"stdout": "[]"},
                 "homelabinfra_config": {"proxmox": {"node": "localhost"}},
             },
             "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
@@ -144,85 +151,106 @@ def verify_virtiofs_mount_contract():
             "--map", "node=compute-2,path=/mnt/media",
         ], "virtiofs directory mapping arguments were not passed separately"
 
-    expected_id = "d" + hashlib.sha1(b"/mnt/media|compute-2|compute-3").hexdigest()[:12]
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        playbook = root / "mapping-id.yml"
-        playbook.write_text(yaml.safe_dump([{
-            "hosts": "localhost",
-            "gather_facts": False,
-            "vars": {
-                "_vmfs_directory_mappings": [],
-                "_vmfs_host_paths": ["/mnt/media"],
-                "_vmfs_compute_nodes": ["compute-3", "compute-2"],
-            },
-            "tasks": [mapping_id_task, {
-                "ansible.builtin.assert": {
-                    "that": [
-                        "_vmfs_directory_mappings | length == 1",
-                        f"_vmfs_directory_mappings[0].id == {json.dumps(expected_id)}",
-                        "_vmfs_directory_mappings[0].id is match('^d[0-9a-f]{12}$')",
-                    ]
-                }
-            }],
-        }]))
-        inventory = root / "inventory.ini"
-        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
-        result = subprocess.run(
-            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
-            env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        output = result.stdout + result.stderr
-        assert result.returncode == 0, f"virtiofs mapping ID was invalid\n{output}"
-
-    def run_mapping_verification(entries):
+    def run_tasks(play_tasks, variables, pvesh_record=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            playbook = root / "mapping-verify.yml"
+            environment = {}
+            if pvesh_record is not None:
+                stub = root / "pvesh"
+                stub.write_text(
+                    f"#!{ANSIBLE.parent / 'python'}\n"
+                    "import json, os, sys\n"
+                    "with open(os.environ['GUEST_MAPPING_ARGV_FILE'], 'a') as out:\n"
+                    "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                )
+                stub.chmod(0o755)
+                environment = {"PATH": str(root) + os.pathsep + os.environ["PATH"]}
+            playbook = root / "mapping.yml"
             playbook.write_text(yaml.safe_dump([{
                 "hosts": "localhost",
                 "gather_facts": False,
-                "vars": {
-                    "_vmfs_compute_nodes": ["compute-3", "compute-2"],
-                    "_vmfs_mapping_details": {"results": [{
-                        "stdout": json.dumps({"map": entries}),
-                        "item": {"id": "d123", "host": "/mnt/media"},
-                    }]},
-                },
-                "tasks": [mapping_verify_task],
+                "vars": variables | {"homelabinfra_config": {"proxmox": {"node": "localhost"}}},
+                "environment": environment,
+                "tasks": play_tasks,
             }]))
             inventory = root / "inventory.ini"
             inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
-            return subprocess.run(
+            result = subprocess.run(
                 [str(ANSIBLE), "-i", str(inventory), str(playbook)],
                 env=os.environ | {
                     "ANSIBLE_STDOUT_CALLBACK": "default",
                     "ANSIBLE_NOCOLOR": "1",
+                    "GUEST_MAPPING_ARGV_FILE": str(pvesh_record or ""),
                 },
                 text=True,
                 capture_output=True,
                 check=False,
             )
+            return result.returncode, result.stdout + result.stderr
 
-    valid_mapping = run_mapping_verification([
-        "node=compute-3,path=/mnt/media",
-        "node=compute-2,path=/mnt/media/",
-    ])
-    output = valid_mapping.stdout + valid_mapping.stderr
-    assert valid_mapping.returncode == 0, f"valid virtiofs mapping was refused\n{output}"
+    def detail(mapping_id, entries):
+        return {"item": mapping_id, "stdout": json.dumps({"id": mapping_id, "map": entries})}
 
-    conflicting_mapping = run_mapping_verification([
-        "node=compute-3,path=/mnt/media",
-        "node=compute-2,path=/mnt/other",
-    ])
-    output = conflicting_mapping.stdout + conflicting_mapping.stderr
-    assert conflicting_mapping.returncode != 0, "conflicting virtiofs path was accepted"
-    normalized_output = " ".join(output.split())
-    assert "different or incomplete compute-node paths" in normalized_output, (
-        "conflicting virtiofs path did not report the expected refusal\n" + output
+    three = ["node=compute-1,path=/mnt/media", "node=compute-2,path=/mnt/media/",
+             "node=compute-3,path=/mnt/media"]
+    old_id = "d" + hashlib.sha1(b"/mnt/media|compute-1|compute-2|compute-3").hexdigest()[:12]
+    other_id = "d" + hashlib.sha1(b"/mnt/media|compute-1|compute-2|compute-3|compute-4").hexdigest()[:12]
+    new_id = "d" + hashlib.sha1(b"/mnt/media").hexdigest()[:12]
+
+    def choose(details, attached):
+        return {
+            "_vmfs_compute_nodes": ["compute-1", "compute-2", "compute-3", "compute-4"],
+            "_vmfs_host_paths": ["/mnt/media"],
+            "_vmfs_directory_mappings": [],
+            "_vmfs_existing_mappings": [],
+            "_vmfs_existing_device_ids": attached,
+            "_vmfs_mapping_details": {"results": details},
+        }
+
+    # No mapping yet: the new ID depends on the host path only, so it survives node changes.
+    code, output = run_tasks([index_task, choose_task, {"ansible.builtin.assert": {"that": [
+        f"_vmfs_directory_mappings == [{{'id': '{new_id}', 'host': '/mnt/media', "
+        "'exists': False, 'entries': [], "
+        "'missing_nodes': ['compute-1', 'compute-2', 'compute-3', 'compute-4']}]",
+    ]}}], choose([], []))
+    assert code == 0, f"a new virtiofs mapping did not get a path-only ID\n{output}"
+
+    # A node joined: keep the mapping the VM already mounts and report the new node, even
+    # when a mapping created later for the larger node set also exists.
+    code, output = run_tasks([index_task, choose_task, {"ansible.builtin.assert": {"that": [
+        f"_vmfs_directory_mappings[0].id == '{old_id}'",
+        "_vmfs_directory_mappings[0].exists",
+        "_vmfs_directory_mappings[0].missing_nodes == ['compute-4']",
+    ]}}], choose([
+        detail(other_id, three + ["node=compute-4,path=/mnt/media"]),
+        detail(old_id, three),
+        detail("operator-other", ["node=compute-1,path=/mnt/other"]),
+    ], [old_id]))
+    assert code == 0, f"the VM's mounted virtiofs mapping was not kept\n{output}"
+
+    with tempfile.TemporaryDirectory() as directory:
+        record = Path(directory) / "argv.jsonl"
+        code, output = run_tasks([extend_task], {
+            "_vmfs_directory_mappings": [{
+                "id": old_id, "host": "/mnt/media", "exists": True,
+                "entries": three, "missing_nodes": ["compute-4"],
+            }],
+        }, pvesh_record=record)
+        assert code == 0, f"adding a compute node to an owned mapping failed\n{output}"
+        assert [json.loads(line) for line in record.read_text().splitlines()] == [[
+            "set", f"/cluster/mapping/dir/{old_id}",
+            "--map", "node=compute-1,path=/mnt/media",
+            "--map", "node=compute-2,path=/mnt/media/",
+            "--map", "node=compute-3,path=/mnt/media",
+            "--map", "node=compute-4,path=/mnt/media",
+        ]], "an owned mapping was not extended with only the missing node"
+
+    code, output = run_tasks([refuse_task], {"_vmfs_directory_mappings": [{
+        "id": "operator-media", "host": "/mnt/media", "exists": True,
+        "entries": three, "missing_nodes": ["compute-4"],
+    }]})
+    assert code != 0 and "left unchanged" in " ".join(output.split()), (
+        "an operator mapping missing a compute node was accepted\n" + output
     )
 
     with tempfile.TemporaryDirectory() as directory:

@@ -1,8 +1,8 @@
 ---
 # Share the lab's already-mounted host directories with a VM through Proxmox directory
 # mappings and virtiofs. The mapping is cluster-wide, but every eligible compute node must
-# expose the same host path before the mapping can be created or used. Existing mappings
-# are read-only inputs: they are never updated or replaced.
+# expose the same host path before the mapping can be created or used. A mapping is never
+# replaced; one homelab-infra created only gains compute nodes that joined later.
 ##
 # Inputs match attach-host-mounts.yml:
 #   attach_mounts_guest — VM inventory hostname
@@ -41,6 +41,7 @@
       {{ attach_mounts_list | map(attribute='host')
          | map('regex_replace', '/+$', '') | unique | list }}
     _vmfs_directory_mappings: []
+    _vmfs_existing_mappings: []
 
 - name: VM host mounts | Require eligible compute nodes
   ansible.builtin.assert:
@@ -74,81 +75,6 @@
   loop: "{{ _vmfs_host_path_stats.results }}"
   loop_control:
     label: "{{ item.item.0 }} on {{ item.item.1 }}"
-
-- name: VM host mounts | Build stable directory mapping IDs
-  ansible.builtin.set_fact:
-    _vmfs_directory_mappings: >-
-      {{ _vmfs_directory_mappings + [
-           {'id': 'd' ~ (((item ~ '|' ~ (_vmfs_compute_nodes | sort | join('|')))
-                         | hash('sha1'))[:12]),
-            'host': item}
-         ] }}
-  loop: "{{ _vmfs_host_paths }}"
-  loop_control:
-    label: "{{ item }}"
-
-- name: VM host mounts | Read existing directory mappings
-  ansible.builtin.command:
-    argv: [pvesh, get, /cluster/mapping/dir, --output-format, json]
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  register: _vmfs_mapping_list
-  changed_when: false
-
-- name: VM host mounts | Create only missing directory mappings
-  ansible.builtin.command:
-    argv: >-
-      {{ ['pvesh', 'create', '/cluster/mapping/dir', '--id', item.id]
-         + (_vmfs_compute_nodes
-            | map('regex_replace', '$', ',path=' ~ item.host)
-            | map('regex_replace', '^', 'node=')
-            | map('regex_replace', '^', '--map ')
-            | map('split', ' ') | flatten) }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  loop: "{{ _vmfs_directory_mappings }}"
-  loop_control:
-    label: "{{ item.id }}"
-  when: >-
-    item.id not in ((_vmfs_mapping_list.stdout | from_json)
-                    | map(attribute='id') | list)
-  changed_when: true
-
-- name: VM host mounts | Read each directory mapping without changing it
-  ansible.builtin.command:
-    argv:
-      - pvesh
-      - get
-      - "/cluster/mapping/dir/{{ item.id }}"
-      - --output-format
-      - json
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  register: _vmfs_mapping_details
-  loop: "{{ _vmfs_directory_mappings }}"
-  loop_control:
-    label: "{{ item.id }}"
-  changed_when: false
-
-- name: VM host mounts | Refuse an existing mapping with a different compute path
-  ansible.builtin.assert:
-    that:
-      - _vmfs_map_compute_nodes | sort == _vmfs_compute_nodes | sort
-      - _vmfs_map_compute_paths | length == _vmfs_compute_nodes | length
-      - _vmfs_map_compute_paths | unique | length == 1
-      - _vmfs_map_compute_paths | first == (item.item.host | regex_replace('/+$', ''))
-    fail_msg: >-
-      Directory mapping {{ item.item.id }} already exists with different or incomplete
-      compute-node paths. Existing mappings are left unchanged; correct the operator-owned
-      mapping or update the declared host path before deploying this VM.
-  vars:
-    _vmfs_map_entries: "{{ (item.stdout | from_json).map | default([]) }}"
-    _vmfs_map_compute_nodes: >-
-      {{ _vmfs_map_entries | map('split', ',') | map('first')
-         | map('regex_replace', '^node=', '') | list }}
-    _vmfs_map_compute_paths: >-
-      {{ _vmfs_map_entries | map('split', ',') | map('last')
-         | map('regex_replace', '^path=', '') | map('regex_replace', '/+$', '') | list }}
-  loop: "{{ _vmfs_mapping_details.results }}"
-  loop_control:
-    label: "{{ item.item.id }}"
 
 - name: VM host mounts | Find this named VM on its selected node
   ansible.builtin.command:
@@ -199,6 +125,116 @@
   vars:
     _vmfs_device_lines: >-
       {{ _vmfs_guest_config.stdout_lines | select('match', '^virtiofs[0-9]+:') | list }}
+
+# One directory mapping per host path, found by that path rather than by a computed ID.
+# The ID once hashed the compute node list too, so a node joining the cluster changed it:
+# Deploy made a second mapping and the guest-mount guard below refused the mount the guest
+# already had from the first. Prefer the mapping this VM already mounts, then any mapping
+# of exactly that path, and create one only when none exists. A mapping this file created
+# (ID `d` + 12 hex) gains any compute node it lacks; an operator's is only read.
+- name: VM host mounts | Read existing directory mappings
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/mapping/dir, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_mapping_list
+  changed_when: false
+
+- name: VM host mounts | Read each existing directory mapping without changing it
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/dir/{{ item }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_mapping_details
+  loop: "{{ _vmfs_mapping_list.stdout | from_json | map(attribute='id') | list }}"
+  changed_when: false
+
+- name: VM host mounts | Index existing mappings by node and path
+  ansible.builtin.set_fact:
+    _vmfs_existing_mappings: >-
+      {{ _vmfs_existing_mappings + [{
+           'id': item.item,
+           'entries': _entries,
+           'nodes': _entries | map('split', ',') | map('first')
+                    | map('regex_replace', '^node=', '') | list,
+           'paths': _entries | map('split', ',') | map('last')
+                    | map('regex_replace', '^path=', '') | map('regex_replace', '/+$', '')
+                    | unique | list
+         }] }}
+  vars:
+    _entries: "{{ (item.stdout | from_json).map | default([]) }}"
+  loop: "{{ _vmfs_mapping_details.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: VM host mounts | Choose each host path's directory mapping
+  ansible.builtin.set_fact:
+    _vmfs_directory_mappings: >-
+      {{ _vmfs_directory_mappings + [{
+           'id': _chosen.id | default('d' ~ (item | hash('sha1'))[:12]),
+           'host': item,
+           'exists': _chosen | length > 0,
+           'entries': _chosen.entries | default([]),
+           'missing_nodes': _vmfs_compute_nodes | reject('in', _chosen.nodes | default([])) | list
+         }] }}
+  vars:
+    _candidates: >-
+      {{ _vmfs_existing_mappings | selectattr('paths', 'equalto', [item]) | list }}
+    _chosen: >-
+      {{ ((_candidates | selectattr('id', 'in', _vmfs_existing_device_ids) | list)
+          + _candidates) | first | default({}) }}
+  loop: "{{ _vmfs_host_paths }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: VM host mounts | Create only missing directory mappings
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'create', '/cluster/mapping/dir', '--id', item.id]
+         + (_vmfs_compute_nodes
+            | map('regex_replace', '$', ',path=' ~ item.host)
+            | map('regex_replace', '^', 'node=')
+            | map('regex_replace', '^', '--map ')
+            | map('split', ' ') | flatten) }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _vmfs_directory_mappings | rejectattr('exists') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  changed_when: true
+
+- name: VM host mounts | Refuse an operator mapping that lacks a compute node
+  ansible.builtin.assert:
+    that: item.missing_nodes | length == 0
+    fail_msg: >-
+      Directory mapping {{ item.id }} maps {{ item.host }} but not on
+      {{ item.missing_nodes | join(', ') }}. It was not created by homelab-infra, so it is
+      left unchanged; add those nodes to it before deploying this VM.
+  loop: "{{ _vmfs_directory_mappings | selectattr('exists') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: item.id is not match('^d[0-9a-f]{12}$')
+
+- name: VM host mounts | Add new compute nodes to a mapping homelab-infra created
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'set', '/cluster/mapping/dir/' ~ item.id]
+         + ((item.entries
+             + (item.missing_nodes
+                | map('regex_replace', '$', ',path=' ~ item.host)
+                | map('regex_replace', '^', 'node=') | list))
+            | map('regex_replace', '^', '--map ')
+            | map('split', ' ') | flatten) }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _vmfs_directory_mappings | selectattr('exists') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when:
+    - item.id is match('^d[0-9a-f]{12}$')
+    - item.missing_nodes | length > 0
+  changed_when: true
 
 - name: VM host mounts | Assign free virtiofs device slots
   ansible.builtin.set_fact:
