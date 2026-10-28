@@ -1,0 +1,35 @@
+---
+# n8n's after-restore hook for tasks/kubernetes/recovery-restore.yml. The restored
+# database's credentials are encrypted with the SOURCE instance's key, so the target takes
+# that key: in its Vaultwarden item first, so the next Deploy keeps it, then in its
+# running environment.
+
+- name: n8n restore | Record the source encryption key for the target
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+    vault_item_merge: true
+    vault_item_fields:
+      encryption_key: "{{ restore_source_encryption_key }}"
+    vault_item_secret_fields: [encryption_key]
+  no_log: true
+
+- name: n8n restore | Sync the restored key and target environment
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ restore_target }}-env"
+    k8s_secret_data:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: "{{ k8s_database_step.env.PGHOST }}"
+      DB_POSTGRESDB_PORT: "{{ k8s_database_step.env.PGPORT }}"
+      DB_POSTGRESDB_DATABASE: "{{ k8s_database_step.env.PGDATABASE }}"
+      DB_POSTGRESDB_USER: "{{ k8s_database_step.env.PGUSER }}"
+      DB_POSTGRESDB_PASSWORD: "{{ k8s_database_step.secret_data['db-password'] }}"
+      N8N_ENCRYPTION_KEY: "{{ restore_source_encryption_key }}"
+      N8N_HOST: "{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
+      N8N_PROTOCOL: http
+      N8N_PORT: "{{ restore_target_config.app.port }}"
+      N8N_EDITOR_BASE_URL: "https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}/"
+      WEBHOOK_URL: "https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}/"
+      N8N_PROXY_HOPS: "1"
+      N8N_SECURE_COOKIE: "true"

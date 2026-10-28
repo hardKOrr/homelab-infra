@@ -1,0 +1,273 @@
+{#
+  The nightly application backup of one Kubernetes app instance: a CronJob in the
+  instance's own namespace that pushes one PBS recovery point holding the app's database
+  dump (when it has one) and each declared volume. Rendered and applied by
+  tasks/kubernetes/recovery-backup.yml; `Backup App` runs one Job from it on demand.
+
+  PBS also backs up the k3s node VMs. That image is crash-consistent and cannot address one
+  application's volume, so the artifact that restores an app is produced here.
+
+  Context (from recovery-backup.yml):
+    instance, k8s_namespace, k8s_pbs_fingerprint
+    _kr  — backup_id, repository, datastore, schedule, timezone, timeout, retention_days,
+           scratch_gi, secret, ntfy_url, ntfy_token, client (backup.client: image, key_url, repository, suite, component),
+           archives[{name, claim|config_map}], database (tasks/database/
+           kubernetes-recovery-step.yml) or none
+
+  No credential appears here or on a command line. The PBS token and database secrets are
+  in the `<instance>-backup` Secret and reach the client as environment.
+#}
+{% set db = _kr.database | default({}, true) %}
+{#
+  Held unindented and placed with `indent`: a block carrying its own spaces is correct at
+  only the one depth it was written for.
+#}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+homelab-infra.io/pbs-fingerprint: managed
+{% endset %}
+---
+{#
+  PBS serves a self-signed certificate. The CronJob reads the pinned fingerprint from this
+  ConfigMap each time it creates a pod, and Deploy PBS refreshes every ConfigMap carrying
+  the label (tasks/backup/refresh-k8s-pbs-fingerprint.yml), so a months-old schedule
+  follows a renewed certificate.
+#}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pbs-backup-trust
+  labels:
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: backup
+    homelab-infra.io/pbs-fingerprint: managed
+data:
+  fingerprint: "{{ k8s_pbs_fingerprint }}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ _kr.schedule }}"
+  # Without it the schedule is read in the controller's timezone (UTC here).
+  timeZone: "{{ _kr.timezone }}"
+  # A second concurrent run would dump the database again and mount the volumes the
+  # stuck first run still holds.
+  concurrencyPolicy: Forbid
+  # A cluster that was down over the scheduled time still runs within the hour after.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  # A failed backup's pod is the only place its reason exists.
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      # Two retries, then stay failed: the default 6 turns one bad night into six alerts.
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ _kr.timeout | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          # A fresh pod per attempt keeps every attempt's log readable.
+          restartPolicy: Never
+{% if db %}
+          # The dump finishes before the push starts: initContainers run to completion
+          # first.
+          initContainers:
+            - name: dump
+              image: {{ db.image }}
+              command: [/bin/sh, -c]
+              args:
+                - |
+                  set -eu
+                  install -d -m 0700 "${DUMP_DIR}"
+{{ db.dump | trim | indent(18, true) }}
+              env:
+                - name: DUMP_DIR
+                  value: /recovery/database
+{% for name, value in (db.env | default({})).items() %}
+                - name: {{ name }}
+                  value: {{ value | string | to_json }}
+{% endfor %}
+{% for name, key in (db.secret_env | default({})).items() %}
+                - name: {{ name }}
+                  valueFrom:
+                    secretKeyRef: { name: {{ _kr.secret }}, key: {{ key }} }
+{% endfor %}
+              volumeMounts:
+                - name: recovery
+                  mountPath: /recovery
+{% if db.secret_files | default([]) | length > 0 %}
+                - name: credentials
+                  mountPath: /etc/recovery-credentials
+                  readOnly: true
+{% endif %}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+{% endif %}
+          containers:
+            - name: push
+              image: {{ _kr.client.image }}
+              # The first successful run caches the image on the node, so a registry outage
+              # at 03:00 does not by itself cost a backup.
+              imagePullPolicy: IfNotPresent
+              command: [/bin/sh, -c]
+              args:
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+                  # Never `set -x`: PBS_PASSWORD is in this process's environment.
+
+                  # The notifier has to work before the first network call, because a dead
+                  # network is the failure it most needs to report. backup.client.image
+                  # carries curl for this reason.
+                  command -v curl >/dev/null 2>&1 || \
+                    echo "WARNING: no curl in this image — a failure of this job cannot be notified"
+                  notify() {
+                    [ -n "${NTFY_URL:-}" ] || return 0
+                    command -v curl >/dev/null 2>&1 || return 0
+                    if [ -n "${NTFY_TOKEN:-}" ]; then
+                      curl -fsS -m 15 -X POST -H "Title: $1" -H "Priority: high" \
+                        -H "Authorization: Bearer ${NTFY_TOKEN}" -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    else
+                      curl -fsS -m 15 -X POST -H "Title: $1" -H "Priority: high" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    fi
+                  }
+                  on_exit() {
+                    [ "$1" -eq 0 ] && return 0
+                    notify "Backup FAILED: {{ instance }}" \
+                      "The nightly application backup for {{ instance }} exited $1. It pushes to PBS datastore {{ _kr.datastore }} as host/{{ _kr.backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
+                    return 0
+                  }
+                  trap 'on_exit $?' EXIT
+
+                  # No official image ships the client and the lab has no registry, so it
+                  # comes from Proxmox's signed repository at run time.
+                  apt-get update -qq
+                  install -d -m 0755 /etc/apt/keyrings
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                    > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+
+                  # Every archive in ONE snapshot: they are one application's state at one
+                  # moment, and a restore needs all of them. Pushed uncompressed so PBS
+                  # deduplicates night to night.
+                  proxmox-backup-client backup \
+{% if db %}
+                    database.pxar:/recovery/database \
+{% endif %}
+{% for archive in _kr.archives %}
+                    {{ archive.name }}.pxar:/volumes/{{ archive.name }} \
+{% endfor %}
+                    --backup-id "${BACKUP_ID}"
+
+                  # --keep-last 2: a same-day pre-restore backup must not prune the point
+                  # being restored, which --keep-daily alone does.
+                  proxmox-backup-client prune "host/${BACKUP_ID}" \
+                    --keep-last 2 --keep-daily "${RETENTION_DAYS}"
+
+                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
+              env:
+                - name: PBS_REPOSITORY
+                  value: "{{ _kr.repository }}"
+                - name: PBS_FINGERPRINT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: pbs-backup-trust
+                      key: fingerprint
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ _kr.secret }}, key: pbs-password }
+                - name: BACKUP_ID
+                  value: "{{ _kr.backup_id }}"
+                - name: RETENTION_DAYS
+                  value: "{{ _kr.retention_days | int }}"
+                - name: PBS_KEY_URL
+                  value: "{{ _kr.client.key_url }}"
+                - name: PBS_APT_REPO
+                  value: "{{ _kr.client.repository }} {{ _kr.client.suite }} {{ _kr.client.component }}"
+                - name: TMPDIR
+                  value: /tmp
+{% if _kr.ntfy_url | length > 0 %}
+                - name: NTFY_URL
+                  value: "{{ _kr.ntfy_url }}"
+{% endif %}
+{% if _kr.ntfy_token | bool %}
+                - name: NTFY_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ _kr.secret }}, key: ntfy-token }
+{% endif %}
+              volumeMounts:
+                # The client's cache and temporary files need a filesystem that supports
+                # O_TMPFILE. The container overlay answers EOPNOTSUPP (os error 95).
+                - name: client-tmp
+                  mountPath: /tmp
+                - name: client-cache
+                  mountPath: /root/.cache
+{% if db %}
+                - name: recovery
+                  mountPath: /recovery
+                  readOnly: true
+{% endif %}
+                # Volumes read-only: this pod copies the application's state out and
+                # nothing else. RWO is per node, and the node-pinned StorageClass lands this
+                # pod beside the application pod that holds the volume.
+{% for archive in _kr.archives %}
+                - name: volume-{{ archive.name }}
+                  mountPath: /volumes/{{ archive.name }}
+                  readOnly: true
+{% endfor %}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+          volumes:
+            - name: client-tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Mi
+            - name: client-cache
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Mi
+{% if db %}
+            - name: recovery
+              emptyDir:
+                sizeLimit: {{ _kr.scratch_gi | int }}Gi
+{% if db.secret_files | default([]) | length > 0 %}
+            - name: credentials
+              secret:
+                secretName: {{ _kr.secret }}
+                defaultMode: 0444
+                items:
+{% for file in db.secret_files %}
+                  - key: {{ file.key }}
+                    path: {{ file.path }}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% for archive in _kr.archives %}
+            - name: volume-{{ archive.name }}
+{% if archive.config_map | default('') | length > 0 %}
+              configMap:
+                name: {{ archive.config_map }}
+{% else %}
+              persistentVolumeClaim:
+                claimName: {{ archive.claim }}
+                readOnly: true
+{% endif %}
+{% endfor %}

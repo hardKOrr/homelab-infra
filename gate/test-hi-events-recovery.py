@@ -9,28 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     defaults = (ROOT / "ansible/vars/app-defaults/hi-events.yml").read_text(encoding="utf-8")
     deploy = (ROOT / "ansible/roles/hi-events/tasks/main.yml").read_text(encoding="utf-8")
-    backup = (ROOT / "ansible/roles/hi-events/templates/backup-cronjob.yaml.j2").read_text(encoding="utf-8")
     restore = (ROOT / "ansible/roles/hi-events/tasks/restore.yml").read_text(encoding="utf-8")
-    restore_job = (ROOT / "ansible/roles/hi-events/templates/restore-job.yaml.j2").read_text(encoding="utf-8")
 
     assert "methods: [native]" in defaults
-    assert "_he_pg_client_version" in deploy
-    assert "'db-password': app_config.app.database_password" in deploy
-    assert "pg_dump --format=custom --no-owner --no-privileges" in backup
-    assert "database.pxar:/backup/database" in backup
-    assert "storage.pxar:/app-storage" in backup
-    assert "secretKeyRef: { name: {{ instance }}-backup, key: db-password }" in backup
-    assert 'restore "${SNAPSHOT}" database.pxar /restore/database' in restore_job
-    assert 'restore "${SNAPSHOT}" storage.pxar /app-storage' in restore_job
-    assert "pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error" in restore_job
-    assert restore_job.index("pg_restore --clean") < restore_job.index("find /app-storage -mindepth 1 -delete")
-    assert restore_job.index("pg_restore --clean") < restore_job.index(
-        'restore "${SNAPSHOT}" storage.pxar /app-storage'
-    )
-    assert "storage stays untouched if pg_restore fails" in restore_job
-    assert "Restart the disposable Redis cache" in restore
-    assert "_he_r_database_password" in restore
-    assert "_he_r_pg_client_version" in restore
+    # Backup and restore go through the shared Kubernetes recovery pair
+    # (gate/test-k8s-recovery-jobs.py renders them) with the PostgreSQL database step.
+    for tasks in (deploy, restore):
+        assert "tasks/database/kubernetes-recovery-step.yml" in tasks
+        assert "k8s_database_step_engine: postgresql" in tasks
+    assert "tasks/kubernetes/recovery-backup.yml" in deploy
+    assert "tasks/kubernetes/recovery-restore.yml" in restore
+    assert '- "{{ restore_target }}-redis"' in restore.split("restart:", 1)[1]
 
     print("Hi.Events backs up and restores its named database plus storage")
 

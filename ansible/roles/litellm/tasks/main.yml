@@ -145,90 +145,25 @@
 # spend records and usage logs. The CronJob dumps it and archives the rendered ConfigMap in
 # one PBS snapshot. Provider credentials remain Vaultwarden-only and are never archived.
 
-- name: LiteLLM | Resolve the lab's PBS target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: LiteLLM | Describe the database step of the backup
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+    k8s_database_step_engine: postgresql
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
   when: app_config.backup.enabled | default(false) | bool
 
-- name: LiteLLM | Note that this lab has no backup target
-  ansible.builtin.debug:
-    msg: >-
-      {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded;
-      no backup was scheduled. Deploy PBS and re-run this job.
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - not (k8s_pbs_available | default(false) | bool)
-
-- name: LiteLLM | Configure the nightly application backup
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - k8s_pbs_available | default(false) | bool
-  block:
-    - name: LiteLLM | Resolve backup settings
-      ansible.builtin.set_fact:
-        _litellm_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        _litellm_backup_timezone: >-
-          {{ app_config.backup.timezone | default('', true)
-             or homelabinfra_config.timezone | default('UTC') }}
-        _litellm_backup_repository: "{{ k8s_pbs_repository }}"
-        _litellm_backup_datastore: "{{ k8s_pbs_datastore }}"
-        _litellm_ntfy_url: >-
-          {{ (homelabinfra_infra.notifications.host ~ '/'
-              ~ (homelabinfra_infra.notifications.topic | default('homelab')))
-             if (((homelabinfra_infra | default({})).notifications | default({})).provider
-                 | default('none') == 'ntfy'
-                 and (homelabinfra_infra.notifications.host | default('') | length > 0))
-             else '' }}
-        _litellm_database_host: "{{ app_config.app.database_host }}"
-        _litellm_database_port: "{{ app_config.app.database_port }}"
-        _litellm_database_name: "{{ app_config.app.database_name }}"
-        _litellm_database_user: "{{ app_config.app.database_user }}"
-
-    - name: LiteLLM | Read the notification publish token
-      ansible.builtin.set_fact:
-        _litellm_ntfy_token: >-
-          {{ ((homelabinfra_infra | default({})).notifications | default({})).token
-             | default('') }}
-      no_log: true
-
-    - name: LiteLLM | Sync backup credentials into the instance namespace
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-      vars:
-        k8s_secret_name: "{{ instance }}-backup"
-        k8s_secret_data: >-
-          {{ {'pbs-password': k8s_pbs_password,
-              'db-password': app_config.app.database_password}
-             | combine({'ntfy-token': _litellm_ntfy_token}
-                       if _litellm_ntfy_token | length > 0 else {}) }}
-      no_log: true
-
-    - name: LiteLLM | Render and apply the backup CronJob
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
-      vars:
-        k8s_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
-
-    - name: LiteLLM | State the backup contract
-      ansible.builtin.debug:
-        msg:
-          - "Backup: an application-consistent PostgreSQL dump plus the rendered routing ConfigMap, pushed to PBS datastore {{ _litellm_backup_datastore }} as host/{{ _litellm_backup_id }}."
-          - "Provider keys and LiteLLM master/salt keys remain in Vaultwarden and are never archived."
-          - "Restore: Restore App instance={{ instance }}; plan first, then overwrite=true after deploying the target namespace."
-
-- name: LiteLLM | Remove the backup CronJob when no backup was configured
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - delete
-      - cronjob
-      - "{{ instance }}-backup"
-      - --ignore-not-found=true
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _litellm_backup_removed
-  when: not ((app_config.backup.enabled | default(false) | bool)
-             and (k8s_pbs_available | default(false) | bool))
-  changed_when: "'deleted' in (_litellm_backup_removed.stdout | default(''))"
+# The pod has no durable filesystem: the recovery point is the external database plus the
+# rendered routing ConfigMap. Provider keys and master/salt keys stay in Vaultwarden and
+# are never archived.
+- name: LiteLLM | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        an application-consistent PostgreSQL dump plus the rendered routing ConfigMap
+        (provider keys and master/salt keys remain in Vaultwarden)

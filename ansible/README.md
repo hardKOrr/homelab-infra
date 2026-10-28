@@ -311,8 +311,9 @@ today's copies only shrinks.
 | PBS target and credentials | `tasks/backup/resolve-pbs-target.yml` | optional `k8s_pbs_datastore_override` |
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
 | PBS client install, backup, verify, restore | `tasks/backup/pbs-client*.yml` (planned, part 02) | paths, archive names, owner, services to stop, hooks |
-| Kubernetes backup CronJob and restore Job | `templates/kubernetes/recovery-*.yaml.j2` (planned, part 03) | volumes or PVCs, dump hook, owner uid/gid, scale-down targets |
-| Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`; `scripts/database-client.sh` in Kubernetes Jobs; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions and privileges stay `provision.yml` inputs |
+| Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, `stop` and `restart` Deployments, optional `after_restore_tasks` hook |
+| Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_engine` (`postgresql` or `mysql`), the instance and its config |
+| Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions and privileges stay `provision.yml` inputs |
 
 ## Local conventions
 
