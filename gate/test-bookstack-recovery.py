@@ -69,9 +69,9 @@ if [[ "$1" == "snapshot" && "$2" == "files" ]]; then
 fi
 if [[ "$1" == "restore" ]]; then
   if [[ "${BOOKSTACK_BACKEND:-docker}" == "kubernetes" ]]; then
-    [[ " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 96
+    [[ " $* " == *" --ignore-ownership "* && " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 96
   else
-    [[ " $* " != *" --ignore-acls "* && " $* " != *" --ignore-xattrs "* ]] || exit 97
+    [[ " $* " != *" --ignore-ownership "* && " $* " != *" --ignore-acls "* && " $* " != *" --ignore-xattrs "* ]] || exit 97
   fi
   destination="$4"
   mkdir -p "$destination"

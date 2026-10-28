@@ -276,7 +276,7 @@ if [[ "$1" == "snapshot" && "$2" == "files" ]]; then
   exit 0
 fi
 if [[ "$1" == "restore" ]]; then
-  [[ " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 91
+  [[ " $* " == *" --ignore-ownership "* && " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 91
   printf '%s\\n' "$*" >> "$BOOKSTACK_TEST_PBS_LOG"
   destination="$4"
   mkdir -p "$destination"

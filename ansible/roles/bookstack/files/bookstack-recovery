@@ -442,9 +442,10 @@ restore() {
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
   if [[ "$BOOKSTACK_BACKEND" == kubernetes ]]; then
-    # Container scratch and PVC filesystems may not support archived ACLs or xattrs.
-    # Preserve ownership and mode while avoiding unsupported optional metadata.
-    restore_options=(--ignore-acls --ignore-xattrs)
+    # Container scratch and PVC filesystems may not support archived ownership, ACLs,
+    # or xattrs. The BookStack image applies its configured PUID/PGID on startup; retain
+    # archived permission bits while avoiding unsupported metadata operations here.
+    restore_options=(--ignore-ownership --ignore-acls --ignore-xattrs)
   fi
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
