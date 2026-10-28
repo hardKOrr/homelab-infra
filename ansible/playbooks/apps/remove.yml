@@ -2110,13 +2110,18 @@
             - _rm_delete_data | bool
           changed_when: true
 
-        - name: Delete the data path
+        # A native app's recovery unit can span more than data_path (Ntfy keeps its
+        # message cache in cache_path), so delete every declared state path.
+        - name: Delete the data and cache paths
           ansible.builtin.file:
-            path: "{{ app_config.app.data_path }}"
+            path: "{{ item }}"
             state: absent
+          loop:
+            - "{{ app_config.app.data_path | default('') }}"
+            - "{{ app_config.app.cache_path | default('') }}"
           when:
             - _rm_delete_data | bool
-            - app_config.app.data_path | default('') | length > 0
+            - item | length > 0
 
     - name: Destroy the explicitly selected native LXC
       ansible.builtin.include_tasks: ../../tasks/proxmox/destroy-owned-lxc.yml

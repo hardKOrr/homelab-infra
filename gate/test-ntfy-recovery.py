@@ -56,6 +56,10 @@ def check_contract():
     assert upload["vars"]["pbs_client_stop_services"] == ["{{ _ntfy_backup_service_name }}"]
     assert [a["name"] for a in upload["vars"]["pbs_client_archives"]] == ["data.pxar", "cache.pxar"]
 
+    remove = list(tasks_recursive(yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())))
+    delete = task_named(remove, "Delete the data and cache paths")
+    assert "{{ app_config.app.cache_path | default('') }}" in delete["loop"]
+
     restore_tasks = list(tasks_recursive(RESTORE))
     transaction = task_named(restore_tasks, "Ntfy restore | Replace and verify both state directories")
     block_names = [task.get("name") for task in transaction["block"]]
