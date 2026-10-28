@@ -14,85 +14,18 @@
       ComfyUI restore needs a PBS-backed application recovery contract. Keep overwrite=false
       to list snapshots before selecting one.
 
-- name: ComfyUI restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: ComfyUI restore | List or verify the recovery point without changing the application
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: ComfyUI restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for ComfyUI. Deploy PBS before listing or restoring model
-      storage and configuration.
-
-- name: ComfyUI restore | Resolve the source backup identity
-  ansible.builtin.set_fact:
-    _comfyui_restore_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
-  no_log: true
-
-- name: ComfyUI restore | List available snapshots
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - PBS_KEY_URL
-      - --env
-      - PBS_APT_REPO
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/proxmox-backup-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  register: _comfyui_restore_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _comfyui_restore_backup_id }}"
-    PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-    PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-  no_log: true
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-
-- name: ComfyUI restore | Print available snapshots
-  ansible.builtin.debug:
-    msg: "PBS snapshots for host/{{ _comfyui_restore_backup_id }}:\n{{ _comfyui_restore_snapshots.stdout }}"
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-
-- name: ComfyUI restore | Explain the read-only plan
-  ansible.builtin.debug:
-    msg: >-
-      No data was changed. Re-run with recovery_point=<PBS snapshot ID> and overwrite=true
-      to replace {{ app_config.app.storage_path }}, including models and user config.
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+    pbs_client_runtime: docker
+    pbs_client_archives: [{name: data.pxar}]
+  when: not (restore_overwrite | bool)
 
 - name: ComfyUI restore | Create private staging space
   ansible.builtin.tempfile:
     state: directory
+    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
+    path: "{{ app_config.app.storage_path | dirname }}"
     prefix: "{{ instance }}-comfyui-restore-"
   register: _comfyui_restore_tmp
   changed_when: true
@@ -107,58 +40,26 @@
         state: stopped
         services: [comfyui]
 
-    - name: ComfyUI restore | Extract and validate the selected archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          # Keep PBS temporary and cache files off the container overlay. The client
-          # may need to create temporary files while reconstructing the archive.
-          - --tmpfs
-          - /tmp
-          - --tmpfs
-          - /root/.cache
-          - --volume
-          - "{{ _comfyui_restore_tmp.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/proxmox-backup-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
-            test -n "$(find /restore -mindepth 1 -print -quit)"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_snapshot }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      no_log: true
-      changed_when: true
+    - name: ComfyUI restore | Extract the selected archive into staging
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _comfyui_restore_tmp.path }}"
+
+    - name: ComfyUI restore | Look for archived state in staging
+      ansible.builtin.find:
+        paths: "{{ _comfyui_restore_tmp.path }}"
+        file_type: any
+        hidden: true
+      register: _comfyui_restore_staged
+
+    - name: ComfyUI restore | Require a non-empty archive
+      ansible.builtin.assert:
+        that: _comfyui_restore_staged.matched > 0
+        fail_msg: >-
+          The selected ComfyUI recovery point is empty; the storage path has not been replaced.
 
     - name: ComfyUI restore | Replace storage after archive validation
       ansible.builtin.file:
@@ -178,6 +79,9 @@
         argv: [cp, -a, "{{ _comfyui_restore_tmp.path }}/.", "{{ app_config.app.storage_path }}/"]
       changed_when: true
       no_log: true
+
+    - name: ComfyUI restore | Give the restored directories to the app's runtime user
+      ansible.builtin.include_tasks: storage-ownership.yml
 
     - name: ComfyUI restore | Start ComfyUI
       community.docker.docker_compose_v2:

@@ -1,0 +1,93 @@
+---
+# Install the pinned PBS client on a Debian guest that runs it natively.
+#
+# Inputs:
+#   pbs_client_source   optional mapping overriding vars/pbs-client.yml (`repository`,
+#                       `component`); default the application's `backup.client`
+#
+# The guest's own Debian suite selects the signing key and the pinned build. A repeat run
+# changes nothing; a pin bump in vars/pbs-client.yml moves every guest to that build.
+# Docker hosts need no install: pbs-client-run.yml runs the client in a container there.
+
+- name: PBS client install | Load the client pins
+  ansible.builtin.include_vars:
+    file: ../../vars/pbs-client.yml
+
+- name: PBS client install | Resolve the client source for this guest
+  ansible.builtin.set_fact:
+    _pbs_client_install: >-
+      {{ pbs_client_defaults | combine(pbs_client_source | default(app_config.backup.client | default({}), true), recursive=True) }}
+    _pbs_client_install_suite: "{{ ansible_distribution_release | default('') }}"
+
+- name: PBS client install | Require a supported Debian release
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution | default('') == 'Debian'
+      - _pbs_client_install_suite in _pbs_client_install.suites
+    fail_msg: >-
+      The PBS client is pinned for Debian {{ _pbs_client_install.suites.keys() | join(', ') }};
+      this guest reports {{ ansible_distribution | default('an unknown OS') }}
+      {{ _pbs_client_install_suite }}.
+
+- name: PBS client install | Select the pinned build
+  ansible.builtin.set_fact:
+    _pbs_client_install_pin: "{{ _pbs_client_install.suites[_pbs_client_install_suite] }}"
+
+- name: PBS client install | Install the Proxmox repository key
+  ansible.builtin.get_url:
+    url: "{{ _pbs_client_install_pin.key_url }}"
+    dest: "{{ _pbs_client_install_pin.keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: PBS client install | Configure the signed client repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by={{ _pbs_client_install_pin.keyring }}]
+      {{ _pbs_client_install.repository }} {{ _pbs_client_install_suite }}
+      {{ _pbs_client_install.component }}
+  register: _pbs_client_install_source
+
+- name: PBS client install | Refresh apt metadata when the repository changes
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 120
+  changed_when: false
+  when: _pbs_client_install_source.changed
+
+- name: PBS client install | Install the pinned client build
+  ansible.builtin.apt:
+    name: "proxmox-backup-client={{ _pbs_client_install_pin.version }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 120
+  register: _pbs_client_install_package
+  # A pin the cached metadata does not list yet needs one refresh, then the same install.
+  failed_when: false
+
+- name: PBS client install | Refresh apt metadata and retry the pinned build
+  ansible.builtin.apt:
+    name: "proxmox-backup-client={{ _pbs_client_install_pin.version }}"
+    state: present
+    allow_downgrade: true
+    update_cache: true
+    lock_timeout: 120
+  when: _pbs_client_install_package.failed | default(false)
+
+# The first package install can rewrite the source file. Leave it in its declared form so
+# the immediate repeat run is unchanged.
+- name: PBS client install | Reassert the signed client repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by={{ _pbs_client_install_pin.keyring }}]
+      {{ _pbs_client_install.repository }} {{ _pbs_client_install_suite }}
+      {{ _pbs_client_install.component }}

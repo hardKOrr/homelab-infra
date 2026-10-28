@@ -36,6 +36,8 @@
 #         it as a live download client). See tasks/unwiring/registry.yml.
 #   3. Withdraw the instance's row and `_<instance>` tag from its Proxmox guest, unless
 #      it is a PostgreSQL guest that this playbook leaves in place for redeployment
+#      (a kept guest's next Deploy finds it again by exact name through
+#      tasks/proxmox/resolve-instance-guest.yml)
 #   4. Stop and remove the app on its host (compose down, or stop+disable the service)
 #   5. Notify via Ntfy: "<instance> removed"
 #
@@ -956,13 +958,18 @@
             - _rm_delete_data | bool
           changed_when: true
 
-        - name: Delete the data path
+        # A native app's recovery unit can span more than data_path (Ntfy keeps its
+        # message cache in cache_path), so delete every declared state path.
+        - name: Delete the data and cache paths
           ansible.builtin.file:
-            path: "{{ app_config.app.data_path }}"
+            path: "{{ item }}"
             state: absent
+          loop:
+            - "{{ app_config.app.data_path | default('') }}"
+            - "{{ app_config.app.cache_path | default('') }}"
           when:
             - _rm_delete_data | bool
-            - app_config.app.data_path | default('') | length > 0
+            - item | length > 0
 
     - name: Destroy the explicitly selected native LXC
       ansible.builtin.include_tasks: ../../tasks/proxmox/destroy-owned-lxc.yml

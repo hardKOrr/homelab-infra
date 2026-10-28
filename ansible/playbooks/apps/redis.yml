@@ -17,9 +17,11 @@
         hosting_app_slug: redis
   tasks:
     - ansible.builtin.meta: refresh_inventory
-    - ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
-      vars: {tag_group_tag: "_{{ instance }}"}
-    - ansible.builtin.set_fact: {_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"}
+    - name: Resolve this instance's guest, reusing one Remove kept
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
+      vars: {resolve_guest_instance: "{{ instance }}"}
+    - ansible.builtin.set_fact:
+        _existing_hosts: "{{ resolve_guest_hosts }}"
     - name: Resolve Redis guest placement and check existing type
       ansible.builtin.include_tasks: ../../tasks/database/resolve-backend-placement.yml
     - ansible.builtin.add_host:

@@ -34,7 +34,10 @@ three shards on separate runners. The suites exercise production logic, expressi
 templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
+- `test-generate-ip-vmid.py`: `generate-ip.yml` never reallocates the address an existing guest's VMID encodes, such as an ISO appliance whose config shows no address.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
+- `test-comfyui-storage.py`: every directory ComfyUI's Compose file mounts belongs to its runtime user after deploy and after restore.
+- `test-instance-guest-reuse.py`: `resolve-instance-guest.yml` reuses the one unclaimed same-name guest Remove kept, refuses ambiguous, wrong-type or claimed guests, and every own-guest playbook selects its guest through it.
 - `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
 - `test-public-dns-preflight.py`: public address lookup agreement, unsafe address refusal, Cloudflare record ownership preflight, adoption, safe API failures, delayed record marking and its bounded timeout.
 - `test-public-dns-status.py`: public resolver matches, drift, missing answers, resolver failure, disabled estates and unchanged output when public DNS is not configured.

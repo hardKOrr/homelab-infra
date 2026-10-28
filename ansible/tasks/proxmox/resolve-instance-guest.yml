@@ -1,0 +1,76 @@
+---
+# Resolve an instance's own guest (native LXC/VM or Docker-on-VM) without creating another
+# same-name guest when its instance tag is missing. The `_<instance>` tag is the preferred
+# identity. Remove withdraws that tag but keeps the guest unless `destroy_guest=true`, so
+# a single unclaimed `_+lab` guest with the exact instance name is reused; the caller's
+# record-app-on-guest.yml puts the tag back. Multiple same-name owned guests, or one that
+# carries another instance or topology tag, fail closed.
+#
+# Inputs:  resolve_guest_instance
+#          resolve_guest_type (optional) — lxc or vm; a same-name guest of the other type
+#                                          is refused instead of reused
+# Outputs: resolve_guest_hosts (zero or one inventory host, or the tagged hosts),
+#          resolve_guest_needs_tag; tag_group_name stays set for the caller
+
+- name: Resolve instance guest | Require an instance name
+  ansible.builtin.assert:
+    that:
+      - resolve_guest_instance is defined
+      - resolve_guest_instance is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: "Provide a safe instance name before resolving its guest."
+
+- name: Resolve instance guest | Find hosts with the instance tag
+  ansible.builtin.include_tasks: tag-group.yml
+  vars:
+    tag_group_tag: "_{{ resolve_guest_instance }}"
+
+- name: Resolve instance guest | Start the exact-name owned guest list
+  ansible.builtin.set_fact:
+    _resolve_guest_tagged_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    _resolve_guest_named_owned_hosts: []
+
+- name: Resolve instance guest | Find owned guests with the exact instance name
+  ansible.builtin.set_fact:
+    _resolve_guest_named_owned_hosts: "{{ _resolve_guest_named_owned_hosts + [item] }}"
+  loop: "{{ groups['lab_managed'] | default([]) }}"
+  when: hostvars[item].proxmox_name | default(item, true) == resolve_guest_instance
+
+- name: Resolve instance guest | Refuse ambiguous exact-name owned guests
+  ansible.builtin.assert:
+    that:
+      - _resolve_guest_named_owned_hosts | length <= 1
+    fail_msg: >-
+      Multiple _+lab guests are named {{ resolve_guest_instance }}. The instance tag cannot
+      distinguish them, so refusing to select one or create another guest. Repair the
+      exact guest identity before retrying Deploy.
+
+- name: Resolve instance guest | Require an unclaimed exact-name guest of the right type
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_vmid | default(0) | int > 0
+      - hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_node | default('') | length > 0
+      - "'_+lab' in (hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_tags_parsed | default([]))"
+      - >-
+        (hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_tags_parsed | default([])
+         | select('match', '^_[A-Za-z0-9]|^_[.]') | list | length) == 0
+      - >-
+        resolve_guest_type | default('', true) | length == 0
+        or hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_vmtype | default('')
+           == ('qemu' if resolve_guest_type == 'vm' else resolve_guest_type)
+    fail_msg: >-
+      The exact-name guest {{ resolve_guest_instance }} is not an unclaimed, lab-owned
+      {{ resolve_guest_type | default('guest', true) }}. Refusing to adopt it.
+  when:
+    - _resolve_guest_tagged_hosts | length == 0
+    - _resolve_guest_named_owned_hosts | length == 1
+
+- name: Resolve instance guest | Select the tagged or uniquely named owned guest
+  ansible.builtin.set_fact:
+    resolve_guest_hosts: >-
+      {{ _resolve_guest_tagged_hosts
+         if _resolve_guest_tagged_hosts | length > 0
+         else _resolve_guest_named_owned_hosts }}
+    resolve_guest_needs_tag: >-
+      {{ _resolve_guest_tagged_hosts | length == 0
+         and _resolve_guest_named_owned_hosts | length == 1 }}

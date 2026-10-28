@@ -26,10 +26,11 @@
         hosting_app_slug: influxdb
   tasks:
     - ansible.builtin.meta: refresh_inventory
-    - ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
-      vars: {tag_group_tag: "_{{ instance }}"}
+    - name: Resolve this instance's guest, reusing one Remove kept
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
+      vars: {resolve_guest_instance: "{{ instance }}"}
     - ansible.builtin.set_fact:
-        _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+        _existing_hosts: "{{ resolve_guest_hosts }}"
 
     # Remove deliberately leaves the lab-owned guest in place after deleting the app's
     # data and withdrawing its instance tag. Resolve the declared network before looking

@@ -74,17 +74,14 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
-    # The application tag is `_<instance>`; the inventory group it produces is derived by
-    # one seam for the whole repository, because Ansible's group-name sanitiser is what
-    # turns punctuation in a tag into something a `groups[...]` lookup can spell.
-    - name: Resolve the inventory group for this instance
-      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+    - name: Resolve this instance's guest, reusing one Remove kept
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars:
-        tag_group_tag: "_{{ instance }}"
+        resolve_guest_instance: "{{ instance }}"
 
     - name: Check for existing instance host
       ansible.builtin.set_fact:
-        _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+        _existing_hosts: "{{ resolve_guest_hosts }}"
 
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:

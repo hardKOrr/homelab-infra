@@ -268,6 +268,33 @@
       and hostname {{ lxc_module_args.hostname }}.
   loop: "{{ groups['all'] | default([]) }}"
 
+# The ostemplate sits on node-local storage (`local:vztmpl/...`), so a node that joined
+# after the others has none until something downloads it. Fetch it from the Proxmox
+# appliance index on the node this container lands on; a second run finds it and does
+# nothing.
+- name: Ensure the LXC template is on the target node
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      if pveam list "$storage" | awk '{print $1}' | grep -qxF "$storage:vztmpl/$file"; then
+        echo present
+        exit 0
+      fi
+      pveam update >/dev/null
+      if ! pveam available --section system | awk '{print $2}' | grep -qxF "$file"; then
+        echo "template $file is not in the Proxmox appliance index; upload it to $storage on this node" >&2
+        exit 3
+      fi
+      pveam download "$storage" "$file"
+      echo downloaded
+  environment:
+    storage: "{{ lxc_module_args.ostemplate.split(':', 1)[0] }}"
+    file: "{{ lxc_module_args.ostemplate.split('/')[-1] }}"
+  delegate_to: "{{ _guest_placement.node }}"
+  register: _lxc_template_ensure
+  changed_when: "'downloaded' in _lxc_template_ensure.stdout"
+
 - name: Check node memory before creating the LXC container
   ansible.builtin.include_tasks: check-node-free-memory.yml
   vars:

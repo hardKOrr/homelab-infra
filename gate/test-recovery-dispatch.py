@@ -385,9 +385,10 @@ def main():
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                 ],
             })
+        # Roles on tasks/backup/pbs-client-*.yml get this check from gate/test-pbs-client.py.
         for app in [
-            "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
-            "deemix", "tautulli", "servarr", "karakeep", "observability", "frigate", "uptime-kuma",
+            "actual-budget", "plex", "sabnzbd", "bazarr",
+            "deemix", "tautulli", "servarr", "karakeep", "observability", "frigate",
         ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
