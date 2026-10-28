@@ -512,11 +512,40 @@
             - _rg_destination == 'existing'
             - _rg_was_running | bool
 
+        - name: Normalize the existing target stop task response
+          ansible.builtin.set_fact:
+            _rg_stop_task_upids: >-
+              {{ _rg_stop_task.stdout | default('')
+                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Require exactly one existing target stop task identity
+          ansible.builtin.assert:
+            that: _rg_stop_task_upids | length == 1
+            fail_msg: >-
+              Proxmox did not return exactly one target stop task identity. The target
+              remains stopped for inspection.
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Select the existing target stop task identity
+          ansible.builtin.set_fact:
+            _rg_stop_task_upid: "{{ (_rg_stop_task_upids | first | default('', true)) | trim }}"
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
         - name: Wait for the existing target to stop
           ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
           vars:
             proxmox_task_node: "{{ _rg_target_node }}"
-            proxmox_task_upid: "{{ _rg_stop_task.stdout | trim }}"
+            proxmox_task_upid: "{{ _rg_stop_task_upid }}"
             proxmox_task_timeout: "{{ restore_timeout | default(900) }}"
           when:
             - _rg_execute | bool
@@ -673,11 +702,40 @@
             - _rg_destination == 'existing'
             - _rg_was_running | bool
 
+        - name: Normalize the existing target start task response
+          ansible.builtin.set_fact:
+            _rg_start_task_upids: >-
+              {{ _rg_start_task.stdout | default('')
+                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Require exactly one existing target start task identity
+          ansible.builtin.assert:
+            that: _rg_start_task_upids | length == 1
+            fail_msg: >-
+              Proxmox did not return exactly one target start task identity. The target
+              remains stopped for inspection.
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Select the existing target start task identity
+          ansible.builtin.set_fact:
+            _rg_start_task_upid: "{{ (_rg_start_task_upids | first | default('', true)) | trim }}"
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
         - name: Wait for the existing target to start
           ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
           vars:
             proxmox_task_node: "{{ _rg_target_node }}"
-            proxmox_task_upid: "{{ _rg_start_task.stdout | trim }}"
+            proxmox_task_upid: "{{ _rg_start_task_upid }}"
             proxmox_task_timeout: "{{ restore_timeout | default(900) }}"
           when:
             - _rg_execute | bool

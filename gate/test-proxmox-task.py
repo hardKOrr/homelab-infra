@@ -80,6 +80,18 @@ def main():
             named_task(playbooks["restore-guest.yml"], "Require exactly one guest restore task identity"),
             named_task(playbooks["restore-guest.yml"], "Select the guest restore task identity"),
         ),
+        "_rg_stop_task_upid": (
+            "_rg_stop_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the existing target stop task response"),
+            named_task(playbooks["restore-guest.yml"], "Require exactly one existing target stop task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the existing target stop task identity"),
+        ),
+        "_rg_start_task_upid": (
+            "_rg_start_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the existing target start task response"),
+            named_task(playbooks["restore-guest.yml"], "Require exactly one existing target start task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the existing target start task identity"),
+        ),
     }
 
     with tempfile.TemporaryDirectory() as directory:
@@ -115,7 +127,9 @@ def main():
         normalization_cases = []
         for fact, (list_fact, normalize_task, cardinality_task, select_task) in normalizers.items():
             register = {"_bg_task_upid": "_bg_task", "_rg_pre_task_upid": "_rg_pre_task",
-                        "_rg_restore_task_upid": "_rg_restore_task"}[fact]
+                        "_rg_restore_task_upid": "_rg_restore_task",
+                        "_rg_stop_task_upid": "_rg_stop_task",
+                        "_rg_start_task_upid": "_rg_start_task"}[fact]
             upid = f"UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:fixture:"
             output = "PVE operation accepted\n" + upid + "\nworker request complete\n"
             normalization_cases.append((register, output, [
