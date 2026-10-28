@@ -82,6 +82,11 @@ spec:
               mountPath: /config
             - name: scratch
               mountPath: /var/tmp
+            # proxmox-backup-client restore creates O_TMPFILE entries in /root/.cache.
+            # The containerd root overlay rejects that operation, so give its cache a
+            # tmpfs that supports anonymous temporary files.
+            - name: client-cache
+              mountPath: /root/.cache
 {% endif %}
           resources:
             requests:
@@ -99,4 +104,8 @@ spec:
         - name: scratch
           emptyDir:
             sizeLimit: {{ b.scratch_size | default(5) | int }}Gi
+        - name: client-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
 {% endif %}

@@ -234,6 +234,14 @@ def check_backup_and_restore_jobs():
         f"--pre-restore-point '{context['_bookstack_restore_safety_point']}'"
         in run_container["args"][0]
     )
+    run_mounts = {item["name"]: item for item in run_container["volumeMounts"]}
+    assert run_mounts["client-cache"]["mountPath"] == "/root/.cache"
+    run_volumes = {item["name"]: item for item in run_pod["volumes"]}
+    assert run_volumes["client-cache"]["emptyDir"] == {
+        "medium": "Memory",
+        "sizeLimit": "64Mi",
+    }
+    assert "client-cache" not in {item["name"] for item in plan_container["volumeMounts"]}
     assert any(volume.get("persistentVolumeClaim", {}).get("claimName") == "bookstack-config"
                for volume in run_pod["volumes"])
 
