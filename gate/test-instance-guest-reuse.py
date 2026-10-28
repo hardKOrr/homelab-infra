@@ -71,7 +71,8 @@ def run_case(guests, expected=None, failure=None, guest_type=""):
             env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
             text=True, capture_output=True, check=False,
         )
-        output = result.stdout + result.stderr
+        # The repository's callback wraps long messages; compare whitespace-normalized text.
+        output = " ".join((result.stdout + result.stderr).split())
         if failure is not None:
             assert result.returncode != 0 and failure in output, output
         else:

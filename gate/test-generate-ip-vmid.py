@@ -20,7 +20,7 @@ GENERATE_IP = ROOT / "ansible/tasks/network/generate-ip.yml"
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
 
 
-def allocate(clients):
+def allocate(clients, expected):
     assert ANSIBLE_PLAYBOOK, "ansible-playbook executable is not configured"
     with tempfile.TemporaryDirectory(prefix="homelab-generate-ip.") as directory:
         root = Path(directory)
@@ -44,7 +44,7 @@ def allocate(clients):
             }}}},
             "tasks": [
                 {"ansible.builtin.import_tasks": str(GENERATE_IP)},
-                {"ansible.builtin.debug": {"msg": "ALLOCATED={{ final_ip_address }}"}},
+                {"ansible.builtin.assert": {"that": [f"final_ip_address == {expected!r}"]}},
             ],
         }]), encoding="utf-8")
         result = subprocess.run(
@@ -52,9 +52,7 @@ def allocate(clients):
             env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
             text=True, capture_output=True, check=False,
         )
-        output = result.stdout + result.stderr
-        assert result.returncode == 0, output
-        return output.split("ALLOCATED=")[1].split('"')[0]
+        assert result.returncode == 0, f"expected {expected}\n{result.stdout}{result.stderr}"
 
 
 def main():
@@ -63,8 +61,8 @@ def main():
     appliance = {"proxmox_node": "pve-a", "proxmox_vmid": 192002011, "ansible_host": ""}
     # A VMID outside this network's encoding reserves nothing here.
     foreign = {"proxmox_node": "pve-a", "proxmox_vmid": 100, "ansible_host": ""}
-    assert allocate({"seen": seen}) == "192.0.2.11"
-    assert allocate({"seen": seen, "pbs": appliance, "other": foreign}) == "192.0.2.12"
+    allocate({"seen": seen}, "192.0.2.11")
+    allocate({"seen": seen, "pbs": appliance, "other": foreign}, "192.0.2.12")
     print("generate-ip: addresses encoded in existing VMIDs are never reallocated")
 
 
