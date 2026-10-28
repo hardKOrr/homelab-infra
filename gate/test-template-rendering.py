@@ -1096,71 +1096,6 @@ def navidrome_rendering():
     ), "unmounted path is rejected"
 
 
-def maintainerr_rendering():
-    context = {
-        "instance": "maintainerr",
-        "app_config": {
-            "app": {
-                "storage": 1,
-                "port": 6246,
-                "image": "ghcr.io/maintainerr/maintainerr:latest",
-            },
-            "backup": {
-                "client": {
-                    "image": "buildpack-deps:bookworm-curl",
-                    "key_url": "key",
-                    "repository": "repo",
-                    "suite": "bookworm",
-                    "component": "main",
-                }
-            },
-        },
-        "homelabinfra_config": {"timezone": "UTC"},
-        "maintainerr_fqdn": "maintainerr.example.test",
-        "client": {
-            "image": "buildpack-deps:bookworm-curl",
-            "key_url": "key",
-            "repository": "repo",
-            "suite": "bookworm",
-            "component": "main",
-        },
-        "_js_r_job_name": "maintainerr-restore-plan",
-        "_js_r_target": "maintainerr",
-        "_js_r_mode": "plan",
-        "_js_r_timeout": 900,
-        "_js_r_secret": "maintainerr-restore",
-        "_js_r_backup_id": "maintainerr",
-        "_js_r_snapshot": "",
-        "k8s_pbs_repository": "pbs@host:store",
-        "k8s_pbs_fingerprint": "fingerprint",
-    }
-
-    def documents(path):
-        return list(yaml.safe_load_all(render(path.read_text(), context)))
-
-    workload = documents(ROOT / "ansible/roles/maintainerr/templates/manifest.yaml.j2")
-    restore = documents(
-        ROOT / "ansible/roles/maintainerr/templates/restore-job.yaml.j2"
-    )
-    workload_pvc = next(
-        (
-            item["metadata"]["name"]
-            for item in workload
-            if item and item["kind"] == "PersistentVolumeClaim"
-        )
-    )
-    restore_pvc = next(
-        (
-            volume["persistentVolumeClaim"]["claimName"]
-            for volume in restore[0]["spec"]["template"]["spec"]["volumes"]
-            if "persistentVolumeClaim" in volume
-        )
-    )
-    assert (
-        restore_pvc == workload_pvc
-    ), f"restore PVC {restore_pvc!r} != workload PVC {workload_pvc!r}"
-
-
 def mautic_rendering():
     tasks = yaml.safe_load(read("ansible/roles/mautic/tasks/main.yml"))
     converge = task_named(
@@ -1716,8 +1651,7 @@ def immich_task_defaults_missing_gpu_device_to_empty():
 def backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored, in
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
-    templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
-    assert templates, "no Kubernetes backup templates found"
+    templates = [ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"]
     for template in templates:
         assert "proxmox-backup-client prune" in template.read_text(), f"{template} has no prune"
     scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
@@ -1760,130 +1694,6 @@ def backup_prune_keeps_the_previous_point():
             assert keep_last >= 0 and keep_daily > keep_last + 1 and prune_options[keep_last + 1] == "2", (
                 f"{script} prunes without --keep-last 2 before --keep-daily"
             )
-
-
-def k3s_pbs_backup_jobs_read_the_rotated_fingerprint():
-    # These CronJobs live for months between app deploys. Keep the fingerprint in a
-    # namespace ConfigMap and have PBS refresh it after reading the active certificate.
-    fingerprint = ":".join(["AA"] * 32)
-    backup = {
-        "schedule": "0 3 * * *",
-        "retention_days": 14,
-        "timeout_seconds": 1800,
-        "scratch_size": 2,
-        "client": {
-            "image": "buildpack-deps:bookworm-curl",
-            "key_url": "https://example.test/key",
-            "repository": "https://example.test/repo",
-            "suite": "bookworm",
-            "component": "main",
-        },
-    }
-    for app in ("jellyseerr", "litellm", "maintainerr", "mixpost"):
-        path = f"ansible/roles/{app}/templates/backup-cronjob.yaml.j2"
-        template = read(path)
-        assert "kind: ConfigMap" in template, path
-        assert "name: pbs-backup-trust" in template, path
-        assert "fingerprint: \"{{ k8s_pbs_fingerprint }}\"" in template, path
-        assert "homelab-infra.io/pbs-fingerprint: managed" in template, path
-        fingerprint_env = template.split("- name: PBS_FINGERPRINT", 1)[1].split(
-            "- name:", 1
-        )[0]
-        assert "configMapKeyRef:" in fingerprint_env, path
-        assert "name: pbs-backup-trust" in fingerprint_env, path
-        assert "key: fingerprint" in fingerprint_env, path
-        assert "value: \"{{" not in fingerprint_env, path
-
-        context = {
-            "instance": app,
-            "k8s_namespace": f"app-{app}",
-            "k8s_pbs_fingerprint": fingerprint,
-            "app_config": {
-                "backup": backup,
-                "app": {
-                    "database": {"version": 16, "image": "mysql:8", "name": app},
-                },
-            },
-            "_js_backup_id": app,
-            "_js_backup_datastore": "store",
-            "_js_backup_repository": "token@pbs:store",
-            "_js_backup_timezone": "UTC",
-            "_js_ntfy_url": "",
-            "_js_ntfy_token": "",
-            "_litellm_backup_id": app,
-            "_litellm_backup_repository": "token@pbs:store",
-            "_litellm_backup_timezone": "UTC",
-            "_litellm_database_host": "postgres",
-            "_litellm_database_name": app,
-            "_litellm_database_port": 5432,
-            "_litellm_database_user": app,
-            "_litellm_ntfy_url": "",
-            "_litellm_ntfy_token": "",
-            "_mp_backup_id": app,
-            "_mp_backup_datastore": "store",
-            "_mp_backup_repository": "token@pbs:store",
-            "_mp_backup_timezone": "UTC",
-            "_mp_ntfy_url": "",
-            "_mp_ntfy_token": "",
-        }
-        documents = list(yaml.safe_load_all(render(template, context)))
-        trust = next(item for item in documents if item["kind"] == "ConfigMap")
-        cronjob = next(item for item in documents if item["kind"] == "CronJob")
-        assert trust["metadata"]["name"] == "pbs-backup-trust", path
-        assert trust["data"]["fingerprint"] == fingerprint, path
-        environment = (
-            cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]
-        )
-        fingerprint_setting = next(
-            item for item in environment if item["name"] == "PBS_FINGERPRINT"
-        )
-        assert fingerprint_setting["valueFrom"]["configMapKeyRef"] == {
-            "name": "pbs-backup-trust",
-            "key": "fingerprint",
-        }, path
-
-
-def litellm_recovery_jobs_use_the_database_client_major():
-    templates = (
-        "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
-        "ansible/roles/litellm/templates/restore-job.yaml.j2",
-    )
-    for path in templates:
-        template = read(path)
-        assert "https://www.postgresql.org/media/keys/ACCC4CF8.asc" in template, path
-        assert "${VERSION_CODENAME}-pgdg main" in template, path
-        assert '"postgresql-client-${PG_CLIENT_VERSION}"' in template, path
-        assert "name: PG_CLIENT_VERSION" in template, path
-    backup = read(templates[0])
-    restore = read(templates[1])
-    assert 'value: "{{ app_config.app.database.version | int }}"' in backup
-    assert 'value: "{{ restore_target_config.app.database.version | int }}"' in restore
-    assert "install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config" not in restore
-    for option in ("--ignore-acls true", "--ignore-xattrs true", "--ignore-ownership true", "--ignore-permissions true"):
-        assert restore.count(option) == 2, f"LiteLLM restore must ignore scratch metadata: {option}"
-    assert "mountPath: /root/.cache" in restore
-    assert "medium: Memory" in restore
-    assert 'name: TMPDIR\n              value: /restore/tmp' in restore
-    restore_tasks = yaml.safe_load(read("ansible/roles/litellm/tasks/restore.yml"))
-    contract = task_named(restore_tasks, "Restore | Require matching PostgreSQL state contracts")
-    assert any(
-        "app_config.app.database.version" in expression
-        and "restore_target_config.app.database.version" in expression
-        for expression in contract["ansible.builtin.assert"]["that"]
-    )
-    replace = task_named(restore_tasks, "Restore | Replace LiteLLM state from PBS")
-    extract_config = task_named(
-        replace["block"], "Restore | Extract the archived routing ConfigMap"
-    )
-    extract_expression = extract_config["ansible.builtin.set_fact"][
-        "_litellm_restored_config_b64"
-    ]
-    assert render(
-        extract_expression, {"k8s_job_log": "ROUTING_CONFIG_B64=YWJj\n"}
-    ) == "YWJj"
-    assert render(
-        extract_expression, {"k8s_job_log": "database restore complete\n"}
-    ) == ""
 
 
 def plane_environment_context(plane_fqdn):
@@ -2149,7 +1959,6 @@ if __name__ == "__main__":
     emby_rendering()
     unpackerr_rendering()
     navidrome_rendering()
-    maintainerr_rendering()
     mautic_rendering()
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
@@ -2162,13 +1971,11 @@ if __name__ == "__main__":
     wireguard_peer_address_uses_the_ipaddr_filter()
     apps_open_access_through_the_shared_task()
     qbittorrent_enforces_peer_ports_before_start()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
     
     k3s_defaults_carry_no_lab_topology()
     k3s_template_supports_a_per_node_snapshotter()
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     backup_prune_keeps_the_previous_point()
-    k3s_pbs_backup_jobs_read_the_rotated_fingerprint()
-    litellm_recovery_jobs_use_the_database_client_major()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags, backup pruning and LiteLLM recovery clients passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Mautic, Bazarr, k3s defaults, VM clone tags and backup pruning passed")

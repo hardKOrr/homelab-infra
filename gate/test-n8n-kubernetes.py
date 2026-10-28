@@ -22,13 +22,6 @@ def render(path, context):
     )
 
 
-def flatten_tasks(tasks):
-    for task in tasks:
-        yield task
-        for key in ("block", "rescue", "always"):
-            yield from flatten_tasks(task.get(key, []))
-
-
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/n8n.yml"))["n8n_defaults"]
 assert defaults["hosting"]["method"] == "docker"
 assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
@@ -120,54 +113,21 @@ assert container["readinessProbe"]["httpGet"]["path"] == "/healthz"
 assert service["spec"]["ports"][0]["targetPort"] == 5678
 assert ingress["spec"]["rules"][0]["host"] == "n8n-test.example.test"
 
-backup_documents = list(yaml.safe_load_all(render("backup-cronjob.yaml.j2", context)))
-trust = next(item for item in backup_documents if item["kind"] == "ConfigMap")
-cronjob = next(item for item in backup_documents if item["kind"] == "CronJob")
-assert trust["metadata"]["labels"]["homelab-infra.io/pbs-fingerprint"] == "managed"
-assert trust["data"]["fingerprint"] == "AA:" * 31 + "AA"
-assert cronjob["metadata"]["labels"]["homelab-infra.io/pbs-fingerprint"] == "managed"
-backup_pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-backup_container = backup_pod["containers"][0]
-backup_env = {item["name"]: item for item in backup_container["env"]}
-assert backup_env["PBS_FINGERPRINT"]["valueFrom"]["configMapKeyRef"]["name"] == "pbs-backup-trust"
-assert backup_env["PBS_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "n8n-test-backup"
-assert backup_env["PGPASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "db-password"
-assert "database.pxar:/backup/database data.pxar:/app-data" in backup_container["args"][0]
-backup_volume = next(item for item in backup_pod["volumes"] if item["name"] == "app-data")
-assert backup_volume["persistentVolumeClaim"]["claimName"] == "n8n-test-storage"
-assert backup_volume["persistentVolumeClaim"]["readOnly"] is True
-
-plan_job = yaml.safe_load(render("restore-job.yaml.j2", context))
-plan_pod = plan_job["spec"]["template"]["spec"]
-plan_container = plan_pod["containers"][0]
-plan_volume = next(item for item in plan_pod["volumes"] if item["name"] == "app-data")
-assert plan_volume["persistentVolumeClaim"]["readOnly"] is True
-assert "snapshot list" in plan_container["args"][0]
-context["_n8n_k8s_r_mode"] = "restore"
-restore_job = yaml.safe_load(render("restore-job.yaml.j2", context))
-restore_pod = restore_job["spec"]["template"]["spec"]
-restore_container = restore_pod["containers"][0]
-restore_script = restore_container["args"][0]
-restore_volume = next(item for item in restore_pod["volumes"] if item["name"] == "app-data")
-assert restore_volume["persistentVolumeClaim"].get("readOnly", False) is False
-assert 'restore "${SNAPSHOT}" database.pxar /restore/database' in restore_script
-assert 'restore "${SNAPSHOT}" data.pxar /restore/data' in restore_script
-assert restore_script.index("pg_restore --clean") < restore_script.index(
-    "find /app-data -mindepth 1"
-)
-assert restore_script.index("find /app-data -mindepth 1") < restore_script.index(
-    "cp -a /restore/data/. /app-data/"
-)
-
+# Backup and restore go through the shared Kubernetes recovery pair, which
+# gate/test-k8s-recovery-jobs.py renders with n8n's inputs.
 restore_tasks = yaml.safe_load(read("ansible/roles/n8n/tasks/restore-kubernetes.yml"))
-task_names = [task.get("name", "") for task in flatten_tasks(restore_tasks)]
-assert task_names.index("n8n restore | Stop the target Deployment") < task_names.index(
-    "n8n restore | Run the restore Job"
-)
-assert task_names.index("n8n restore | Record the source encryption key for the target") < task_names.index(
-    "n8n restore | Start the target Deployment"
-)
-assert any("failed restore" in name for name in task_names)
+include = next(task for task in restore_tasks
+               if "recovery-restore.yml" in task.get("ansible.builtin.include_tasks", ""))
+recovery = include["vars"]["k8s_recovery"]
+assert recovery["archives"] == [
+    {"name": "data", "claim": "{{ restore_target }}-storage", "owner": "1000:1000"}
+], "the restored data volume must stay owned by the image's node user"
+assert recovery["after_restore_tasks"].endswith("/tasks/restore-kubernetes-key.yml")
+key_tasks = [task["name"] for task in yaml.safe_load(read("ansible/roles/n8n/tasks/restore-kubernetes-key.yml"))]
+assert key_tasks == [
+    "n8n restore | Record the source encryption key for the target",
+    "n8n restore | Sync the restored key and target environment",
+]
 docker_restore = read("ansible/roles/n8n/tasks/restore-docker.yml")
 assert "community.docker.docker_compose_v2" in docker_restore
 assert "docker-compose.yml.j2" in read("ansible/roles/n8n/tasks/main.yml")

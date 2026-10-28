@@ -1,0 +1,392 @@
+---
+# Restore one Kubernetes app instance from a PBS recovery point made by
+# tasks/kubernetes/recovery-backup.yml, into the namespace of an instance that is already
+# deployed. Called from an app role's restore task, which playbooks/maintenance/
+# restore-app.yml dispatches; that playbook's header is the operator procedure.
+#
+# The source instance owns the snapshot and the target owns the namespace it lands in.
+# When they are the same instance this is a recovery; when they differ it is the drill,
+# over the same path.
+#
+# Nothing restores on a schedule or on a failure. `restore_overwrite: false` is the plan:
+# the same Job in the same namespace runs the client against the named snapshot and writes
+# nothing to the target. `true` stops the target, runs the Job, and starts it again. A
+# failed restore leaves every stopped Deployment at zero replicas.
+#
+# Inputs:
+#   instance, app_config                     the SOURCE instance and its merged config
+#   restore_target, restore_target_config    the TARGET instance and its merged config
+#   restore_snapshot                         a PBS snapshot, or '' to list what exists
+#   restore_overwrite                        false: plan only. true: restore.
+#   k8s_recovery:
+#     app          display name for operator messages
+#     archives     the target's [{name, claim, owner?} | {name, config_map}], names as
+#                  backed up. A claim is emptied and refilled; `owner` (uid:gid) is applied
+#                  after. A config_map archive is applied as that ConfigMap in the target.
+#     database     optional k8s_database_step for the TARGET database
+#     stop         Deployments scaled to 0 before the Job and back to 1 after it
+#     restart      Deployments restarted after the Job (disposable caches)
+#     after_restore_tasks  optional task file run after the Job, before the target starts
+#                  (for example re-keying the target's environment)
+#     describe     what a restore replaces, for the plan message
+#     verify       lines telling the operator how to verify the restored application
+#
+# Sets _application_restore_complete when the restored target is running again.
+
+- name: k8s restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_target_config is defined
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - k8s_recovery is mapping
+      - k8s_recovery.archives | default([]) | length > 0
+      - k8s_recovery.stop | default([]) | length > 0
+    fail_msg: >-
+      A restore needs a target instance and, to actually run, a snapshot to restore from.
+      Run it once without `snapshot` to list what PBS holds for this application, then
+      again naming one of the identifiers it printed.
+
+- name: k8s restore | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: resolve-cluster.yml
+
+- name: k8s restore | Derive the target namespace
+  ansible.builtin.include_tasks: derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ restore_target }}"
+
+- name: k8s restore | Read the target namespace's ownership label
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _kr_owner
+  failed_when: false
+  changed_when: false
+
+- name: k8s restore | Require a deployed target
+  ansible.builtin.assert:
+    that:
+      - _kr_owner.rc == 0
+      - (_kr_owner.stdout | trim) == 'homelab-infra'
+    fail_msg: >-
+      Namespace {{ k8s_namespace }} does not exist, or is not labelled
+      `app.kubernetes.io/managed-by: homelab-infra`. Deploy
+      {{ k8s_recovery.app | default('the app') }} with instance={{ restore_target }} first
+      and restore into the namespace it creates. For the drill, deploy a second instance
+      under a new name and restore into it without touching the live one.
+
+- name: k8s restore | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: k8s restore | Require a PBS to restore from
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No Proxmox Backup Server is recorded in config/.generated/facts.yml, so there is
+      nothing to restore from. Application backups live in the lab's PBS datastore.
+
+- name: k8s restore | Resolve the restore's identity
+  ansible.builtin.set_fact:
+    _kr:
+      mode: "{{ 'restore' if restore_overwrite | bool else 'plan' }}"
+      target: "{{ restore_target }}"
+      snapshot: "{{ restore_snapshot | default('') }}"
+      backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+      secret: "{{ restore_target }}-restore"
+      job_name: "{{ restore_target }}-restore-{{ 'run' if restore_overwrite | bool else 'plan' }}"
+      timeout: >-
+        {{ (app_config.backup.timeout_seconds | default(3600) | int)
+           if restore_overwrite | bool else 900 }}
+      scratch_gi: "{{ restore_target_config.backup.scratch_size | default(app_config.backup.scratch_size | default(2)) | int }}"
+      client: "{{ app_config.backup.client }}"
+      archives: "{{ k8s_recovery.archives }}"
+      database: "{{ k8s_recovery.database | default({}, true) }}"
+
+- name: k8s restore | Sync the restore credentials into the target namespace
+  ansible.builtin.include_tasks: sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ _kr.secret }}"
+    k8s_secret_data: >-
+      {{ {'pbs-password': k8s_pbs_password}
+         | combine((k8s_recovery.database | default({}, true)).secret_data | default({})) }}
+
+- name: k8s restore | Render the restore Job
+  ansible.builtin.set_fact:
+    _kr_manifest: >-
+      {{ lookup('ansible.builtin.template',
+                playbook_dir ~ '/../../templates/kubernetes/recovery-restore.yaml.j2') }}
+
+# ── Plan: read-only, and the default ──────────────────────────────────────────
+- name: k8s restore | Show what a restore would do
+  when: not (restore_overwrite | bool)
+  block:
+    - name: k8s restore | Run the plan job
+      ansible.builtin.include_tasks: run-job.yml
+      vars:
+        k8s_job_name: "{{ _kr.job_name }}"
+        k8s_job_manifest: "{{ _kr_manifest }}"
+        k8s_job_timeout: "{{ _kr.timeout }}"
+
+    - name: k8s restore | State what a real run would replace
+      ansible.builtin.debug:
+        msg:
+          - "PLAN ONLY — nothing was changed."
+          - "Source: PBS group host/{{ _kr.backup_id }} in datastore
+             {{ k8s_pbs_datastore }}{{ ', snapshot ' ~ _kr.snapshot
+                if _kr.snapshot | length > 0 else ' (no snapshot named)' }}."
+          - "Target: namespace {{ k8s_namespace }} —
+             {{ k8s_recovery.describe | default('the application state') }}. It is listed
+             above as it stands now; a real run replaces it with the snapshot's contents."
+          - "To do it: re-run this job with the same snapshot and overwrite=true."
+
+  # `always`: a plan job commonly fails — surfacing an unreadable snapshot is its purpose —
+  # and the PBS token must not stay in the namespace when it does.
+  always:
+    - name: k8s restore | Remove the plan's credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _kr.secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+# ── Restore: the destructive path ─────────────────────────────────────────────
+- name: k8s restore | Restore the snapshot into the target
+  when: restore_overwrite | bool
+  block:
+    - name: k8s restore | Read each stopped Deployment's pod selector
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - "deployment/{{ item }}"
+          - -o
+          - jsonpath={.spec.selector.matchLabels}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      register: _kr_selectors
+      changed_when: false
+
+    # Stopped, not left running: the application would otherwise read and write state
+    # that is being replaced underneath it.
+    - name: k8s restore | Stop the target application
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ item }}"
+          - --replicas=0
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      changed_when: true
+
+
+    # Scaling returns when the request is accepted; the pod holds its volume until it
+    # terminates. A retry after a failed restore finds no pods, which is the same answer.
+    - name: k8s restore | Wait for the application pods to go away
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - wait
+          - --for=delete
+          - pod
+          - "--selector={% for key, value in (item.stdout | from_json).items() %}{{ key }}={{ value }}{{ '' if loop.last else ',' }}{% endfor %}"
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _kr_selectors.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: _kr_stopped
+      failed_when:
+        - _kr_stopped.rc != 0
+        - "'no matching resources found' not in (_kr_stopped.stderr | default(''))"
+      changed_when: false
+
+    - name: k8s restore | Run the restore job
+      ansible.builtin.include_tasks: run-job.yml
+      vars:
+        k8s_job_name: "{{ _kr.job_name }}"
+        k8s_job_manifest: "{{ _kr_manifest }}"
+        k8s_job_timeout: "{{ _kr.timeout }}"
+
+    # The Job printed each restored ConfigMap file as `RECOVERY_CONFIGMAP <archive> <file>
+    # <base64>`. Applied from here so the Job needs no Kubernetes API write access.
+    - name: k8s restore | Read the restored ConfigMaps from the job's output
+      ansible.builtin.set_fact:
+        _kr_configmaps: >-
+          {{ _kr_configmaps | default({}) | combine({item.config_map:
+               k8s_job_log | default('')
+               | regex_findall('RECOVERY_CONFIGMAP ' ~ item.name ~ ' ([^ ]+) ([A-Za-z0-9+/=]+)')}) }}
+      loop: "{{ k8s_recovery.archives | selectattr('config_map', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.config_map }}"
+
+    # An archive that returned no files would otherwise apply an empty ConfigMap.
+    - name: k8s restore | Require every ConfigMap archive to have returned its files
+      ansible.builtin.assert:
+        that: item.value | length > 0
+        fail_msg: >-
+          The recovery point's archive for ConfigMap {{ item.key }} returned no files. The
+          target is left stopped; read the Job output above.
+      loop: "{{ _kr_configmaps | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: k8s restore | Apply the restored ConfigMaps
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", apply, -f, -]
+        stdin: >-
+          {{ {'apiVersion': 'v1', 'kind': 'ConfigMap',
+              'metadata': {'name': item.key,
+                           'labels': {'app.kubernetes.io/instance': restore_target,
+                                      'app.kubernetes.io/managed-by': 'homelab-infra'}},
+              'data': dict(item.value | map('first')
+                           | zip(item.value | map('last') | map('b64decode')))}
+             | to_json }}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _kr_configmaps | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: true
+
+    # Disposable caches with no volume hold state from before the restore.
+    - name: k8s restore | Restart the target's caches
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - restart
+          - "deployment/{{ item }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.restart | default([]) }}"
+      changed_when: true
+
+    - name: k8s restore | Run the app's after-restore tasks
+      ansible.builtin.include_tasks: "{{ k8s_recovery.after_restore_tasks }}"
+      when: k8s_recovery.after_restore_tasks | default('') | length > 0
+
+    # Every Deployment here declares one replica. The value is not read back at the start
+    # of this run: a failed earlier attempt deliberately left it at zero.
+    - name: k8s restore | Start the target application again
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ item }}"
+          - --replicas=1
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      changed_when: true
+
+    - name: k8s restore | Wait for the target application to come back
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - status
+          - "deployment/{{ item }}"
+          - --timeout=600s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop + (k8s_recovery.restart | default([])) }}"
+      changed_when: false
+
+    - name: k8s restore | Mark the restore complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+
+    # A Job that exited zero proves the Job ran; the operator still verifies the app.
+    - name: k8s restore | State how to verify the restored application
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['Restored ' ~ _kr.snapshot ~ ' into namespace ' ~ k8s_namespace
+              ~ '. The Job output above is what arrived.']
+             + (k8s_recovery.verify | default([])) }}
+
+  # Left down on purpose: a target holding half of one point in time and half of another
+  # is worse in front of users than stopped. The operator decides.
+  rescue:
+    - name: k8s restore | Keep the target stopped
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ item }}"
+          - --replicas=0
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      failed_when: false
+      changed_when: false
+
+    - name: k8s restore | Report a failed restore
+      ansible.builtin.fail:
+        msg: >-
+          The restore of {{ _kr.snapshot }} into {{ k8s_namespace }} did not complete, and
+          {{ k8s_recovery.stop | join(', ') }} {{ 'has' if k8s_recovery.stop | length == 1
+          else 'have' }} been LEFT SCALED TO 0 — the target may be partially replaced. The
+          output is above ({{ ansible_failed_result.msg | default('') | truncate(2000) }}).
+          Re-run this restore, or start the application as it stands with:
+          k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ k8s_recovery.stop | first }}
+          --replicas=1
+
+  # The Secret holds the PBS token and the target's database credential, wanted for
+  # minutes. It is re-synced at the top of every run, so removing it costs a retry nothing.
+  always:
+    - name: k8s restore | Remove the restore credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _kr.secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true

@@ -1,0 +1,272 @@
+{#
+  The restore side of a Kubernetes app's recovery point, as one Job in the TARGET
+  instance's namespace. Rendered and run by tasks/kubernetes/recovery-restore.yml.
+
+  Two modes, and the mode is the safety mechanism:
+
+    plan     — reads only. Lists the app's PBS group and, for a named snapshot, runs the
+               same client restore path into scratch (the snapshot index and the archive
+               catalog), so a broken client environment fails the plan, not the restore.
+               Reports what the target holds now; every target volume is mounted read-only
+               by the kubelet.
+    restore  — ordered steps, each one only after the one before it succeeded:
+                 stage    the database dump and ConfigMap archives into scratch
+                 load     the database, from the app's database step
+                 replace  each volume, emptied and refilled from the snapshot
+               The database loads before any volume is touched, so a dump that will not
+               load leaves the volumes as they were.
+
+  The steps run as initContainers in order, and the last one as the Job's container. The
+  Job does the work, not the runner: the volumes are node-pinned RWO claims only a pod on
+  that node can mount, and the credentials stay in the namespace they die with.
+
+  Context (from recovery-restore.yml):
+    k8s_pbs_repository, k8s_pbs_fingerprint
+    _kr  — mode, job_name, target, timeout, secret, backup_id, snapshot, scratch_gi,
+           client (backup.client: image, key_url, repository, suite, component), archives[{name, claim, owner} | {name,
+           config_map}], database (tasks/database/kubernetes-recovery-step.yml) or {}
+#}
+{% set db = _kr.database | default({}, true) %}
+{% set plan = _kr.mode == 'plan' %}
+{% set volumes = _kr.archives | rejectattr('config_map', 'defined') | list %}
+{% set staged = _kr.archives | selectattr('config_map', 'defined') | list %}
+{% set labels %}
+app.kubernetes.io/instance: {{ _kr.target }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: restore
+{% endset %}
+{#
+  One client container: installs proxmox-backup-client, then runs `body`. The client's
+  cache and temporary files are on tmpfs because the container overlay answers O_TMPFILE
+  with EOPNOTSUPP (os error 95).
+#}
+{% macro client_step(name, body, mount_volumes, volumes_read_only) %}
+- name: {{ name }}
+  image: {{ _kr.client.image }}
+  imagePullPolicy: IfNotPresent
+  command: [/bin/sh, -c]
+  args:
+    - |
+      set -eu
+      export DEBIAN_FRONTEND=noninteractive
+      # Never `set -x`: PBS_PASSWORD is in this process's environment.
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+      install -d -m 0755 /etc/apt/keyrings
+      curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+      echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+        > /etc/apt/sources.list.d/pbs-client.list
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+      volume_state() {
+        echo "$(du -sh "$1" 2>/dev/null | cut -f1) in $(find "$1" -type f | wc -l) file(s)"
+      }
+{{ body | trim | indent(6, true) }}
+  env:
+    - name: PBS_REPOSITORY
+      value: "{{ k8s_pbs_repository }}"
+    - name: PBS_FINGERPRINT
+      value: "{{ k8s_pbs_fingerprint }}"
+    - name: PBS_PASSWORD
+      valueFrom:
+        secretKeyRef: { name: {{ _kr.secret }}, key: pbs-password }
+    - name: BACKUP_ID
+      value: "{{ _kr.backup_id }}"
+    - name: SNAPSHOT
+      value: "{{ _kr.snapshot }}"
+    - name: PBS_KEY_URL
+      value: "{{ _kr.client.key_url }}"
+    - name: PBS_APT_REPO
+      value: "{{ _kr.client.repository }} {{ _kr.client.suite }} {{ _kr.client.component }}"
+    - name: TMPDIR
+      value: /tmp
+  volumeMounts:
+    - name: client-tmp
+      mountPath: /tmp
+    - name: client-cache
+      mountPath: /root/.cache
+    - name: recovery
+      mountPath: /recovery
+{% if mount_volumes %}
+{% for archive in volumes %}
+    - name: volume-{{ archive.name }}
+      mountPath: /volumes/{{ archive.name }}
+{% if volumes_read_only %}
+      readOnly: true
+{% endif %}
+{% endfor %}
+{% endif %}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+{% endmacro %}
+{% macro database_step(name, body) %}
+- name: {{ name }}
+  image: {{ db.image }}
+  command: [/bin/sh, -c]
+  args:
+    - |
+      set -eu
+{{ body | trim | indent(6, true) }}
+  env:
+    - name: DUMP_DIR
+      value: /recovery/database
+{% for env_name, value in (db.env | default({})).items() %}
+    - name: {{ env_name }}
+      value: {{ value | string | to_json }}
+{% endfor %}
+{% for env_name, key in (db.secret_env | default({})).items() %}
+    - name: {{ env_name }}
+      valueFrom:
+        secretKeyRef: { name: {{ _kr.secret }}, key: {{ key }} }
+{% endfor %}
+  volumeMounts:
+    - name: recovery
+      mountPath: /recovery
+      readOnly: true
+{% if db.secret_files | default([]) | length > 0 %}
+    - name: credentials
+      mountPath: /etc/recovery-credentials
+      readOnly: true
+{% endif %}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+{% endmacro %}
+{% set preview %}
+echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
+# Older clients take no group argument; half the answer beats a failed plan.
+proxmox-backup-client snapshot list "host/${BACKUP_ID}" \
+  || proxmox-backup-client snapshot list
+
+if [ -n "${SNAPSHOT:-}" ]; then
+  echo
+  echo "=== files in ${SNAPSHOT} ==="
+  proxmox-backup-client snapshot files "${SNAPSHOT}"
+  # The restore's own client path, into scratch: the index through `restore` and the
+  # archive catalog through the client cache. Either failing here would fail the restore
+  # the same way.
+  proxmox-backup-client restore "${SNAPSHOT}" index.json /recovery/index.json
+  proxmox-backup-client catalog dump "${SNAPSHOT}" > /recovery/catalog.txt
+  echo "catalog readable: $(wc -l < /recovery/catalog.txt) entries"
+else
+  echo
+  echo "No snapshot named. Re-run with one of the identifiers above to check"
+  echo "that it is readable and to see what a restore would replace."
+fi
+
+echo
+echo "=== what the target holds NOW ==="
+{% for archive in volumes %}
+echo "{{ archive.claim }}: $(volume_state /volumes/{{ archive.name }})"
+{% endfor %}
+{% endset %}
+{% set stage %}
+echo "=== staging ${SNAPSHOT} ==="
+{% if db %}
+# Into scratch. Nothing in the target has changed yet, so an unreadable snapshot costs
+# nothing.
+proxmox-backup-client restore "${SNAPSHOT}" database.pxar /recovery/database
+echo "database archive: $(volume_state /recovery/database)"
+{% endif %}
+{% for archive in staged %}
+proxmox-backup-client restore "${SNAPSHOT}" {{ archive.name }}.pxar /recovery/{{ archive.name }}
+# Printed for the controller, which applies it as the target's ConfigMap: the Job gets no
+# Kubernetes API write access.
+for file in /recovery/{{ archive.name }}/*; do
+  [ -f "$file" ] || continue
+  printf 'RECOVERY_CONFIGMAP {{ archive.name }} %s ' "$(basename "$file")"
+  base64 -w0 "$file"
+  printf '\n'
+done
+{% endfor %}
+{% endset %}
+{% set replace %}
+{% for archive in volumes %}
+# Emptied, then filled: a restore that only added files would leave the target holding a
+# mixture of two points in time.
+echo "replacing {{ archive.claim }}: was $(volume_state /volumes/{{ archive.name }})"
+find /volumes/{{ archive.name }} -mindepth 1 -delete
+proxmox-backup-client restore "${SNAPSHOT}" {{ archive.name }}.pxar /volumes/{{ archive.name }}
+{% if archive.owner | default('') | length > 0 %}
+chown -R {{ archive.owner }} /volumes/{{ archive.name }}
+{% endif %}
+echo "restored {{ archive.claim }}: now $(volume_state /volumes/{{ archive.name }})"
+{% endfor %}
+{% endset %}
+{% set steps = [] %}
+{% if plan %}
+{% set _ = steps.append(client_step('preview', preview, true, true)) %}
+{% if db %}
+{% set _ = steps.append(database_step('inspect', db.inspect)) %}
+{% endif %}
+{% else %}
+{% if db or staged %}
+{% set _ = steps.append(client_step('stage', stage, false, false)) %}
+{% endif %}
+{% if db %}
+{% set _ = steps.append(database_step('load', db.load)) %}
+{% endif %}
+{% if volumes %}
+{% set _ = steps.append(client_step('replace', replace, true, false)) %}
+{% endif %}
+{% endif %}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _kr.job_name }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  # One attempt. A restore that failed half way has already changed the target; the
+  # operator reads what happened and decides.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _kr.timeout | int }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      restartPolicy: Never
+{% if steps | length > 1 %}
+      initContainers:
+{% for step in steps[:-1] %}
+{{ step | trim | indent(8, true) }}
+{% endfor %}
+{% endif %}
+      containers:
+{{ steps[-1] | trim | indent(8, true) }}
+      volumes:
+        - name: client-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: client-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: recovery
+          emptyDir:
+            sizeLimit: {{ _kr.scratch_gi | int }}Gi
+{% if db and db.secret_files | default([]) | length > 0 %}
+        - name: credentials
+          secret:
+            secretName: {{ _kr.secret }}
+            defaultMode: 0444
+            items:
+{% for file in db.secret_files %}
+              - key: {{ file.key }}
+                path: {{ file.path }}
+{% endfor %}
+{% endif %}
+{% for archive in volumes %}
+        - name: volume-{{ archive.name }}
+          persistentVolumeClaim:
+            claimName: {{ archive.claim }}
+{% if plan %}
+            readOnly: true
+{% endif %}
+{% endfor %}

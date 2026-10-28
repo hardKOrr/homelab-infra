@@ -1,289 +1,41 @@
-# Restore one paired n8n PostgreSQL and PVC snapshot into an already deployed Kubernetes
-# instance. The target stays stopped if the destructive restore fails, so the same point
-# can be retried after fixing the cause.
+---
+# Restore one paired n8n PostgreSQL and PVC recovery point into an already deployed
+# Kubernetes instance, through tasks/kubernetes/recovery-restore.yml. The target stays
+# stopped if the destructive restore fails, so the same point can be retried after fixing
+# the cause.
 
 - name: n8n restore | Assert the Kubernetes recovery inputs
   ansible.builtin.assert:
     that:
-      - restore_target is defined and restore_target | length > 0
-      - restore_target_config is defined
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - restore_source_encryption_key | default('') | length > 0
     fail_msg: >-
-      n8n Kubernetes restore needs a target, its source encryption key, and a recovery
-      point when overwrite=true.
+      n8n Kubernetes restore needs the source instance's encryption key.
   no_log: true
 
-- name: n8n restore | Resolve the cluster and target namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
-
-- name: n8n restore | Derive the target namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+- name: n8n restore | Describe the target's database step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_namespace_for: "{{ restore_target }}"
+    k8s_database_step_engine: postgresql
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
 
-- name: n8n restore | Read the namespace ownership label
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - get
-      - namespace
-      - "{{ k8s_namespace }}"
-      - -o
-      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _n8n_k8s_r_owner
-  failed_when: false
-  changed_when: false
-
-- name: n8n restore | Require a homelab-infra-owned target
-  ansible.builtin.assert:
-    that:
-      - _n8n_k8s_r_owner.rc == 0
-      - (_n8n_k8s_r_owner.stdout | trim) == 'homelab-infra'
-    fail_msg: >-
-      Namespace {{ k8s_namespace }} does not exist or is not owned by homelab-infra.
-      Deploy n8n for target={{ restore_target }} before restoring into it.
-
-- name: n8n restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: n8n restore | Restore n8n through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: n8n restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS target is recorded for n8n, so there is no application recovery point
-      to list or restore.
-
-- name: n8n restore | Resolve the target PostgreSQL connection
-  ansible.builtin.set_fact:
-    _n8n_k8s_r_database: "{{ restore_target_config.app.database | default({}) }}"
-    _n8n_k8s_r_database_host: "{{ restore_target_config.app.database_host | default('') }}"
-    _n8n_k8s_r_database_port: "{{ restore_target_config.app.database_port | default(0) }}"
-    _n8n_k8s_r_database_name: "{{ restore_target_config.app.database.name | default('') }}"
-    _n8n_k8s_r_database_user: >-
-      {{ restore_target_config.app.database_user
-         | default(restore_target_config.app.database.role | default(''), true) }}
-    _n8n_k8s_r_database_password: "{{ restore_target_config.app.database_password | default('', true) }}"
-    _n8n_k8s_r_pg_client_version: >-
-      {{ restore_target_config.app.database.version
-         | default((homelabinfra_infra.databases | default({})).get(
-             restore_target_config.app.database.instance, {}).version | default(''), true)
-         | string }}
-  no_log: true
-
-- name: n8n restore | Require the target's named PostgreSQL database
-  ansible.builtin.assert:
-    that:
-      - _n8n_k8s_r_database.provider | default('') == 'postgresql'
-      - _n8n_k8s_r_database_host | length > 0
-      - _n8n_k8s_r_database_port | int > 0
-      - _n8n_k8s_r_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
-      - _n8n_k8s_r_database_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
-      - _n8n_k8s_r_database_password | length > 0
-      - _n8n_k8s_r_pg_client_version is match('^[0-9]+$')
-    fail_msg: >-
-      n8n Kubernetes restore needs the deployed target's named PostgreSQL backend,
-      credentials and major version.
-  no_log: true
-
-- name: n8n restore | Resolve restore identity
-  ansible.builtin.set_fact:
-    _n8n_k8s_r_mode: "{{ 'restore' if restore_overwrite | bool else 'plan' }}"
-    _n8n_k8s_r_target: "{{ restore_target }}"
-    _n8n_k8s_r_snapshot: "{{ restore_snapshot | default('') }}"
-    _n8n_k8s_r_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-    _n8n_k8s_r_secret: "{{ restore_target }}-restore"
-    _n8n_k8s_r_job_name: >-
-      {{ restore_target }}-restore-{{ 'plan' if not (restore_overwrite | bool) else 'run' }}
-    _n8n_k8s_r_timeout: >-
-      {{ 900 if not (restore_overwrite | bool)
-         else (app_config.backup.timeout_seconds | default(3600) | int) }}
-
-- name: n8n restore | Sync restore credentials into the target namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-  vars:
-    k8s_secret_name: "{{ _n8n_k8s_r_secret }}"
-    k8s_secret_data:
-      pbs-password: "{{ k8s_pbs_password }}"
-      db-password: "{{ _n8n_k8s_r_database_password }}"
-
-- name: n8n restore | Render the restore Job
-  ansible.builtin.set_fact:
-    _n8n_k8s_r_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2') }}"
-
-- name: n8n restore | Plan a read-only restore
-  when: not (restore_overwrite | bool)
-  block:
-    - name: n8n restore | Run the plan Job
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
-      vars:
-        k8s_job_name: "{{ _n8n_k8s_r_job_name }}"
-        k8s_job_manifest: "{{ _n8n_k8s_r_manifest }}"
-        k8s_job_timeout: "{{ _n8n_k8s_r_timeout }}"
-
-    - name: n8n restore | State what a restore would replace
-      ansible.builtin.debug:
-        msg:
-          - "PLAN ONLY — nothing was changed."
-          - "Source: PBS group host/{{ _n8n_k8s_r_backup_id }}{{ ', snapshot ' ~ _n8n_k8s_r_snapshot if _n8n_k8s_r_snapshot | length > 0 else ' (no snapshot named)' }}."
-          - "Target: namespace {{ k8s_namespace }} — the {{ _n8n_k8s_r_database_name }} database and {{ restore_target }}-storage volume."
-          - "To restore, re-run with the same recovery point and overwrite=true."
-  always:
-    - name: n8n restore | Remove temporary plan credentials
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - delete
-          - "secret/{{ _n8n_k8s_r_secret }}"
-          - --ignore-not-found=true
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: true
-
-- name: n8n restore | Replace the target database and data volume
-  when: restore_overwrite | bool
-  block:
-    - name: n8n restore | Stop the target Deployment
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - scale
-          - "deployment/{{ restore_target }}"
-          - --replicas=0
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: true
-
-    - name: n8n restore | Wait for the target pod to stop
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - wait
-          - --for=delete
-          - pod
-          - "--selector=app.kubernetes.io/instance={{ restore_target }},app.kubernetes.io/component=web"
-          - --timeout=300s
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: false
-
-    - name: n8n restore | Run the restore Job
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
-      vars:
-        k8s_job_name: "{{ _n8n_k8s_r_job_name }}"
-        k8s_job_manifest: "{{ _n8n_k8s_r_manifest }}"
-        k8s_job_timeout: "{{ _n8n_k8s_r_timeout }}"
-
-    - name: n8n restore | Record the source encryption key for the target
-      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-      vars:
-        vault_item_name: "homelab-infra/apps/{{ restore_target }}"
-        vault_item_merge: true
-        vault_item_fields:
-          encryption_key: "{{ restore_source_encryption_key }}"
-        vault_item_secret_fields: [encryption_key]
-      no_log: true
-
-    - name: n8n restore | Sync the restored key and target environment
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-      vars:
-        k8s_secret_name: "{{ restore_target }}-env"
-        k8s_secret_data:
-          DB_TYPE: postgresdb
-          DB_POSTGRESDB_HOST: "{{ _n8n_k8s_r_database_host }}"
-          DB_POSTGRESDB_PORT: "{{ _n8n_k8s_r_database_port }}"
-          DB_POSTGRESDB_DATABASE: "{{ _n8n_k8s_r_database_name }}"
-          DB_POSTGRESDB_USER: "{{ _n8n_k8s_r_database_user }}"
-          DB_POSTGRESDB_PASSWORD: "{{ _n8n_k8s_r_database_password }}"
-          N8N_ENCRYPTION_KEY: "{{ restore_source_encryption_key }}"
-          N8N_HOST: "{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
-          N8N_PROTOCOL: http
-          N8N_PORT: "{{ restore_target_config.app.port }}"
-          N8N_EDITOR_BASE_URL: "https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}/"
-          WEBHOOK_URL: "https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}/"
-          N8N_PROXY_HOPS: "1"
-          N8N_SECURE_COOKIE: "true"
-
-    - name: n8n restore | Start the target Deployment
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - scale
-          - "deployment/{{ restore_target }}"
-          - --replicas=1
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: true
-
-    - name: n8n restore | Wait for the restored Deployment
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - rollout
-          - status
-          - "deployment/{{ restore_target }}"
-          - --timeout=300s
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: false
-
-    - name: n8n restore | Mark the paired recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: n8n restore | Keep the target stopped after a failed restore
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - scale
-          - "deployment/{{ restore_target }}"
-          - --replicas=0
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: false
-      failed_when: false
-
-    - name: n8n restore | Report the failed recovery
-      ansible.builtin.fail:
-        msg: >-
-          n8n restore {{ restore_snapshot }} did not complete. The target Deployment is
-          intentionally left stopped because its database or volume may be partially
-          replaced. Inspect the target and retry from the retained recovery point.
-  always:
-    - name: n8n restore | Remove temporary restore credentials
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - delete
-          - "secret/{{ _n8n_k8s_r_secret }}"
-          - --ignore-not-found=true
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: true
+    k8s_recovery:
+      app: n8n
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+          # The image runs as the `node` user.
+          owner: "1000:1000"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-key.yml"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the {{ restore_target }}-storage volume
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in with the owner account
+          from {{ instance }}, and check that workflows and their credentials are present.
