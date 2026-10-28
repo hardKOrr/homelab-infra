@@ -18,7 +18,7 @@ set +a
 for required in PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH \
   PLANE_DB_HOST PLANE_DB_PORT PLANE_DB_NAME PLANE_DB_USER PLANE_DB_PASSWORD \
   PLANE_REDIS_HOST PLANE_REDIS_PORT PLANE_REDIS_PASSWORD PLANE_BACKUP_ID PLANE_RELEASE \
-  PLANE_PBS_IMAGE PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE \
+  PLANE_PBS_IMAGE PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE DATABASE_CLIENT_SCRIPT \
   PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD PBS_KEY_URL PBS_APT_REPO; do
   [[ -n "${!required:-}" ]] || { echo "Plane recovery configuration is incomplete: $required" >&2; exit 1; }
 done
@@ -80,6 +80,17 @@ finish() {
 }
 trap finish EXIT
 
+# Dump or check the named database with the shared client (tasks/database/scripts/
+# database-client.sh) in the server-matched image, as the application's own login.
+database_client() {
+  docker run --rm --network host \
+    --volume "$(dirname -- "$2"):/work" \
+    --volume "$DATABASE_CLIENT_SCRIPT:/usr/local/bin/database-client.sh:ro" \
+    --env DB_ENGINE=postgresql --env DB_HOST --env DB_PORT --env DB_NAME --env DB_USER --env DB_PASSWORD \
+    --entrypoint /bin/sh "$PLANE_POSTGRES_IMAGE" \
+    /usr/local/bin/database-client.sh "$1" "/work/$(basename -- "$2")"
+}
+
 backup() {
   if ! mkdir -m 0700 -- "$lock"; then
     echo "Plane recovery is already running for $INSTANCE; refusing overlapping backup/restore work" >&2
@@ -93,17 +104,9 @@ backup() {
   restart_on_failure=1
   "${compose[@]}" stop
 
-  docker run --rm --network host \
-    --volume "$work/database:/backup" \
-    --env DB_HOST --env DB_PORT --env DB_NAME --env DB_USER --env DB_PASSWORD \
-    "$PLANE_POSTGRES_IMAGE" /bin/sh -ceu \
-    'PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl \
-      --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
-      --dbname="$DB_NAME" --file=/backup/plane.dump'
-  test -s "$work/database/plane.dump"
+  database_client dump "$work/database/plane.dump"
   printf '%s\n' "$PLANE_RELEASE" > "$work/database/plane-release.txt"
-  docker run --rm --volume "$work/database:/backup:ro" "$PLANE_POSTGRES_IMAGE" \
-    pg_restore --list /backup/plane.dump >/dev/null
+  database_client verify "$work/database/plane.dump"
 
   docker run --rm --network host \
     --volume "$work/redis:/backup" \

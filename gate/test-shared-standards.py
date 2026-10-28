@@ -267,8 +267,6 @@ ALLOWLIST = {
         "ansible/roles/mysql/files/mysql-recovery.py",
         "ansible/roles/n8n/templates/backup-cronjob.yaml.j2",
         "ansible/roles/n8n/templates/restore-job.yaml.j2",
-        "ansible/roles/plane/files/plane-recovery",
-        "ansible/roles/plane/tasks/restore.yml",
     },
     "k8s-recovery-job": {
         "ansible/roles/hi-events/templates/backup-cronjob.yaml.j2",
