@@ -293,6 +293,27 @@ that ownership boundary and leave untagged guests alone.
 - `callback_plugins/` defines the common job and terminal output.
 - `files/` contains controller-side helper programs installed or called by tasks.
 
+### Shared operations
+
+A role uses the shared file for any operation listed here and supplies its per-app
+behavior through that file's inputs or hook. When the shared file lacks a needed seam, add
+the seam there. [`gate/test-shared-standards.py`](../gate/test-shared-standards.py)
+fails on a new copy of a recovery primitive outside its shared file; its allowlist of
+today's copies only shrinks.
+
+| Operation | Owner | A role supplies |
+| --- | --- | --- |
+| Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
+| Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |
+| Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
+| Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job |
+| Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
+| PBS target and credentials | `tasks/backup/resolve-pbs-target.yml` | optional `k8s_pbs_datastore_override` |
+| Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
+| PBS client install, backup, verify, restore | `tasks/backup/pbs-client*.yml` (planned, part 02) | paths, archive names, owner, services to stop, hooks |
+| Kubernetes backup CronJob and restore Job | `templates/kubernetes/recovery-*.yaml.j2` (planned, part 03) | volumes or PVCs, dump hook, owner uid/gid, scale-down targets |
+| Database dump, restore and drop | `tasks/database/*` (planned, part 04) | engine, database and login names |
+
 ## Local conventions
 
 - Keep playbooks focused on orchestration. Put reusable behavior in a task file or role.

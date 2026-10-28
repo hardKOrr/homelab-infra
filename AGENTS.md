@@ -14,6 +14,9 @@ never depends on Rundeck.
 - Update `homelabinfra_config`, `homelabinfra_instance` and `homelabinfra_infra` only with
   `combine(recursive=True)`. Never replace one of them with a partial mapping.
 - Reusable behavior lives in roles and task files. Playbooks only orchestrate.
+- A role uses the shared task or template for any operation that has one (see Shared
+  operations in `ansible/README.md`); per-app behavior goes in that shared code's hook or
+  inputs, never in a copy of it. Shared code that lacks a needed seam gets the seam.
 - Every deploy and day-2 operation is safe to run again: a second run keeps configuration,
   credentials and data, and creates no duplicate resources.
 - Fix defects in the repository. A manual change on the lab is for diagnosis or for
