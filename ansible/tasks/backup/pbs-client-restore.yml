@@ -1,0 +1,164 @@
+---
+# List, verify or extract one PBS recovery point. Preview and overwrite run the same client
+# path, so a client, network or scratch-filesystem failure shows up in the preview.
+#
+# Inputs:
+#   pbs_client_runtime           docker | native (see pbs-client-run.yml)
+#   pbs_client_archives          [{name: data.pxar, path: /abs/staging/dir}]; with
+#                                overwrite each archive is extracted into its path, which
+#                                the role creates (empty) outside the live data and /tmp.
+#                                A preview needs only the names.
+#   pbs_client_restore_args      optional extra `restore` arguments, such as
+#                                ['--allow-existing-dirs', 'true', '--ignore-ownership', 'true']
+#   pbs_client_backup_id         optional source group id; default `restore_backup_id`,
+#                                else `backup.backup_id`, else the source instance
+#   pbs_client_snapshot          optional; default `restore_snapshot`
+#   pbs_client_overwrite         optional; default `restore_overwrite`
+#   pbs_client_pre_restore_point optional independent point of the existing target; default
+#                                `restore_pre_restore_point` for destination=existing. When
+#                                set it must hold the same archives before anything runs
+#   pbs_client_pre_restore_backup_id  its group id; default the target's backup id
+#
+# Sets:
+#   pbs_client_restore_extracted  true only after every archive was extracted
+#
+# Without a point the run lists the group's points. With a point and overwrite=false it
+# checks that the point holds every archive, downloads the point's index and reads its
+# catalog into the client's tmpfs, prints the index, and changes nothing on the host.
+# With overwrite=true it checks the point (and the pre-restore point) and extracts every
+# archive into its staging path. Replacing live state stays with the role.
+
+- name: PBS restore | Resolve the recovery identities
+  ansible.builtin.set_fact:
+    _pbs_restore_backup_id: >-
+      {{ pbs_client_backup_id | default(restore_backup_id | default(app_config.backup.backup_id
+         | default('', true) or restore_source_instance | default(instance, true), true), true) }}
+    _pbs_restore_pre_backup_id: >-
+      {{ pbs_client_pre_restore_backup_id | default(restore_target_backup_id
+         | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true), true) }}
+    _pbs_restore_snapshot: "{{ pbs_client_snapshot | default(restore_snapshot | default(''), true) }}"
+    _pbs_restore_pre_point: >-
+      {{ pbs_client_pre_restore_point | default(restore_pre_restore_point | default('')
+         if restore_destination | default('existing') == 'existing' else '', true) }}
+    _pbs_restore_overwrite: "{{ pbs_client_overwrite | default(restore_overwrite | default(false)) | bool }}"
+    _pbs_restore_archives: "{{ pbs_client_archives | default([]) }}"
+    pbs_client_restore_extracted: false
+
+- name: PBS restore | Validate the restore request
+  ansible.builtin.assert:
+    that:
+      - _pbs_restore_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _pbs_restore_archives | length > 0
+      - _pbs_restore_archives | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9_.-]*\.(pxar|img|conf|log)$') | list | length == _pbs_restore_archives | length
+      - _pbs_restore_snapshot | length > 0 or not _pbs_restore_overwrite
+      - >-
+        _pbs_restore_snapshot | length == 0
+        or _pbs_restore_snapshot is match('^host/' ~ (_pbs_restore_backup_id | regex_escape) ~ '/[^/]+$')
+      - >-
+        _pbs_restore_pre_point | length == 0
+        or (_pbs_restore_pre_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+            and _pbs_restore_pre_point is match('^host/' ~ (_pbs_restore_pre_backup_id | regex_escape) ~ '/[^/]+$'))
+    fail_msg: >-
+      PBS restore needs a safe backup id, the archives to restore, and a recovery point for
+      overwrite=true. The point must belong to host/{{ _pbs_restore_backup_id }}/ and a
+      pre-restore point to host/{{ _pbs_restore_pre_backup_id }}/. Nothing was changed.
+
+- name: PBS restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: PBS restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for {{ instance }}. Deploy PBS before listing or restoring
+      application data.
+
+- name: PBS restore | Check the staging directories
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ _pbs_restore_archives if _pbs_restore_overwrite else [] }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _pbs_restore_staging
+  changed_when: false
+
+- name: PBS restore | Require real staging directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.isdir | default(false)
+      - not (item.stat.islnk | default(false))
+    fail_msg: "Staging path {{ item.item.path }} for {{ item.item.name }} is not a directory."
+  loop: "{{ _pbs_restore_staging.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: PBS restore | Run the client
+  ansible.builtin.include_tasks: pbs-client-run.yml
+  vars:
+    _pbs_restore_mode: >-
+      {{ 'extract' if _pbs_restore_overwrite else ('verify' if _pbs_restore_snapshot | length > 0 else 'list') }}
+    pbs_client_context: "PBS restore {{ _pbs_restore_mode }} of {{ _pbs_restore_snapshot or 'host/' ~ _pbs_restore_backup_id }}"
+    pbs_client_changes: "{{ _pbs_restore_overwrite }}"
+    pbs_client_mounts: >-
+      {{ _pbs_restore_archives | map('combine', {'mode': 'rw'}) | list if _pbs_restore_overwrite else [] }}
+    pbs_client_env:
+      PBS_RESTORE_MODE: "{{ _pbs_restore_mode }}"
+      PBS_BACKUP_ID: "{{ _pbs_restore_backup_id }}"
+      PBS_SNAPSHOT: "{{ _pbs_restore_snapshot }}"
+      PBS_PRE_RESTORE_POINT: "{{ _pbs_restore_pre_point }}"
+    pbs_client_script: |
+      require_archives() {
+        files=$(proxmox-backup-client snapshot files "$1" --output-format json)
+        for archive in {{ _pbs_restore_archives | map(attribute='name') | map('quote') | join(' ') }}; do
+          case "$files" in
+            *"\"$archive."*) ;;
+            *) echo "recovery point $1 lacks $archive" >&2; return 3 ;;
+          esac
+        done
+      }
+      if [ "$PBS_RESTORE_MODE" = list ]; then
+        proxmox-backup-client snapshot list "host/$PBS_BACKUP_ID" --output-format text
+        exit 0
+      fi
+      require_archives "$PBS_SNAPSHOT"
+      if [ -n "$PBS_PRE_RESTORE_POINT" ]; then require_archives "$PBS_PRE_RESTORE_POINT"; fi
+      if [ "$PBS_RESTORE_MODE" = verify ]; then
+        proxmox-backup-client restore "$PBS_SNAPSHOT" index.json "$HOME/index.json" >&2
+        case "$files" in
+          *'"catalog.pcat1.'*) proxmox-backup-client catalog dump "$PBS_SNAPSHOT" >/dev/null ;;
+        esac
+        cat "$HOME/index.json"
+        exit 0
+      fi
+      {% for archive in _pbs_restore_archives %}
+      proxmox-backup-client restore "$PBS_SNAPSHOT" {{ archive.name | quote }} {{ archive.path | quote }} \
+        {{ pbs_client_restore_args | default([]) | map('quote') | join(' ') }} >&2
+      {% endfor %}
+      echo extracted
+
+- name: PBS restore | Show the recovery points
+  ansible.builtin.debug:
+    msg: "PBS recovery points for host/{{ _pbs_restore_backup_id }}:\n{{ pbs_client_output }}"
+  when: not _pbs_restore_overwrite and _pbs_restore_snapshot | length == 0
+
+- name: PBS restore | Explain the verified preview
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. {{ _pbs_restore_snapshot }} holds
+      {{ _pbs_restore_archives | map(attribute='name') | join(', ') }}, and the client
+      downloaded its index through the same path a restore uses. Re-run with
+      overwrite=true to restore it.
+  when: not _pbs_restore_overwrite and _pbs_restore_snapshot | length > 0
+
+- name: PBS restore | Record the extraction
+  ansible.builtin.set_fact:
+    pbs_client_restore_extracted: "{{ _pbs_restore_overwrite and (pbs_client_output | trim | split('\n') | last) == 'extracted' }}"
+
+- name: PBS restore | Require every archive in staging
+  ansible.builtin.assert:
+    that: pbs_client_restore_extracted | bool
+    fail_msg: PBS restore did not confirm that every archive was extracted.
+  when: _pbs_restore_overwrite

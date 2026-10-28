@@ -53,9 +53,3 @@ home_assistant_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
-    client:
-      image: buildpack-deps:bookworm-curl
-      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      suite: bookworm
-      component: main

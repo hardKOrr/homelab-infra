@@ -11,11 +11,6 @@
     _ntfy_restore_auth_relative: >-
       {{ ntfy_auth_file | replace((app_config.app.data_path | default('')).rstrip('/') ~ '/', '') }}
     _ntfy_restore_service_name: "{{ app_config.app.service_name | default(ntfy_service_name) }}"
-    _ntfy_restore_source_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
-    _ntfy_restore_target_backup_id: >-
-      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
-         or restore_target | default(instance, true), true) }}
     _ntfy_restore_snapshot: "{{ restore_snapshot | default('') }}"
     _application_restore_complete: false
     _ntfy_restore_data_moved: false
@@ -39,201 +34,19 @@
       - _ntfy_restore_auth_file.startswith(_ntfy_restore_data_path.rstrip('/') ~ '/')
       - _ntfy_restore_cache_file.startswith(_ntfy_restore_cache_path.rstrip('/') ~ '/')
       - _ntfy_restore_auth_relative | length > 0
-      - _ntfy_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-      - _ntfy_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - restore_overwrite is defined
       - (_ntfy_restore_snapshot | length > 0) or not (restore_overwrite | bool)
       - homelabinfra_infra.backups is defined
     fail_msg: >-
       Ntfy restore needs its application-consistent contract, separate data/cache paths,
-      safe backup identities, PBS, and a selected recovery point for overwrite=true.
+      PBS, and a selected recovery point for overwrite=true.
 
-- name: Ntfy restore | Require the source point to belong to its backup group
-  ansible.builtin.assert:
-    that:
-      - _ntfy_restore_snapshot.startswith('host/' ~ _ntfy_restore_source_backup_id ~ '/')
-      - _ntfy_restore_snapshot | length > ('host/' ~ _ntfy_restore_source_backup_id ~ '/') | length
-    fail_msg: >-
-      The selected Ntfy recovery point must belong to
-      host/{{ _ntfy_restore_source_backup_id }}/.
-  when: _ntfy_restore_snapshot | length > 0
-
-- name: Ntfy restore | Require the existing-target point to belong to its backup group
-  ansible.builtin.assert:
-    that:
-      - restore_pre_restore_point.startswith('host/' ~ _ntfy_restore_target_backup_id ~ '/')
-      - restore_pre_restore_point | length > ('host/' ~ _ntfy_restore_target_backup_id ~ '/') | length
-    fail_msg: >-
-      The independent Ntfy pre-restore point must belong to
-      host/{{ _ntfy_restore_target_backup_id }}/.
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Ntfy restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: Ntfy restore | List or verify the recovery point without changing Ntfy
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Ntfy restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Ntfy. Deploy PBS before listing or restoring
-      application data.
-
-- name: Ntfy restore | Require the installed PBS client
-  ansible.builtin.stat:
-    path: /usr/bin/proxmox-backup-client
-  register: _ntfy_restore_client
-  changed_when: false
-
-- name: Ntfy restore | Require the PBS client binary
-  ansible.builtin.assert:
-    that: _ntfy_restore_client.stat.exists and _ntfy_restore_client.stat.isreg
-    fail_msg: >-
-      Ntfy has no installed PBS client. Deploy the instance with the current Ntfy role
-      before requesting an application restore.
-
-- name: Ntfy restore | List source recovery points in plan mode
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - list
-      - "host/{{ _ntfy_restore_source_backup_id }}"
-      - --output-format
-      - text
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _ntfy_restore_snapshots
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when:
-    - not (restore_overwrite | bool)
-    - _ntfy_restore_snapshot | length == 0
-
-- name: Ntfy restore | Report a failed snapshot listing
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _ntfy_restore_snapshots }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Ntfy restore | PBS snapshot listing failed
-  when:
-    - _ntfy_restore_snapshots is defined
-    - not (_ntfy_restore_snapshots.skipped | default(false) | bool)
-
-- name: Ntfy restore | Show source recovery points in plan mode
-  ansible.builtin.debug:
-    msg: >-
-      PBS recovery points for host/{{ _ntfy_restore_source_backup_id }}:
-      {{ _ntfy_restore_snapshots.stdout }}
-  when:
-    - not (restore_overwrite | bool)
-    - _ntfy_restore_snapshot | length == 0
-
-- name: Ntfy restore | Verify the selected recovery point archives
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - files
-      - "{{ _ntfy_restore_snapshot }}"
-      - --output-format
-      - json
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _ntfy_restore_source_files
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when: _ntfy_restore_snapshot | length > 0
-
-- name: Ntfy restore | Report an unavailable source archive
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _ntfy_restore_source_files }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Ntfy restore | selected PBS point is unavailable
-  when: _ntfy_restore_source_files is defined
-
-- name: Ntfy restore | Require both application archives
-  ansible.builtin.assert:
-    that:
-      - "'data.pxar' in _ntfy_restore_source_files.stdout"
-      - "'cache.pxar' in _ntfy_restore_source_files.stdout"
-    fail_msg: >-
-      Recovery point {{ _ntfy_restore_snapshot }} lacks Ntfy's auth database or cache
-      archive; the current instance has not been changed.
-  when: _ntfy_restore_snapshot | length > 0
-
-- name: Ntfy restore | Verify the independent pre-restore archives
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - files
-      - "{{ restore_pre_restore_point }}"
-      - --output-format
-      - json
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _ntfy_restore_prepoint_files
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Ntfy restore | Report an unavailable pre-restore archive
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _ntfy_restore_prepoint_files }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Ntfy restore | pre-restore point is unavailable
-  when: _ntfy_restore_prepoint_files is defined
-
-- name: Ntfy restore | Require both independent safety archives
-  ansible.builtin.assert:
-    that:
-      - "'data.pxar' in _ntfy_restore_prepoint_files.stdout"
-      - "'cache.pxar' in _ntfy_restore_prepoint_files.stdout"
-    fail_msg: >-
-      Pre-restore point {{ restore_pre_restore_point }} lacks Ntfy's auth database or
-      cache archive for the target instance.
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Ntfy restore | Explain the selected read-only plan
-  ansible.builtin.debug:
-    msg: >-
-      No Ntfy data was changed. Re-run with overwrite=true and
-      pre_restore_point=<independent target recovery point> to replace the auth database
-      and message cache from {{ _ntfy_restore_snapshot }}.
-  when:
-    - not (restore_overwrite | bool)
-    - _ntfy_restore_snapshot | length > 0
+    pbs_client_runtime: native
+    pbs_client_archives: [{name: data.pxar}, {name: cache.pxar}]
+  when: not (restore_overwrite | bool)
 
 - name: Ntfy restore | Check the live data and cache directories
   ansible.builtin.stat:
@@ -294,6 +107,16 @@
         - "{{ _ntfy_restore_stages.results[0].path }}/data"
         - "{{ _ntfy_restore_stages.results[1].path }}/cache"
 
+    - name: Ntfy restore | Extract the selected point into staging
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: native
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _ntfy_restore_stages.results[0].path }}/data"
+          - name: cache.pxar
+            path: "{{ _ntfy_restore_stages.results[1].path }}/cache"
+
     - name: Ntfy restore | Stop only this instance
       ansible.builtin.systemd_service:
         name: "{{ _ntfy_restore_service_name }}"
@@ -302,62 +125,6 @@
     - name: Ntfy restore | Record that the service is stopped
       ansible.builtin.set_fact:
         _ntfy_restore_service_stopped: true
-
-    - name: Ntfy restore | Extract the selected auth database archive
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - restore
-          - "{{ _ntfy_restore_snapshot }}"
-          - data.pxar
-          - "{{ _ntfy_restore_stages.results[0].path }}/data"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_restore_data_extract
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Ntfy restore | Report an invalid auth database archive
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_restore_data_extract }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy restore | auth database extraction failed
-
-    - name: Ntfy restore | Extract the selected cache archive
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - restore
-          - "{{ _ntfy_restore_snapshot }}"
-          - cache.pxar
-          - "{{ _ntfy_restore_stages.results[1].path }}/cache"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_restore_cache_extract
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Ntfy restore | Report an invalid cache archive
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_restore_cache_extract }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy restore | cache extraction failed
 
     - name: Ntfy restore | Check the staged auth database
       ansible.builtin.stat:
