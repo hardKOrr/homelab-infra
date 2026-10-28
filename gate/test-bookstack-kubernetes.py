@@ -113,6 +113,8 @@ def check_defaults_and_dispatch():
     assert k8s_include["ansible.builtin.include_role"]["name"] == "bookstack-kubernetes"
     assert k8s_include["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
     assert "homelabinfra_infra.kubernetes.ingress_vip" in str(deploy[-1]["vars"]["wiring_upstream_host"])
+    assert "80 if app_config.hosting.method == 'kubernetes'" in deploy[-1]["vars"]["wiring_upstream_port"]
+    assert "else app_config.app.port" in deploy[-1]["vars"]["wiring_upstream_port"]
 
     backup = yaml.safe_load(
         (ROOT / "ansible/playbooks/maintenance/bookstack-backup.yml").read_text()

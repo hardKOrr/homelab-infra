@@ -164,7 +164,7 @@
          if app_config.hosting.method == 'kubernetes'
          else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
     wiring_upstream_port: >-
-      {{ app_config.app.container_port if app_config.hosting.method == 'kubernetes'
+      {{ 80 if app_config.hosting.method == 'kubernetes'
          else app_config.app.port }}
     wiring_subdomain: "{{ hostvars['localhost'].bookstack_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].bookstack_fqdn }}"
