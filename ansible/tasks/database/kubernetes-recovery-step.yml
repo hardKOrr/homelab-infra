@@ -9,8 +9,9 @@
 # PostgreSQL writes `<database>.dump` (custom format), MySQL writes `database.sql`.
 #
 # Inputs:
-#   k8s_database_step_engine     postgresql — the app's registered external backend
-#                                mysql      — a database pod in the app's own namespace
+#   k8s_database_step_engine     postgresql     — the app's registered external backend
+#                                external-mysql — the app's registered external backend
+#                                mysql          — a database pod in the app's own namespace
 #   k8s_database_step_config     the merged config of the instance whose database this is
 #   k8s_database_step_instance   that instance's name (mysql: its pod is `<instance>-db`)
 #   k8s_database_step_root_password  mysql only: the in-namespace server's root password
@@ -27,7 +28,7 @@
 - name: Database recovery step | Assert inputs
   ansible.builtin.assert:
     that:
-      - k8s_database_step_engine | default('') in ['postgresql', 'mysql']
+      - k8s_database_step_engine | default('') in ['postgresql', 'external-mysql', 'mysql']
       - k8s_database_step_config is mapping
       - k8s_database_step_instance | default('') | length > 0
     fail_msg: >-
@@ -113,6 +114,108 @@
             echo "=== database a restore would replace: ${PGDATABASE} on ${PGHOST} ==="
             psql --no-psqlrc --tuples-only --no-align \
               --command="SELECT current_database(), count(*) FROM pg_tables WHERE schemaname = 'public'"
+      no_log: true
+
+- name: Database recovery step | Resolve an external MariaDB or MySQL server
+  when: k8s_database_step_engine == 'external-mysql'
+  block:
+    - name: Database recovery step | Read the external MySQL connection
+      ansible.builtin.set_fact:
+        _kds_app: "{{ k8s_database_step_config.app }}"
+        _kds_provider: >-
+          {{ k8s_database_step_config.app.database_provider
+             | default(k8s_database_step_config.app.database.provider | default('')) }}
+        _kds_host: "{{ k8s_database_step_config.app.database_host | default('') }}"
+        _kds_port: "{{ k8s_database_step_config.app.database_port | default(0) | string }}"
+        _kds_name: >-
+          {{ k8s_database_step_config.app.database_name
+             | default(k8s_database_step_config.app.database.name | default(''), true) }}
+        _kds_user: >-
+          {{ k8s_database_step_config.app.database_user
+             | default(k8s_database_step_config.app.database.role | default(''), true) }}
+        _kds_password: "{{ k8s_database_step_config.app.database_password | default('', true) }}"
+      no_log: true
+
+    - name: Database recovery step | Require an external MySQL-compatible database
+      ansible.builtin.assert:
+        that:
+          - _kds_provider in ['mariadb', 'mysql']
+          - _kds_host | length > 0
+          - _kds_port | int > 0
+          - _kds_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _kds_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _kds_password | length > 0
+        fail_msg: >-
+          {{ k8s_database_step_instance }} needs its registered MariaDB or MySQL
+          connection and application credentials before a recovery Job can reach it.
+          Deploy the instance first.
+      no_log: true
+
+    - name: Database recovery step | Describe the external MySQL step
+      ansible.builtin.set_fact:
+        _kds_client: "{{ 'mariadb' if _kds_provider == 'mariadb' else 'mysql' }}"
+        _kds_dump_client: "{{ 'mariadb-dump' if _kds_provider == 'mariadb' else 'mysqldump' }}"
+        _kds_client_package: "{{ 'mariadb-client' if _kds_provider == 'mariadb' else 'default-mysql-client' }}"
+      no_log: true
+
+    - name: Database recovery step | Describe the external database operations
+      ansible.builtin.set_fact:
+        k8s_database_step:
+          image: debian:bookworm-slim
+          setup: |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends {{ _kds_client_package }} >/dev/null
+          env:
+            DB_HOST: "{{ _kds_host }}"
+            DB_PORT: "{{ _kds_port }}"
+            DB_NAME: "{{ _kds_name }}"
+          secret_env: {}
+          secret_files:
+            - key: my.cnf
+              path: my.cnf
+          secret_data:
+            my.cnf: |
+              [client]
+              user={{ _kds_user }}
+              password={{ _kds_password }}
+          describe: "{{ _kds_provider }} database {{ _kds_name }} on {{ _kds_host }}"
+          dump: |
+            umask 077
+            {{ _kds_dump_client }} \
+              --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+              --host="${DB_HOST}" --port="${DB_PORT}" \
+              --single-transaction --routines --triggers --events --hex-blob \
+              --no-create-db --databases "${DB_NAME}" > "${DUMP_DIR}/database.sql"
+            test -s "${DUMP_DIR}/database.sql"
+            echo "dumped ${DB_NAME}: $(wc -c < "${DUMP_DIR}/database.sql") bytes"
+          load: |
+            test -s "${DUMP_DIR}/database.sql"
+            # The application role owns this database, not the backend server. Replace
+            # its tables under that grant instead of dropping the shared database.
+            table_sql=$({{ _kds_client }} \
+              --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+              --host="${DB_HOST}" --port="${DB_PORT}" --batch --skip-column-names \
+              --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', CHAR(96), REPLACE(TABLE_NAME, CHAR(96), CONCAT(CHAR(96), CHAR(96))), CHAR(96), ';') FROM information_schema.tables WHERE TABLE_SCHEMA='${DB_NAME}';")
+            if [ -n "${table_sql}" ]; then
+              {
+                printf 'SET FOREIGN_KEY_CHECKS=0;\n'
+                printf '%s\n' "${table_sql}"
+              } | {{ _kds_client }} \
+                --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+                --host="${DB_HOST}" --port="${DB_PORT}" --database="${DB_NAME}"
+            fi
+            {{ _kds_client }} \
+              --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+              --host="${DB_HOST}" --port="${DB_PORT}" --database="${DB_NAME}" \
+              < "${DUMP_DIR}/database.sql"
+            echo "=== restored into ${DB_NAME} ==="
+          inspect: |
+            echo "=== database a restore would replace: ${DB_NAME} on ${DB_HOST} ==="
+            {{ _kds_client }} \
+              --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+              --host="${DB_HOST}" --port="${DB_PORT}" --table \
+              --execute="SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.tables WHERE table_schema='${DB_NAME}' ORDER BY TABLE_ROWS DESC LIMIT 15;"
       no_log: true
 
 - name: Database recovery step | Resolve the in-namespace MySQL server

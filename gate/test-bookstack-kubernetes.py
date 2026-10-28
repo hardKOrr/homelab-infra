@@ -149,8 +149,8 @@ def check_defaults_and_dispatch():
 def check_workload_manifest():
     rendered = documents("ansible/roles/bookstack-kubernetes/templates/manifest.yaml.j2", fixture())
     objects = {doc["kind"]: doc for doc in rendered if doc}
-    assert {"ConfigMap", "PersistentVolumeClaim", "ServiceAccount", "Role", "RoleBinding",
-            "Deployment", "Service", "Ingress"} <= set(objects)
+    assert {"PersistentVolumeClaim", "Deployment", "Service", "Ingress"} <= set(objects)
+    assert not {"ConfigMap", "ServiceAccount", "Role", "RoleBinding"} & set(objects)
 
     pvc = objects["PersistentVolumeClaim"]
     assert pvc["spec"]["resources"]["requests"]["storage"] == "5Gi"
@@ -165,85 +165,50 @@ def check_workload_manifest():
     assert container["volumeMounts"][0]["mountPath"] == "/config"
     assert container["readinessProbe"]["httpGet"]["path"] == "/login"
     assert objects["Ingress"]["spec"]["rules"][0]["host"] == "bookstack.example.test"
-    assert "bookstack-recovery" in objects["ConfigMap"]["data"]
-    assert "kube_scale_bookstack 0" in objects["ConfigMap"]["data"]["bookstack-recovery"]
-
-    role_rules = objects["Role"]["rules"]
-    scale_rule = next(rule for rule in role_rules if "deployments/scale" in rule["resources"])
-    assert scale_rule["resourceNames"] == ["bookstack"]
-    assert scale_rule["verbs"] == ["get", "patch"]
-    pod_rule = next(rule for rule in role_rules if "pods" in rule["resources"])
-    assert set(pod_rule["verbs"]) == {"get", "list", "watch"}
 
 
 def check_backup_and_restore_jobs():
-    context = fixture()
+    main_tasks = yaml.safe_load(
+        (ROLE / "tasks/main.yml").read_text(encoding="utf-8")
+    )
+    database_backup = next(
+        task for task in main_tasks
+        if task.get("name") == "BookStack Kubernetes | Describe the external database recovery step"
+    )
+    assert database_backup["vars"]["k8s_database_step_engine"] == "external-mysql"
+    assert database_backup["vars"]["k8s_database_step_config"] == "{{ app_config }}"
+    backup_task = next(
+        task for task in main_tasks
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("recovery-backup.yml")
+    )
+    backup = backup_task["vars"]["k8s_recovery"]
+    assert backup["archives"] == [
+        {"name": "storage", "claim": "{{ instance }}-config"}
+    ]
+    assert backup["database"] == "{{ k8s_database_step | default({}) }}"
+
     restore_tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/bookstack-kubernetes/tasks/restore.yml").read_text()
+        (ROLE / "tasks/restore.yml").read_text(encoding="utf-8")
     )
-    render_task = next(
+    database_restore = next(
         task for task in restore_tasks
-        if task.get("name") == "BookStack Kubernetes Restore | Render the recovery Job"
+        if task.get("name") == "BookStack Kubernetes Restore | Describe the external database recovery step"
     )
-    manifest_expression = render_task["ansible.builtin.set_fact"]["_bookstack_restore_manifest"]
-    assert "convert_data=False" in manifest_expression
-
-    backup = documents("ansible/roles/bookstack-kubernetes/templates/backup-cronjob.yaml.j2", context)[0]
-    spec = backup["spec"]
-    pod = spec["jobTemplate"]["spec"]["template"]["spec"]
-    container = pod["containers"][0]
-    assert isinstance(container["args"], list) and all(isinstance(arg, str) for arg in container["args"])
-    assert spec["schedule"] == "0 3 * * *"
-    assert spec["concurrencyPolicy"] == "Forbid"
-    assert pod["serviceAccountName"] == "bookstack-recovery"
-    assert "bookstack-recovery --backup" in container["args"][0]
-    env = {item["name"]: item for item in container["env"]}
-    assert env["BOOKSTACK_DB_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "db-password"
-    assert env["PBS_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "pbs-password"
-    mounts = {item["name"]: item for item in container["volumeMounts"]}
-    assert mounts["config"]["mountPath"] == "/config" and mounts["config"]["readOnly"] is True
-    assert pod["volumes"][-2]["persistentVolumeClaim"]["claimName"] == "bookstack-config"
-
-    plan = documents("ansible/roles/bookstack-kubernetes/templates/restore-job.yaml.j2", context)[0]
-    plan_pod = plan["spec"]["template"]["spec"]
-    plan_container = plan_pod["containers"][0]
-    assert isinstance(plan_container["args"], list) and all(
-        isinstance(arg, str) for arg in plan_container["args"]
-    ), "restore Job args must be a list of strings"
-    assert plan_container["env"][0]["name"] == "BOOKSTACK_BACKEND"
-    assert plan_pod["serviceAccountName"] == "bookstack-recovery"
-    assert "--plan --snapshot 'host/bookstack/2026-10-15T00:00:00Z'" in plan_container["args"][0]
-    assert all(volume["name"] != "config" for volume in plan_pod["volumes"])
-
-    context.update(
-        {
-            "_bookstack_restore_mode": "restore",
-            "_bookstack_restore_job_name": "bookstack-restore-run",
-        }
+    assert database_restore["vars"]["k8s_database_step_engine"] == "external-mysql"
+    recovery_task = next(
+        task for task in restore_tasks
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("recovery-restore.yml")
     )
-    overwrite = documents(
-        "ansible/roles/bookstack-kubernetes/templates/restore-job.yaml.j2", context
-    )[0]
-    run_pod = overwrite["spec"]["template"]["spec"]
-    run_container = run_pod["containers"][0]
-    assert isinstance(run_container["args"], list) and all(
-        isinstance(arg, str) for arg in run_container["args"]
-    )
-    assert "--restore --snapshot 'host/bookstack/2026-10-15T00:00:00Z'" in run_container["args"][0]
-    assert (
-        f"--pre-restore-point '{context['_bookstack_restore_safety_point']}'"
-        in run_container["args"][0]
-    )
-    run_mounts = {item["name"]: item for item in run_container["volumeMounts"]}
-    assert run_mounts["client-cache"]["mountPath"] == "/root/.cache"
-    run_volumes = {item["name"]: item for item in run_pod["volumes"]}
-    assert run_volumes["client-cache"]["emptyDir"] == {
-        "medium": "Memory",
-        "sizeLimit": "64Mi",
-    }
-    assert "client-cache" not in {item["name"] for item in plan_container["volumeMounts"]}
-    assert any(volume.get("persistentVolumeClaim", {}).get("claimName") == "bookstack-config"
-               for volume in run_pod["volumes"])
+    recovery = recovery_task["vars"]["k8s_recovery"]
+    assert recovery["archives"] == [{
+        "name": "storage",
+        "claim": "{{ restore_target }}-config",
+        "owner": "{{ restore_target_config.app.puid | default(1000) }}:{{ restore_target_config.app.pgid | default(1000) }}",
+    }]
+    assert recovery["stop"] == ["{{ restore_target }}"]
+    assert recovery["database"] == "{{ k8s_database_step }}"
+    assert not (ROLE / "templates/backup-cronjob.yaml.j2").exists()
+    assert not (ROLE / "templates/restore-job.yaml.j2").exists()
 
 
 FAKE_CURL = """#!/bin/bash

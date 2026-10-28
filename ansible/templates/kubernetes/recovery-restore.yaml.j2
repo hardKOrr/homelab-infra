@@ -108,6 +108,9 @@ app.kubernetes.io/component: restore
   args:
     - |
       set -eu
+{% if db.setup | default('', true) | length > 0 %}
+{{ db.setup | trim | indent(6, true) }}
+{% endif %}
 {{ body | trim | indent(6, true) }}
   env:
     - name: DUMP_DIR

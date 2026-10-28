@@ -1,77 +1,45 @@
 ---
+# Restore BookStack's named database and /config PVC through the shared Kubernetes
+# recovery Job. The source and target are the same instance for this application playbook.
 - name: BookStack Kubernetes Restore | Resolve the cluster
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 
 - name: BookStack Kubernetes Restore | Derive and verify the owned namespace
   ansible.builtin.include_tasks: namespace.yml
 
-- name: BookStack Kubernetes Restore | Resolve PBS
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('', true) }}"
-
-- name: BookStack Kubernetes Restore | Require PBS and canonical database credentials
-  ansible.builtin.assert:
-    that:
-      - k8s_pbs_available | bool
-      - app_config.app.database_host | default('') | length > 0
-      - app_config.app.database_password | default('') | length > 0
-      - app_config.app.database_name | default(app_config.app.database.name | default('')) | length > 0
-      - app_config.app.database_user | default(app_config.app.database.role | default('')) | length > 0
-    fail_msg: >-
-      BookStack Kubernetes restore needs its registered PBS target and canonical database
-      credentials from Vaultwarden.
-  no_log: true
-
-- name: BookStack Kubernetes Restore | Set restore identity
+- name: BookStack Kubernetes Restore | Set shared restore inputs
   ansible.builtin.set_fact:
-    _bookstack_restore_mode: "{{ 'restore' if overwrite | default(false) | bool else 'plan' }}"
-    _bookstack_restore_snapshot: "{{ snapshot | default('') }}"
-    _bookstack_restore_safety_point: "{{ pre_restore_point | default('') }}"
-    _bookstack_restore_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-    _bookstack_restore_secret: "{{ instance }}-restore"
-    _bookstack_restore_job_name: "{{ instance }}-restore-{{ 'run' if overwrite | default(false) | bool else 'plan' }}"
-    _bookstack_restore_timeout: "{{ app_config.backup.timeout_seconds | default(3600) | int }}"
+    restore_target: "{{ instance }}"
+    restore_target_config: "{{ app_config }}"
+    restore_overwrite: "{{ overwrite | default(false) | bool }}"
+    restore_snapshot: "{{ snapshot | default('') }}"
 
-- name: BookStack Kubernetes Restore | Sync recovery credentials
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+- name: BookStack Kubernetes Restore | Describe the external database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_secret_name: "{{ _bookstack_restore_secret }}"
-    k8s_secret_data:
-      db-password: "{{ app_config.app.database_password }}"
-      pbs-password: "{{ k8s_pbs_password }}"
-  no_log: true
+    k8s_database_step_engine: external-mysql
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
 
-- name: BookStack Kubernetes Restore | Render the recovery Job
+- name: BookStack Kubernetes Restore | Run the shared recovery operation
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: BookStack
+      archives:
+        - name: storage
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1000) }}:{{ restore_target_config.app.pgid | default(1000) }}"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ k8s_database_step.describe }} and {{ restore_target }}'s /config volume
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in as the BookStack
+          administrator, and confirm the restored books, pages and uploaded images.
+
+- name: BookStack Kubernetes Restore | Record success for the dispatcher
   ansible.builtin.set_fact:
-    # This is a YAML document, so the template lookup's default native conversion turns
-    # the manifest into a mapping. run-job.yml writes it to kubectl stdin and needs the
-    # rendered document text intact (especially the Job container's args string list).
-    _bookstack_restore_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2', convert_data=False) }}"
-
-- name: BookStack Kubernetes Restore | Run the requested recovery operation
-  block:
-    - name: BookStack Kubernetes Restore | Run the plan or restore Job
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
-      vars:
-        k8s_job_name: "{{ _bookstack_restore_job_name }}"
-        k8s_job_manifest: "{{ _bookstack_restore_manifest }}"
-        k8s_job_timeout: "{{ _bookstack_restore_timeout }}"
-
-    - name: BookStack Kubernetes Restore | Record success
-      ansible.builtin.set_fact:
-        bookstack_restore_result: {rc: 0}
-  always:
-    - name: BookStack Kubernetes Restore | Remove temporary recovery credentials
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - delete
-          - secret/{{ _bookstack_restore_secret }}
-          - --ignore-not-found=true
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      changed_when: false
+    bookstack_restore_result: {rc: 0}

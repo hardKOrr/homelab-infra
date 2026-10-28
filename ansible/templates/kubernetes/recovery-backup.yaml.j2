@@ -90,6 +90,9 @@ spec:
                 - |
                   set -eu
                   install -d -m 0700 "${DUMP_DIR}"
+{% if db.setup | default('', true) | length > 0 %}
+{{ db.setup | trim | indent(18, true) }}
+{% endif %}
 {{ db.dump | trim | indent(18, true) }}
               env:
                 - name: DUMP_DIR

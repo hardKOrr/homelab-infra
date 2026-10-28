@@ -1,18 +1,8 @@
-{# One namespace contains BookStack's application, /config volume and recovery access. #}
+{# One namespace contains BookStack's application and /config volume. #}
 {% set labels %}
 app.kubernetes.io/instance: {{ instance }}
 app.kubernetes.io/managed-by: homelab-infra
 {% endset %}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ instance }}-recovery
-  labels:
-{{ labels | trim | indent(4, true) }}
-data:
-  bookstack-recovery: |
-{{ _bookstack_recovery_script | indent(4, true) }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -25,48 +15,6 @@ spec:
   resources:
     requests:
       storage: {{ app_config.app.storage | int }}Gi
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ instance }}-recovery
-  labels:
-{{ labels | trim | indent(4, true) }}
-automountServiceAccountToken: true
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ instance }}-recovery
-  labels:
-{{ labels | trim | indent(4, true) }}
-rules:
-  - apiGroups: [apps]
-    resources: [deployments]
-    resourceNames: [{{ instance }}]
-    verbs: [get]
-  - apiGroups: [apps]
-    resources: [deployments/scale]
-    resourceNames: [{{ instance }}]
-    verbs: [get, patch]
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list, watch]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ instance }}-recovery
-  labels:
-{{ labels | trim | indent(4, true) }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ instance }}-recovery
-    namespace: {{ k8s_namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ instance }}-recovery
 ---
 apiVersion: apps/v1
 kind: Deployment

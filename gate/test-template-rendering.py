@@ -1668,7 +1668,7 @@ def backup_prune_keeps_the_previous_point():
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
     templates = [ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"]
     bookstack_kubernetes = ROOT / "ansible/roles/bookstack-kubernetes/templates/backup-cronjob.yaml.j2"
-    assert bookstack_kubernetes.is_file(), "BookStack Kubernetes backup template is missing"
+    assert not bookstack_kubernetes.exists(), "BookStack must use the shared Kubernetes backup template"
     templates_with_inline_pruning = templates
     for template in templates_with_inline_pruning:
         assert "proxmox-backup-client prune" in template.read_text(), f"{template} has no prune"

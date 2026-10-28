@@ -29,6 +29,8 @@ CLIENT = {
 }
 # Archive names are part of every recovery point already in PBS. Changing one strands them.
 APPS = {
+    "bookstack": {"role": "bookstack-kubernetes", "file": "main.yml", "restore": "restore.yml", "engine": "external-mysql",
+                  "archives": ["storage"]},
     "maintainerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
                     "archives": ["config"]},
     "jellyseerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
@@ -90,7 +92,43 @@ def database_steps():
     assert "password=root-secret" in mysql["secret_data"]["my.cnf"]
     assert '"${DUMP_DIR}/database.sql"' in mysql["dump"]
     assert "DROP DATABASE IF EXISTS" in mysql["load"]
-    return {"postgresql": postgres, "mysql": mysql}
+
+    external_task = task_named(tasks, "Database recovery step | Describe the external database operations")
+
+    def external_mysql(provider):
+        client = "mariadb" if provider == "mariadb" else "mysql"
+        dump_client = "mariadb-dump" if provider == "mariadb" else "mysqldump"
+        package = "mariadb-client" if provider == "mariadb" else "default-mysql-client"
+        return render(external_task["ansible.builtin.set_fact"]["k8s_database_step"], {
+            "_kds_provider": provider,
+            "_kds_client": client,
+            "_kds_dump_client": dump_client,
+            "_kds_client_package": package,
+            "_kds_host": "database.example.test",
+            "_kds_port": "3306",
+            "_kds_name": "bookstack",
+            "_kds_user": "bookstack",
+            "_kds_password": "fixture-database-password",
+        })
+
+    external_mariadb = external_mysql("mariadb")
+    assert external_mariadb["image"] == "debian:bookworm-slim"
+    assert "mariadb-client" in external_mariadb["setup"]
+    assert external_mariadb["env"] == {
+        "DB_HOST": "database.example.test", "DB_PORT": "3306", "DB_NAME": "bookstack"
+    }
+    assert external_mariadb["secret_files"] == [{"key": "my.cnf", "path": "my.cnf"}]
+    assert "user=bookstack" in external_mariadb["secret_data"]["my.cnf"]
+    assert "mariadb-dump" in external_mariadb["dump"]
+    assert "--single-transaction" in external_mariadb["dump"]
+    assert "DROP TABLE IF EXISTS" in external_mariadb["load"]
+    assert "DROP DATABASE" not in external_mariadb["load"]
+    assert "mariadb" in external_mariadb["inspect"]
+
+    external_mysql_step = external_mysql("mysql")
+    assert "default-mysql-client" in external_mysql_step["setup"]
+    assert "mysqldump" in external_mysql_step["dump"]
+    return {"postgresql": postgres, "mysql": mysql, "external-mysql": external_mariadb}
 
 
 def backup_documents(archives, database, instance="app"):
@@ -218,6 +256,28 @@ def shared_pair(steps):
     assert {"name": "credentials", "mountPath": "/etc/recovery-credentials",
             "readOnly": True} in load["volumeMounts"]
 
+    _, cronjob = backup_documents(
+        [{"name": "storage", "claim": "bookstack-config"}], steps["external-mysql"], "bookstack"
+    )
+    pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    dump = pod["initContainers"][0]
+    assert "mariadb-client" in dump["args"][0]
+    assert "mariadb-dump" in dump["args"][0]
+    assert "database.pxar:/recovery/database" in pod["containers"][0]["args"][0]
+    assert "storage.pxar:/volumes/storage" in pod["containers"][0]["args"][0]
+
+    _, containers = restore_pod(
+        "restore", [{"name": "storage", "claim": "bookstack-config", "owner": "1000:1000"}],
+        steps["external-mysql"], "bookstack"
+    )
+    load = containers[1]
+    assert "mariadb-client" in load["args"][0]
+    assert "DROP TABLE IF EXISTS" in load["args"][0]
+    assert "DROP DATABASE" not in load["args"][0]
+    replace = containers[2]["args"][0]
+    assert "find /volumes/storage -mindepth 1 -delete" in replace
+    assert "chown -R 1000:1000 /volumes/storage" in replace
+
 
 def restore_tasks():
     tasks = tasks_of("ansible/tasks/kubernetes/recovery-restore.yml")
@@ -259,17 +319,32 @@ def include_vars(tasks, shared_file):
 
 
 def app_render(app, spec, steps):
-    role = ROOT / "ansible/roles" / app
+    role_name = spec.get("role", app)
+    role = ROOT / "ansible/roles" / role_name
     manifest = (role / "templates/manifest.yaml.j2").read_text(encoding="utf-8")
     assert not (role / "templates/backup-cronjob.yaml.j2").exists()
     assert not (role / "templates/restore-job.yaml.j2").exists()
     database = steps[spec["engine"]] if spec["engine"] else {}
-    variables = {"instance": "src", "restore_target": "dst", "k8s_database_step": database,
-                 "role_path": str(role), "app_config": {"app": {"database": {"name": "db"}}}}
+    variables = {
+        "instance": "src", "restore_target": "dst", "k8s_database_step": database,
+        "role_path": str(role),
+        "app_config": {"app": {
+            "database": {"name": "db", "provider": "mariadb"},
+            "database_host": "database.example.test", "database_port": 3306,
+            "database_user": "bookstack", "database_password": "fixture-password",
+            "puid": 1000, "pgid": 1000,
+        }},
+        "restore_target_config": {"app": {
+            "database": {"name": "db", "provider": "mariadb"},
+            "database_host": "database.example.test", "database_port": 3306,
+            "database_user": "bookstack", "database_password": "fixture-password",
+            "puid": 1000, "pgid": 1000,
+        }},
+    }
 
-    backup = render(include_vars(tasks_of(f"ansible/roles/{app}/tasks/{spec['file']}"),
+    backup = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['file']}"),
                                  "recovery-backup.yml"), variables)
-    restore = render(include_vars(tasks_of(f"ansible/roles/{app}/tasks/{spec['restore']}"),
+    restore = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['restore']}"),
                                   "recovery-restore.yml"), variables)
     assert [a["name"] for a in backup["archives"]] == spec["archives"], app
     assert [a["name"] for a in restore["archives"]] == spec["archives"], app
