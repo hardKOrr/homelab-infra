@@ -608,7 +608,7 @@
           ansible.builtin.set_fact:
             _rg_restore_task_upids: >-
               {{ _rg_restore_task.stdout | default('')
-                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+                 | regex_findall('UPID:[^\s"\\]+:') }}
           when: _rg_execute | bool
 
         - name: Require exactly one guest restore task identity

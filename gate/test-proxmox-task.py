@@ -132,12 +132,17 @@ def main():
                         "_rg_start_task_upid": "_rg_start_task"}[fact]
             upid = f"UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:fixture:"
             output = "PVE operation accepted\n" + upid + "\nworker request complete\n"
-            normalization_cases.append((register, output, [
+            normalization_tasks = [
                 {"ansible.builtin.set_fact": normalize_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": cardinality_task["ansible.builtin.assert"]},
                 {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
-            ]))
+            ]
+            normalization_cases.append((register, output, normalization_tasks))
+            if fact == "_rg_restore_task_upid":
+                # The restore API may wrap its UPID inside JSON instead of returning a
+                # standalone line. Accept that one identity, but reject ambiguity below.
+                normalization_cases.append((register, json.dumps({"data": upid}), normalization_tasks))
 
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
@@ -199,6 +204,32 @@ def main():
                 env=env, text=True, capture_output=True, check=False,
             )
             assert normalized.returncode == 0, normalized.stdout + normalized.stderr
+
+        restore_list_fact, normalize_restore, require_restore, _ = normalizers["_rg_restore_task_upid"]
+        restore_upid = "UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:restore:"
+        ambiguous_upid = "UPID:<pve-node>:00000001:00000002:00000004:vzrestore:<GUEST-vmid>:ambiguous:"
+        ambiguous_restore = root / "restore-response-ambiguous.yml"
+        ambiguous_restore.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"_rg_restore_task": {"stdout": json.dumps({"data": [restore_upid, ambiguous_upid]})}},
+            "tasks": [
+                {"ansible.builtin.set_fact": normalize_restore["ansible.builtin.set_fact"]},
+                {"block": [
+                    {"name": "Require exactly one guest restore task identity",
+                     "ansible.builtin.assert": require_restore["ansible.builtin.assert"]},
+                    {"ansible.builtin.fail": {"msg": "Ambiguous restore response was accepted"}},
+                ], "rescue": [{"ansible.builtin.assert": {"that": [
+                    f"ansible_failed_result.msg == {json.dumps(require_restore['ansible.builtin.assert']['fail_msg'])}",
+                    "ansible_failed_task.name == 'Require exactly one guest restore task identity'",
+                    f"{restore_list_fact} | length == 2",
+                ]}}]},
+            ],
+        }]))
+        ambiguous = subprocess.run(
+            [str(ansible), "-i", str(inventory), str(ambiguous_restore)],
+            env=env, text=True, capture_output=True, check=False,
+        )
+        assert ambiguous.returncode == 0, ambiguous.stdout + ambiguous.stderr
 
         restore_response_selection = named_task(
             playbooks["restore-guest.yml"], "Select the guest restore task response")
