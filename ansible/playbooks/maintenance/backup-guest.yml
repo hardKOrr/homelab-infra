@@ -148,7 +148,7 @@
       ansible.builtin.set_fact:
         _bg_task_upids: >-
           {{ _bg_task.stdout | default('')
-             | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+             | regex_findall('UPID:[^\s"\\]+:') }}
 
     - name: Require at most one PBS backup task identity
       ansible.builtin.assert:

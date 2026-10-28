@@ -93,6 +93,13 @@ def main():
             named_task(playbooks["restore-guest.yml"], "Select the existing target start task identity"),
         ),
     }
+    normalizer_patterns = {
+        normalize_task["ansible.builtin.set_fact"][list_fact]
+        .split("regex_findall(", 1)[1]
+        .split(")", 1)[0]
+        for list_fact, normalize_task, _, _ in normalizers.values()
+    }
+    assert len(normalizer_patterns) == 1, normalizer_patterns
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -139,13 +146,12 @@ def main():
                 {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
             ]
             normalization_cases.append((register, output, normalization_tasks))
-            if fact == "_rg_restore_task_upid":
-                # The restore API may wrap its UPID inside JSON instead of returning a
-                # standalone line. Accept that one identity, but reject ambiguity below.
-                normalization_cases.append((register, json.dumps({"data": upid}), normalization_tasks))
+            # pvesh can wrap the task identity in JSON; every caller uses the same
+            # extraction pattern and its cardinality assertion rejects ambiguity.
+            normalization_cases.append((register, json.dumps({"data": upid}), normalization_tasks))
 
-        # Each of the five production callers must poll exactly the same identity
-        # for bare and JSON-quoted stdout, including pvesh's trailing newline.
+        # Each caller polls the same identity from bare and JSON-quoted stdout,
+        # including pvesh's trailing newline.
         for index, caller in enumerate(callers):
             for operation in ("vzdump", "qmstop", "qmstart", "vzrestore", "vzstop", "vzstart"):
                 upid = (f"UPID:<pve-node>:00000001:00000002:00000003:{operation}:"
@@ -255,7 +261,7 @@ def main():
             assert selected.returncode == 0, selected.stdout + selected.stderr
         requests = [json.loads(line) for line in log.read_text().splitlines()]
         assert requests == expected, requests
-    print("Proxmox: callers extract one wrapped UPID; invalid output fails before polling")
+    print("Proxmox: all task normalizers extract plain and wrapped UPIDs; invalid task input fails before polling")
 
 
 if __name__ == "__main__":

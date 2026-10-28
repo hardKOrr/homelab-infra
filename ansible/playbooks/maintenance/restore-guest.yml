@@ -331,7 +331,7 @@
           ansible.builtin.set_fact:
             _rg_pre_task_upids: >-
               {{ _rg_pre_task.stdout | default('')
-                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+                 | regex_findall('UPID:[^\s"\\]+:') }}
           when: _rg_pre_restore_point | length == 0
 
         - name: Require at most one independent recovery task identity
@@ -516,7 +516,7 @@
           ansible.builtin.set_fact:
             _rg_stop_task_upids: >-
               {{ _rg_stop_task.stdout | default('')
-                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+                 | regex_findall('UPID:[^\s"\\]+:') }}
           when:
             - _rg_execute | bool
             - _rg_destination == 'existing'
@@ -706,7 +706,7 @@
           ansible.builtin.set_fact:
             _rg_start_task_upids: >-
               {{ _rg_start_task.stdout | default('')
-                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+                 | regex_findall('UPID:[^\s"\\]+:') }}
           when:
             - _rg_execute | bool
             - _rg_destination == 'existing'

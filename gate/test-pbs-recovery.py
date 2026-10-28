@@ -658,7 +658,7 @@ for name in ("Restore a VM from the native PBS artifact", "Restore an LXC from t
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
 backup_tasks = backup_guest[0]["tasks"]
 backup_response = task(backup_tasks, "Normalize the PBS backup task response")
-assert "regex_findall('(?m)" in backup_response["ansible.builtin.set_fact"]["_bg_task_upids"]
+assert "regex_findall('UPID:" in backup_response["ansible.builtin.set_fact"]["_bg_task_upids"]
 assert task(backup_tasks, "Require at most one PBS backup task identity")["ansible.builtin.assert"]["that"] == "_bg_task_upids | length <= 1"
 assert "_bg_task_upids | first" in task(backup_tasks, "Select the PBS backup task identity")["ansible.builtin.set_fact"]["_bg_task_upid"]
 async_wait = task(backup_tasks, "Wait for the asynchronous PBS backup task")
@@ -671,7 +671,7 @@ pre_restore_tasks = task(
     restore_guest[0]["pre_tasks"], "Capture and verify an independent pre-restore recovery point"
 )["block"]
 pre_restore_response = task(pre_restore_tasks, "Normalize the independent target recovery task response")
-assert "regex_findall('(?m)" in pre_restore_response["ansible.builtin.set_fact"]["_rg_pre_task_upids"]
+assert "regex_findall('UPID:" in pre_restore_response["ansible.builtin.set_fact"]["_rg_pre_task_upids"]
 assert task(pre_restore_tasks, "Require at most one independent recovery task identity")["ansible.builtin.assert"]["that"] == "_rg_pre_task_upids | length <= 1"
 pre_restore_wait = task(pre_restore_tasks, "Wait for the independent target recovery point")
 assert "_rg_pre_task_upid" in pre_restore_wait["vars"]["proxmox_task_upid"]
