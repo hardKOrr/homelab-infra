@@ -70,7 +70,7 @@
        | length) > 0
 
 - name: MySQL | Install the shared server recovery script
-  ansible.builtin.include_tasks: ../../../tasks/database/install-server-recovery.yml
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
 
 - name: MySQL | Permit application-network listeners
   ansible.builtin.template:

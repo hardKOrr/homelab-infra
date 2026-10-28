@@ -49,7 +49,7 @@
   register: _mariadb_backup_tmp
 
 - name: MariaDB backup | Install the shared server recovery script
-  ansible.builtin.include_tasks: ../../../tasks/database/install-server-recovery.yml
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
 
 - name: MariaDB backup | Create and verify the logical recovery point
   block:
