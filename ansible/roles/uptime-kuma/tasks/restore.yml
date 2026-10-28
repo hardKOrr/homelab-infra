@@ -32,16 +32,6 @@
       Uptime Kuma restore needs its application-consistent contract, safe source and
       target backup ids, PBS, and a selected recovery point for overwrite=true.
 
-- name: Uptime Kuma restore | Require the selected point to belong to its backup group
-  ansible.builtin.assert:
-    that:
-      - _kuma_restore_snapshot.startswith('host/' ~ _kuma_restore_source_backup_id ~ '/')
-      - _kuma_restore_snapshot | length > ('host/' ~ _kuma_restore_source_backup_id ~ '/') | length
-    fail_msg: >-
-      The selected Uptime Kuma recovery point must belong to
-      host/{{ _kuma_restore_source_backup_id }}/.
-  when: _kuma_restore_snapshot | length > 0
-
 - name: Uptime Kuma restore | Require an independent pre-restore point
   ansible.builtin.assert:
     that:
@@ -56,102 +46,13 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-- name: Uptime Kuma restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: Uptime Kuma restore | List or verify the recovery point without changing Uptime Kuma
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Uptime Kuma restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Uptime Kuma. Deploy PBS before listing or restoring
-      application data.
-
-- name: Uptime Kuma restore | List recovery points or validate a preview
-  block:
-    - name: Uptime Kuma restore | List PBS recovery points
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - SNAPSHOT
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl python3 >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client snapshot list "host/$BACKUP_ID" --output-format json \
-              > /tmp/snapshots.json
-            if [ -n "$SNAPSHOT" ]; then
-              files=$(proxmox-backup-client snapshot files "$SNAPSHOT" --output-format json)
-              printf '%s' "$files" | grep -q 'data.pxar'
-              printf 'SELECTED_POINT=%s\n' "$SNAPSHOT"
-            fi
-            python3 - "$BACKUP_ID" <<'PY'
-            import datetime, json, sys
-
-            backup_id = sys.argv[1]
-            with open('/tmp/snapshots.json') as f:
-                rows = json.load(f)
-            for row in sorted(rows, key=lambda value: int(value['backup-time'])):
-                stamp = datetime.datetime.fromtimestamp(
-                    int(row['backup-time']), datetime.timezone.utc
-                ).strftime('%Y-%m-%dT%H:%M:%SZ')
-                print(f"RECOVERY_POINT=host/{backup_id}/{stamp}")
-            PY
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ _kuma_restore_source_backup_id }}"
-        SNAPSHOT: "{{ _kuma_restore_snapshot }}"
-      register: _kuma_restore_plan
-      failed_when: false
-      changed_when: false
-      no_log: true
-
-    - name: Uptime Kuma restore | Report a failed preview
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _kuma_restore_plan }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Uptime Kuma restore | PBS recovery point preview failed
-
-    - name: Uptime Kuma restore | Show the read-only plan
-      ansible.builtin.debug:
-        msg:
-          - "No Uptime Kuma data was changed."
-          - >-
-            {{ _kuma_restore_plan.stdout_lines | select('match', '^(SELECTED_POINT|RECOVERY_POINT)=') | list
-               | join('\n') }}
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _kuma_restore_source_backup_id }}"
+    pbs_client_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
   when: not (restore_overwrite | bool)
 
 - name: Uptime Kuma restore | Check the existing target data directory
@@ -197,76 +98,28 @@
         state: stopped
         services: [uptime-kuma]
 
-    - name: Uptime Kuma restore | Validate both PBS archives and extract the selected point
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --tmpfs
-          - /tmp
-          - --volume
-          - "{{ _kuma_restore_stage.path }}/restored:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - PRE_RESTORE_POINT
-          - --env
-          - RESTORE_DESTINATION
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            source_files=$(proxmox-backup-client snapshot files "$SNAPSHOT" --output-format json)
-            printf '%s' "$source_files" | grep -q 'data.pxar'
-            if [ "$RESTORE_DESTINATION" = "existing" ]; then
-              pre_restore_files=$(proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" --output-format json)
-              printf '%s' "$pre_restore_files" | grep -q 'data.pxar'
-            fi
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
-            test -s /restore/kuma.db
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ _kuma_restore_snapshot }}"
-        PRE_RESTORE_POINT: "{{ restore_pre_restore_point | default('', true) }}"
-        RESTORE_DESTINATION: "{{ restore_destination | default('existing') }}"
-      register: _kuma_restore_extract
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Uptime Kuma restore | Report an invalid or unavailable PBS archive
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+    - name: Uptime Kuma restore | Validate both PBS points and extract the selected one
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        scrub_failure_result: "{{ _kuma_restore_extract }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Uptime Kuma restore | PBS archive validation or extraction failed
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _kuma_restore_source_backup_id }}"
+        pbs_client_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _kuma_restore_stage.path }}/restored"
+
+    - name: Uptime Kuma restore | Check the staged database
+      ansible.builtin.stat:
+        path: "{{ _kuma_restore_stage.path }}/restored/kuma.db"
+      register: _kuma_restore_staged_database
+      changed_when: false
+
+    - name: Uptime Kuma restore | Require the staged database
+      ansible.builtin.assert:
+        that: (_kuma_restore_staged_database.stat.size | default(0)) > 0
+        fail_msg: >-
+          The selected Uptime Kuma recovery point has no kuma.db; the live data has not
+          been replaced.
 
     - name: Uptime Kuma restore | Move the live data aside for rollback
       ansible.builtin.command:
