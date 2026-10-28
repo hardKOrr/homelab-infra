@@ -321,8 +321,10 @@ in a short-lived container on a Docker host or in a private mount namespace on a
 guest. Backup names each recovery point by its UTC time and keeps the previous point
 through a same-day safety backup. A Restore preview (`overwrite=false`) runs the same
 client path: it checks the point's archives and downloads its index without touching the
-application. Stage backup sources and restore targets outside `/tmp`, beside the data
-they replace.
+application. A role that stops its application before extracting runs that preview on
+every restore first (`pbs_client_overwrite: false`), so a point from another group, a
+missing PBS, or a point without the archives fails while the application still serves.
+Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
 ## Local conventions
 

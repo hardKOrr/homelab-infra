@@ -27,6 +27,10 @@
 # catalog into the client's tmpfs, prints the index, and changes nothing on the host.
 # With overwrite=true it checks the point (and the pre-restore point) and extracts every
 # archive into its staging path. Replacing live state stays with the role.
+#
+# A role that stops its application before extracting first calls this file on every
+# restore with pbs_client_overwrite: false. A point from another group, an unreachable
+# PBS, or a point without the archives then fails while the application still serves.
 
 - name: PBS restore | Resolve the recovery identities
   ansible.builtin.set_fact:
@@ -151,7 +155,9 @@
       {{ _pbs_restore_archives | map(attribute='name') | join(', ') }}, and the client
       downloaded its index through the same path a restore uses. Re-run with
       overwrite=true to restore it.
-  when: not _pbs_restore_overwrite and _pbs_restore_snapshot | length > 0
+  when:
+    - not _pbs_restore_overwrite and _pbs_restore_snapshot | length > 0
+    - not (restore_overwrite | default(false) | bool)
 
 - name: PBS restore | Record the extraction
   ansible.builtin.set_fact:

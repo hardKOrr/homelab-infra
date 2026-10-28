@@ -21,12 +21,14 @@
       Navidrome restore needs PBS, an explicit snapshot for overwrite=true, and
       overwrite=false for a read-only plan.
 
-- name: Navidrome restore | List or verify the recovery point without changing the application
+# Runs on every restore, before anything stops: a point from another group, no PBS,
+# or a point without the archives fails while the application still serves.
+- name: Navidrome restore | List or verify the recovery point before changing the application
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
     pbs_client_runtime: docker
     pbs_client_archives: [{name: data.pxar}]
-  when: not (restore_overwrite | bool)
+    pbs_client_overwrite: false
 
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:

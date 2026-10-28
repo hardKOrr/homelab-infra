@@ -11,7 +11,9 @@ lookup is replaced by fixed facts. Fake `docker`, `unshare`, `mount` and
 - preview with a point runs the client (archive check, index download, catalog read)
   and extracts nothing; overwrite extracts every archive into its staging path;
 - a lab without PBS, a point outside the source group and keep_last below 2 fail before
-  the client runs.
+  the client runs;
+- every role restore that stops its application before extracting first runs the shared
+  preview on every restore, so those failures happen while the application still serves.
 """
 
 import json
@@ -197,6 +199,42 @@ def reset_logs(root):
         (root / name).unlink(missing_ok=True)
 
 
+def check_roles_verify_before_stop():
+    """A role that stops its application before extracting must first verify the point."""
+    def walk(tasks):
+        for task in tasks or []:
+            yield task
+            # Only the block runs in order; rescue and always are failure paths.
+            yield from walk(task.get("block"))
+
+    def stops(task):
+        for module in ["community.docker.docker_compose_v2", "ansible.builtin.systemd_service",
+                       "ansible.builtin.systemd"]:
+            if (task.get(module) or {}).get("state") == "stopped":
+                return True
+        return False
+
+    def shared_restore(task):
+        return str(task.get("ansible.builtin.include_tasks", "")).endswith("pbs-client-restore.yml")
+
+    checked = 0
+    for path in sorted((repo / "ansible/roles").glob("*/tasks/*.yml")):
+        if "pbs-client-restore.yml" not in path.read_text():
+            continue
+        tasks = list(walk(yaml.safe_load(path.read_text())))
+        extract = next((i for i, t in enumerate(tasks) if shared_restore(t)
+                        and all("path" in a for a in t["vars"]["pbs_client_archives"])), None)
+        stop = next((i for i, t in enumerate(tasks) if stops(t)), None)
+        if extract is None or stop is None or stop > extract:
+            continue
+        checked += 1
+        assert any(shared_restore(t) and t["vars"].get("pbs_client_overwrite") is False
+                   and "when" not in t for t in tasks[:stop]), (
+            f"{path.relative_to(repo)} stops its application before the shared PBS restore "
+            "checks the point; run the preview (pbs_client_overwrite: false) on every restore first")
+    assert checked, "no role restore stops its application before extracting; the check found nothing"
+
+
 def expect(result, ok, label):
     if (result.returncode == 0) != ok:
         sys.stderr.write(result.stdout + result.stderr)
@@ -204,6 +242,7 @@ def expect(result, ok, label):
 
 
 def main():
+    check_roles_verify_before_stop()
     assert pins["suites"]["bookworm"]["version"] and pins["suites"]["trixie"]["version"]
     assert pins["tmpfs_size"]
     # The shared code refuses paths under /tmp, where its own tmpfs goes.
@@ -304,7 +343,7 @@ def main():
         assert "pruning removed the previous point" in result.stdout + result.stderr
         assert "gate-only-secret" not in result.stdout + result.stderr
 
-    print("pbs client: tmpfs, pinned install, identity and preview checks passed")
+    print("pbs client: tmpfs, pinned install, identity, preview and verify-before-stop checks passed")
 
 
 if __name__ == "__main__":
