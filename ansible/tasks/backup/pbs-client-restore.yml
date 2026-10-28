@@ -133,7 +133,7 @@
         cat "$HOME/index.json"
         exit 0
       fi
-      {% for archive in _pbs_restore_archives %}
+      {% for archive in (_pbs_restore_archives if _pbs_restore_overwrite else []) %}
       proxmox-backup-client restore "$PBS_SNAPSHOT" {{ archive.name | quote }} {{ archive.path | quote }} \
         {{ pbs_client_restore_args | default([]) | map('quote') | join(' ') }} >&2
       {% endfor %}
