@@ -228,6 +228,15 @@ def verify_virtiofs_mount_contract():
     ], [old_id]))
     assert code == 0, f"the VM's mounted virtiofs mapping was not kept\n{output}"
 
+    # A failed run left a second device for the same path: keep the lower slot's mapping.
+    code, output = run_tasks([index_task, choose_task, {"ansible.builtin.assert": {"that": [
+        f"_vmfs_directory_mappings[0].id == '{old_id}'",
+    ]}}], choose([
+        detail(other_id, three + ["node=compute-4,path=/mnt/media"]),
+        detail(old_id, three),
+    ], [old_id, other_id]))
+    assert code == 0, f"the first-slot virtiofs mapping was not kept\n{output}"
+
     with tempfile.TemporaryDirectory() as directory:
         record = Path(directory) / "argv.jsonl"
         code, output = run_tasks([extend_task], {

@@ -183,8 +183,12 @@
   vars:
     _candidates: >-
       {{ _vmfs_existing_mappings | selectattr('paths', 'equalto', [item]) | list }}
+    # Device order is slot order, so a VM with two devices for one path keeps its first.
+    _attached_id: >-
+      {{ _vmfs_existing_device_ids
+         | select('in', _candidates | map(attribute='id') | list) | first | default('') }}
     _chosen: >-
-      {{ ((_candidates | selectattr('id', 'in', _vmfs_existing_device_ids) | list)
+      {{ ((_candidates | selectattr('id', 'equalto', _attached_id) | list)
           + _candidates) | first | default({}) }}
   loop: "{{ _vmfs_host_paths }}"
   loop_control:
