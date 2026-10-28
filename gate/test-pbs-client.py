@@ -243,7 +243,9 @@ def main():
                      {"name": "cache.pxar", "path": str(root / "stage/cache")}]
 
             reset_logs(root)
-            preview = {"pbs_client_runtime": runtime, "pbs_client_archives": stage,
+            # A preview names the archives only; it has no staging paths.
+            preview = {"pbs_client_runtime": runtime,
+                       "pbs_client_archives": [{"name": "data.pxar"}, {"name": "cache.pxar"}],
                        "pbs_client_snapshot": snapshot, "pbs_client_overwrite": False}
             expect(run(root, "pbs-client-restore.yml", preview), True, f"{runtime} preview")
             verbs = [" ".join(c["args"][:2]) for c in calls(root)]
@@ -259,7 +261,7 @@ def main():
             assert snapshot in result.stdout
 
             reset_logs(root)
-            overwrite = preview | {"pbs_client_overwrite": True,
+            overwrite = preview | {"pbs_client_overwrite": True, "pbs_client_archives": stage,
                                    "pbs_client_restore_args": ["--ignore-ownership", "true"]}
             expect(run(root, "pbs-client-restore.yml", overwrite), True, f"{runtime} overwrite")
             restored = (root / "stage/data/restored-data.pxar").read_text()
