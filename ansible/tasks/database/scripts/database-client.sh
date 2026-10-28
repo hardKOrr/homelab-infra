@@ -17,7 +17,7 @@
 #          skipping extensions (provision.yml creates those as the superuser). A failed
 #          load leaves the previous contents.
 #          MariaDB/MySQL: recreates the database with its previous character set and
-#          collation, then loads FILE. Older dumps that carry `USE <name>` still load.
+#          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
 set -eu
 
 action=${1:-}
@@ -95,7 +95,10 @@ mysql_compatible() {
   "$client" --defaults-extra-file="$work/client.cnf" --execute="
     DROP DATABASE \`$DB_NAME\`;
     CREATE DATABASE \`$DB_NAME\` CHARACTER SET $charset;"
-  "$client" --defaults-extra-file="$work/client.cnf" --database="$DB_NAME" < "$file"
+  # A dump taken with --databases names its source; drop those lines so a restore into a
+  # new destination can never switch to, or create, the source database.
+  sed -e '/^USE `[^`]*`;$/d' -e '/^CREATE DATABASE /d' "$file" > "$work/load.sql"
+  "$client" --defaults-extra-file="$work/client.cnf" --database="$DB_NAME" < "$work/load.sql"
 }
 
 case "$DB_ENGINE" in

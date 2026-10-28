@@ -262,8 +262,6 @@ ALLOWLIST = {
         "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
         "ansible/roles/litellm/templates/restore-job.yaml.j2",
         "ansible/roles/mariadb/files/mariadb-recovery.py",
-        "ansible/roles/mautic/tasks/backup.yml",
-        "ansible/roles/mautic/tasks/restore.yml",
         "ansible/roles/mixpost/tasks/main.yml",
         "ansible/roles/mixpost/templates/backup-cronjob.yaml.j2",
         "ansible/roles/mixpost/templates/restore-job.yaml.j2",

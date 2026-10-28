@@ -43,7 +43,7 @@ case "$name" in
   psql)
     for arg; do case "$arg" in --file=*) cp "${arg#--file=}" "$LOG.sql" ;; esac; done ;;
   mariadb-dump | mysqldump)
-    printf 'CREATE TABLE `items` (id int);\\n' ;;
+    printf 'CREATE DATABASE `source`;\\nUSE `source`;\\nCREATE TABLE `items` (id int);\\n' ;;
   mariadb | mysql)
     case "$*" in
       *information_schema.SCHEMATA*) echo 'utf8mb4 COLLATE utf8mb4_unicode_ci' ;;
@@ -105,7 +105,7 @@ def check_mysql_compatible(engine, dump_command, client):
         dump = work / "app.sql"
         result, calls = run_client(engine, "dump", dump, work, DB_PORT="3306")
         assert result.returncode == 0, result.stderr
-        assert dump.read_text().startswith("CREATE TABLE")
+        assert "CREATE TABLE" in dump.read_text()
         call = calls[0]
         assert call.startswith(f"{dump_command} --defaults-extra-file=")
         assert "--single-transaction" in call and call.endswith(" app")
@@ -118,7 +118,9 @@ def check_mysql_compatible(engine, dump_command, client):
         recreate = next(call for call in calls if "DROP DATABASE" in call)
         assert recreate.startswith(f"{client} ")
         assert "CREATE DATABASE `app` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" in recreate
-        assert (work / "log.load").read_text().startswith("CREATE TABLE")
+        loaded = (work / "log.load").read_text()
+        assert loaded.startswith("CREATE TABLE") and "USE" not in loaded, (
+            "a dump must never switch the restore to its source database")
         assert calls.index(recreate) < next(
             i for i, call in enumerate(calls) if "--database=app" in call)
 
