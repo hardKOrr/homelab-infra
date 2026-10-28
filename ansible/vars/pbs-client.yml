@@ -1,0 +1,27 @@
+---
+# The one source of the guest-side PBS client: where it comes from and which build runs.
+# ansible/tasks/backup/pbs-client-*.yml read this file; an application's
+# `backup.client` mapping may override `repository`, `component`, `image` or `suite`.
+#
+# Each Debian suite pins one client build, so a native install and a throwaway client
+# container run the same version on every run until this file changes. Bump a pin here
+# after checking the new build against the lab's PBS.
+pbs_client_defaults:
+  repository: http://download.proxmox.com/debian/pbs-client
+  component: main
+  # Docker hosts run the client in this short-lived container; its suite selects the pin.
+  image: buildpack-deps:bookworm-curl
+  suite: bookworm
+  # The bounded tmpfs that holds the client's /tmp, cache and runtime files. The client
+  # creates unnamed temporary files in /tmp, which a Docker overlay, NFS and some LXC
+  # root filesystems reject with `Operation not supported (os error 95)`.
+  tmpfs_size: 512m
+  suites:
+    bookworm:
+      version: 3.4.7-1
+      key_url: https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
+      keyring: /usr/share/keyrings/proxmox-release-bookworm.gpg
+    trixie:
+      version: 4.2.8-1
+      key_url: https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg
+      keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg

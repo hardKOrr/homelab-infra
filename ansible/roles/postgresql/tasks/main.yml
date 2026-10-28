@@ -62,8 +62,8 @@
     state: present
     update_cache: true
 
-- name: PostgreSQL | Configure the PBS client repository when backups are enabled
-  ansible.builtin.include_tasks: install-pbs-client.yml
+- name: PostgreSQL | Install the pinned PBS client when backups are enabled
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when: app_config.backup.enabled | default(false) | bool
 
 - name: PostgreSQL | Install the PGDG signing key
@@ -87,27 +87,6 @@
       - python3-psycopg2
     state: present
     update_cache: false
-
-- name: PostgreSQL | Install the PBS backup client when backups are enabled
-  ansible.builtin.apt:
-    name: proxmox-backup-client
-    state: present
-    update_cache: false
-  when: app_config.backup.enabled | default(false) | bool
-
-# The first package install can rewrite this source file. Leave it in its declared
-# form at the end of Deploy so the immediate repeat is unchanged.
-- name: PostgreSQL | Reassert the signed PBS client repository after package installation
-  ansible.builtin.copy:
-    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
-    owner: root
-    group: root
-    mode: "0644"
-    content: >-
-      deb [signed-by={{ _postgresql_pbs_keyring }}]
-      {{ app_config.backup.client.repository }} {{ ansible_distribution_release }}
-      {{ app_config.backup.client.component }}
-  when: app_config.backup.enabled | default(false) | bool
 
 - name: PostgreSQL | Install the native recovery helper when backups are enabled
   ansible.builtin.copy:

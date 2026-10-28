@@ -32,31 +32,6 @@
       Ntfy backup needs its application-consistent contract, separate data/cache paths,
       an auth database and a safe backup id, plus a configured PBS target.
 
-- name: Ntfy backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Ntfy backup | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Ntfy. Deploy PBS and retry; no local archive is
-      treated as a recovery point.
-
-- name: Ntfy backup | Require the installed PBS client
-  ansible.builtin.stat:
-    path: /usr/bin/proxmox-backup-client
-  register: _ntfy_backup_client
-  changed_when: false
-
-- name: Ntfy backup | Require the PBS client binary
-  ansible.builtin.assert:
-    that: _ntfy_backup_client.stat.exists and _ntfy_backup_client.stat.isreg
-    fail_msg: >-
-      Ntfy has no installed PBS client. Deploy the instance with the current Ntfy role
-      before requesting an application backup.
-
 - name: Ntfy backup | Check the data and cache directories
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -98,164 +73,18 @@
   loop: "{{ _ntfy_backup_auth_database.results }}"
   no_log: true
 
-- name: Ntfy backup | Check whether the service is running
-  ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _ntfy_backup_service_name }}"]
-  register: _ntfy_backup_service_state
-  changed_when: false
-  failed_when: false
+- name: Ntfy backup | Quiesce Ntfy and archive auth and cache state to PBS
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+  vars:
+    pbs_client_runtime: native
+    pbs_client_backup_id: "{{ _ntfy_backup_id }}"
+    pbs_client_stop_services: ["{{ _ntfy_backup_service_name }}"]
+    pbs_client_archives:
+      - name: data.pxar
+        path: "{{ _ntfy_backup_data_path }}"
+      - name: cache.pxar
+        path: "{{ _ntfy_backup_cache_path }}"
 
-- name: Ntfy backup | Quiesce and archive application state
-  block:
-    - name: Ntfy backup | Stop only Ntfy
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_backup_service_name }}"
-        state: stopped
-
-    - name: Ntfy backup | Read the existing recovery points
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - snapshot
-          - list
-          - "host/{{ _ntfy_backup_id }}"
-          - --output-format
-          - json
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_backup_snapshots_before
-      failed_when: false
-      changed_when: false
-      no_log: true
-
-    - name: Ntfy backup | Report an unreadable baseline recovery point listing
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_backup_snapshots_before }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy backup | baseline recovery points could not be verified
-
-    - name: Ntfy backup | Validate the baseline recovery point listing
-      ansible.builtin.assert:
-        that:
-          - (_ntfy_backup_snapshots_before.stdout | from_json | type_debug) == 'list'
-        fail_msg: Ntfy backup could not parse the baseline PBS recovery point list.
-      no_log: true
-
-    - name: Ntfy backup | Upload auth and cache archives to PBS
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - backup
-          - "data.pxar:{{ _ntfy_backup_data_path }}"
-          - "cache.pxar:{{ _ntfy_backup_cache_path }}"
-          - --backup-id
-          - "{{ _ntfy_backup_id }}"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_backup_upload
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Ntfy backup | Report a failed PBS upload
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_backup_upload }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy backup | PBS archive upload failed
-
-    - name: Ntfy backup | Verify and list the recovery points
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - snapshot
-          - list
-          - "host/{{ _ntfy_backup_id }}"
-          - --output-format
-          - json
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_backup_snapshots
-      failed_when: false
-      changed_when: false
-      no_log: true
-
-    - name: Ntfy backup | Report an unreadable recovery point listing
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_backup_snapshots }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy backup | recovery points could not be verified
-
-    - name: Ntfy backup | Confirm PBS recorded a new recovery point
-      ansible.builtin.assert:
-        that:
-          - (_ntfy_backup_snapshots.stdout | from_json | type_debug) == 'list'
-          - (_ntfy_backup_snapshots.stdout | from_json | length) > (_ntfy_backup_snapshots_before.stdout | from_json | length)
-        fail_msg: >-
-          Ntfy backup completed without adding a new PBS recovery point to
-          host/{{ _ntfy_backup_id }}.
-      no_log: true
-
-    - name: Ntfy backup | Show the verified recovery points
-      ansible.builtin.debug:
-        msg: "PBS recovery points for host/{{ _ntfy_backup_id }}:\n{{ _ntfy_backup_snapshots.stdout }}"
-
-    - name: Ntfy backup | Retain the two newest points and daily history
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - prune
-          - "host/{{ _ntfy_backup_id }}"
-          - --keep-last
-          - "2"
-          - --keep-daily
-          - "{{ app_config.backup.retention_days | default(14) | int }}"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _ntfy_backup_prune
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Ntfy backup | Report a failed retention update
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _ntfy_backup_prune }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Ntfy backup | PBS retention update failed
-
-    - name: Ntfy backup | Mark the backup complete
-      ansible.builtin.set_fact:
-        _application_backup_complete: true
-  always:
-    - name: Ntfy backup | Restart only Ntfy when it was running
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_backup_service_name }}"
-        state: started
-      when: _ntfy_backup_service_state.rc | default(1) == 0
+- name: Ntfy backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true

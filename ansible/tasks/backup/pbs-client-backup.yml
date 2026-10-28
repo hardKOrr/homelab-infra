@@ -1,0 +1,193 @@
+---
+# Back up named host paths to one verified PBS recovery point.
+#
+# Inputs:
+#   pbs_client_runtime        docker | native (see pbs-client-run.yml)
+#   pbs_client_archives       [{name: data.pxar, path: /abs/dir}], one or more
+#   pbs_client_backup_args    optional extra `backup` arguments, such as
+#                             ['--exclude', '/logs'] or ['--all-file-systems', 'true']
+#   pbs_client_backup_id      optional; default `backup.backup_id`, else `instance`
+#   pbs_client_keep_last      optional, default 2 and never less
+#   pbs_client_keep_daily     optional, default `backup.retention_days` (14); '' omits it
+#   pbs_client_stop_services  optional services stopped for the upload and started after:
+#                             Compose services in pbs_client_compose_project (docker), or
+#                             systemd units, restarted only when they were running (native)
+#   pbs_client_compose_project  the Compose project directory for docker services
+#   pbs_client_quiesced_hook  optional task file run after the stop, before the upload,
+#                             for app-specific capture such as a database export
+#
+# Sets:
+#   pbs_client_recovery_point  host/<backup id>/<UTC time>, verified to hold every archive
+#
+# Recovery point identity: the point is named by its UTC backup time, which this file
+# chooses and passes as --backup-time, so the new point is known without parsing client
+# output. Pruning keeps at least the two newest points, and the run proves the point that
+# was newest before it still exists afterwards. A same-day pre-restore safety backup
+# therefore never prunes away the point the operator is about to restore.
+
+- name: PBS backup | Resolve the recovery identity
+  ansible.builtin.set_fact:
+    _pbs_backup_id: >-
+      {{ pbs_client_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _pbs_backup_keep_last: "{{ pbs_client_keep_last | default(2) | int }}"
+    _pbs_backup_keep_daily: >-
+      {{ pbs_client_keep_daily | default(app_config.backup.retention_days | default(14), true) }}
+    _pbs_backup_archives: "{{ pbs_client_archives | default([]) }}"
+    _pbs_backup_services: "{{ pbs_client_stop_services | default([]) }}"
+    pbs_client_recovery_point: ""
+
+- name: PBS backup | Validate the backup request
+  ansible.builtin.assert:
+    that:
+      - _pbs_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _pbs_backup_keep_last | int >= 2
+      - (_pbs_backup_keep_daily | string) is match('^([0-9]+)?$')
+      - _pbs_backup_archives | length > 0
+      - _pbs_backup_archives | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9_.-]*\.(pxar|img|conf|log)$') | list | length == _pbs_backup_archives | length
+      - _pbs_backup_archives | map(attribute='name') | unique | list | length == _pbs_backup_archives | length
+      - _pbs_backup_services | length == 0 or pbs_client_runtime == 'native' or pbs_client_compose_project | default('') | length > 0
+    fail_msg: >-
+      PBS backup needs a safe backup id, keep_last of at least 2 so the previous point
+      survives a same-day backup, and uniquely named archives
+      (<name>.pxar|img|conf|log). Docker services to stop need their Compose project.
+
+- name: PBS backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: PBS backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for {{ instance }}. Deploy PBS and retry; no local archive
+      is treated as a recovery point.
+
+- name: PBS backup | Check each archive source
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ _pbs_backup_archives }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _pbs_backup_sources
+  changed_when: false
+
+- name: PBS backup | Require real archive sources
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists | default(false)
+      - not (item.stat.islnk | default(false))
+      - item.stat.isdir | default(false) or not item.item.name.endswith('.pxar')
+    fail_msg: >-
+      {{ item.item.name }} source {{ item.item.path }} is missing, a link, or not a
+      directory; refusing to create a recovery point without it.
+  loop: "{{ _pbs_backup_sources.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: PBS backup | Read which native services are running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ item }}"]
+  loop: "{{ _pbs_backup_services if pbs_client_runtime == 'native' else [] }}"
+  register: _pbs_backup_service_state
+  changed_when: false
+  failed_when: false
+
+- name: PBS backup | Quiesce, upload and verify
+  block:
+    - name: PBS backup | Stop the Compose services
+      community.docker.docker_compose_v2:
+        project_src: "{{ pbs_client_compose_project }}"
+        state: stopped
+        services: "{{ _pbs_backup_services }}"
+      when:
+        - pbs_client_runtime == 'docker'
+        - _pbs_backup_services | length > 0
+
+    - name: PBS backup | Stop the native services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ _pbs_backup_services if pbs_client_runtime == 'native' else [] }}"
+
+    - name: PBS backup | Run the application capture hook
+      ansible.builtin.include_tasks: "{{ pbs_client_quiesced_hook }}"
+      when: pbs_client_quiesced_hook | default('') | length > 0
+
+    - name: PBS backup | Upload, verify and prune
+      ansible.builtin.include_tasks: pbs-client-run.yml
+      vars:
+        pbs_client_context: "PBS backup of host/{{ _pbs_backup_id }}"
+        pbs_client_changes: true
+        pbs_client_mounts: "{{ _pbs_backup_archives | map('combine', {'mode': 'ro'}) | list }}"
+        pbs_client_env:
+          PBS_BACKUP_ID: "{{ _pbs_backup_id }}"
+          PBS_KEEP_LAST: "{{ _pbs_backup_keep_last }}"
+          PBS_KEEP_DAILY: "{{ _pbs_backup_keep_daily }}"
+        pbs_client_script: |
+          group="host/$PBS_BACKUP_ID"
+          point_of() { echo "$group/$(date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ)"; }
+          require_archives() {
+            files=$(proxmox-backup-client snapshot files "$1" --output-format json)
+            for archive in {{ _pbs_backup_archives | map(attribute='name') | map('quote') | join(' ') }}; do
+              case "$files" in
+                *"\"$archive."*) ;;
+                *) echo "recovery point $1 lacks $archive" >&2; return 3 ;;
+              esac
+            done
+          }
+          previous=$(proxmox-backup-client snapshot list "$group" --output-format json \
+            | grep -oE '"backup-time" *: *[0-9]+' | grep -oE '[0-9]+$' | sort -n | tail -n 1)
+          now=$(date +%s)
+          if [ -n "$previous" ] && [ "$now" -le "$previous" ]; then now=$((previous + 1)); fi
+          point=$(point_of "$now")
+          proxmox-backup-client backup \
+            {{ _pbs_backup_archives | map(attribute='name') | zip(_pbs_backup_archives | map(attribute='path')) | map('join', ':') | map('quote') | join(' ') }} \
+            {{ pbs_client_backup_args | default([]) | map('quote') | join(' ') }} \
+            --backup-id "$PBS_BACKUP_ID" --backup-time "$now" >&2
+          require_archives "$point"
+          if [ -n "$PBS_KEEP_DAILY" ]; then
+            proxmox-backup-client prune "$group" --keep-last "$PBS_KEEP_LAST" --keep-daily "$PBS_KEEP_DAILY" >&2
+          else
+            proxmox-backup-client prune "$group" --keep-last "$PBS_KEEP_LAST" >&2
+          fi
+          require_archives "$point"
+          if [ -n "$previous" ]; then
+            proxmox-backup-client snapshot files "$(point_of "$previous")" >/dev/null \
+              || { echo "pruning removed the previous point $(point_of "$previous")" >&2; exit 4; }
+          fi
+          echo "$point"
+
+    - name: PBS backup | Record the verified recovery point
+      ansible.builtin.set_fact:
+        pbs_client_recovery_point: "{{ pbs_client_output | trim | split('\n') | last }}"
+
+    - name: PBS backup | Require the recovery point identity
+      ansible.builtin.assert:
+        that: >-
+          pbs_client_recovery_point is match('^host/' ~ (_pbs_backup_id | regex_escape)
+          ~ '/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')
+        fail_msg: >-
+          PBS backup finished without reporting a recovery point in host/{{ _pbs_backup_id }}.
+
+    - name: PBS backup | Report the verified recovery point
+      ansible.builtin.debug:
+        msg: "Recovery point {{ pbs_client_recovery_point }} is verified."
+  always:
+    - name: PBS backup | Start the Compose services
+      community.docker.docker_compose_v2:
+        project_src: "{{ pbs_client_compose_project }}"
+        state: present
+        services: "{{ _pbs_backup_services }}"
+      when:
+        - pbs_client_runtime == 'docker'
+        - _pbs_backup_services | length > 0
+
+    - name: PBS backup | Restart the native services that were running
+      ansible.builtin.systemd_service:
+        name: "{{ item.item }}"
+        state: started
+      loop: "{{ _pbs_backup_service_state.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.rc | default(1) == 0
