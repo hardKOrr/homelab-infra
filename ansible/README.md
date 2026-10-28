@@ -314,6 +314,7 @@ today's copies only shrinks.
 | Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, `stop` and `restart` Deployments, optional `after_restore_tasks` hook |
 | Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_engine` (`postgresql` or `mysql`), the instance and its config |
 | Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions and privileges stay `provision.yml` inputs |
+| Whole MariaDB/MySQL backend guest export and restore | `tasks/database/install-server-recovery.yml`, installing `scripts/server-recovery.py` | the engine (`mariadb` or `mysql`) as its first argument; MariaDB's restore takes `--data-dir` and `--service` |
 
 ## Local conventions
 

@@ -231,10 +231,7 @@ ALLOWLIST = {
         "ansible/roles/vaultwarden/tasks/main.yml",
         "ansible/roles/wordpress/tasks/main.yml",
     },
-    "database-dump": {
-        "ansible/roles/mariadb/files/mariadb-recovery.py",
-        "ansible/roles/mysql/files/mysql-recovery.py",
-    },
+    "database-dump": set(),
     "k8s-recovery-job": set(),
 }
 

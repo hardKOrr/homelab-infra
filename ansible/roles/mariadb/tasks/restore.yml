@@ -219,6 +219,9 @@
 - name: MariaDB restore | Apply the selected point with rollback protection
   when: restore_overwrite | bool
   block:
+    - name: MariaDB restore | Install the shared server recovery script
+      ansible.builtin.include_tasks: ../../../tasks/database/install-server-recovery.yml
+
     - name: MariaDB restore | Create private archive directories
       ansible.builtin.file:
         path: "{{ _mariadb_restore_tmp.path }}/{{ item }}"
@@ -270,10 +273,10 @@
     - name: MariaDB restore | Import the point and retain rollback state until verified
       ansible.builtin.command:
         argv: >-
-          {{ ['python3', '/usr/local/sbin/homelab-mariadb-recovery', 'restore',
-              _mariadb_restore_tmp.path ~ '/source',
-              app_config.app.data_path | default('/var/lib/mysql'),
-              app_config.app.service_name | default('mariadb')]
+          {{ ['python3', database_server_recovery_script, 'mariadb', 'restore',
+              '--data-dir', app_config.app.data_path | default('/var/lib/mysql'),
+              '--service', app_config.app.service_name | default('mariadb'),
+              _mariadb_restore_tmp.path ~ '/source']
              + ([_mariadb_restore_tmp.path ~ '/safety']
                 if restore_destination | default('existing') == 'existing'
                    and _mariadb_restore_prepoint | length > 0 else []) }}

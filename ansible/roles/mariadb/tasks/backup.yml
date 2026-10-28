@@ -48,13 +48,17 @@
     prefix: "{{ instance }}-mariadb-backup-"
   register: _mariadb_backup_tmp
 
+- name: MariaDB backup | Install the shared server recovery script
+  ansible.builtin.include_tasks: ../../../tasks/database/install-server-recovery.yml
+
 - name: MariaDB backup | Create and verify the logical recovery point
   block:
     - name: MariaDB backup | Export all databases and grants consistently
       ansible.builtin.command:
         argv:
           - python3
-          - /usr/local/sbin/homelab-mariadb-recovery
+          - "{{ database_server_recovery_script }}"
+          - mariadb
           - backup
           - "{{ _mariadb_backup_tmp.path }}"
       changed_when: true
