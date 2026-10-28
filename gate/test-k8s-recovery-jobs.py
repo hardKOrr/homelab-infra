@@ -287,6 +287,8 @@ def restore_tasks():
     found = {name: [list(match) for match in matches] for name, matches in found.items()}
     assert found == {"t-config": [["config.yaml", "YWJj"]]}, found
     apply = task_named(tasks, "k8s restore | Apply the restored ConfigMaps")
+    # The same server-side apply as Deploy, so the next Deploy reports no change.
+    assert "--server-side" in apply["ansible.builtin.command"]["argv"]
     manifest = yaml.safe_load(render(apply["ansible.builtin.command"]["stdin"], {
         "item": {"key": "t-config", "value": found["t-config"]}, "restore_target": "t"}))
     assert manifest["metadata"]["name"] == "t-config"
