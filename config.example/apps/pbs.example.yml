@@ -20,6 +20,7 @@
 
 # ── VM resources ───────────────────────────────────────────────────────────────
 # proxmox:
+#   node: <pve-node>       # optional per-instance node; add it to proxmox.nodes
 #   vm:
 #     cores: 4
 #     memory: 4096        # MB — raise for large datastores; deduplication is memory-hungry

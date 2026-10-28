@@ -80,7 +80,26 @@ def main():
             named_task(playbooks["restore-guest.yml"], "Require exactly one guest restore task identity"),
             named_task(playbooks["restore-guest.yml"], "Select the guest restore task identity"),
         ),
+        "_rg_stop_task_upid": (
+            "_rg_stop_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the existing target stop task response"),
+            named_task(playbooks["restore-guest.yml"], "Require exactly one existing target stop task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the existing target stop task identity"),
+        ),
+        "_rg_start_task_upid": (
+            "_rg_start_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the existing target start task response"),
+            named_task(playbooks["restore-guest.yml"], "Require exactly one existing target start task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the existing target start task identity"),
+        ),
     }
+    normalizer_patterns = {
+        normalize_task["ansible.builtin.set_fact"][list_fact]
+        .split("regex_findall(", 1)[1]
+        .split(")", 1)[0]
+        for list_fact, normalize_task, _, _ in normalizers.values()
+    }
+    assert len(normalizer_patterns) == 1, normalizer_patterns
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -115,18 +134,24 @@ def main():
         normalization_cases = []
         for fact, (list_fact, normalize_task, cardinality_task, select_task) in normalizers.items():
             register = {"_bg_task_upid": "_bg_task", "_rg_pre_task_upid": "_rg_pre_task",
-                        "_rg_restore_task_upid": "_rg_restore_task"}[fact]
+                        "_rg_restore_task_upid": "_rg_restore_task",
+                        "_rg_stop_task_upid": "_rg_stop_task",
+                        "_rg_start_task_upid": "_rg_start_task"}[fact]
             upid = f"UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:fixture:"
             output = "PVE operation accepted\n" + upid + "\nworker request complete\n"
-            normalization_cases.append((register, output, [
+            normalization_tasks = [
                 {"ansible.builtin.set_fact": normalize_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": cardinality_task["ansible.builtin.assert"]},
                 {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
                 {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
-            ]))
+            ]
+            normalization_cases.append((register, output, normalization_tasks))
+            # pvesh can wrap the task identity in JSON; every caller uses the same
+            # extraction pattern and its cardinality assertion rejects ambiguity.
+            normalization_cases.append((register, json.dumps({"data": upid}), normalization_tasks))
 
-        # Each of the five production callers must poll exactly the same identity
-        # for bare and JSON-quoted stdout, including pvesh's trailing newline.
+        # Each caller polls the same identity from bare and JSON-quoted stdout,
+        # including pvesh's trailing newline.
         for index, caller in enumerate(callers):
             for operation in ("vzdump", "qmstop", "qmstart", "vzrestore", "vzstop", "vzstart"):
                 upid = (f"UPID:<pve-node>:00000001:00000002:00000003:{operation}:"
@@ -185,9 +210,58 @@ def main():
                 env=env, text=True, capture_output=True, check=False,
             )
             assert normalized.returncode == 0, normalized.stdout + normalized.stderr
+
+        restore_list_fact, normalize_restore, require_restore, _ = normalizers["_rg_restore_task_upid"]
+        restore_upid = "UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:restore:"
+        ambiguous_upid = "UPID:<pve-node>:00000001:00000002:00000004:vzrestore:<GUEST-vmid>:ambiguous:"
+        ambiguous_restore = root / "restore-response-ambiguous.yml"
+        ambiguous_restore.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"_rg_restore_task": {"stdout": json.dumps({"data": [restore_upid, ambiguous_upid]})}},
+            "tasks": [
+                {"ansible.builtin.set_fact": normalize_restore["ansible.builtin.set_fact"]},
+                {"block": [
+                    {"name": "Require exactly one guest restore task identity",
+                     "ansible.builtin.assert": require_restore["ansible.builtin.assert"]},
+                    {"ansible.builtin.fail": {"msg": "Ambiguous restore response was accepted"}},
+                ], "rescue": [{"ansible.builtin.assert": {"that": [
+                    f"ansible_failed_result.msg == {json.dumps(require_restore['ansible.builtin.assert']['fail_msg'])}",
+                    "ansible_failed_task.name == 'Require exactly one guest restore task identity'",
+                    f"{restore_list_fact} | length == 2",
+                ]}}]},
+            ],
+        }]))
+        ambiguous = subprocess.run(
+            [str(ansible), "-i", str(inventory), str(ambiguous_restore)],
+            env=env, text=True, capture_output=True, check=False,
+        )
+        assert ambiguous.returncode == 0, ambiguous.stdout + ambiguous.stderr
+
+        restore_response_selection = named_task(
+            playbooks["restore-guest.yml"], "Select the guest restore task response")
+        selector_playbook = root / "restore-selector.yml"
+        for target_type, expected_stdout in (("qemu", "qemu-result"), ("lxc", "lxc-result")):
+            selector_playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {
+                    "_rg_execute": True,
+                    "_rg_target_type": target_type,
+                    "_rg_restore_vm_task": {"stdout": "qemu-result"},
+                    "_rg_restore_lxc_task": {"stdout": "lxc-result"},
+                },
+                "tasks": [restore_response_selection, {
+                    "ansible.builtin.assert": {"that": [
+                        f"_rg_restore_task.stdout == {json.dumps(expected_stdout)}"]}
+                }],
+            }]))
+            selected = subprocess.run(
+                [str(ansible), "-i", str(inventory), str(selector_playbook)],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            assert selected.returncode == 0, selected.stdout + selected.stderr
         requests = [json.loads(line) for line in log.read_text().splitlines()]
         assert requests == expected, requests
-    print("Proxmox: callers extract one wrapped UPID; invalid output fails before polling")
+    print("Proxmox: all task normalizers extract plain and wrapped UPIDs; invalid task input fails before polling")
 
 
 if __name__ == "__main__":

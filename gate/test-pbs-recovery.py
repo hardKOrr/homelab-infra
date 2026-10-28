@@ -118,14 +118,30 @@ assert cleanup_manifest["ansible.builtin.file"]["state"] == "absent"
 
 provision_tasks = playbook[0]["tasks"]
 provision_pre_tasks = playbook[0]["pre_tasks"]
+pbs_placement = task(provision_tasks, "Resolve placement for a new PBS guest with a datastore disk")
+assert pbs_placement["ansible.builtin.include_tasks"] == "../../tasks/proxmox/resolve-guest-placement.yml"
+assert pbs_placement["vars"]["guest_placement_class"] == "floating_vm"
+assert pbs_placement["vars"]["guest_placement_guest_type"] == "qemu"
+assert pbs_placement["vars"]["guest_placement_additional_storage"] == "{{ app_config.proxmox.vm.datastore_disk.storage | default('') }}"
+assert "app_config.proxmox.vm.datastore_disk is defined" in str(pbs_placement["when"])
+assert "_existing_hosts | length == 0" in str(pbs_placement["when"])
+pbs_preflight_node = task(provision_tasks, "Resolve the PBS datastore preflight node")
+assert "hostvars[_existing_hosts[0]].proxmox_node" in str(
+    pbs_preflight_node["ansible.builtin.set_fact"]["_pbs_disk_preflight_node"]
+)
+assert "_guest_placement.node" in str(
+    pbs_preflight_node["ansible.builtin.set_fact"]["_pbs_disk_preflight_node"]
+)
 reuse_preflight = task(provision_tasks, "Refuse provisioning without the exact retained PBS volume")
 clone_index = next(i for i, item in enumerate(provision_tasks) if item.get("name") == "Provision new VM")
+assert provision_tasks.index(pbs_placement) < provision_tasks.index(reuse_preflight)
 assert provision_tasks.index(reuse_preflight) < clone_index
 disk_declaration = task(provision_pre_tasks, "Validate the optional PBS datastore disk declaration")
 assert "source_vmid is defined" in str(disk_declaration["ansible.builtin.assert"]["that"])
 assert "stable source_vmid reserved for the volume" in disk_declaration["ansible.builtin.assert"]["fail_msg"]
 owner_query = task(provision_tasks, "Check PBS datastore owner identity against current guests")
 assert owner_query["ansible.builtin.command"]["argv"][:3] == ["pvesh", "get", "/cluster/resources"]
+assert owner_query["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
 owner_guard = task(provision_tasks, "Refuse a PBS datastore owner VMID assigned to a guest")
 assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.builtin.assert"]["that"])
 assert provision_tasks.index(owner_guard) < clone_index
@@ -138,6 +154,8 @@ assert existing_copy_disk_include["vars"]["pbs_disk_index"] == 2
 assert existing_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
 assert "second_copy.enabled" in str(existing_copy_disk_include["when"])
 provision_block = task(provision_tasks, "Provision new VM")["block"]
+cloud_template = task(provision_block, "Ensure the Debian cloud-init template exists")
+assert cloud_template["vars"]["proxmox_placement_node"] == "{{ (_guest_placement | default({})).node | default('') }}"
 derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
 avoid_vmid = task(provision_block, "Avoid colliding with the retained PBS datastore VMID")
 assert provision_block.index(avoid_vmid) == derive_index + 1
@@ -151,6 +169,8 @@ new_copy_disk_include = task(provision_block, "Attach the retained PBS second-co
 assert new_copy_disk_include["vars"]["pbs_disk_device"] == "scsi2"
 assert new_copy_disk_include["vars"]["pbs_disk_index"] == 2
 assert new_copy_disk_include["vars"]["pbs_disk_mode"] == "{{ _pbs_second_copy_disk_mode }}"
+assert new_copy_disk_include["vars"]["pbs_disk_node"] == "{{ _guest_placement.node }}"
+assert new_disk_include["vars"]["pbs_disk_node"] == "{{ _guest_placement.node }}"
 avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
 assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
     task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
@@ -638,7 +658,7 @@ for name in ("Restore a VM from the native PBS artifact", "Restore an LXC from t
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
 backup_tasks = backup_guest[0]["tasks"]
 backup_response = task(backup_tasks, "Normalize the PBS backup task response")
-assert "regex_findall('(?m)" in backup_response["ansible.builtin.set_fact"]["_bg_task_upids"]
+assert "regex_findall('UPID:" in backup_response["ansible.builtin.set_fact"]["_bg_task_upids"]
 assert task(backup_tasks, "Require at most one PBS backup task identity")["ansible.builtin.assert"]["that"] == "_bg_task_upids | length <= 1"
 assert "_bg_task_upids | first" in task(backup_tasks, "Select the PBS backup task identity")["ansible.builtin.set_fact"]["_bg_task_upid"]
 async_wait = task(backup_tasks, "Wait for the asynchronous PBS backup task")
@@ -651,15 +671,21 @@ pre_restore_tasks = task(
     restore_guest[0]["pre_tasks"], "Capture and verify an independent pre-restore recovery point"
 )["block"]
 pre_restore_response = task(pre_restore_tasks, "Normalize the independent target recovery task response")
-assert "regex_findall('(?m)" in pre_restore_response["ansible.builtin.set_fact"]["_rg_pre_task_upids"]
+assert "regex_findall('UPID:" in pre_restore_response["ansible.builtin.set_fact"]["_rg_pre_task_upids"]
 assert task(pre_restore_tasks, "Require at most one independent recovery task identity")["ansible.builtin.assert"]["that"] == "_rg_pre_task_upids | length <= 1"
 pre_restore_wait = task(pre_restore_tasks, "Wait for the independent target recovery point")
 assert "_rg_pre_task_upid" in pre_restore_wait["vars"]["proxmox_task_upid"]
 assert "_rg_pre_task_upid | length > 0" in str(pre_restore_wait["when"])
 assert task(pre_restore_tasks, "Require a successful synchronous target recovery point")["ansible.builtin.assert"]["that"]
 restore_tasks = task(restore_tasks, "Restore the guest without activating the target")["block"]
+assert task(restore_tasks, "Restore a VM from the native PBS artifact")["register"] == "_rg_restore_vm_task"
+assert task(restore_tasks, "Restore an LXC from the native PBS artifact")["register"] == "_rg_restore_lxc_task"
+restore_response_selection = task(restore_tasks, "Select the guest restore task response")
+restore_selected_result = restore_response_selection["ansible.builtin.set_fact"]["_rg_restore_task"]
+assert "_rg_target_type == 'qemu'" in restore_selected_result
+assert "_rg_restore_vm_task" in restore_selected_result and "_rg_restore_lxc_task" in restore_selected_result
 restore_response = task(restore_tasks, "Normalize the guest restore task response")
-assert "regex_findall('(?m)" in restore_response["ansible.builtin.set_fact"]["_rg_restore_task_upids"]
+assert "regex_findall('UPID:" in restore_response["ansible.builtin.set_fact"]["_rg_restore_task_upids"]
 assert task(restore_tasks, "Require exactly one guest restore task identity")["ansible.builtin.assert"]["that"] == "_rg_restore_task_upids | length == 1"
 restore_wait = task(restore_tasks, "Wait for the guest restore task")
 assert "_rg_restore_task_upid" in restore_wait["vars"]["proxmox_task_upid"]

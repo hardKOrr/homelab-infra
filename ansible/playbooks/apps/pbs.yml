@@ -130,9 +130,6 @@
         _pbs_datastore_source_vmid: "{{ app_config.proxmox.vm.datastore_disk.source_vmid }}"
         _pbs_datastore_volume_id: >-
           {{ app_config.proxmox.vm.datastore_disk.storage }}:vm-{{ app_config.proxmox.vm.datastore_disk.source_vmid }}-disk-1
-        _pbs_disk_preflight_node: >-
-          {{ hostvars[_existing_hosts[0]].proxmox_node
-             if _existing_hosts | length > 0 else homelabinfra_config.proxmox.node }}
       when: app_config.proxmox.vm.datastore_disk is defined
 
     - name: Resolve the PBS second-copy disk identity
@@ -147,6 +144,78 @@
 
     - name: Register the PBS volume preflight node
       ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Check PBS datastore owner identity against current guests
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - /cluster/resources
+          - --type
+          - vm
+          - --output-format
+          - json
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _pbs_datastore_owner_guests
+      changed_when: false
+      no_log: true
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Refuse a PBS datastore owner VMID assigned to a guest
+      ansible.builtin.assert:
+        that:
+          - >-
+            _pbs_datastore_source_vmid | int not in
+            (_pbs_datastore_owner_guests.stdout | from_json
+             | map(attribute='vmid') | map('int') | list)
+        fail_msg: >-
+          PBS datastore source_vmid must remain reserved for the volume and must not be
+          assigned to a guest. Proxmox may free disks owned by a guest when it is destroyed.
+          No PBS guest was created or modified.
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    # Resolve without allocating, for both reuse and creation. The same effective
+    # network (including default inheritance) must guard a reused running VM too.
+    - name: Resolve the network this guest belongs on
+      ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+      vars:
+        resolve_network_app: "pbs"
+        resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
+
+    - name: Require the selected network declaration
+      ansible.builtin.assert:
+        that: network_selected in (homelabinfra_config.networks | default({}))
+        fail_msg: "config/proxmox.yml declares no network named {{ network_selected }}. Refusing PBS provisioning."
+
+    - name: Require a declared bridge after network inheritance
+      ansible.builtin.assert:
+        that: network_effective.bridge | default('', true) | length > 0
+        fail_msg: >-
+          config/proxmox.yml must declare a bridge for network {{ network_selected }},
+          directly or through networks.default.bridge (ansible/vars/CONTRACT.md).
+          Refusing PBS provisioning before template creation, guest start or deployment.
+
+    # A replacement PBS guest can be pinned to a different node from the control node.
+    # Resolve placement before checking the retained volume so preflight inspects the node
+    # that will receive both the guest and disk. Carry the node into template creation and
+    # cloning below so a later memory check cannot select a different node.
+    - name: Resolve placement for a new PBS guest with a datastore disk
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-guest-placement.yml
+      vars:
+        guest_placement_class: floating_vm
+        guest_placement_additional_storage: "{{ app_config.proxmox.vm.datastore_disk.storage | default('') }}"
+        guest_placement_guest_type: qemu
+      when:
+        - app_config.proxmox.vm.datastore_disk is defined
+        - _existing_hosts | length == 0
+
+    - name: Resolve the PBS datastore preflight node
+      ansible.builtin.set_fact:
+        _pbs_disk_preflight_node: >-
+          {{ hostvars[_existing_hosts[0]].proxmox_node
+             if _existing_hosts | length > 0 else _guest_placement.node }}
       when: app_config.proxmox.vm.datastore_disk is defined
 
     - name: Read Proxmox storage available to the PBS node for the second copy
@@ -175,35 +244,6 @@
           a distinct pool from the primary datastore storage. No guest was created or changed.
       when: app_config.second_copy.enabled | default(false) | bool
 
-    - name: Check PBS datastore owner identity against current guests
-      ansible.builtin.command:
-        argv:
-          - pvesh
-          - get
-          - /cluster/resources
-          - --type
-          - vm
-          - --output-format
-          - json
-      delegate_to: "{{ _pbs_disk_preflight_node }}"
-      register: _pbs_datastore_owner_guests
-      changed_when: false
-      no_log: true
-      when: app_config.proxmox.vm.datastore_disk is defined
-
-    - name: Refuse a PBS datastore owner VMID assigned to a guest
-      ansible.builtin.assert:
-        that:
-          - >-
-            _pbs_datastore_source_vmid | int not in
-            (_pbs_datastore_owner_guests.stdout | from_json
-             | map(attribute='vmid') | map('int') | list)
-        fail_msg: >-
-          PBS datastore source_vmid must remain reserved for the volume and must not be
-          assigned to a guest. Proxmox may free disks owned by a guest when it is destroyed.
-          No PBS guest was created or modified.
-      when: app_config.proxmox.vm.datastore_disk is defined
-
     - name: Check the retained PBS volume before creating a replacement guest
       ansible.builtin.command:
         argv:
@@ -227,8 +267,8 @@
             (_pbs_datastore_preflight_content.stdout | from_json)
             | selectattr('volid', 'equalto', _pbs_datastore_volume_id) | list | length == 1
         fail_msg: >-
-          PBS reuse volume is absent or ambiguous. The existing guest remains untouched;
-          restore the exact retained volume before retrying Deploy PBS.
+          PBS reuse volume is absent or ambiguous on {{ _pbs_disk_preflight_node }}. The
+          existing guest remains untouched; restore the exact retained volume before retrying Deploy PBS.
       when: app_config.app.datastore_mode | default('create') == 'reuse'
 
     - name: Check the retained PBS second-copy volume before creating a replacement guest
@@ -274,28 +314,6 @@
              if _pbs_second_copy_volume_exists | bool else 'create' }}
       changed_when: false
       when: app_config.second_copy.enabled | default(false) | bool
-
-    # Resolve without allocating, for both reuse and creation. The same effective
-    # network (including default inheritance) must guard a reused running VM too.
-    - name: Resolve the network this guest belongs on
-      ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
-      vars:
-        resolve_network_app: "pbs"
-        resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
-        resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
-
-    - name: Require the selected network declaration
-      ansible.builtin.assert:
-        that: network_selected in (homelabinfra_config.networks | default({}))
-        fail_msg: "config/proxmox.yml declares no network named {{ network_selected }}. Refusing PBS provisioning."
-
-    - name: Require a declared bridge after network inheritance
-      ansible.builtin.assert:
-        that: network_effective.bridge | default('', true) | length > 0
-        fail_msg: >-
-          config/proxmox.yml must declare a bridge for network {{ network_selected }},
-          directly or through networks.default.bridge (ansible/vars/CONTRACT.md).
-          Refusing PBS provisioning before template creation, guest start or deployment.
 
     - name: Validate the existing PBS VM network before reuse
       ansible.builtin.include_tasks: ../../tasks/proxmox/validate-vm-network.yml
@@ -385,6 +403,7 @@
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
             proxmox_placement_class: floating_vm
+            proxmox_placement_node: "{{ (_guest_placement | default({})).node | default('') }}"
             cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
@@ -447,7 +466,7 @@
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
           vars:
             pbs_disk_vmid: "{{ homelabinfra_instance.vm.vmid }}"
-            pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
+            pbs_disk_node: "{{ _guest_placement.node }}"
             pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
             pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
             pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
@@ -460,7 +479,7 @@
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
           vars:
             pbs_disk_vmid: "{{ homelabinfra_instance.vm.vmid }}"
-            pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
+            pbs_disk_node: "{{ _guest_placement.node }}"
             pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
             pbs_disk_config: "{{ _pbs_second_copy_disk_config }}"
             pbs_disk_mode: "{{ _pbs_second_copy_disk_mode }}"
