@@ -1,0 +1,55 @@
+---
+# Mixpost's after-restore hook for tasks/kubernetes/recovery-restore.yml. Runs after the
+# restore Job and before the target starts, with k8s_namespace and k8s_api_host set.
+#
+# THE ENCRYPTION KEY HAS TO TRAVEL WITH THE DATA.
+#
+# Laravel encrypts selected columns with APP_KEY, and Mixpost uses that for the OAuth
+# tokens it holds for every connected account. Restoring one instance's rows into
+# another instance's namespace therefore restores rows the target cannot decrypt: the
+# posts and the media come back, the connected accounts silently do not, and the
+# failure looks like an application bug rather than a missing key.
+#
+# Written to the target's canonical Vaultwarden item FIRST and to the running Secret
+# second, because the role reads the vault on every deploy — if only the Secret were
+# patched, the next `Deploy Mixpost` for the target would put its own old key back and
+# break the restored data again, at a moment unrelated to the restore.
+- name: Restore | Carry the source's application key across
+  when:
+    - restore_target != instance
+    - (app_config.app.app_key | default('')) | length > 0
+  block:
+    - name: Restore | Record the source's application key against the target
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+        vault_item_merge: true
+        vault_item_fields:
+          app_key: "{{ app_config.app.app_key }}"
+        vault_item_secret_fields:
+          - app_key
+
+    # A merge patch on stdin, not `kubectl apply` and not `-p '<json>'`. `apply` with a
+    # single key would prune every other key in the environment Secret, because
+    # kubectl's three-way merge deletes what the last applied configuration had and this
+    # one does not. `-p` would put a base64-encoded credential in argv, where `ps` and
+    # Ansible's own module arguments can both see it. `--patch-file /dev/stdin` is
+    # neither.
+    - name: Restore | Point the target's running environment at the restored key
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - patch
+          - "secret/{{ restore_target }}-env"
+          - --type
+          - merge
+          - --patch-file
+          - /dev/stdin
+        stdin: "{{ {'data': {'APP_KEY': app_config.app.app_key | b64encode}} | to_json }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+      no_log: true

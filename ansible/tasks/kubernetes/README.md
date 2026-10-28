@@ -55,6 +55,18 @@ VM disks also deletes retained local-path volumes. The cluster config, Vaultward
 PBS backups remain as recovery points. While a removal is interrupted, the generated
 registry marks it in progress so new Kubernetes app operations stop until Remove finishes.
 
+## Application recovery
+
+Every Kubernetes app backs up and restores through one shared pair:
+`recovery-backup.yml` applies `templates/kubernetes/recovery-backup.yaml.j2` (the nightly
+CronJob that `Backup App` runs on demand), and `recovery-restore.yml` runs
+`templates/kubernetes/recovery-restore.yaml.j2` in plan or restore mode. The shared code owns
+the PBS client, its tmpfs cache, the PBS trust ConfigMap, recovery-point identity and
+retention, the read-only preview, and the restore order: stage, load the database, then
+replace volumes. A role supplies `k8s_recovery` (archives, an optional database step from
+`../database/kubernetes-recovery-step.yml`, the Deployments to stop and restart, and an
+optional after-restore task file). The input contract is in each task file's header.
+
 ## Availability and storage
 
 Read availability from the declared properties, not from the node count:

@@ -90,6 +90,7 @@ templates.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
+- `test-k8s-recovery-jobs.py`: the shared Kubernetes backup CronJob and restore Job keep the PBS client on tmpfs, read the rotated PBS fingerprint, keep the previous point through a same-day backup, preview through the client read-only, and load the database before replacing volumes; each Kubernetes app's archives, database step and stop list render through them.
 - `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files or on a frozen allowlist that can only shrink; README and full-line comment mentions do not count.
 - `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
 

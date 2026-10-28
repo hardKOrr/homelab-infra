@@ -61,91 +61,25 @@
   vars:
     k8s_manifest: "{{ _n8n_k8s_manifest }}"
 
-- name: n8n | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: n8n | Describe the database step of the backup
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+    k8s_database_step_engine: postgresql
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
   when: app_config.backup.enabled | default(false) | bool
 
-- name: n8n | Configure the application backup CronJob
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - k8s_pbs_available | default(false) | bool
-  block:
-    - name: n8n | Resolve the PostgreSQL client major version
-      ansible.builtin.set_fact:
-        _n8n_pg_client_version: >-
-          {{ app_config.app.database.version
-             | default((homelabinfra_infra.databases | default({})).get(
-                 app_config.app.database.instance, {}).version | default(''), true)
-             | string }}
-
-    - name: n8n | Require a matching PostgreSQL client version
-      ansible.builtin.assert:
-        that: _n8n_pg_client_version is match('^[0-9]+$')
-        fail_msg: >-
-          n8n needs the registered PostgreSQL backend's major version to create a
-          compatible application recovery point.
-
-    - name: n8n | Resolve the backup identity and destination
-      ansible.builtin.set_fact:
-        _n8n_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        _n8n_backup_timezone: >-
-          {{ app_config.backup.timezone | default('', true)
-             or homelabinfra_config.timezone | default('UTC') }}
-        _n8n_backup_repository: "{{ k8s_pbs_repository }}"
-        _n8n_backup_datastore: "{{ k8s_pbs_datastore }}"
-      no_log: true
-
-    - name: n8n | Sync backup credentials into the namespace
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-      vars:
-        k8s_secret_name: "{{ instance }}-backup"
-        k8s_secret_data:
-          pbs-password: "{{ k8s_pbs_password }}"
-          db-password: "{{ app_config.app.database_password }}"
-
-    - name: n8n | Render the backup CronJob
-      ansible.builtin.set_fact:
-        _n8n_backup_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
-
-    - name: n8n | Apply the backup CronJob
-      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
-      vars:
-        k8s_manifest: "{{ _n8n_backup_manifest }}"
-
-    - name: n8n | State the recovery contract
-      ansible.builtin.debug:
-        msg:
-          - "Backup: the named PostgreSQL database and /home/node/.n8n volume are paired in one PBS snapshot under host/{{ _n8n_backup_id }}."
-          - "Schedule: {{ app_config.backup.schedule }} ({{ _n8n_backup_timezone }}); retention: {{ app_config.backup.retention_days }} daily snapshots."
-          - "Run one now with playbooks/maintenance/backup-app.yml -e instance={{ instance }}."
-
-- name: n8n | Remove the backup CronJob if backups are unavailable or disabled
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - delete
-      - "cronjob/{{ instance }}-backup"
-      - --ignore-not-found=true
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  changed_when: false
-  when: >-
-    not (app_config.backup.enabled | default(false) | bool)
-    or not (k8s_pbs_available | default(false) | bool)
-
-- name: n8n | State that application backups need a deployed PBS
-  ansible.builtin.debug:
-    msg: >-
-      n8n is deployed, but no usable PBS target is recorded, so its backup CronJob was
-      removed. Deploy PBS and re-run this Deploy to enable the recovery path.
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - not (k8s_pbs_available | default(false) | bool)
+- name: n8n | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        the named PostgreSQL database and the /home/node/.n8n volume, paired in one
+        snapshot
 
 - name: n8n | Wait for the Deployment to become ready
   ansible.builtin.command:

@@ -1,0 +1,187 @@
+---
+# The database half of a Kubernetes app's recovery point, keyed by engine. It returns the
+# container step that the shared recovery templates
+# (templates/kubernetes/recovery-{backup,restore}.yaml.j2) run beside the PBS client:
+# the dump before a backup push, and the load or read-only inspection in a restore Job.
+#
+# The scripts read and write ${DUMP_DIR}, which the templates point at the recovery point's
+# `database` archive. File names inside it are part of existing recovery points:
+# PostgreSQL writes `<database>.dump` (custom format), MySQL writes `database.sql`.
+#
+# Inputs:
+#   k8s_database_step_engine     postgresql — the app's registered external backend
+#                                mysql      — a database pod in the app's own namespace
+#   k8s_database_step_config     the merged config of the instance whose database this is
+#   k8s_database_step_instance   that instance's name (mysql: its pod is `<instance>-db`)
+#   k8s_database_step_root_password  mysql only: the in-namespace server's root password
+#
+# Sets k8s_database_step:
+#   image        the client image, matched to the server major
+#   env          plain environment for the step
+#   secret_env   {ENV_NAME: key} read from the Job's credential Secret
+#   secret_files [{key, path}] mounted from that Secret under /etc/recovery-credentials
+#   secret_data  the keys the caller adds to that Secret (no_log)
+#   dump, load, inspect  shell bodies; never `set -x` — credentials are in the env
+#   describe     one line naming the database for operator messages
+
+- name: Database recovery step | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - k8s_database_step_engine | default('') in ['postgresql', 'mysql']
+      - k8s_database_step_config is mapping
+      - k8s_database_step_instance | default('') | length > 0
+    fail_msg: >-
+      kubernetes-recovery-step.yml needs an engine (postgresql or mysql), the instance's
+      merged config and the instance name.
+
+- name: Database recovery step | Resolve the PostgreSQL connection
+  when: k8s_database_step_engine == 'postgresql'
+  block:
+    - name: Database recovery step | Read the PostgreSQL connection
+      ansible.builtin.set_fact:
+        _kds_app: "{{ k8s_database_step_config.app }}"
+        _kds_host: "{{ k8s_database_step_config.app.database_host | default('') }}"
+        _kds_port: "{{ k8s_database_step_config.app.database_port | default(0) | string }}"
+        _kds_name: >-
+          {{ k8s_database_step_config.app.database_name
+             | default(k8s_database_step_config.app.database.name | default(''), true) }}
+        _kds_user: >-
+          {{ k8s_database_step_config.app.database_user
+             | default(k8s_database_step_config.app.database.role | default(''), true) }}
+        _kds_password: "{{ k8s_database_step_config.app.database_password | default('', true) }}"
+        _kds_version: >-
+          {{ k8s_database_step_config.app.database.version
+             | default((homelabinfra_infra.databases | default({})).get(
+                 k8s_database_step_config.app.database.instance | default(''), {}).version
+               | default(''), true)
+             | string }}
+      no_log: true
+
+    - name: Database recovery step | Require the named PostgreSQL database
+      ansible.builtin.assert:
+        that:
+          - (_kds_app.database_provider | default(_kds_app.database.provider | default(''))) == 'postgresql'
+          - _kds_host | length > 0
+          - _kds_port | int > 0
+          - _kds_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _kds_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _kds_password | length > 0
+          - _kds_version is match('^[0-9]+$')
+        fail_msg: >-
+          {{ k8s_database_step_instance }} needs its registered PostgreSQL database,
+          credentials and server major version recorded before a recovery Job can reach it.
+          Deploy the instance first.
+      no_log: true
+
+    # The client comes from the server's own major release. pg_restore refuses an archive
+    # written by a newer pg_dump, and pg_dump refuses a newer server.
+    - name: Database recovery step | Describe the PostgreSQL step
+      ansible.builtin.set_fact:
+        k8s_database_step:
+          image: "postgres:{{ _kds_version }}-alpine"
+          env:
+            PGHOST: "{{ _kds_host }}"
+            PGPORT: "{{ _kds_port }}"
+            PGDATABASE: "{{ _kds_name }}"
+            PGUSER: "{{ _kds_user }}"
+          secret_env:
+            PGPASSWORD: db-password
+          secret_files: []
+          secret_data:
+            db-password: "{{ _kds_password }}"
+          describe: "PostgreSQL database {{ _kds_name }} on {{ _kds_host }}"
+          dump: |
+            # Custom format lets pg_restore --clean replace the objects while the platform
+            # keeps owning the database and its login.
+            pg_dump --format=custom --no-owner --no-privileges \
+              --file="${DUMP_DIR}/${PGDATABASE}.dump"
+            test -s "${DUMP_DIR}/${PGDATABASE}.dump"
+            echo "dumped ${PGDATABASE}: $(wc -c < "${DUMP_DIR}/${PGDATABASE}.dump") bytes"
+          load: |
+            # The dump is named for the SOURCE database, which a drill target need not share.
+            set -- "${DUMP_DIR}"/*.dump
+            if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
+              echo "expected one PostgreSQL dump in the recovery point, found: $*"
+              exit 1
+            fi
+            pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
+              --dbname="${PGDATABASE}" "$1"
+            echo "=== restored $(basename "$1") into ${PGDATABASE} ==="
+            psql --no-psqlrc --tuples-only --no-align \
+              --command="SELECT current_database(), count(*) FROM pg_tables WHERE schemaname = 'public'"
+          inspect: |
+            echo "=== database a restore would replace: ${PGDATABASE} on ${PGHOST} ==="
+            psql --no-psqlrc --tuples-only --no-align \
+              --command="SELECT current_database(), count(*) FROM pg_tables WHERE schemaname = 'public'"
+      no_log: true
+
+- name: Database recovery step | Resolve the in-namespace MySQL server
+  when: k8s_database_step_engine == 'mysql'
+  block:
+    - name: Database recovery step | Require the MySQL root credential
+      ansible.builtin.assert:
+        that:
+          - k8s_database_step_root_password | default('') | length > 0
+          - k8s_database_step_config.app.database.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - k8s_database_step_config.app.database.image | default('') | length > 0
+        fail_msg: >-
+          No root credential, database name or image is recorded for
+          {{ k8s_database_step_instance }}'s database. Deploy the instance first; its
+          deploy generates and stores that credential.
+      no_log: true
+
+    # The client is the server's own image. A MariaDB client cannot authenticate to MySQL
+    # 8's default caching_sha2_password plugin, and that failure reads as a wrong password.
+    - name: Database recovery step | Describe the MySQL step
+      ansible.builtin.set_fact:
+        k8s_database_step:
+          image: "{{ k8s_database_step_config.app.database.image }}"
+          env:
+            DB_HOST: "{{ k8s_database_step_instance }}-db"
+            DB_NAME: "{{ k8s_database_step_config.app.database.name }}"
+          secret_env: {}
+          # 0444 in the pod: the mysql image may run as a non-root user, and the client
+          # rejects only world-writable defaults files.
+          secret_files:
+            - key: my.cnf
+              path: my.cnf
+          secret_data:
+            my.cnf: |
+              [client]
+              user=root
+              password={{ k8s_database_step_root_password }}
+          describe: >-
+            database {{ k8s_database_step_config.app.database.name }} on
+            {{ k8s_database_step_instance }}-db
+          dump: |
+            umask 077
+            # --single-transaction reads every InnoDB table at one point without a global
+            # lock. --defaults-extra-file must be the first argument.
+            mysqldump \
+              --defaults-extra-file=/etc/recovery-credentials/my.cnf \
+              --host="${DB_HOST}" \
+              --single-transaction \
+              --routines --triggers --events \
+              --hex-blob \
+              --set-gtid-purged=OFF \
+              --databases "${DB_NAME}" \
+              > "${DUMP_DIR}/database.sql"
+            echo "dumped ${DB_NAME}: $(wc -c < "${DUMP_DIR}/database.sql") bytes"
+          load: |
+            test -s "${DUMP_DIR}/database.sql"
+            # Dropped and recreated, not loaded over: loading over keeps every table the
+            # snapshot lacks. Grants on a database name survive DROP DATABASE.
+            mysql --defaults-extra-file=/etc/recovery-credentials/my.cnf --host="${DB_HOST}" \
+              -e "DROP DATABASE IF EXISTS \`${DB_NAME}\`; CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+            # The dump was taken with --databases, so it carries its own CREATE and USE.
+            mysql --defaults-extra-file=/etc/recovery-credentials/my.cnf --host="${DB_HOST}" \
+              < "${DUMP_DIR}/database.sql"
+            echo "=== restored into ${DB_NAME} ==="
+            mysql --defaults-extra-file=/etc/recovery-credentials/my.cnf --host="${DB_HOST}" --table \
+              -e "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.tables WHERE table_schema='${DB_NAME}' ORDER BY TABLE_ROWS DESC LIMIT 15;"
+          inspect: |
+            echo "=== database a restore would replace: ${DB_NAME} on ${DB_HOST} ==="
+            mysql --defaults-extra-file=/etc/recovery-credentials/my.cnf --host="${DB_HOST}" --table \
+              -e "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.tables WHERE table_schema='${DB_NAME}' ORDER BY TABLE_ROWS DESC LIMIT 15;"
+            echo "A restore would DROP that database and rebuild it from the snapshot."
+      no_log: true
