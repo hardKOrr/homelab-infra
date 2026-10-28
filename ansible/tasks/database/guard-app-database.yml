@@ -1,0 +1,95 @@
+---
+# Ownership guard before any destructive change to an application's named database
+# (drop.yml, restore.yml). Run resolve-app-database.yml first.
+#
+# Refuses unless:
+#   - no other application's canonical item names the same database or login on this host;
+#   - the application's own item, when it records a database, names this exact one;
+#   - the backend address is exactly one homelab-infra-owned guest (`_<backend instance>`);
+#   - a PostgreSQL database that exists is owned by the application's role.
+- name: Database guard | Find other applications using this database or login
+  vars:
+    _other_items: >-
+      {{ (homelabinfra_vault.apps | default({}) | dict2items)
+         | rejectattr('key', 'equalto', database_app_instance)
+         | selectattr('value.database_host', 'defined')
+         | selectattr('value.database_host', 'equalto', database_app_target.host)
+         | list }}
+  ansible.builtin.set_fact:
+    _database_guard_other_consumers: >-
+      {{ (_other_items | selectattr('value.database_name', 'defined')
+          | selectattr('value.database_name', 'equalto', database_app_target.name) | list)
+         + (_other_items | selectattr('value.database_user', 'defined')
+          | selectattr('value.database_user', 'equalto', database_app_target.role) | list) }}
+    _database_guard_own_item: >-
+      {{ (homelabinfra_vault.apps | default({})).get(database_app_instance, {}) }}
+  no_log: true
+
+- name: Database guard | Refuse a shared or mismatched database
+  ansible.builtin.assert:
+    that:
+      - _database_guard_other_consumers | length == 0
+      - _database_guard_own_item.database_host | default(database_app_target.host) == database_app_target.host
+      - _database_guard_own_item.database_name | default(database_app_target.name) == database_app_target.name
+      - _database_guard_own_item.database_user | default(database_app_target.role) == database_app_target.role
+    fail_msg: >-
+      Refusing to change {{ database_app_instance }}'s database {{ database_app_target.name }}:
+      another application's item uses it or its login
+      ({{ _database_guard_other_consumers | map(attribute='key') | unique | join(', ') | default('none', true) }}), or
+      {{ database_app_instance }}'s own item names a different database.
+
+- name: Database guard | Refresh inventory before checking backend ownership
+  ansible.builtin.meta: refresh_inventory
+
+- name: Database guard | Resolve the backend guest's ownership group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_{{ database_app_target.instance }}"
+
+- name: Database guard | Require one owned backend guest at the registered address
+  ansible.builtin.assert:
+    that:
+      - tag_group_name is match('^lab_app_')
+      - groups[tag_group_name] | default([]) | length == 1
+      - groups[tag_group_name][0] in groups['lab_managed'] | default([])
+      - hostvars[groups[tag_group_name][0]].ansible_host | default('') == database_app_target.host
+    fail_msg: >-
+      Refusing to change {{ database_app_instance }}'s database: backend
+      {{ database_app_target.instance }} does not resolve to one homelab-infra-owned guest at
+      its registered address.
+
+# refresh_inventory drops hosts added with add_host; add the backend back for delegation.
+- name: Database guard | Add the backend guest back as a delegation target
+  ansible.builtin.add_host:
+    name: database_app_target
+    ansible_host: "{{ database_app_target.host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: database_app_targets
+  changed_when: false
+
+- name: Database guard | Read the PostgreSQL database owner
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ database_app_target.port }}"
+      - >-
+        --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database
+        WHERE datname = '{{ database_app_target.name }}'), 'missing')
+  delegate_to: database_app_target
+  become: true
+  become_user: postgres
+  changed_when: false
+  register: _database_guard_owner
+  when: database_app_target.provider == 'postgresql'
+
+- name: Database guard | Refuse a PostgreSQL database owned by another role
+  ansible.builtin.assert:
+    that: _database_guard_owner.stdout | trim in ['missing', database_app_target.role]
+    fail_msg: >-
+      Refusing to change PostgreSQL database {{ database_app_target.name }}: it is owned by
+      {{ _database_guard_owner.stdout | trim }}, not {{ database_app_target.role }}.
+  when: database_app_target.provider == 'postgresql'

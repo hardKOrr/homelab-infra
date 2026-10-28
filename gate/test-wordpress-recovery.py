@@ -20,7 +20,6 @@ RESTORE_PLAYBOOK = yaml.safe_load(
     (ROOT / "ansible/playbooks/maintenance/wordpress-restore.yml").read_text()
 )
 RUNDECK_RESTORE = yaml.safe_load((ROOT / "rundeck/jobs/wordpress-restore.yaml").read_text())[0]
-REMOVE_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/main.yml").read_text())
 WORDPRESS_COMPOSE = (ROOT / "ansible/roles/wordpress/templates/docker-compose.yml.j2").read_text()
 
@@ -217,37 +216,6 @@ def check_wordpress_health_redirects():
     assert "200 <= status < 400" in recovery
 
 
-def check_remove_contract():
-    pre_tasks = REMOVE_PLAYBOOK[0]["pre_tasks"]
-    resolve = next(task for task in pre_tasks
-                   if task.get("name") == "Resolve WordPress's named database removal inputs")
-    assert "wordpress" in str(resolve["when"])
-    assert "delete_data" in str(resolve["when"])
-    validate = next(task for task in pre_tasks
-                    if task.get("name") == "Validate WordPress's named database removal inputs")
-    requirements = validate["ansible.builtin.assert"]["that"]
-    assert any("provider" in item and "mariadb" in item for item in requirements)
-    assert any("database_config.name" in item and "is match" in item for item in requirements)
-    assert any("database_config.role" in item and "is match" in item for item in requirements)
-    assert any("database_backend.client_hosts" in item for item in requirements)
-    consumers = next(task for task in pre_tasks
-                     if task.get("name") == "Check WordPress's database and role are not shared by another app")
-    assert "database_name" in str(consumers["ansible.builtin.set_fact"])
-    assert "database_user" in str(consumers["ansible.builtin.set_fact"])
-    assert "rejectattr('key', 'equalto', instance)" in str(consumers["ansible.builtin.set_fact"])
-    remove = next(task for task in REMOVE_PLAYBOOK[1]["tasks"]
-                  if task.get("name") == "Remove WordPress's named database and role")
-    assert "_rm_delete_data" in str(remove["when"])
-    operations = remove["block"]
-    drop_database = next(task for task in operations
-                         if task.get("name") == "Drop WordPress's named MariaDB database")
-    assert drop_database["community.mysql.mysql_db"]["state"] == "absent"
-    drop_role = next(task for task in operations
-                     if task.get("name") == "Drop WordPress's database login on permitted client networks")
-    assert drop_role["community.mysql.mysql_user"]["state"] == "absent"
-    assert drop_role["loop"] == "{{ hostvars['localhost']._rm_wordpress_database_backend.client_hosts }}"
-
-
 def run_restore(case):
     with tempfile.TemporaryDirectory(prefix="wordpress-recovery-test-") as directory:
         root = Path(directory)
@@ -371,7 +339,6 @@ def main():
     check_wordpress_data_directory_access()
     check_wordpress_cli_uses_data_owner()
     check_wordpress_health_redirects()
-    check_remove_contract()
     run_restore("success")
     run_restore("mysql-client-tools")
     run_restore("missing-database-client-tools")
@@ -379,7 +346,7 @@ def main():
     run_restore("database-dump-failure")
     run_restore("database-import-failure")
     run_restore("wp-cli-failure")
-    print("WordPress: scoped Remove, fresh safety point, restore and content/database rollback passed")
+    print("WordPress: fresh safety point, restore and content/database rollback passed")
 
 
 if __name__ == "__main__":

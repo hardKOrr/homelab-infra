@@ -16,7 +16,6 @@ catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore.yml").read_text())
 deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
-remove_source = yaml.safe_load((repo / "ansible/playbooks/apps/remove.yml").read_text())
 compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
 
@@ -320,18 +319,6 @@ def static_contract():
     assert "_mautic_restore_database_mutated" in str(restore_source)
     assert "database-before.sql" in str(restore_source)
 
-    removal = [
-        task
-        for play in remove_source
-        for section in ["pre_tasks", "tasks"]
-        for task in tasks_recursive(play.get(section, []))
-    ]
-    drop_db = next(task for task in removal
-                   if task.get("name") == "Drop Mautic's named MariaDB database")
-    drop_user = next(task for task in removal
-                     if task.get("name") == "Drop Mautic's database login on permitted client networks")
-    assert drop_db["community.mysql.mysql_db"]["state"] == "absent"
-    assert drop_user["community.mysql.mysql_user"]["state"] == "absent"
 
 
 def main():

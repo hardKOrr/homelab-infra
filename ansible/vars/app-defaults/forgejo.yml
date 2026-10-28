@@ -44,9 +44,6 @@ forgejo_defaults:
       repository: "http://download.proxmox.com/debian/pbs-client"
       suite: bookworm
       component: main
-    # Forgejo's tracked PostgreSQL major is 16. The dump client is separate from the
-    # shared database guest and is used only for this named application database.
-    postgres_client_image: "postgres:16-alpine"
   # Direct Git-over-SSH is separate from the HTTP route. Publish it to the WAN only
   # when an instance config explicitly enables this forward.
   firewall:

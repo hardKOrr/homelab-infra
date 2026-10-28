@@ -12,7 +12,6 @@ def main():
     backup = (ROOT / "ansible/roles/hi-events/templates/backup-cronjob.yaml.j2").read_text(encoding="utf-8")
     restore = (ROOT / "ansible/roles/hi-events/tasks/restore.yml").read_text(encoding="utf-8")
     restore_job = (ROOT / "ansible/roles/hi-events/templates/restore-job.yaml.j2").read_text(encoding="utf-8")
-    remove = (ROOT / "ansible/playbooks/apps/remove.yml").read_text(encoding="utf-8")
 
     assert "methods: [native]" in defaults
     assert "_he_pg_client_version" in deploy
@@ -33,16 +32,7 @@ def main():
     assert "_he_r_database_password" in restore
     assert "_he_r_pg_client_version" in restore
 
-    # Remove drops only the named DB/role after validating registration, ownership,
-    # and that no other canonical application item refers to either resource.
-    assert "_rm_hi_events_shared_databases | length == 0" in remove
-    assert "_rm_hi_events_shared_roles | length == 0" in remove
-    assert "_rm_hi_events_database_item.database_name" in remove
-    assert "Refuse to delete Hi.Events' database with an unexpected owner" in remove
-    assert "DROP DATABASE {{ hostvars['localhost']._rm_hi_events_database_config.name }}" in remove
-    assert "DROP ROLE {{ hostvars['localhost']._rm_hi_events_database_config.role }}" in remove
-
-    print("Hi.Events backs up, restores, and removes only its named database plus storage")
+    print("Hi.Events backs up and restores its named database plus storage")
 
 
 if __name__ == "__main__":

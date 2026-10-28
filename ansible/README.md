@@ -312,7 +312,7 @@ today's copies only shrinks.
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
 | PBS client install, backup, verify, restore | `tasks/backup/pbs-client*.yml` (planned, part 02) | paths, archive names, owner, services to stop, hooks |
 | Kubernetes backup CronJob and restore Job | `templates/kubernetes/recovery-*.yaml.j2` (planned, part 03) | volumes or PVCs, dump hook, owner uid/gid, scale-down targets |
-| Database dump, restore and drop | `tasks/database/*` (planned, part 04) | engine, database and login names |
+| Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`; `scripts/database-client.sh` in Kubernetes Jobs; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions and privileges stay `provision.yml` inputs |
 
 ## Local conventions
 
