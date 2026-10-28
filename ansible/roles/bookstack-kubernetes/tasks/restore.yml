@@ -44,7 +44,10 @@
 
 - name: BookStack Kubernetes Restore | Render the recovery Job
   ansible.builtin.set_fact:
-    _bookstack_restore_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2') }}"
+    # This is a YAML document, so the template lookup's default native conversion turns
+    # the manifest into a mapping. run-job.yml writes it to kubectl stdin and needs the
+    # rendered document text intact (especially the Job container's args string list).
+    _bookstack_restore_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2', convert_data=False) }}"
 
 - name: BookStack Kubernetes Restore | Run the requested recovery operation
   block:

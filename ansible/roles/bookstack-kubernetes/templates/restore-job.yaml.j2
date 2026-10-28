@@ -42,13 +42,13 @@ spec:
                 DB_CLIENT_PACKAGE=mariadb-client
               fi
               apt-get install -y -qq --no-install-recommends proxmox-backup-client "$DB_CLIENT_PACKAGE" >/dev/null
-              {% if _bookstack_restore_mode == 'restore' %}
+{% if _bookstack_restore_mode == 'restore' %}
               exec /bin/bash /usr/local/sbin/bookstack-recovery --restore --snapshot '{{ _bookstack_restore_snapshot }}' --pre-restore-point '{{ _bookstack_restore_safety_point }}'
-              {% elif _bookstack_restore_snapshot | length > 0 %}
+{% elif _bookstack_restore_snapshot | length > 0 %}
               exec /bin/bash /usr/local/sbin/bookstack-recovery --plan --snapshot '{{ _bookstack_restore_snapshot }}'
-              {% else %}
+{% else %}
               exec /bin/bash /usr/local/sbin/bookstack-recovery --plan
-              {% endif %}
+{% endif %}
           env:
             - {name: BOOKSTACK_BACKEND, value: kubernetes}
             - {name: BOOKSTACK_INSTANCE, value: "{{ instance }}"}

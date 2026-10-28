@@ -170,10 +170,21 @@ def check_workload_manifest():
 
 def check_backup_and_restore_jobs():
     context = fixture()
+    restore_tasks = yaml.safe_load(
+        (ROOT / "ansible/roles/bookstack-kubernetes/tasks/restore.yml").read_text()
+    )
+    render_task = next(
+        task for task in restore_tasks
+        if task.get("name") == "BookStack Kubernetes Restore | Render the recovery Job"
+    )
+    manifest_expression = render_task["ansible.builtin.set_fact"]["_bookstack_restore_manifest"]
+    assert "convert_data=False" in manifest_expression
+
     backup = documents("ansible/roles/bookstack-kubernetes/templates/backup-cronjob.yaml.j2", context)[0]
     spec = backup["spec"]
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
     container = pod["containers"][0]
+    assert isinstance(container["args"], list) and all(isinstance(arg, str) for arg in container["args"])
     assert spec["schedule"] == "0 3 * * *"
     assert spec["concurrencyPolicy"] == "Forbid"
     assert pod["serviceAccountName"] == "bookstack-recovery"
@@ -188,6 +199,10 @@ def check_backup_and_restore_jobs():
     plan = documents("ansible/roles/bookstack-kubernetes/templates/restore-job.yaml.j2", context)[0]
     plan_pod = plan["spec"]["template"]["spec"]
     plan_container = plan_pod["containers"][0]
+    assert isinstance(plan_container["args"], list) and all(
+        isinstance(arg, str) for arg in plan_container["args"]
+    ), "restore Job args must be a list of strings"
+    assert plan_container["env"][0]["name"] == "BOOKSTACK_BACKEND"
     assert plan_pod["serviceAccountName"] == "bookstack-recovery"
     assert "--plan --snapshot 'host/bookstack/2026-10-15T00:00:00Z'" in plan_container["args"][0]
     assert all(volume["name"] != "config" for volume in plan_pod["volumes"])
@@ -203,6 +218,9 @@ def check_backup_and_restore_jobs():
     )[0]
     run_pod = overwrite["spec"]["template"]["spec"]
     run_container = run_pod["containers"][0]
+    assert isinstance(run_container["args"], list) and all(
+        isinstance(arg, str) for arg in run_container["args"]
+    )
     assert "--restore --snapshot 'host/bookstack/2026-10-15T00:00:00Z'" in run_container["args"][0]
     assert (
         f"--pre-restore-point '{context['_bookstack_restore_safety_point']}'"
