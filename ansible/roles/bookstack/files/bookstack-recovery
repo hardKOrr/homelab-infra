@@ -419,6 +419,7 @@ validate_pre_restore_point_age() {
 
 restore() {
   local original_data_owner original_data_mode mysql_config
+  local -a restore_options=()
   [[ "${SNAPSHOT:-}" == host/$PBS_BACKUP_ID/* ]] || {
     echo "restore requires a snapshot from host/$PBS_BACKUP_ID" >&2
     exit 1
@@ -440,12 +441,17 @@ restore() {
   mysql_config=$(mysql_config_path)
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
+  if [[ "$BOOKSTACK_BACKEND" == kubernetes ]]; then
+    # Container scratch and PVC filesystems may not support archived ACLs or xattrs.
+    # Preserve ownership and mode while avoiding unsupported optional metadata.
+    restore_options=(--ignore-acls --ignore-xattrs)
+  fi
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
-    database.pxar "$work/database"
+    database.pxar "$work/database" "${restore_options[@]}"
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
-    storage.pxar "$work/storage"
+    storage.pxar "$work/storage" "${restore_options[@]}"
 
   # Rollback state is captured before either copy is changed. The database dump lives
   # in the private work directory and is removed only after success or rollback.
