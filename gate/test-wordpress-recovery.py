@@ -46,44 +46,29 @@ if args[0]=='compose':
 
 if args[0]!='run':
     raise SystemExit(90)
+# The shared database client: -v DIR:/work ... IMAGE database-client.sh ACTION /work/FILE.
 entrypoint=args[args.index('--entrypoint')+1]
+if entrypoint!='/bin/sh' or args[-3]!='/usr/local/bin/database-client.sh':
+    raise SystemExit(91)
+assert os.environ['DB_ENGINE']=='mariadb' and os.environ['DB_NAME']=='wordpress'
+work=next(args[i+1] for i,value in enumerate(args) if value=='-v' and args[i+1].endswith(':/work'))
+action,file=args[-2],Path(work[:-len(':/work')])/Path(args[-1]).name
 database=root/'database-state.sql'
-if entrypoint=='/bin/sh':
-    if case=='missing-database-client-tools':
-        raise SystemExit(1)
-    if case=='mysql-client-tools':
-        print('mysql')
-        print('mysqldump')
-    else:
-        print('mariadb')
-        print('mariadb-dump')
-    raise SystemExit(0)
 with (root/'database-client.log').open('a') as log:
-    log.write(entrypoint+'\n')
-if entrypoint in ['mysqldump','mariadb-dump']:
+    log.write(action+'\n')
+if action=='dump':
     if case=='database-dump-failure':
         raise SystemExit(16)
-    sys.stdout.write(database.read_text())
+    file.write_text(database.read_text())
     raise SystemExit(0)
-if entrypoint not in ['mysql','mariadb']:
-    raise SystemExit(91)
-if any(value.startswith('--execute=SELECT CONCAT') for value in args):
-    if database.read_text().strip() not in ['', 'EMPTY']:
-        print('DROP TABLE IF EXISTS `wordpress_table`;')
-    raise SystemExit(0)
-input_sql=sys.stdin.read()
-if 'DROP TABLE IF EXISTS' in input_sql:
-    assert 'SET FOREIGN_KEY_CHECKS=0;' in input_sql
-    database.write_text('EMPTY\n')
-    raise SystemExit(0)
-if 'SNAPSHOT-DATABASE' in input_sql:
+if action!='restore':
+    raise SystemExit(92)
+dump=file.read_text()
+if 'SNAPSHOT-DATABASE' in dump:
     database.write_text('PARTIAL-DATABASE\n' if case=='database-import-failure'
                         else 'SNAPSHOT-DATABASE\n')
     raise SystemExit(17 if case=='database-import-failure' else 0)
-if 'ORIGINAL-DATABASE' in input_sql:
-    database.write_text('ORIGINAL-DATABASE\n')
-    raise SystemExit(0)
-raise SystemExit(92)
+database.write_text(dump)
 '''
 
 PBS = r'''#!/usr/bin/env python3
@@ -271,7 +256,9 @@ def run_restore(case):
             "WORDPRESS_DB_NAME": "wordpress",
             "WORDPRESS_DB_USER": "wordpress",
             "WORDPRESS_DB_PASSWORD": "fixture-only",
+            "WORDPRESS_DB_PROVIDER": "mariadb",
             "WORDPRESS_DB_CLIENT_IMAGE": "mariadb:test",
+            "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
             "PBS_REPOSITORY": "test:store",
             "PBS_FINGERPRINT": "test",
             "PBS_PASSWORD": "fixture-only",
@@ -301,7 +288,7 @@ def run_restore(case):
             server.server_close()
             thread.join()
         compose_actions = (root / "compose.log").read_text().splitlines() if (root / "compose.log").exists() else []
-        success = case in {"success", "health-redirect", "mysql-client-tools"}
+        success = case in {"success", "health-redirect"}
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert content.is_dir()
         if success:
@@ -311,21 +298,15 @@ def run_restore(case):
             assert content.stat().st_ino != original_inode
             assert (root / "database-state.sql").read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
-            database_tools = (root / "database-client.log").read_text().splitlines()
-            if case == "mysql-client-tools":
-                assert "mysql" in database_tools and "mysqldump" in database_tools
-            else:
-                assert "mariadb" in database_tools and "mariadb-dump" in database_tools
+            database_actions = (root / "database-client.log").read_text().splitlines()
+            assert database_actions == ["dump", "restore"], database_actions
         else:
             assert (content / "original.txt").read_text() == "original media state\n"
             assert not (content / "restored.txt").exists()
             assert content.stat().st_ino == original_inode, "rollback must rename the original tree back"
             assert content.stat().st_mode == original_mode
             assert (root / "database-state.sql").read_text() == "ORIGINAL-DATABASE\n"
-            if case == "missing-database-client-tools":
-                assert compose_actions == [], compose_actions
-                assert "must provide a MariaDB/MySQL client and dump tool" in result.stderr
-            elif case == "database-dump-failure":
+            if case == "database-dump-failure":
                 assert compose_actions == ["stop", "start"], compose_actions
             else:
                 assert "WordPress rollback restored the previous content and database." in result.stderr
@@ -340,8 +321,6 @@ def main():
     check_wordpress_cli_uses_data_owner()
     check_wordpress_health_redirects()
     run_restore("success")
-    run_restore("mysql-client-tools")
-    run_restore("missing-database-client-tools")
     run_restore("health-redirect")
     run_restore("database-dump-failure")
     run_restore("database-import-failure")

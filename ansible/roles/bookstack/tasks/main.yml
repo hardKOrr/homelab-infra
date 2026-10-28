@@ -199,6 +199,15 @@
         name: proxmox-backup-client
         state: present
 
+- name: BookStack | Resolve the server-matched database client
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+
+- name: BookStack | Install the shared database client
+  ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
+
 - name: BookStack | Install recovery helper
   ansible.builtin.copy:
     src: bookstack-recovery

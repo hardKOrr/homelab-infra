@@ -1,0 +1,26 @@
+---
+# Install scripts/database-client.sh on the current host. run-client.yml uses it, and a
+# host recovery script runs it the same way: in database_app_target.client_image with
+# the file's directory mounted at /work (see run-client.yml for the exact Docker call).
+#
+# Sets:
+#   database_client_script  its path on the current host
+- name: Database client | Record the script path
+  ansible.builtin.set_fact:
+    database_client_script: /usr/local/lib/homelab-infra/database-client.sh
+
+- name: Database client | Create the script directory
+  ansible.builtin.file:
+    path: "{{ database_client_script | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Database client | Install the shared script
+  ansible.builtin.copy:
+    src: scripts/database-client.sh
+    dest: "{{ database_client_script }}"
+    owner: root
+    group: root
+    mode: "0755"

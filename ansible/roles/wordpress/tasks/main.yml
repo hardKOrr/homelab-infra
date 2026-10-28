@@ -324,6 +324,15 @@
         name: proxmox-backup-client
         state: present
 
+- name: WordPress | Resolve the server-matched database client
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+
+- name: WordPress | Install the shared database client
+  ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
+
 - name: WordPress | Install recovery helper
   ansible.builtin.copy:
     src: wordpress-recovery

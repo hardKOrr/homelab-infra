@@ -256,7 +256,6 @@ ALLOWLIST = {
         "ansible/roles/wordpress/tasks/main.yml",
     },
     "database-dump": {
-        "ansible/roles/bookstack/files/bookstack-recovery",
         "ansible/roles/hi-events/templates/backup-cronjob.yaml.j2",
         "ansible/roles/hi-events/templates/restore-job.yaml.j2",
         "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
@@ -270,7 +269,6 @@ ALLOWLIST = {
         "ansible/roles/n8n/templates/restore-job.yaml.j2",
         "ansible/roles/plane/files/plane-recovery",
         "ansible/roles/plane/tasks/restore.yml",
-        "ansible/roles/wordpress/files/wordpress-recovery",
     },
     "k8s-recovery-job": {
         "ansible/roles/hi-events/templates/backup-cronjob.yaml.j2",

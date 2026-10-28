@@ -7,12 +7,7 @@
 #   database_client_file      absolute path on the current host; its directory is mounted
 #   database_client_password  the application login's password (not used by verify)
 - name: Database client | Install the shared script
-  ansible.builtin.copy:
-    src: scripts/database-client.sh
-    dest: /usr/local/lib/homelab-infra/database-client.sh
-    owner: root
-    group: root
-    mode: "0755"
+  ansible.builtin.include_tasks: install-client.yml
 
 - name: Database client | Run {{ database_client_action }}
   ansible.builtin.command:
@@ -23,7 +18,7 @@
       - --network=host
       - --entrypoint=/bin/sh
       - "--volume={{ database_client_file | dirname }}:/work{{ '' if database_client_action == 'dump' else ':ro' }}"
-      - --volume=/usr/local/lib/homelab-infra/database-client.sh:/usr/local/bin/database-client.sh:ro
+      - "--volume={{ database_client_script }}:/usr/local/bin/database-client.sh:ro"
       - --env=DB_ENGINE
       - --env=DB_HOST
       - --env=DB_PORT
