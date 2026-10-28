@@ -20,10 +20,10 @@
     k8s_secret_name: "{{ restore_target }}-env"
     k8s_secret_data:
       DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: "{{ k8s_database_step.env.PGHOST }}"
-      DB_POSTGRESDB_PORT: "{{ k8s_database_step.env.PGPORT }}"
-      DB_POSTGRESDB_DATABASE: "{{ k8s_database_step.env.PGDATABASE }}"
-      DB_POSTGRESDB_USER: "{{ k8s_database_step.env.PGUSER }}"
+      DB_POSTGRESDB_HOST: "{{ k8s_database_step.env.DB_HOST }}"
+      DB_POSTGRESDB_PORT: "{{ k8s_database_step.env.DB_PORT }}"
+      DB_POSTGRESDB_DATABASE: "{{ k8s_database_step.env.DB_NAME }}"
+      DB_POSTGRESDB_USER: "{{ k8s_database_step.env.DB_USER }}"
       DB_POSTGRESDB_PASSWORD: "{{ k8s_database_step.secret_data['db-password'] }}"
       N8N_ENCRYPTION_KEY: "{{ restore_source_encryption_key }}"
       N8N_HOST: "{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"

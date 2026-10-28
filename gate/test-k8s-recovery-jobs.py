@@ -12,10 +12,13 @@ from pathlib import Path
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
+from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
+# The database step reads the shared client script through the `file` lookup.
+init_plugin_loader()
 BACKUP = ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"
 RESTORE = ROOT / "ansible/templates/kubernetes/recovery-restore.yaml.j2"
 STEP = ROOT / "ansible/tasks/database/kubernetes-recovery-step.yml"
@@ -29,7 +32,7 @@ CLIENT = {
 }
 # Archive names are part of every recovery point already in PBS. Changing one strands them.
 APPS = {
-    "bookstack": {"role": "bookstack-kubernetes", "file": "main.yml", "restore": "restore.yml", "engine": "external-mysql",
+    "bookstack": {"role": "bookstack-kubernetes", "file": "main.yml", "restore": "restore.yml", "engine": "mariadb",
                   "archives": ["storage"]},
     "maintainerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
                     "archives": ["config"]},
@@ -39,7 +42,7 @@ APPS = {
                   "archives": ["storage"]},
     "litellm": {"file": "main.yml", "restore": "restore.yml", "engine": "postgresql",
                 "archives": ["config"]},
-    "mixpost": {"file": "main.yml", "restore": "restore.yml", "engine": "mysql",
+    "mixpost": {"file": "main.yml", "restore": "restore.yml", "engine": "namespace-mysql",
                 "archives": ["storage"]},
     "n8n": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
             "engine": "postgresql", "archives": ["data"]},
@@ -66,69 +69,67 @@ def task_named(tasks, name):
 
 
 def database_steps():
+    """Render the step's real set_facts and return one step per database kind."""
     tasks = tasks_of(STEP.relative_to(ROOT))
-    postgres = task_named(tasks, "Database recovery step | Describe the PostgreSQL step")
-    mysql = task_named(tasks, "Database recovery step | Describe the MySQL step")
-    postgres = render(postgres["ansible.builtin.set_fact"]["k8s_database_step"], {
-        "_kds_version": "16", "_kds_host": "pg.example.test", "_kds_port": "5432",
-        "_kds_name": "app", "_kds_user": "app", "_kds_password": "secret",
-    })
-    mysql = render(mysql["ansible.builtin.set_fact"]["k8s_database_step"], {
+    registered = task_named(tasks, "Database recovery step | Read the application login")
+    namespace = task_named(tasks, "Database recovery step | Read the in-namespace server")
+    describe = task_named(tasks, "Database recovery step | Describe the step")
+
+    def step(kds):
+        return render(describe["ansible.builtin.set_fact"]["k8s_database_step"], {
+            "_kds": kds, "_kds_glob": render(describe["vars"]["_kds_glob"], {"_kds": kds}),
+            "ansible_search_path": [str(STEP.parent)],
+        })
+
+    def target(provider, image):
+        return render(registered["ansible.builtin.set_fact"]["_kds"], {
+            "database_app_target": {
+                "provider": provider, "instance": f"{provider}-app", "host": "192.0.2.10",
+                "port": 5432 if provider == "postgresql" else 3306, "name": "app",
+                "role": "app", "password": "", "client_image": image,
+            },
+            # The canonical item's password is read through the instance's merged config.
+            "k8s_database_step_config": {"app": {"database_password": "fixture-db-password"}},
+        })
+
+    postgres = step(target("postgresql", "docker.io/library/postgres:16-alpine"))
+    mariadb = step(target("mariadb", "docker.io/library/mariadb:11.4"))
+    mysql = step(render(namespace["ansible.builtin.set_fact"]["_kds"], {
         "k8s_database_step_instance": "mp",
         "k8s_database_step_root_password": "root-secret",
         "k8s_database_step_config": {"app": {"database": {"name": "mixpost",
                                                           "image": "mysql:8.4"}}},
-    })
-    # The client is the server's major, so pg_restore accepts what pg_dump wrote.
-    assert postgres["image"] == "postgres:16-alpine"
-    assert postgres["secret_env"] == {"PGPASSWORD": "db-password"}
-    assert '"${DUMP_DIR}/${PGDATABASE}.dump"' in postgres["dump"]
+    }))
+
+    script = (STEP.parent / "scripts/database-client.sh").read_text(encoding="utf-8")
+    for database in (postgres, mariadb, mysql):
+        # One client for guests and Jobs: the script ships in the Job's Secret.
+        assert database["secret_data"]["database-client.sh"] == script.rstrip("\n")
+        assert database["secret_files"] == [{"key": "database-client.sh",
+                                             "path": "database-client.sh"}]
+        assert database["secret_env"] == {"DB_PASSWORD": "db-password"}
+        for body in ("dump", "load", "inspect"):
+            assert "/etc/recovery-credentials/database-client.sh" in database[body], body
+        load = database["load"]
+        assert load.index(" verify ") < load.index(" restore ")
+    # The client is the server's own image, so pg_restore accepts what pg_dump wrote.
+    assert postgres["image"] == "docker.io/library/postgres:16-alpine"
+    assert postgres["env"] == {"DB_ENGINE": "postgresql", "DB_HOST": "192.0.2.10",
+                               "DB_PORT": "5432", "DB_NAME": "app", "DB_USER": "app"}
+    assert postgres["secret_data"]["db-password"] == "fixture-db-password"
+    # Existing recovery points hold these file names.
+    assert postgres["dump"].endswith('dump "${DUMP_DIR}/${DB_NAME}.dump"')
     # A drill target's database name need not be the source's, whose name the dump carries.
     assert 'set -- "${DUMP_DIR}"/*.dump' in postgres["load"]
-    assert "pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error" in postgres["load"]
+    assert mariadb["image"] == "docker.io/library/mariadb:11.4"
+    assert mariadb["env"]["DB_ENGINE"] == "mariadb"
+    assert mariadb["dump"].endswith('dump "${DUMP_DIR}/database.sql"')
     assert mysql["image"] == "mysql:8.4"
-    assert mysql["env"]["DB_HOST"] == "mp-db"
-    assert mysql["secret_files"] == [{"key": "my.cnf", "path": "my.cnf"}]
-    assert "password=root-secret" in mysql["secret_data"]["my.cnf"]
-    assert '"${DUMP_DIR}/database.sql"' in mysql["dump"]
-    assert "DROP DATABASE IF EXISTS" in mysql["load"]
-
-    external_task = task_named(tasks, "Database recovery step | Describe the external database operations")
-
-    def external_mysql(provider):
-        client = "mariadb" if provider == "mariadb" else "mysql"
-        dump_client = "mariadb-dump" if provider == "mariadb" else "mysqldump"
-        package = "mariadb-client" if provider == "mariadb" else "default-mysql-client"
-        return render(external_task["ansible.builtin.set_fact"]["k8s_database_step"], {
-            "_kds_provider": provider,
-            "_kds_client": client,
-            "_kds_dump_client": dump_client,
-            "_kds_client_package": package,
-            "_kds_host": "database.example.test",
-            "_kds_port": "3306",
-            "_kds_name": "bookstack",
-            "_kds_user": "bookstack",
-            "_kds_password": "fixture-database-password",
-        })
-
-    external_mariadb = external_mysql("mariadb")
-    assert external_mariadb["image"] == "debian:bookworm-slim"
-    assert "mariadb-client" in external_mariadb["setup"]
-    assert external_mariadb["env"] == {
-        "DB_HOST": "database.example.test", "DB_PORT": "3306", "DB_NAME": "bookstack"
-    }
-    assert external_mariadb["secret_files"] == [{"key": "my.cnf", "path": "my.cnf"}]
-    assert "user=bookstack" in external_mariadb["secret_data"]["my.cnf"]
-    assert "mariadb-dump" in external_mariadb["dump"]
-    assert "--single-transaction" in external_mariadb["dump"]
-    assert "DROP TABLE IF EXISTS" in external_mariadb["load"]
-    assert "DROP DATABASE" not in external_mariadb["load"]
-    assert "mariadb" in external_mariadb["inspect"]
-
-    external_mysql_step = external_mysql("mysql")
-    assert "default-mysql-client" in external_mysql_step["setup"]
-    assert "mysqldump" in external_mysql_step["dump"]
-    return {"postgresql": postgres, "mysql": mysql, "external-mysql": external_mariadb}
+    assert mysql["env"] == {"DB_ENGINE": "mysql", "DB_HOST": "mp-db", "DB_PORT": "3306",
+                            "DB_NAME": "mixpost", "DB_USER": "root"}
+    assert mysql["secret_data"]["db-password"] == "root-secret"
+    assert 'set -- "${DUMP_DIR}"/database.sql' in mysql["load"]
+    return {"postgresql": postgres, "namespace-mysql": mysql, "mariadb": mariadb}
 
 
 def backup_documents(archives, database, instance="app"):
@@ -188,7 +189,7 @@ def shared_pair(steps):
     assert cronjob["spec"]["timeZone"] == "UTC"
     pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     assert [c["name"] for c in pod["initContainers"]] == ["dump"]
-    assert pod["initContainers"][0]["image"] == "postgres:16-alpine"
+    assert pod["initContainers"][0]["image"] == "docker.io/library/postgres:16-alpine"
     push = pod["containers"][0]
     script = push["args"][0]
     assert_client_tmpfs(pod, push)
@@ -234,7 +235,7 @@ def shared_pair(steps):
     assert 'restore "${SNAPSHOT}" config.pxar /recovery/config' in stage
     assert "RECOVERY_CONFIGMAP config" in stage
     assert "/volumes/" not in stage
-    assert "pg_restore" in load
+    assert "database-client.sh restore" in load
     assert replace.index("find /volumes/data -mindepth 1 -delete") < replace.index(
         'restore "${SNAPSHOT}" data.pxar /volumes/data')
     assert "chown -R 1000:1000 /volumes/data" in replace
@@ -250,33 +251,23 @@ def shared_pair(steps):
     assert [c["name"] for c in containers] == ["stage", "load"]
 
     _, containers = restore_pod("restore", [{"name": "storage", "claim": "app-storage"}],
-                                steps["mysql"])
+                                steps["namespace-mysql"])
     load = containers[1]
     assert load["image"] == "mysql:8.4"
     assert {"name": "credentials", "mountPath": "/etc/recovery-credentials",
             "readOnly": True} in load["volumeMounts"]
+    assert {"name": "DB_PASSWORD", "valueFrom": {"secretKeyRef": {
+        "name": "app-restore", "key": "db-password"}}} in load["env"]
 
     _, cronjob = backup_documents(
-        [{"name": "storage", "claim": "bookstack-config"}], steps["external-mysql"], "bookstack"
+        [{"name": "storage", "claim": "bookstack-config"}], steps["mariadb"], "bookstack"
     )
     pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
     dump = pod["initContainers"][0]
-    assert "mariadb-client" in dump["args"][0]
-    assert "mariadb-dump" in dump["args"][0]
+    assert dump["image"] == "docker.io/library/mariadb:11.4"
+    assert "database-client.sh dump" in dump["args"][0]
     assert "database.pxar:/recovery/database" in pod["containers"][0]["args"][0]
     assert "storage.pxar:/volumes/storage" in pod["containers"][0]["args"][0]
-
-    _, containers = restore_pod(
-        "restore", [{"name": "storage", "claim": "bookstack-config", "owner": "1000:1000"}],
-        steps["external-mysql"], "bookstack"
-    )
-    load = containers[1]
-    assert "mariadb-client" in load["args"][0]
-    assert "DROP TABLE IF EXISTS" in load["args"][0]
-    assert "DROP DATABASE" not in load["args"][0]
-    replace = containers[2]["args"][0]
-    assert "find /volumes/storage -mindepth 1 -delete" in replace
-    assert "chown -R 1000:1000 /volumes/storage" in replace
 
 
 def restore_tasks():

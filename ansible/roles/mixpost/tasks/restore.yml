@@ -16,7 +16,7 @@
 - name: Restore | Describe the target's database step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_database_step_engine: mysql
+    k8s_database_step_source: namespace-mysql
     k8s_database_step_config: "{{ restore_target_config }}"
     k8s_database_step_instance: "{{ restore_target }}"
     k8s_database_step_root_password: "{{ restore_target_config.app.db_root_password | default('') }}"

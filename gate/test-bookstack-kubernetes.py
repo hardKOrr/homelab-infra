@@ -179,7 +179,7 @@ def check_backup_and_restore_jobs():
         task for task in main_tasks
         if task.get("name") == "BookStack Kubernetes | Describe the external database recovery step"
     )
-    assert database_backup["vars"]["k8s_database_step_engine"] == "external-mysql"
+    assert database_backup["vars"]["k8s_database_step_source"] == "registered"
     assert database_backup["vars"]["k8s_database_step_config"] == "{{ app_config }}"
     backup_task = next(
         task for task in main_tasks
@@ -198,7 +198,7 @@ def check_backup_and_restore_jobs():
         task for task in restore_tasks
         if task.get("name") == "BookStack Kubernetes Restore | Describe the external database recovery step"
     )
-    assert database_restore["vars"]["k8s_database_step_engine"] == "external-mysql"
+    assert database_restore["vars"]["k8s_database_step_source"] == "registered"
     recovery_task = next(
         task for task in restore_tasks
         if str(task.get("ansible.builtin.include_tasks", "")).endswith("recovery-restore.yml")

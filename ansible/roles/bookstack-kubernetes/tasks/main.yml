@@ -157,7 +157,7 @@
 - name: BookStack Kubernetes | Describe the external database recovery step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_database_step_engine: external-mysql
+    k8s_database_step_source: registered
     k8s_database_step_config: "{{ app_config }}"
     k8s_database_step_instance: "{{ instance }}"
   when: app_config.backup.enabled | default(false) | bool
