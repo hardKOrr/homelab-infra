@@ -52,7 +52,9 @@ bookstack_defaults:
     datastore: ""
     backup_id: ""
     client:
-      image: debian:bookworm-slim
+      # The Kubernetes recovery Job uses curl for notifications and to fetch the signed
+      # PBS client repository key before installing proxmox-backup-client.
+      image: buildpack-deps:bookworm-curl
       key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
       # Client-only repository, not the PBS server's subscription repository.
       repository: "http://download.proxmox.com/debian/pbs-client"

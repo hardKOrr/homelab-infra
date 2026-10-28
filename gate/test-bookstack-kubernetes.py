@@ -90,6 +90,7 @@ def check_defaults_and_dispatch():
     assert defaults["hosting"]["method"] == "docker"
     assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
     assert defaults["hosting"]["impossible"] == {}
+    assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
     deploy = yaml.safe_load((ROOT / "ansible/playbooks/apps/bookstack.yml").read_text())
     validate = next(
