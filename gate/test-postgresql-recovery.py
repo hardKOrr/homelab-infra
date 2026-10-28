@@ -117,8 +117,8 @@ def check_contract():
     assert provision["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
     main = task_tree(ROLE / "tasks/main.yml")
-    pbs_client = task_named(main, "PostgreSQL | Install the PBS backup client when backups are enabled")
-    assert pbs_client["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
+    pbs_client = task_named(main, "PostgreSQL | Install the pinned PBS client when backups are enabled")
+    assert pbs_client["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper = task_named(main, "PostgreSQL | Install the native recovery helper when backups are enabled")
     assert helper["ansible.builtin.copy"]["src"] == "postgresql-recovery.py"
     assert helper["ansible.builtin.copy"]["mode"] == "0750"
@@ -136,16 +136,17 @@ def check_contract():
     assert exporter["become_user"] == "postgres"
     assert task_named(backup, "PostgreSQL backup | Refuse unsupported external tablespaces")
     upload = task_named(backup, "PostgreSQL backup | Upload the physical archive to PBS")
-    assert "postgresql.pxar:" in str(upload["ansible.builtin.command"]["argv"])
-    assert upload["no_log"] is True
-    assert task_named(backup, "PostgreSQL backup | Require a new recovery point")
-    assert task_named(backup, "PostgreSQL backup | Verify that PBS stored the native archive")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert [a["name"] for a in upload["vars"]["pbs_client_archives"]] == ["postgresql.pxar"]
+    staging = task_named(backup, "PostgreSQL backup | Create private staging space")
+    assert staging["ansible.builtin.tempfile"]["path"] == "/var/tmp"
 
     restore = task_tree(ROLE / "tasks/restore.yml")
     assert task_named(restore, "PostgreSQL restore | Require the source point to belong to its backup group")
     assert task_named(restore, "PostgreSQL restore | Require the independent existing-target point")
-    assert task_named(restore, "PostgreSQL restore | Require the selected native archive")
-    assert task_named(restore, "PostgreSQL restore | Require the pre-restore native archive")
+    download = task_named(restore, "PostgreSQL restore | Download the selected native archive")
+    assert download["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert download["vars"]["pbs_client_pre_restore_backup_id"] == "{{ _postgresql_restore_target_backup_id }}"
     importer = task_named(restore, "PostgreSQL restore | Verify and apply the point transactionally")
     assert "homelab-postgresql-recovery" in str(importer["ansible.builtin.command"]["argv"])
     assert task_named(restore, "PostgreSQL restore | Remove private staging data")

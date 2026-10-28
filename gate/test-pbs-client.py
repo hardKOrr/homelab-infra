@@ -10,7 +10,8 @@ lookup is replaced by fixed facts. Fake `docker`, `unshare`, `mount` and
   points and proves the previous point survived pruning;
 - preview with a point runs the client (archive check, index download, catalog read)
   and extracts nothing; overwrite extracts every archive into its staging path;
-- a point outside the source group and keep_last below 2 fail before the client runs.
+- a lab without PBS, a point outside the source group and keep_last below 2 fail before
+  the client runs.
 """
 
 import json
@@ -138,7 +139,7 @@ printf '%s\n' "$*" >> "$PBS_TEST_ROOT/mount.log"
 STUB_TARGET = """\
 - name: Stub PBS target
   ansible.builtin.set_fact:
-    k8s_pbs_available: true
+    k8s_pbs_available: "{{ gate_pbs_available | default(true) }}"
     k8s_pbs_repository: gate@pbs.example.invalid:store
     k8s_pbs_fingerprint: "00:11"
     k8s_pbs_password: gate-only-secret
@@ -180,6 +181,7 @@ def run(root, task_file, variables, case=""):
         "PBS_TEST_CASE": case,
         "ANSIBLE_NOCOLOR": "1",
         "ANSIBLE_STDOUT_CALLBACK": "default",
+        "ANSIBLE_DISPLAY_OK_HOSTS": "1",
     }
     return subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
                           cwd=root, env=env, capture_output=True, text=True)
@@ -276,6 +278,14 @@ def main():
                    "pbs_client_overwrite": False}
         expect(run(root, "pbs-client-restore.yml", foreign), False, "foreign point")
         assert not calls(root), "a point outside the group must fail before the client runs"
+
+        reset_logs(root)
+        for task_file in ["pbs-client-backup.yml", "pbs-client-restore.yml"]:
+            result = run(root, task_file, {"pbs_client_runtime": "native", "pbs_client_archives": archives,
+                                           "gate_pbs_available": False})
+            expect(result, False, f"{task_file} without PBS")
+            assert "No usable PBS" in result.stdout + result.stderr
+        assert not calls(root), "a lab without PBS must fail before the client runs"
 
         short = {"pbs_client_runtime": "native", "pbs_client_archives": archives,
                  "pbs_client_keep_last": 1}
