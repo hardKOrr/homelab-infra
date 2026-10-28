@@ -310,10 +310,18 @@ today's copies only shrinks.
 | Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
 | PBS target and credentials | `tasks/backup/resolve-pbs-target.yml` | optional `k8s_pbs_datastore_override` |
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
-| PBS client install, backup, verify, restore | `tasks/backup/pbs-client*.yml` (planned, part 02) | paths, archive names, owner, services to stop, hooks |
+| PBS client install, backup, verify, restore | `tasks/backup/pbs-client-install.yml`, `pbs-client-backup.yml`, `pbs-client-restore.yml`; pins in `vars/pbs-client.yml` | `pbs_client_runtime` (`docker` or `native`), `pbs_client_archives`, optional `pbs_client_stop_services` with `pbs_client_compose_project`, `pbs_client_backup_args`, `pbs_client_restore_args`, `pbs_client_quiesced_hook` |
 | Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, `stop` and `restart` Deployments, optional `after_restore_tasks` hook |
 | Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_engine` (`postgresql` or `mysql`), the instance and its config |
 | Database dump, restore and drop | `tasks/database/*` (planned, part 04) | engine, database and login names |
+
+The guest-side PBS client runs with `/tmp`, its cache and runtime files on a bounded tmpfs,
+in a short-lived container on a Docker host or in a private mount namespace on a native
+guest. Backup names each recovery point by its UTC time and keeps the previous point
+through a same-day safety backup. A Restore preview (`overwrite=false`) runs the same
+client path: it checks the point's archives and downloads its index without touching the
+application. Stage backup sources and restore targets outside `/tmp`, beside the data
+they replace.
 
 ## Local conventions
 
