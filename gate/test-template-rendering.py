@@ -787,14 +787,6 @@ def emby_rendering():
     restore_identity = task_named(
         restore_block, "Emby restore | Assert the restored service is Emby"
     )
-    restore_extract = task_named(
-        restore_block, "Emby restore | Extract the selected archive"
-    )
-    restore_extract_argv = restore_extract["ansible.builtin.command"]["argv"]
-    assert any(
-        restore_extract_argv[index : index + 2] == ["--tmpfs", "/tmp"]
-        for index in range(len(restore_extract_argv) - 1)
-    ), "Emby PBS extraction gets a writable temporary filesystem"
     restore_identity_conditions = restore_health["until"] + restore_identity[
         "ansible.builtin.assert"
     ]["that"]

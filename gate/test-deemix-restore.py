@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 source = yaml.safe_load((repo / "ansible/roles/deemix/tasks/restore.yml").read_text())
@@ -26,17 +28,11 @@ class Health(http.server.BaseHTTPRequestHandler):
 
 
 def fixture_tasks(tasks, root):
-    """Stub only PBS resolution and Compose; run the production file/command tasks."""
+    """Stub the PBS client and Compose; run the production file/command tasks."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         task.pop("no_log", None)
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True, "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test", "k8s_pbs_password": "test",
-            }
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {"argv": [
@@ -59,20 +55,21 @@ def check(case, server):
         config.mkdir()
         (config / "original.txt").write_text("original state\n")
         before_mode = config.stat().st_mode
-        # The executable stubs are the process boundary for the unmodified production
-        # Docker and cp argv. Copy failure writes partial state before failing.
+        # The executable stubs are the process boundary for the PBS client and the
+        # unmodified production cp argv. Copy failure writes partial state before failing.
         scripts = {
-            "docker": """#!/usr/bin/env python3
+            "proxmox-backup-client": """#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
-assert os.environ.get('PBS_REPOSITORY') == 'test'
-assert 'host/deemix/2026-10-09T00:00:00Z' == os.environ['SNAPSHOT']
+args=sys.argv[1:]
+if args[:2] == ['snapshot', 'list']:
+    raise SystemExit(0)
+assert args[:2] == ['restore', 'host/deemix/2026-10-09T00:00:00Z'], args
 if os.environ['DEEMIX_TEST_CASE'] == 'extract-failure':
     raise SystemExit(7)
-args=sys.argv[1:]
-mount=args[args.index('--volume')+1]
-assert mount.endswith(':/restore')
-Path(mount[:-9], 'restored.txt').write_text('restored state\\n')
+assert args[2] == 'data.pxar'
+staging=Path(args[3])
+Path(staging, 'restored.txt').write_text('restored state\\n')
 """,
             "cp": """#!/usr/bin/env python3
 import os,subprocess,sys
@@ -105,8 +102,7 @@ if sys.argv[1]=='present' and os.environ['DEEMIX_TEST_CASE']=='start-failure':
             path = root / "bin" / name
             path.write_text(script)
             path.chmod(0o700)
-        snapshot = ("host/deemix-other/2026-10-09T00:00:00Z" if case == "foreign-group"
-                    else "host/deemix/2026-10-09T00:00:00Z")
+        snapshot = "host/deemix/2026-10-09T00:00:00Z"
         server.response_status = 503 if case == "health-failure" else 200
         plays = [{"hosts": "localhost", "gather_facts": False, "vars": {
             "instance": "deemix", "deemix_project_dir": str(root),
@@ -114,10 +110,7 @@ if sys.argv[1]=='present' and os.environ['DEEMIX_TEST_CASE']=='start-failure':
             "homelabinfra_infra": {"backups": {}},
             "app_config": {"app": {"config_path": str(config), "puid": os.getuid(),
                                    "pgid": os.getgid(), "port": server.server_port},
-                           "backup": {"enabled": True, "application_consistent": True,
-                                      "client": {"key_url": "test", "repository": "test",
-                                                 "suite": "test", "component": "test",
-                                                 "image": "test"}}},
+                           "backup": {"enabled": True, "application_consistent": True}},
         }, "tasks": fixture_tasks(source, root)}]
         path = root / "restore.yml"
         path.write_text(yaml.safe_dump(plays))
@@ -145,64 +138,24 @@ if sys.argv[1]=='present' and os.environ['DEEMIX_TEST_CASE']=='start-failure':
             assert config.stat().st_mode == before_mode
         if case != "rollback-failure":
             assert not list(root.glob(".deemix-pre-restore-*")), result.stdout + result.stderr
-        if case in ["plan", "foreign-group"]:
-            assert not (root / "services").exists(), "read-only/rejected restore stopped service"
+        if case == "plan":
+            assert not (root / "services").exists(), "read-only restore stopped service"
         else:
             states = (root / "services").read_text().splitlines()
             assert states[0] == "stopped"
             assert states[-1] == ("present" if success else "stopped")
-        if case == "foreign-group":
-            assert "must belong to host/deemix/" in result.stdout
 
 
-def check_backup(fail_upload):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "settings.json").write_text('{"tracknameTemplate":"canary"}')
-        scripts = {
-            "docker": """#!/usr/bin/env python3
-import os, sys
-args = sys.argv[1:]
-assert args.count('--volume') == 1
-assert args[args.index('--volume')+1] == os.environ['DEEMIX_TEST_ROOT']+'/config:/source:ro'
-assert os.environ['BACKUP_ID'] == 'deemix'
-assert 'backup data.pxar:/source --backup-id "$BACKUP_ID"' in args[-1]
-assert '--keep-last 2' in args[-1]
-raise SystemExit(7 if os.environ['FAIL_UPLOAD'] == '1' else 0)
-""",
-            "service": """#!/usr/bin/env python3
-import os, sys
-from pathlib import Path
-assert sys.argv[2:] == ['deemix']
-with Path(os.environ['DEEMIX_TEST_ROOT'], 'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/deemix.yml").read_text())["deemix_defaults"]
-        defaults["app"]["config_path"] = str(config)
-        tasks = yaml.safe_load((repo / "ansible/roles/deemix/tasks/backup.yml").read_text())
-        path = root / "backup.yml"
-        path.write_text(yaml.safe_dump([{
-            "hosts": "localhost", "gather_facts": False,
-            "vars": {"instance": "deemix", "deemix_project_dir": str(root),
-                     "app_config": defaults, "homelabinfra_infra": {"backups": {}}},
-            "tasks": fixture_tasks(tasks, root),
-        }]))
-        env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-                            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-                            "DEEMIX_TEST_ROOT": str(root), "FAIL_UPLOAD": str(int(fail_upload))}
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                env=env, text=True, capture_output=True, check=False)
-        assert (result.returncode == 0) != fail_upload, result.stdout + result.stderr
-        assert (root / "services").read_text().splitlines() == ["stopped", "present"]
-        assert (config / "settings.json").read_text() == '{"tracknameTemplate":"canary"}'
+def check_backup():
+    """The shared PBS client stops, uploads and restarts; Deemix supplies only its inputs."""
+    tasks = yaml.safe_load((repo / "ansible/roles/deemix/tasks/backup.yml").read_text())
+    upload = next(t for t in tasks if t["name"] == "Deemix backup | Quiesce Deemix and archive its config to PBS")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_compose_project"] == "{{ deemix_project_dir }}"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ app_config.app.config_path }}"}]
 
 
 def check_arl():
@@ -255,20 +208,19 @@ def check_arl():
 
 def main():
     check_arl()
-    check_backup(False)
-    check_backup(True)
+    check_backup()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "foreign-group", "extract-failure", "move-failure", "copy-failure",
+        for case in ["plan", "extract-failure", "move-failure", "copy-failure",
                      "ownership-failure", "start-failure", "health-failure", "rollback-failure", "success"]:
             check(case, server)
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Deemix: read-only plan, group guard, successful restore and failure rollback passed")
+    print("Deemix: read-only plan, successful restore and failure rollback passed")
 
 
 if __name__ == "__main__":

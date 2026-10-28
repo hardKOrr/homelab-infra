@@ -17,18 +17,6 @@
       Actual Budget needs its declared application-consistent backup contract and a
       configured PBS before an on-demand backup can run.
 
-- name: Actual Budget backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Actual Budget backup | Assert PBS is available
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Actual Budget. Deploy PBS and re-run this backup;
-      no local archive is treated as a recovery point.
-
 - name: Actual Budget backup | Check the application data path
   ansible.builtin.stat:
     path: "{{ app_config.app.data_path }}"
@@ -44,74 +32,16 @@
       Actual Budget data path {{ app_config.app.data_path }} is missing; refusing to
       create a backup that would not contain the application's persistent state.
 
-- name: Actual Budget backup | Stop only Actual Budget
-  community.docker.docker_compose_v2:
-    project_src: "{{ actual_budget_project_dir }}"
-    state: stopped
-    services:
-      - "{{ app_config.app.service_name }}"
+- name: Actual Budget backup | Quiesce Actual Budget and archive its data to PBS
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_compose_project: "{{ actual_budget_project_dir }}"
+    pbs_client_stop_services: ["{{ app_config.app.service_name }}"]
+    pbs_client_archives:
+      - name: data.pxar
+        path: "{{ app_config.app.data_path }}"
 
-- name: Actual Budget backup | Archive the quiesced data directory to PBS
-  block:
-    - name: Actual Budget backup | Push one application archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ app_config.app.data_path }}:/source:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
-            # A same-day pre-restore safety backup must retain the preceding recovery point.
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-      no_log: true
-      changed_when: true
-
-    - name: Actual Budget backup | Mark the backup complete
-      ansible.builtin.set_fact:
-        _application_backup_complete: true
-  always:
-    # A failed PBS upload must not leave the application down. The backup task's failure
-    # still propagates, while this service restart is limited to Actual Budget itself.
-    - name: Actual Budget backup | Start only Actual Budget
-      community.docker.docker_compose_v2:
-        project_src: "{{ actual_budget_project_dir }}"
-        state: present
-        services:
-          - "{{ app_config.app.service_name }}"
+- name: Actual Budget backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true

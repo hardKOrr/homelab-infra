@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 restore_source = yaml.safe_load((repo / "ansible/roles/frigate/tasks/restore.yml").read_text())
@@ -31,17 +33,11 @@ class Health(http.server.BaseHTTPRequestHandler):
 
 
 def fixture_tasks(tasks, root):
-    """Stub only PBS resolution and Compose; execute production file/command tasks."""
+    """Stub only the PBS client and Compose; execute production file/command tasks."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         task.pop("no_log", None)
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True, "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test", "k8s_pbs_password": "test",
-            }
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {"argv": [
@@ -189,22 +185,18 @@ def check_restore(case, server):
         (config / "original.txt").write_text("original state\n")
         before_mode = config.stat().st_mode
         scripts = {
-            "docker": """#!/usr/bin/env python3
+            "proxmox-backup-client": """#!/usr/bin/env python3
 import os,sqlite3,sys
 from pathlib import Path
-assert os.environ.get('PBS_REPOSITORY') == 'test'
 args=sys.argv[1:]
-if 'snapshot list' in args[-1]:
+if args[:2] == ['snapshot', 'list']:
     print('host/frigate/2026-10-09T00:00:00Z')
 else:
-    assert os.environ['SNAPSHOT'] == 'host/frigate/2026-10-09T00:00:00Z'
-    assert args[args.index('--tmpfs')+1] == '/tmp:rw,noexec,nosuid,nodev,size=256m'
+    assert args[:3] == ['restore', 'host/frigate/2026-10-09T00:00:00Z', 'data.pxar'], args
     case=os.environ['FRIGATE_TEST_CASE']
     if case=='extract-failure':
         raise SystemExit(7)
-    mount=args[args.index('--volume')+1]
-    assert mount.endswith(':/restore')
-    target=Path(mount[:-9])
+    target=Path(args[3])
     target.mkdir(parents=True,exist_ok=True)
     if case!='archive-missing-config':
         (target/'config.yml').write_text('detectors: {}\\n')
@@ -239,8 +231,7 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
             path = root / "bin" / name
             path.write_text(script)
             path.chmod(0o700)
-        snapshot = ("host/frigate-other/2026-10-09T00:00:00Z" if case == "foreign-group"
-                    else "host/frigate/2026-10-09T00:00:00Z")
+        snapshot = "host/frigate/2026-10-09T00:00:00Z"
         server.response_status = 503 if case == "health-failure" else 200
         plays = [{
             "hosts": "localhost", "gather_facts": False,
@@ -248,14 +239,12 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
                 "instance": "frigate", "frigate_project_dir": str(root),
                 "frigate_http_retries": 1, "frigate_http_delay": 0,
                 "restore_snapshot": "" if case == "plan" else snapshot,
-                "restore_overwrite": case not in ["plan", "foreign-group"],
+                "restore_overwrite": case != "plan",
                 "restore_pre_restore_point": "" if case == "missing-prepoint" else "host/frigate/2026-10-10T00:00:00Z",
                 "homelabinfra_infra": {"backups": {}},
                 "app_config": {
                     "app": {"config_path": str(config), "port": server.server_port},
-                    "backup": {"enabled": True, "application_consistent": True,
-                               "client": {"key_url": "test", "repository": "test",
-                                          "suite": "test", "component": "test", "image": "test"}},
+                    "backup": {"enabled": True, "application_consistent": True},
                 },
             },
             "tasks": fixture_tasks(restore_source, root),
@@ -282,7 +271,7 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
             assert (config / "config.yml").read_text() == "original config\n"
             assert config.stat().st_mode == before_mode
         assert not list(root.glob(".frigate-pre-restore-*")), result.stdout + result.stderr
-        if case in ["plan", "foreign-group", "missing-prepoint"]:
+        if case in ["plan", "missing-prepoint"]:
             assert not (root / "services").exists(), "read-only/rejected restore stopped service"
         else:
             states = (root / "services").read_text().splitlines()
@@ -297,57 +286,37 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
             else:
                 expected_states = ["stopped", "stopped"]
             assert states == expected_states, states
-        if case == "foreign-group":
-            assert "must belong to host/frigate/" in result.stdout
 
 
-def check_backup(fail_upload):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "config.yml").write_text("detectors: {}\n")
-        sqlite3.connect(config / "frigate.db").close()
-        scripts = {
-            "docker": """#!/usr/bin/env python3
-import os,sys
-args=sys.argv[1:]
-assert args[args.index('--volume')+1] == os.environ['FRIGATE_TEST_ROOT']+'/config:/source:ro'
-assert 'backup data.pxar:/source --backup-id "$BACKUP_ID"' in args[-1]
-assert '--keep-last 2' in args[-1]
-raise SystemExit(7 if os.environ['FAIL_UPLOAD']=='1' else 0)
-""",
-            "service": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['frigate']
-with Path(os.environ['FRIGATE_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/frigate.yml").read_text())["frigate_defaults"]
-        defaults["app"]["config_path"] = str(config)
-        playbook = root / "backup.yml"
-        playbook.write_text(yaml.safe_dump([{
-            "hosts": "localhost", "gather_facts": False,
-            "vars": {"instance": "frigate", "frigate_project_dir": str(root),
-                     "app_config": defaults, "homelabinfra_infra": {"backups": {}}},
-            "tasks": fixture_tasks(backup_source, root),
-        }]))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "FRIGATE_TEST_ROOT": str(root), "FAIL_UPLOAD": "1" if fail_upload else "0",
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
-                                env=env, text=True, capture_output=True, check=False)
-        assert (result.returncode != 0) == fail_upload, result.stdout + result.stderr
-        assert (root / "services").read_text().splitlines() == ["stopped", "present"]
+def check_backup():
+    """The shared PBS client stops, uploads and restarts; Frigate supplies its inputs and an
+    integrity check that runs while it is stopped."""
+    upload = next(t for t in backup_source
+                  if t["name"] == "Frigate backup | Quiesce Frigate and archive its configuration and database to PBS")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_compose_project"] == "{{ frigate_project_dir }}"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
+    assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ app_config.app.config_path }}"}]
+    hook = yaml.safe_load((repo / "ansible/roles/frigate/tasks/backup-quiesced.yml").read_text())
+    for healthy in [True, False]:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            if healthy:
+                sqlite3.connect(config / "frigate.db").close()
+            else:
+                (config / "frigate.db").write_text("not a sqlite database")
+            playbook = config / "hook.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"app_config": {"app": {"config_path": str(config)}}},
+                "tasks": hook,
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                                    text=True, capture_output=True, check=False)
+            assert (result.returncode == 0) == healthy, result.stdout + result.stderr
 
 
 def main():
@@ -358,7 +327,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "foreign-group", "missing-prepoint", "extract-failure",
+        for case in ["plan", "missing-prepoint", "extract-failure",
                      "archive-missing-config", "archive-missing-db", "integrity-failure",
                      "move-failure", "copy-failure", "start-failure", "health-failure", "success"]:
             check_restore(case, server)
@@ -366,9 +335,8 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
-    check_backup(False)
-    check_backup(True)
-    print("Frigate: CPU-only templates, PBS backup restart, read-only plan, group guard, and restore rollback passed")
+    check_backup()
+    print("Frigate: CPU-only templates, backup inputs and integrity hook, read-only plan, and restore rollback passed")
 
 
 if __name__ == "__main__":
