@@ -1,0 +1,26 @@
+---
+- name: BookStack Kubernetes Backup | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: BookStack Kubernetes Backup | Derive and verify the owned namespace
+  ansible.builtin.include_tasks: namespace.yml
+
+- name: BookStack Kubernetes Backup | Require configured PBS recovery
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - k8s_pbs_available | default(false) | bool
+    fail_msg: >-
+      BookStack has no active Kubernetes backup schedule. Deploy with backup enabled and
+      a verified PBS target before requesting a backup.
+
+- name: BookStack Kubernetes Backup | Run the deployed backup CronJob now
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: "{{ instance }}-backup-manual"
+    k8s_job_from_cronjob: "{{ instance }}-backup"
+    k8s_job_timeout: "{{ app_config.backup.timeout_seconds | default(3600) | int }}"
+
+- name: BookStack Kubernetes Backup | Record success
+  ansible.builtin.set_fact:
+    bookstack_backup_result: {rc: 0}

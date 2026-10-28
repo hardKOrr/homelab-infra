@@ -87,6 +87,9 @@ templates.
   checks only while dropping that database's tables, requires a readable safety snapshot
   no more than one hour old, rejects future and malformed snapshot times, and returns the
   original data and database after an import failure.
+- `test-bookstack-kubernetes.py`: BookStack keeps Docker as its default, dispatches the
+  Kubernetes method to an owned namespace, and renders a default-class PVC, restricted
+  recovery access, application-consistent backup CronJob and rollback-capable restore Job.
 - `test-wordpress-recovery.py`: WordPress Remove guards its unshared named database and
   login, Restore checks a recent readable safety point and the login endpoint, and a failed
   replacement restores the original `wp-content` tree and database. It also checks that

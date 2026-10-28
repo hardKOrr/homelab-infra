@@ -4,7 +4,7 @@
 bookstack_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -25,6 +25,9 @@ bookstack_defaults:
       name: bookstack
       role: bookstack
     data_path: "/opt/{{ instance }}/data"
+    # Used only by the Kubernetes backend; omitting storageClassName selects the
+    # cluster's default StorageClass, whose volumes are node-pinned and retained.
+    storage: 5
     # Initial administrator only; the role records the email in /config and refuses an
     # accidental change on a later deploy.
     admin_user: admin@example.invalid
@@ -44,9 +47,14 @@ bookstack_defaults:
     enabled: true
     schedule: "0 3 * * *"
     retention_days: 14
+    scratch_size: 5
+    timeout_seconds: 3600
     datastore: ""
     backup_id: ""
     client:
+      # The Kubernetes recovery Job uses curl for notifications and to fetch the signed
+      # PBS client repository key before installing proxmox-backup-client.
+      image: buildpack-deps:bookworm-curl
       key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
       # Client-only repository, not the PBS server's subscription repository.
       repository: "http://download.proxmox.com/debian/pbs-client"

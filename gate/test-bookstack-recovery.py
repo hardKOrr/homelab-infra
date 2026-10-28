@@ -15,11 +15,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
+REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
-# Plays the shared database client: `docker run ... -v DIR:/work ... --entrypoint /bin/sh
+# Plays the shared database client: `docker run ... -v DIR:/work[:ro] ... --entrypoint /bin/sh
 # IMAGE /usr/local/bin/database-client.sh ACTION /work/FILE`.
 DOCKER = """#!/bin/bash
 set -eu
@@ -36,7 +38,13 @@ shift
 work= entrypoint= image= args=()
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
-    -v) [[ "$2" == *:/work ]] && work=${2%:/work}; shift 2 ;;
+    -v)
+      case "$2" in
+        *:/work) work=${2%:/work} ;;
+        *:/work:ro) work=${2%:/work:ro} ;;
+      esac
+      shift 2
+      ;;
     -e) shift 2 ;;
     --entrypoint) entrypoint="$2"; shift 2 ;;
     --rm | --network) [[ "$1" == --network ]] && shift; shift ;;
@@ -68,6 +76,11 @@ if [[ "$1" == "snapshot" && "$2" == "files" ]]; then
   exit 0
 fi
 if [[ "$1" == "restore" ]]; then
+  if [[ "${BOOKSTACK_BACKEND:-docker}" == "kubernetes" ]]; then
+    [[ " $* " == *" --ignore-ownership "* && " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 96
+  else
+    [[ " $* " != *" --ignore-ownership "* && " $* " != *" --ignore-acls "* && " $* " != *" --ignore-xattrs "* ]] || exit 97
+  fi
   destination="$4"
   mkdir -p "$destination"
   case "$3" in
@@ -97,6 +110,38 @@ def tasks_recursive(value):
             yield from tasks_recursive(value.get(key, []))
 
 
+def check_remove_contract():
+    tasks = list(tasks_recursive(REMOVE))
+    database = BOOKSTACK_DEFAULTS["app"]["database"]
+    assert database["provider"] == "mariadb"
+    assert database["instance"]
+    assert database["name"] and database["role"]
+
+    decision = next(task for task in tasks
+                    if task.get("name") == "Decide whether Remove drops a named database")
+    expression = str(decision["ansible.builtin.set_fact"]["_rm_drops_database"])
+    assert "delete_data" in expression
+    assert "app_config.app.database.provider" in expression
+    assert "app_config.app.database.instance" in expression
+
+    resolve = next(task for task in tasks
+                   if task.get("name") == "Resolve the app's named database before unwiring")
+    assert resolve["ansible.builtin.include_tasks"].endswith("database/resolve-app-database.yml")
+    guard = next(task for task in tasks
+                 if task.get("name") == "Check the app's named database ownership before unwiring")
+    assert guard["ansible.builtin.include_tasks"].endswith("database/guard-app-database.yml")
+
+    drop = next(task for task in tasks
+                if task.get("name") == "Drop the app's named database and login")
+    assert drop["ansible.builtin.include_tasks"].endswith("database/drop.yml")
+    assert "_rm_drops_database" in str(drop["when"])
+    drop_play = next(play for play in REMOVE
+                     if play.get("name") == "Remove App | Drop its named database")
+    assert drop_play["hosts"] == "localhost"
+    assert REMOVE.index(drop_play) > next(
+        index for index, play in enumerate(REMOVE)
+        if play.get("name", "").startswith("Remove App | Stop ")
+    )
 def check_admin_email_contract():
     task = next(task for task in BOOKSTACK_ROLE
                 if task.get("name") == "BookStack | Validate administrator email")
@@ -245,7 +290,9 @@ def check(case):
             assert client_commands == ["dump", "restore"], client_commands
         elif case == "import-failure":
             assert result.returncode != 0, result.stdout + result.stderr
-            assert "BookStack rollback restored the previous data and database." in result.stderr
+            assert "BookStack rollback restored the previous data and database." in result.stderr, (
+                result.stdout + result.stderr
+            )
             assert (data / "original.txt").read_text() == "original attachment state\n"
             assert not (data / "restored.txt").exists()
             assert data.stat().st_ino == original_inode, "rollback must rename the original tree back"
@@ -271,6 +318,7 @@ def check(case):
 
 
 def main():
+    check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()
     check_pre_restore_point_contract()

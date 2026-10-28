@@ -1,0 +1,45 @@
+---
+# Restore BookStack's named database and /config PVC through the shared Kubernetes
+# recovery Job. The source and target are the same instance for this application playbook.
+- name: BookStack Kubernetes Restore | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: BookStack Kubernetes Restore | Derive and verify the owned namespace
+  ansible.builtin.include_tasks: namespace.yml
+
+- name: BookStack Kubernetes Restore | Set shared restore inputs
+  ansible.builtin.set_fact:
+    restore_target: "{{ instance }}"
+    restore_target_config: "{{ app_config }}"
+    restore_overwrite: "{{ overwrite | default(false) | bool }}"
+    restore_snapshot: "{{ snapshot | default('') }}"
+
+- name: BookStack Kubernetes Restore | Describe the external database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: BookStack Kubernetes Restore | Run the shared recovery operation
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: BookStack
+      archives:
+        - name: storage
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1000) }}:{{ restore_target_config.app.pgid | default(1000) }}"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ k8s_database_step.describe }} and {{ restore_target }}'s /config volume
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in as the BookStack
+          administrator, and confirm the restored books, pages and uploaded images.
+
+- name: BookStack Kubernetes Restore | Record success for the dispatcher
+  ansible.builtin.set_fact:
+    bookstack_restore_result: {rc: 0}

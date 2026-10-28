@@ -133,7 +133,7 @@
 - name: Mixpost | Describe the database step of the backup
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_database_step_engine: mysql
+    k8s_database_step_source: namespace-mysql
     k8s_database_step_config: "{{ app_config }}"
     k8s_database_step_instance: "{{ instance }}"
     k8s_database_step_root_password: "{{ _mp_db_root_password }}"

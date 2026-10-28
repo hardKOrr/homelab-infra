@@ -1,0 +1,26 @@
+---
+- name: Accept a VM instance override for MariaDB's native service role
+  hosts: localhost
+  gather_facts: false
+  vars:
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    _mariadb_defaults: >-
+      {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../ansible/vars/app-defaults/mariadb.yml')
+          | from_yaml).mariadb_defaults }}
+  tasks:
+    - name: Validate the MariaDB VM instance configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: mariadb
+        hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/mariadb.yml"
+        hosting_app_config: >-
+          {{ _mariadb_defaults
+             | combine({'proxmox': {'guest_type': 'vm'}}, recursive=True) }}
+
+    - name: Assert that the selected combination resolved to native-vm
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-vm'
+
+    - name: Report the verified MariaDB VM combination
+      ansible.builtin.debug:
+        msg: MARIADB_VM_HOSTING_PASS

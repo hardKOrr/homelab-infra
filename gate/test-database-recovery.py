@@ -125,6 +125,19 @@ def check_mysql_compatible(engine, dump_command, client):
             i for i, call in enumerate(calls) if "--database=app" in call)
 
 
+def check_inspect_reads_only():
+    """A restore preview runs the client against the live database and changes nothing."""
+    for engine, client, port in (("postgresql", "psql", "5432"), ("mariadb", "mariadb", "3306"),
+                                 ("mysql", "mysql", "3306")):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            result, calls = run_client(engine, "inspect", "", work, DB_PORT=port)
+            assert result.returncode == 0, result.stderr
+            assert len(calls) == 1 and calls[0].startswith(f"{client} "), calls
+            assert "SELECT" in calls[0] and "DROP" not in calls[0], calls[0]
+            assert ENV["DB_PASSWORD"] not in calls[0]
+
+
 def check_client_refuses_unsafe_input():
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -298,6 +311,7 @@ def main():
     check_postgresql()
     check_mysql_compatible("mariadb", "mariadb-dump", "mariadb")
     check_mysql_compatible("mysql", "mysqldump", "mysql")
+    check_inspect_reads_only()
     check_client_refuses_unsafe_input()
     check_ownership_guard()
     check_destructive_files_use_the_guard()

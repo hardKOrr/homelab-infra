@@ -4,6 +4,7 @@
 mariadb_defaults:
   hosting:
     method: native
+    # The role uses the same apt/systemd service path on either guest type.
     supported: [native-lxc, native-vm]
     impossible: {}
   recovery:

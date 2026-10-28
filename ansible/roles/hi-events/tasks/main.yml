@@ -168,7 +168,7 @@
 - name: Hi.Events | Describe the database step of the backup
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
   vars:
-    k8s_database_step_engine: postgresql
+    k8s_database_step_source: registered
     k8s_database_step_config: "{{ app_config }}"
     k8s_database_step_instance: "{{ instance }}"
   when: app_config.backup.enabled | default(false) | bool

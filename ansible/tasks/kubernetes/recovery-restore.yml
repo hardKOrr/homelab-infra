@@ -261,9 +261,12 @@
       loop_control:
         label: "{{ item.key }}"
 
+    # Server-side, like apply-manifest.yml: a client-side apply leaves an annotation that
+    # the next Deploy rewrites, so that Deploy reports a change the restore made.
     - name: k8s restore | Apply the restored ConfigMaps
       ansible.builtin.command:
-        argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", apply, -f, -]
+        argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", apply, --server-side,
+               --force-conflicts, -f, -]
         stdin: >-
           {{ {'apiVersion': 'v1', 'kind': 'ConfigMap',
               'metadata': {'name': item.key,

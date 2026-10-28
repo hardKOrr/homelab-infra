@@ -1,11 +1,12 @@
 #!/bin/sh
-# Dump, verify or restore one application's named database as the application's own login.
+# Dump, verify, restore or inspect one application's named database as its own login.
 #
 # Runs inside the official client image for the server's major (resolve-app-database.yml
 # picks it). tasks/database/dump.yml and restore.yml run it with Docker on the application
 # host; a Kubernetes recovery Job runs the same file in the same image.
 #
 # usage: database-client.sh dump|verify|restore FILE
+#        database-client.sh inspect
 # env:   DB_ENGINE (postgresql|mariadb|mysql) DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 #        (verify needs only DB_ENGINE)
 #
@@ -18,19 +19,20 @@
 #          load leaves the previous contents.
 #          MariaDB/MySQL: recreates the database with its previous character set and
 #          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
+# inspect  Read only: one line counting the tables and rows a restore would replace.
 set -eu
 
 action=${1:-}
 file=${2:-}
 case "$action" in
-  dump | restore) required="DB_ENGINE DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD" ;;
+  dump | restore | inspect) required="DB_ENGINE DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD" ;;
   verify) required=DB_ENGINE ;;
   *)
-    echo "usage: database-client.sh dump|verify|restore FILE" >&2
+    echo "usage: database-client.sh dump|verify|restore FILE | inspect" >&2
     exit 64
     ;;
 esac
-[ -n "$file" ] || { echo "database-client.sh: FILE is required" >&2; exit 64; }
+[ -n "$file" ] || [ "$action" = inspect ] || { echo "database-client.sh: FILE is required" >&2; exit 64; }
 for name in $required; do
   eval "value=\${$name:-}"
   [ -n "$value" ] || { echo "database-client.sh: $name is required" >&2; exit 64; }
@@ -49,6 +51,11 @@ postgresql() {
   fi
   export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGDATABASE="$DB_NAME"
   export PGPASSWORD="$DB_PASSWORD"
+  if [ "$action" = inspect ]; then
+    psql --no-psqlrc --tuples-only --no-align --command="SELECT count(*) || ' tables, '
+      || coalesce(sum(n_live_tup), 0) || ' rows (estimated)' FROM pg_stat_user_tables"
+    return
+  fi
   if [ "$action" = dump ]; then
     pg_dump --format=custom --no-owner --no-acl --file="$work/dump"
     test -s "$work/dump"
@@ -79,6 +86,12 @@ mysql_compatible() {
   umask 077
   printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport=%s\n' \
     "$DB_USER" "$DB_PASSWORD" "$DB_HOST" "$DB_PORT" > "$work/client.cnf"
+  if [ "$action" = inspect ]; then
+    "$client" --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
+      --execute="SELECT CONCAT(COUNT(*), ' tables, ', COALESCE(SUM(TABLE_ROWS), 0),
+        ' rows (estimated)') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$DB_NAME'"
+    return
+  fi
   if [ "$action" = dump ]; then
     # shellcheck disable=SC2086 # $extra holds engine-specific flags
     "$dump" --defaults-extra-file="$work/client.cnf" --single-transaction --quick \
@@ -106,4 +119,5 @@ case "$DB_ENGINE" in
   mariadb | mysql) mysql_compatible ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
 esac
+[ "$action" = inspect ] && exit 0
 echo "database-client.sh: $action $DB_ENGINE database ${DB_NAME:-dump} complete ($(wc -c < "$file") bytes)"
