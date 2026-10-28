@@ -1675,9 +1675,10 @@ def backup_prune_keeps_the_previous_point():
     bookstack_recovery = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
     recovery_text = bookstack_recovery.read_text()
     assert "proxmox-backup-client prune" in recovery_text
-    assert "--keep-last 2 --keep-daily" in recovery_text
+    assert "--keep-last 3 --keep-daily" in recovery_text
     scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
-               if path.is_file() and "--keep-daily" in path.read_text(errors="ignore")]
+               if path.is_file() and path != bookstack_recovery
+               and "--keep-daily" in path.read_text(errors="ignore")]
     assert len(scripts) > len(templates_with_inline_pruning), scripts
     for script in scripts:
         contents = script.read_text()

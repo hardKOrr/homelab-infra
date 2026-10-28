@@ -382,7 +382,7 @@ def check_kubernetes_backup():
         assert '"replicas":0' in api and '"replicas":1' in api, api
         assert "--data-urlencode labelSelector=" in api and "/deployments/bookstack" in api, api
         assert "database.pxar:" in pbs and "storage.pxar:" in pbs
-        assert "--backup-id bookstack" in pbs and "--keep-last 2" in pbs
+        assert "--backup-id bookstack" in pbs and "--keep-last 3" in pbs
         assert "BookStack backup complete" in result.stdout
 
 
