@@ -149,8 +149,12 @@ if [ -n "${SNAPSHOT:-}" ]; then
   # archive catalog through the client cache. Either failing here would fail the restore
   # the same way.
   proxmox-backup-client restore "${SNAPSHOT}" index.json /recovery/index.json
-  proxmox-backup-client catalog dump "${SNAPSHOT}" > /recovery/catalog.txt
-  echo "catalog readable: $(wc -l < /recovery/catalog.txt) entries"
+  # The listing goes to stderr; kept in scratch so it does not flood the job log.
+  if ! proxmox-backup-client catalog dump "${SNAPSHOT}" > /recovery/catalog.txt 2>&1; then
+    tail -20 /recovery/catalog.txt
+    exit 1
+  fi
+  echo "catalog readable: $(grep -c '^[a-z] ' /recovery/catalog.txt) entries"
 else
   echo
   echo "No snapshot named. Re-run with one of the identifiers above to check"
