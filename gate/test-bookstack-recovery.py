@@ -21,7 +21,7 @@ BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml"
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
-# Plays the shared database client: `docker run ... -v DIR:/work ... --entrypoint /bin/sh
+# Plays the shared database client: `docker run ... -v DIR:/work[:ro] ... --entrypoint /bin/sh
 # IMAGE /usr/local/bin/database-client.sh ACTION /work/FILE`.
 DOCKER = """#!/bin/bash
 set -eu
@@ -38,7 +38,13 @@ shift
 work= entrypoint= image= args=()
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
-    -v) [[ "$2" == *:/work ]] && work=${2%:/work}; shift 2 ;;
+    -v)
+      case "$2" in
+        *:/work) work=${2%:/work} ;;
+        *:/work:ro) work=${2%:/work:ro} ;;
+      esac
+      shift 2
+      ;;
     -e) shift 2 ;;
     --entrypoint) entrypoint="$2"; shift 2 ;;
     --rm | --network) [[ "$1" == --network ]] && shift; shift ;;
@@ -284,7 +290,9 @@ def check(case):
             assert client_commands == ["dump", "restore"], client_commands
         elif case == "import-failure":
             assert result.returncode != 0, result.stdout + result.stderr
-            assert "BookStack rollback restored the previous data and database." in result.stderr
+            assert "BookStack rollback restored the previous data and database." in result.stderr, (
+                result.stdout + result.stderr
+            )
             assert (data / "original.txt").read_text() == "original attachment state\n"
             assert not (data / "restored.txt").exists()
             assert data.stat().st_ino == original_inode, "rollback must rename the original tree back"

@@ -132,19 +132,20 @@ def check_defaults_and_dispatch():
     )
 
     remove = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
-    bookstack_remove_play = next(
-        play for play in remove if play.get("name") == "Remove BookStack | Delete its named database"
+    database_remove_play = next(
+        play for play in remove if play.get("name") == "Remove App | Drop its named database"
     )
-    assert bookstack_remove_play["hosts"] == "localhost"
-    assert remove.index(bookstack_remove_play) > next(
+    assert database_remove_play["hosts"] == "localhost"
+    assert remove.index(database_remove_play) > next(
         index for index, play in enumerate(remove)
         if play.get("name", "").startswith("Remove App | Stop ")
     )
-    bookstack_remove = next(
-        task for task in bookstack_remove_play["tasks"]
-        if task.get("name") == "Remove BookStack's named database and role"
+    database_remove = next(
+        task for task in database_remove_play["tasks"]
+        if task.get("name") == "Drop the app's named database and login"
     )
-    assert "delete_data" in str(bookstack_remove["when"])
+    assert database_remove["ansible.builtin.include_tasks"].endswith("database/drop.yml")
+    assert "_rm_drops_database" in str(database_remove["when"])
 
 
 def check_workload_manifest():
@@ -224,31 +225,21 @@ case "$args" in
 esac
 """
 
-FAKE_MARIADB_DUMP = """#!/bin/bash
+FAKE_DATABASE_CLIENT = """#!/bin/bash
 set -eu
-cat "$BOOKSTACK_TEST_DB_STATE"
-"""
-
-FAKE_MARIADB = """#!/bin/bash
-set -eu
-all_args="$*"
-if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
-  current=$(cat "$BOOKSTACK_TEST_DB_STATE")
-  if [[ -n "$current" && "$current" != "EMPTY" ]]; then
-    printf '%s\\n' 'DROP TABLE IF EXISTS `references`;'
-  fi
-  exit 0
-fi
-input=$(cat)
-if [[ "$input" == *"DROP TABLE IF EXISTS"* ]]; then
-  printf 'EMPTY\\n' > "$BOOKSTACK_TEST_DB_STATE"
-  exit 0
-fi
-if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" && "$input" == *"SNAPSHOT-DATABASE"* ]]; then
-  printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
-  exit 17
-fi
-printf '%s\\n' "$input" > "$BOOKSTACK_TEST_DB_STATE"
+action=$1 file=$2
+printf '%s\\n' "$action" >> "$BOOKSTACK_TEST_DATABASE_CLIENT_LOG"
+case "$action" in
+  dump) cp "$BOOKSTACK_TEST_DB_STATE" "$file" ;;
+  restore)
+    if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" ]] && grep -q SNAPSHOT-DATABASE "$file"; then
+      printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
+      exit 17
+    fi
+    cp "$file" "$BOOKSTACK_TEST_DB_STATE"
+    ;;
+  *) exit 94 ;;
+esac
 """
 
 FAKE_PBS = """#!/bin/bash
@@ -290,9 +281,9 @@ def kubernetes_recovery_environment(root, case="success"):
     bin_dir = root / "bin"
     bin_dir.mkdir()
     write_executable(bin_dir / "curl", FAKE_CURL)
-    write_executable(bin_dir / "mariadb", FAKE_MARIADB)
-    write_executable(bin_dir / "mariadb-dump", FAKE_MARIADB_DUMP)
     write_executable(bin_dir / "proxmox-backup-client", FAKE_PBS)
+    database_client = root / "database-client.sh"
+    write_executable(database_client, FAKE_DATABASE_CLIENT)
 
     data = root / "pvc" / "config"
     data.mkdir(parents=True)
@@ -326,6 +317,7 @@ def kubernetes_recovery_environment(root, case="success"):
         "BOOKSTACK_DB_NAME": "bookstack",
         "BOOKSTACK_DB_USER": "bookstack",
         "BOOKSTACK_DB_PASSWORD": "fixture-db-password",
+        "DATABASE_CLIENT_SCRIPT": str(database_client),
         "PBS_REPOSITORY": "fixture@pbs.example.test:store",
         "PBS_FINGERPRINT": "fixture-fingerprint",
         "PBS_PASSWORD": "fixture-pbs-password",
@@ -337,6 +329,7 @@ def kubernetes_recovery_environment(root, case="success"):
         "BOOKSTACK_K8S_CA_FILE": str(ca),
         "BOOKSTACK_TEST_CASE": case,
         "BOOKSTACK_TEST_DB_STATE": str(database),
+        "BOOKSTACK_TEST_DATABASE_CLIENT_LOG": str(root / "database-client.log"),
         "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
         "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
         "BOOKSTACK_TEST_PRE_RESTORE_POINT": now_point,

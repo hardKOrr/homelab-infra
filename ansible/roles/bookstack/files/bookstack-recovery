@@ -22,7 +22,6 @@ fi
 if [[ -z "${BOOKSTACK_INSTANCE:-}" && "$BOOKSTACK_BACKEND" == docker ]]; then
   BOOKSTACK_INSTANCE=bookstack
 fi
-
 for required in BOOKSTACK_BACKEND BOOKSTACK_INSTANCE BOOKSTACK_SERVICE BOOKSTACK_DATA_PATH \
   BOOKSTACK_DB_PROVIDER BOOKSTACK_DB_HOST BOOKSTACK_DB_PORT BOOKSTACK_DB_NAME BOOKSTACK_DB_USER \
   BOOKSTACK_DB_PASSWORD PBS_REPOSITORY PBS_FINGERPRINT \
@@ -32,13 +31,15 @@ done
 
 case "$BOOKSTACK_BACKEND" in
   docker)
-    [[ -n "${BOOKSTACK_PROJECT_DIR:-}" && -n "${BOOKSTACK_DB_CLIENT_IMAGE:-}" ]] || {
+    [[ -n "${BOOKSTACK_PROJECT_DIR:-}" && -n "${BOOKSTACK_DB_CLIENT_IMAGE:-}" \
+      && -n "${DATABASE_CLIENT_SCRIPT:-}" ]] || {
       echo "BookStack Docker recovery configuration is incomplete" >&2
       exit 1
     }
     compose=(docker compose --project-directory "$BOOKSTACK_PROJECT_DIR" -f "$BOOKSTACK_PROJECT_DIR/docker-compose.yml")
     ;;
   kubernetes)
+    DATABASE_CLIENT_SCRIPT=${DATABASE_CLIENT_SCRIPT:-/usr/local/bin/database-client.sh}
     [[ -n "${BOOKSTACK_NAMESPACE:-}" ]] || {
       echo "BookStack Kubernetes recovery configuration is incomplete: BOOKSTACK_NAMESPACE" >&2
       exit 1
@@ -51,6 +52,10 @@ case "$BOOKSTACK_BACKEND" in
     }
     [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]] || {
       echo "BookStack Kubernetes recovery cannot reach the Kubernetes API service" >&2
+      exit 1
+    }
+    [[ -x "$DATABASE_CLIENT_SCRIPT" ]] || {
+      echo "BookStack Kubernetes recovery requires the shared database client script" >&2
       exit 1
     }
     KUBE_API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS:-443}"
@@ -146,12 +151,27 @@ start_bookstack() {
   stopped=0
 }
 
-mysql_config_path() {
+database_client() {
+  local action=$1 file=$2 directory filename mount_path
   if [[ "$BOOKSTACK_BACKEND" == kubernetes ]]; then
-    printf '%s\n' "$work/my.cnf"
-  else
-    printf '%s\n' /run/secrets/my.cnf
+    DB_ENGINE="$BOOKSTACK_DB_PROVIDER" DB_HOST="$BOOKSTACK_DB_HOST" DB_PORT="$BOOKSTACK_DB_PORT" \
+      DB_NAME="$BOOKSTACK_DB_NAME" DB_USER="$BOOKSTACK_DB_USER" DB_PASSWORD="$BOOKSTACK_DB_PASSWORD" \
+      "$DATABASE_CLIENT_SCRIPT" "$action" "$file"
+    return $?
   fi
+
+  directory=$(dirname -- "$file")
+  filename=$(basename -- "$file")
+  mount_path=/work
+  [[ "$action" == dump ]] || mount_path=/work:ro
+  DB_ENGINE="$BOOKSTACK_DB_PROVIDER" DB_HOST="$BOOKSTACK_DB_HOST" DB_PORT="$BOOKSTACK_DB_PORT" \
+    DB_NAME="$BOOKSTACK_DB_NAME" DB_USER="$BOOKSTACK_DB_USER" DB_PASSWORD="$BOOKSTACK_DB_PASSWORD" \
+    docker run --rm --network host \
+    -v "$directory:$mount_path" \
+    -v "$DATABASE_CLIENT_SCRIPT:/usr/local/bin/database-client.sh:ro" \
+    -e DB_ENGINE -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
+    --entrypoint /bin/sh "$BOOKSTACK_DB_CLIENT_IMAGE" \
+    /usr/local/bin/database-client.sh "$action" "/work/$filename"
 }
 
 stash_bookstack_data() {
@@ -304,68 +324,16 @@ finish() {
 }
 trap finish EXIT
 
-mysql_client() {
-  local command=$1
-  shift
-  if [[ "$BOOKSTACK_DB_PROVIDER" == mariadb ]]; then
-    case "$command" in
-      mysql) command=mariadb ;;
-      mysqldump) command=mariadb-dump ;;
-    esac
-  fi
-  if [[ "$BOOKSTACK_BACKEND" == kubernetes ]]; then
-    "$command" "$@"
-  else
-    docker run --rm --network host -i \
-      -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
-      --entrypoint "$command" "$BOOKSTACK_DB_CLIENT_IMAGE" "$@"
-  fi
-}
-
-write_client_config() {
-  umask 077
-  cat > "$work/my.cnf" <<CNF
-[client]
-user=$BOOKSTACK_DB_USER
-password=$BOOKSTACK_DB_PASSWORD
-CNF
-}
-
 replace_database_from_dump() {
-  local dump=$1 table_sql mysql_config
-  mysql_config=$(mysql_config_path)
-  table_sql=$(mysql_client mysql --defaults-extra-file="$mysql_config" \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" --batch --skip-column-names \
-    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', CHAR(96), REPLACE(TABLE_NAME, CHAR(96), CONCAT(CHAR(96), CHAR(96))), CHAR(96), ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$BOOKSTACK_DB_NAME';") || return
-  if [[ -n "$table_sql" ]]; then
-    {
-      # BookStack's InnoDB schema has foreign keys; clear its tables in one client
-      # session with checks disabled so the database's table order cannot block restore
-      # or rollback. The client exits before the known-good dump is imported.
-      printf 'SET FOREIGN_KEY_CHECKS=0;\n'
-      printf '%s\n' "$table_sql"
-    } | mysql_client mysql \
-      --defaults-extra-file="$mysql_config" --host="$BOOKSTACK_DB_HOST" \
-      --port="$BOOKSTACK_DB_PORT" --database="$BOOKSTACK_DB_NAME" || return
-  fi
-  mysql_client mysql --defaults-extra-file="$mysql_config" \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --database="$BOOKSTACK_DB_NAME" < "$dump"
+  database_client restore "$1"
 }
 
 backup() {
-  local mysql_config
-  write_client_config
   # BookStack is stopped before the dump and the archive. The external backend remains
   # available to every other application on it; only this application's writes pause.
   stop_bookstack
-  mysql_config=$(mysql_config_path)
   mkdir -p "$work/database"
-  mysql_client mysqldump \
-    --defaults-extra-file="$mysql_config" \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --single-transaction --routines --triggers --events --hex-blob \
-    --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/database/database.sql"
+  database_client dump "$work/database/database.sql"
   echo "dumped BookStack database $BOOKSTACK_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client backup \
@@ -418,7 +386,7 @@ validate_pre_restore_point_age() {
 }
 
 restore() {
-  local original_data_owner original_data_mode mysql_config
+  local original_data_owner original_data_mode
   local -a restore_options=()
   [[ "${SNAPSHOT:-}" == host/$PBS_BACKUP_ID/* ]] || {
     echo "restore requires a snapshot from host/$PBS_BACKUP_ID" >&2
@@ -437,8 +405,6 @@ restore() {
     original_data_owner=$(stat -c '%u:%g' "$BOOKSTACK_DATA_PATH")
     original_data_mode=$(stat -c '%a' "$BOOKSTACK_DATA_PATH")
   fi
-  write_client_config
-  mysql_config=$(mysql_config_path)
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
   if [[ "$BOOKSTACK_BACKEND" == kubernetes ]]; then
@@ -458,11 +424,7 @@ restore() {
   # in the private work directory and is removed only after success or rollback.
   stop_bookstack
   mkdir -p "$work/original"
-  mysql_client mysqldump \
-    --defaults-extra-file="$mysql_config" \
-    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
-    --single-transaction --routines --triggers --events --hex-blob \
-    --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/original/database.sql"
+  database_client dump "$work/original/database.sql"
   restore_active=1
   stash_bookstack_data
   copy_restored_bookstack_data
