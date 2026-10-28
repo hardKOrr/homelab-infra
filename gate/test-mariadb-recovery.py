@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check MariaDB's native PBS contract and transactional recovery helper."""
+"""Check MariaDB's native PBS contract and the shared server recovery script's rebuild restore."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import json
@@ -12,7 +12,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible/roles/mariadb"
-SPEC = spec_from_file_location("mariadb_recovery", ROLE / "files/mariadb-recovery.py")
+SPEC = spec_from_file_location(
+    "server_recovery", ROOT / "ansible/tasks/database/scripts/server-recovery.py"
+)
 MARIADB_RECOVERY = module_from_spec(SPEC)
 SPEC.loader.exec_module(MARIADB_RECOVERY)
 
@@ -89,7 +91,11 @@ printf 'fresh\\n' > "$dir/initialized"
     os.environ["MARIADB_FIXTURE_CAPTURE"] = str(capture)
     os.environ["MARIADB_FIXTURE_DATA_DIR"] = str(data_dir)
     os.environ["MARIADB_FIXTURE_VERSION"] = "10.11.6-MariaDB"
-    MARIADB_RECOVERY.SOCKET = "/run/mariadb-fixture.sock"
+    os.environ["DATABASE_RECOVERY_SOCKET"] = "/run/mariadb-fixture.sock"
+
+
+def server():
+    return MARIADB_RECOVERY.Server("mariadb")
 
 
 def bundle(directory, sql, version="10.11.6-MariaDB"):
@@ -122,8 +128,8 @@ def check_contract():
     assert packages["ansible.builtin.apt"]["name"] == [
         "mariadb-server", "mariadb-client", "python3-pymysql"
     ]
-    helper = named(main, "MariaDB | Install the native recovery helper")
-    assert helper["ansible.builtin.copy"]["src"] == "mariadb-recovery.py"
+    helper = named(main, "MariaDB | Install the shared server recovery script")
+    assert helper["ansible.builtin.include_tasks"].endswith("tasks/database/install-server-recovery.yml")
     pbs = named(main, "MariaDB | Install the PBS backup client")
     assert pbs["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
     pbs_tasks = list(tasks(yaml.safe_load(
@@ -135,8 +141,8 @@ def check_contract():
 
     backup = list(tasks(yaml.safe_load((ROLE / "tasks/backup.yml").read_text(encoding="utf-8"))))
     export = named(backup, "MariaDB backup | Export all databases and grants consistently")
-    assert export["ansible.builtin.command"]["argv"][-2:] == [
-        "backup", "{{ _mariadb_backup_tmp.path }}"
+    assert export["ansible.builtin.command"]["argv"][-3:] == [
+        "mariadb", "backup", "{{ _mariadb_backup_tmp.path }}"
     ]
     upload = named(backup, "MariaDB backup | Upload the logical archive to PBS")
     assert "mariadb.pxar:{{ _mariadb_backup_tmp.path }}" in upload["ansible.builtin.command"]["argv"]
@@ -172,13 +178,13 @@ def check_backup_bundle():
         install_stubs(root / "bin", capture, root / "data")
         staging = root / "staging"
         staging.mkdir()
-        MARIADB_RECOVERY.backup(staging)
+        MARIADB_RECOVERY.backup(server(), staging)
 
         args = (capture / "dump-args").read_text(encoding="utf-8")
         assert "--protocol=socket" in args and "--user=root" in args
         assert "--all-databases" in args and "--lock-all-tables" in args
         assert all(flag in args for flag in ["--routines", "--events", "--triggers", "--flush-privileges"])
-        dump, version = MARIADB_RECOVERY.read_bundle(staging)
+        dump, version = MARIADB_RECOVERY.read_bundle(server(), staging)
         assert version == "10.11.6-MariaDB"
         assert dump.read_text(encoding="utf-8").startswith("-- MariaDB dump")
         assert stat.S_IMODE(staging.stat().st_mode) == 0o700
@@ -200,7 +206,7 @@ def check_restore_and_rollback():
         bundle(source, "CREATE DATABASE canary;\\n")
         bundle(safety, "CREATE DATABASE fresh;\\n")
 
-        MARIADB_RECOVERY.restore(source, data_dir, "mariadb", safety)
+        MARIADB_RECOVERY.restore(server(), source, safety, data_dir, "mariadb")
         assert (data_dir / "imported").read_text(encoding="utf-8").strip() == "restored"
         assert not (data_dir / "original.marker").exists()
         assert (capture / "active").exists()
@@ -213,7 +219,7 @@ def check_restore_and_rollback():
         failed_source = root / "failed-source"
         bundle(failed_source, "IMPORT_FAILURE\\n")
         try:
-            MARIADB_RECOVERY.restore(failed_source, failed_data, "mariadb", safety)
+            MARIADB_RECOVERY.restore(server(), failed_source, safety, failed_data, "mariadb")
         except MARIADB_RECOVERY.RecoveryError as error:
             assert "original data directory was restored" in str(error)
         else:
@@ -238,7 +244,7 @@ def check_preflight_refusal():
         with (source / "mariadb.sql").open("a", encoding="utf-8") as dump:
             dump.write("changed")
         try:
-            MARIADB_RECOVERY.restore(source, data_dir, "mariadb")
+            MARIADB_RECOVERY.restore(server(), source, None, data_dir, "mariadb")
         except MARIADB_RECOVERY.RecoveryError as error:
             assert "manifest check" in str(error)
         else:
@@ -252,7 +258,7 @@ def main():
     check_backup_bundle()
     check_restore_and_rollback()
     check_preflight_refusal()
-    print("MariaDB native export, PBS dispatch, integrity checks, and transactional restore passed")
+    print("MariaDB native export, PBS dispatch, integrity checks, and rebuild restore passed")
 
 
 if __name__ == "__main__":

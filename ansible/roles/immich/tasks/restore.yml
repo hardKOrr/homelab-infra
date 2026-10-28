@@ -279,40 +279,11 @@
       no_log: true
 
     - name: Immich restore | Restore the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _immich_restore_scratch.path }}/database:/restore:ro"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_restore --clean --if-exists --no-owner --no-acl
-            --exit-on-error --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" /restore/immich.dump
-      environment:
-        DB_HOST: "{{ _immich_restore_database_backend.host }}"
-        DB_PORT: "{{ _immich_restore_database_backend.port }}"
-        DB_NAME: "{{ app_config.app.database.name }}"
-        DB_USER: "{{ _immich_restore_database_user }}"
-        DB_PASSWORD: "{{ _immich_restore_database_password }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+      vars:
+        database_app_instance: "{{ instance }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _immich_restore_scratch.path }}/database/immich.dump"
 
     - name: Immich restore | Start Immich services
       community.docker.docker_compose_v2:

@@ -5,7 +5,7 @@
 postgresql_defaults:
   hosting:
     method: native
-    supported: [native-lxc]
+    supported: [native-lxc, native-vm]
     impossible: {}
   recovery:
     methods: [native]

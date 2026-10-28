@@ -1,0 +1,15 @@
+---
+# Check a dump is loadable before a restore stops anything. Connects to nothing.
+#
+# Inputs:
+#   database_app_instance  application instance
+#   database_app_config    the app's `app.database` mapping
+#   database_restore_file  absolute path on the current host of the dump
+- name: Database verify | Resolve the application's database
+  ansible.builtin.include_tasks: resolve-app-database.yml
+
+- name: Database verify | Check the dump
+  ansible.builtin.include_tasks: run-client.yml
+  vars:
+    database_client_action: verify
+    database_client_file: "{{ database_restore_file }}"

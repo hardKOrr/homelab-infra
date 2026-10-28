@@ -15,11 +15,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
-REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
+# Plays the shared database client: `docker run ... -v DIR:/work ... --entrypoint /bin/sh
+# IMAGE /usr/local/bin/database-client.sh ACTION /work/FILE`.
 DOCKER = """#!/bin/bash
 set -eu
 if [[ "$1" == "compose" ]]; then
@@ -32,37 +33,31 @@ if [[ "$1" == "compose" ]]; then
 fi
 [[ "$1" == "run" ]] || exit 90
 shift
-all_args="$*"
-entrypoint=
+work= entrypoint= image= args=()
 while [[ "$#" -gt 0 ]]; do
-  if [[ "$1" == "--entrypoint" ]]; then entrypoint="$2"; shift 2; else shift; fi
+  case "$1" in
+    -v) [[ "$2" == *:/work ]] && work=${2%:/work}; shift 2 ;;
+    -e) shift 2 ;;
+    --entrypoint) entrypoint="$2"; shift 2 ;;
+    --rm | --network) [[ "$1" == --network ]] && shift; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
 done
-printf '%s\\n' "$entrypoint" >> "$BOOKSTACK_TEST_CLIENT_LOG"
-if [[ "$entrypoint" == "mariadb-dump" || "$entrypoint" == "mysqldump" ]]; then
-  cat "$BOOKSTACK_TEST_DB_STATE"
-  exit 0
-fi
-[[ "$entrypoint" == "mariadb" || "$entrypoint" == "mysql" ]] || exit 91
-if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
-  [[ "$all_args" == *"REPLACE(TABLE_NAME"* ]] || exit 97
-  current=$(cat "$BOOKSTACK_TEST_DB_STATE")
-  if [[ -n "$current" && "$current" != "EMPTY" ]]; then
-    printf '%s\\n' 'DROP TABLE IF EXISTS `references`;'
-  fi
-  exit 0
-fi
-input=$(cat)
-if [[ "$input" == *"DROP TABLE IF EXISTS"* ]]; then
-  [[ "$input" == *"SET FOREIGN_KEY_CHECKS=0;"* ]] || exit 96
-  [[ "$input" == *'`references`'* ]] || exit 98
-  printf 'EMPTY\\n' > "$BOOKSTACK_TEST_DB_STATE"
-  exit 0
-fi
-if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" && "$input" == *"SNAPSHOT-DATABASE"* ]]; then
-  printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
-  exit 17
-fi
-printf '%s\\n' "$input" > "$BOOKSTACK_TEST_DB_STATE"
+[[ "$entrypoint" == /bin/sh && "${args[0]}" == mysql-client:test ]] || exit 91
+[[ "${args[1]}" == /usr/local/bin/database-client.sh ]] || exit 92
+[[ "$DB_ENGINE" == mariadb && "$DB_NAME" == bookstack && "$DB_USER" == bookstack ]] || exit 93
+action=${args[2]} file="$work/${args[3]#/work/}"
+printf '%s\\n' "$action" >> "$BOOKSTACK_TEST_CLIENT_LOG"
+case "$action" in
+  dump) cp "$BOOKSTACK_TEST_DB_STATE" "$file" ;;
+  restore)
+    if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" ]] && grep -q SNAPSHOT-DATABASE "$file"; then
+      printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
+      exit 17
+    fi
+    cp "$file" "$BOOKSTACK_TEST_DB_STATE" ;;
+  *) exit 94 ;;
+esac
 """
 
 PBS = """#!/bin/bash
@@ -100,40 +95,6 @@ def tasks_recursive(value):
             yield value
         for key in ["pre_tasks", "tasks", "block", "rescue", "always"]:
             yield from tasks_recursive(value.get(key, []))
-
-
-def check_remove_contract():
-    tasks = list(tasks_recursive(REMOVE))
-    resolve = next(task for task in tasks
-                   if task.get("name") == "Resolve BookStack's named database removal inputs")
-    assert "bookstack" in str(resolve["when"])
-    assert "delete_data" in str(resolve["when"])
-
-    validate = next(task for task in tasks
-                    if task.get("name") == "Validate BookStack's named database removal inputs")
-    requirements = validate["ansible.builtin.assert"]["that"]
-    assert any("provider" in item and "mariadb" in item for item in requirements)
-    assert any("database_config.name" in item and "is match" in item for item in requirements)
-    assert any("database_config.role" in item and "is match" in item for item in requirements)
-    assert any("database_backend.client_hosts" in item for item in requirements)
-
-    consumers = next(task for task in tasks
-                     if task.get("name") == "Check BookStack's database and role are not shared by another app")
-    assert "database_name" in str(consumers["ansible.builtin.set_fact"])
-    assert "database_user" in str(consumers["ansible.builtin.set_fact"])
-    assert "rejectattr('key', 'equalto', instance)" in str(consumers["ansible.builtin.set_fact"])
-
-    removal = next(task for task in tasks
-                   if task.get("name") == "Remove BookStack's named database and role")
-    assert "bookstack" in str(removal["when"])
-    assert "_rm_delete_data" in str(removal["when"])
-    drop_database = next(task for task in tasks
-                         if task.get("name") == "Drop BookStack's named MariaDB database")
-    assert drop_database["community.mysql.mysql_db"]["state"] == "absent"
-    drop_role = next(task for task in tasks
-                     if task.get("name") == "Drop BookStack's database login on permitted client networks")
-    assert drop_role["community.mysql.mysql_user"]["state"] == "absent"
-    assert drop_role["loop"] == "{{ hostvars['localhost']._rm_bookstack_database_backend.client_hosts }}"
 
 
 def check_admin_email_contract():
@@ -243,6 +204,7 @@ def check(case):
             "BOOKSTACK_DB_USER": "bookstack",
             "BOOKSTACK_DB_PASSWORD": "test-only",
             "BOOKSTACK_DB_CLIENT_IMAGE": "mysql-client:test",
+            "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
             "PBS_REPOSITORY": "test:store",
             "PBS_FINGERPRINT": "test",
             "PBS_PASSWORD": "test-only",
@@ -280,9 +242,7 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
-            assert client_commands.count("mariadb-dump") == 1, client_commands
-            assert "mariadb" in client_commands, client_commands
-            assert all(command in {"mariadb", "mariadb-dump"} for command in client_commands), client_commands
+            assert client_commands == ["dump", "restore"], client_commands
         elif case == "import-failure":
             assert result.returncode != 0, result.stdout + result.stderr
             assert "BookStack rollback restored the previous data and database." in result.stderr
@@ -292,9 +252,7 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "ORIGINAL-DATABASE\n"
             assert compose_actions == ["stop", "stop", "start"], compose_actions
-            assert client_commands.count("mariadb-dump") == 1, client_commands
-            assert "mariadb" in client_commands, client_commands
-            assert all(command in {"mariadb", "mariadb-dump"} for command in client_commands), client_commands
+            assert client_commands == ["dump", "restore", "restore"], client_commands
         else:
             assert result.returncode != 0, result.stdout + result.stderr
             assert "restore failed" not in result.stderr.lower()
@@ -313,7 +271,6 @@ def check(case):
 
 
 def main():
-    check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()
     check_pre_restore_point_contract()
@@ -324,7 +281,7 @@ def main():
     check("stale-prepoint")
     check("future-prepoint")
     check("invalid-time-prepoint")
-    print("BookStack: guarded Remove, recent restore points, plan separation, and restore rollback passed")
+    print("BookStack: recent restore points, plan separation, and restore rollback passed")
 
 
 if __name__ == "__main__":

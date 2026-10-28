@@ -99,51 +99,11 @@
         _forgejo_backup_service_stopped: true
 
     - name: Forgejo backup | Dump the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _forgejo_backup_scratch.path }}:/backup"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
-            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" --file=/backup/database/forgejo.dump
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _forgejo_backup_database_backend.host }}"
-        DB_PORT: "{{ _forgejo_backup_database_backend.port }}"
-        DB_NAME: "{{ _forgejo_backup_database_name }}"
-        DB_USER: "{{ _forgejo_backup_database_user }}"
-        DB_PASSWORD: "{{ _forgejo_backup_database_password }}"
-      no_log: true
-      register: _forgejo_backup_database_dump
-      failed_when: false
-      changed_when: true
-
-    - name: Forgejo backup | Report a failed database dump
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
       vars:
-        scrub_failure_result: "{{ _forgejo_backup_database_dump }}"
-        scrub_failure_secrets:
-          - "{{ _forgejo_backup_database_password }}"
-        scrub_failure_context: Forgejo backup | PostgreSQL database dump failed
+        database_app_instance: "{{ instance }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_dump_file: "{{ _forgejo_backup_scratch.path }}/database/forgejo.dump"
 
     - name: Forgejo backup | Push one database and data archive to PBS
       ansible.builtin.command:

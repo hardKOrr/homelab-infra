@@ -64,6 +64,7 @@ templates.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-proxmox-ha.py`: opt-in HA resource creation, idempotence, owned-resource removal, shared-storage refusal and Remove ordering.
 - `test-guest-placement.py`: database pinning, ordered floating node selection, class storage and placement refusal paths.
+- `test-database-recovery.py`: shared database client dump and restore per engine (PostgreSQL, MariaDB, MySQL) against command shims, the ownership guard before drop or restore, the version-matched client image, and Remove dropping every registered-backend database from the controller.
 - `test-database-backend-placement.py`: shared backend placement for all five engines, per-instance node/storage defaults, legacy type compatibility, mismatch refusal and single-node LXC/VM placement.
 - `test-database-memory.py`: database memory ratios, LXC/VM guest inputs, per-instance overrides and rendered or managed engine settings.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
@@ -92,7 +93,8 @@ templates.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
 - `test-k8s-recovery-jobs.py`: the shared Kubernetes backup CronJob and restore Job keep the PBS client on tmpfs, read the rotated PBS fingerprint, keep the previous point through a same-day backup, preview through the client read-only, and load the database before replacing volumes; each Kubernetes app's archives, database step and stop list render through them.
 - `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files or on a frozen allowlist that can only shrink; README and full-line comment mentions do not count.
-- `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
+- `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
+- `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
 
 On a Windows checkout accessed through WSL, wrap each command:
 

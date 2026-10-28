@@ -1,7 +1,7 @@
 ---
-# Remove only the data owned by this Immich instance. Remove App includes this after
-# stopping Compose when delete_data=true; the shared PostgreSQL guest and media mount
-# remain in place for other services and a later deployment.
+# Remove only the media owned by this Immich instance. Remove App includes this after
+# stopping Compose when delete_data=true; the media mount itself remains in place for a
+# later deployment. Remove App drops the named database through tasks/database/drop.yml.
 - name: Immich remove | Revalidate its declared media mount and owner
   ansible.builtin.assert:
     that:
@@ -11,8 +11,7 @@
       - hostvars['localhost']._rm_immich_media_path.split('/') | select('equalto', '..') | list | length == 0
       - hostvars['localhost'].app_config.media_storage.owner.uid | default(0) | int > 0
       - hostvars['localhost'].app_config.media_storage.owner.gid | default(0) | int > 0
-      - "'immich_database_removal_target' in groups['immich_database_removal_targets'] | default([])"
-    fail_msg: "Refusing to remove Immich data without its validated mount, owner, and PostgreSQL target."
+    fail_msg: "Refusing to remove Immich data without its validated mount and owner."
   no_log: true
 
 - name: Immich remove | Require the declared media path to be an exact mount point
@@ -35,83 +34,6 @@
       - _rm_immich_media_mountpoint.stdout | trim == hostvars['localhost']._rm_immich_media_path
     fail_msg: "Refusing to clear Immich data because its declared media path is not mounted here."
   no_log: true
-
-- name: Immich remove | Recheck the named database owner
-  ansible.builtin.command:
-    argv:
-      - psql
-      - --tuples-only
-      - --no-align
-      - --username=postgres
-      - --dbname=postgres
-      - "--port={{ hostvars['localhost']._rm_immich_database_backend.port }}"
-      - >-
-        --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
-        FROM pg_database WHERE datname = '{{ hostvars['localhost']._rm_immich_database_config.name }}'), 'missing')
-  delegate_to: immich_database_removal_target
-  become: true
-  become_user: postgres
-  register: _rm_immich_database_owner_before_drop
-  changed_when: false
-  no_log: true
-
-- name: Immich remove | Refuse a database with an unexpected owner
-  ansible.builtin.assert:
-    that:
-      - _rm_immich_database_owner_before_drop.stdout | trim in ['missing', hostvars['localhost']._rm_immich_database_config.role]
-    fail_msg: "Refusing to delete Immich's database because its owner is unexpected."
-  no_log: true
-
-- name: Immich remove | Drop the named PostgreSQL database
-  ansible.builtin.command:
-    argv:
-      - psql
-      - --set=ON_ERROR_STOP=1
-      - --username=postgres
-      - --dbname=postgres
-      - "--port={{ hostvars['localhost']._rm_immich_database_backend.port }}"
-      - "--command=DROP DATABASE {{ hostvars['localhost']._rm_immich_database_config.name }}"
-  delegate_to: immich_database_removal_target
-  become: true
-  become_user: postgres
-  changed_when: true
-  no_log: true
-  when: _rm_immich_database_owner_before_drop.stdout | trim != 'missing'
-
-- name: Immich remove | Read whether its PostgreSQL role exists
-  ansible.builtin.command:
-    argv:
-      - psql
-      - --tuples-only
-      - --no-align
-      - --username=postgres
-      - --dbname=postgres
-      - "--port={{ hostvars['localhost']._rm_immich_database_backend.port }}"
-      - >-
-        --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
-        WHERE rolname = '{{ hostvars['localhost']._rm_immich_database_config.role }}') THEN 'present' ELSE 'missing' END
-  delegate_to: immich_database_removal_target
-  become: true
-  become_user: postgres
-  register: _rm_immich_database_role
-  changed_when: false
-  no_log: true
-
-- name: Immich remove | Drop its PostgreSQL role
-  ansible.builtin.command:
-    argv:
-      - psql
-      - --set=ON_ERROR_STOP=1
-      - --username=postgres
-      - --dbname=postgres
-      - "--port={{ hostvars['localhost']._rm_immich_database_backend.port }}"
-      - "--command=DROP ROLE {{ hostvars['localhost']._rm_immich_database_config.role }}"
-  delegate_to: immich_database_removal_target
-  become: true
-  become_user: postgres
-  changed_when: true
-  no_log: true
-  when: _rm_immich_database_role.stdout | trim == 'present'
 
 - name: Immich remove | Find existing media contents as the declared owner
   ansible.builtin.command:

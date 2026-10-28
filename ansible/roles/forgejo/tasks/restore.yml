@@ -287,20 +287,11 @@
         scrub_failure_context: FORGEJO_RESTORE_STAGE=archive-extraction | PBS archive extraction failed
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _forgejo_restore_scratch.path }}/archive/database:/restore:ro"
-          - "{{ app_config.backup.postgres_client_image }}"
-          - pg_restore
-          - --list
-          - /restore/forgejo.dump
-      changed_when: false
+      ansible.builtin.include_tasks: ../../../tasks/database/verify-dump.yml
+      vars:
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _forgejo_restore_scratch.path }}/archive/database/forgejo.dump"
 
     - name: Forgejo restore | Stop only the Forgejo service
       community.docker.docker_compose_v2:
@@ -313,52 +304,11 @@
         _forgejo_restore_service_stopped: true
 
     - name: Forgejo restore | Preserve the current database before replacement
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _forgejo_restore_scratch.path }}:/work"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
-            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" --file=/work/database-before.dump
-            && test -s /work/database-before.dump
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _forgejo_restore_database_backend.host }}"
-        DB_PORT: "{{ _forgejo_restore_database_backend.port }}"
-        DB_NAME: "{{ _forgejo_restore_database_name }}"
-        DB_USER: "{{ _forgejo_restore_database_user }}"
-        DB_PASSWORD: "{{ _forgejo_restore_database_password }}"
-      no_log: true
-      register: _forgejo_restore_database_backup
-      failed_when: false
-      changed_when: true
-
-    - name: Forgejo restore | Report a failed database safety dump
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
       vars:
-        scrub_failure_result: "{{ _forgejo_restore_database_backup }}"
-        scrub_failure_secrets:
-          - "{{ _forgejo_restore_database_password }}"
-        scrub_failure_context: FORGEJO_RESTORE_STAGE=database-backup | PostgreSQL safety dump failed
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_dump_file: "{{ _forgejo_restore_scratch.path }}/database-before.dump"
 
     - name: Forgejo restore | Move the current data directory aside
       ansible.builtin.command:
@@ -386,58 +336,11 @@
         _forgejo_restore_database_mutated: true
 
     - name: Forgejo restore | Replace the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _forgejo_restore_scratch.path }}:/work:ro"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - --env
-          - DB_DUMP
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            PGPASSWORD="$DB_PASSWORD" psql --set=ON_ERROR_STOP=1 \
-              --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
-              --dbname="$DB_NAME" \
-              --command="DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \"$DB_USER\";"
-            PGPASSWORD="$DB_PASSWORD" pg_restore --no-owner --no-acl --exit-on-error \
-              --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
-              --dbname="$DB_NAME" "$DB_DUMP"
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _forgejo_restore_database_backend.host }}"
-        DB_PORT: "{{ _forgejo_restore_database_backend.port }}"
-        DB_NAME: "{{ _forgejo_restore_database_name }}"
-        DB_USER: "{{ _forgejo_restore_database_user }}"
-        DB_PASSWORD: "{{ _forgejo_restore_database_password }}"
-        DB_DUMP: /work/archive/database/forgejo.dump
-      no_log: true
-      register: _forgejo_restore_database_replace
-      failed_when: false
-      changed_when: true
-
-    - name: Forgejo restore | Report a failed database replacement
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
       vars:
-        scrub_failure_result: "{{ _forgejo_restore_database_replace }}"
-        scrub_failure_secrets:
-          - "{{ _forgejo_restore_database_password }}"
-        scrub_failure_context: FORGEJO_RESTORE_STAGE=database-restore | PostgreSQL database replacement failed
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _forgejo_restore_scratch.path }}/archive/database/forgejo.dump"
 
     - name: Forgejo restore | Start the restored Forgejo service
       community.docker.docker_compose_v2:
@@ -488,62 +391,18 @@
       when: _forgejo_restore_data_moved | bool
 
     - name: Forgejo restore | Put the original PostgreSQL database back
+      when: _forgejo_restore_database_mutated | bool
       block:
         - name: Forgejo restore | Restore the original PostgreSQL database
-          ansible.builtin.command:
-            argv:
-              - docker
-              - run
-              - --rm
-              - --network
-              - host
-              - --volume
-              - "{{ _forgejo_restore_scratch.path }}:/work:ro"
-              - --env
-              - DB_HOST
-              - --env
-              - DB_PORT
-              - --env
-              - DB_NAME
-              - --env
-              - DB_USER
-              - --env
-              - DB_PASSWORD
-              - --env
-              - DB_DUMP
-              - "{{ app_config.backup.postgres_client_image }}"
-              - /bin/sh
-              - -ceu
-              - |
-                PGPASSWORD="$DB_PASSWORD" psql --set=ON_ERROR_STOP=1 \
-                  --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
-                  --dbname="$DB_NAME" \
-                  --command="DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \"$DB_USER\";"
-                PGPASSWORD="$DB_PASSWORD" pg_restore --no-owner --no-acl --exit-on-error \
-                  --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
-                  --dbname="$DB_NAME" "$DB_DUMP"
-            expand_argument_vars: false
-          environment:
-            DB_HOST: "{{ _forgejo_restore_database_backend.host }}"
-            DB_PORT: "{{ _forgejo_restore_database_backend.port }}"
-            DB_NAME: "{{ _forgejo_restore_database_name }}"
-            DB_USER: "{{ _forgejo_restore_database_user }}"
-            DB_PASSWORD: "{{ _forgejo_restore_database_password }}"
-            DB_DUMP: /work/database-before.dump
-          register: _forgejo_restore_database_rollback
-          failed_when: false
-          changed_when: true
-          no_log: true
-          when: _forgejo_restore_database_mutated | bool
-
-        - name: Forgejo restore | Report a failed database rollback
-          ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
           vars:
-            scrub_failure_result: "{{ _forgejo_restore_database_rollback }}"
-            scrub_failure_secrets:
-              - "{{ _forgejo_restore_database_password }}"
-            scrub_failure_context: FORGEJO_RESTORE_STAGE=database-rollback | PostgreSQL rollback failed
-          when: _forgejo_restore_database_mutated | bool
+            database_app_instance: "{{ restore_target }}"
+            database_app_config: "{{ app_config.app.database }}"
+            database_restore_file: "{{ _forgejo_restore_scratch.path }}/database-before.dump"
+
+        - name: Forgejo restore | Record the database rollback
+          ansible.builtin.set_fact:
+            _forgejo_restore_database_rolled_back: true
       rescue:
         - name: Forgejo restore | Continue reporting after the scrubbed rollback failure
           ansible.builtin.set_fact:
@@ -556,7 +415,7 @@
               or ((_forgejo_restore_partial_data_removed.failed | default(false) | bool) == false
                   and (_forgejo_restore_data_rollback.rc | default(1) | int) == 0))
              and (not (_forgejo_restore_database_mutated | bool)
-                  or (_forgejo_restore_database_rollback.rc | default(1) | int) == 0) }}
+                  or _forgejo_restore_database_rolled_back | default(false) | bool) }}
 
     - name: Forgejo restore | Report the failed restore and rollback result
       ansible.builtin.fail:

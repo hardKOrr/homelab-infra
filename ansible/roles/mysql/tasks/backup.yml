@@ -48,13 +48,17 @@
     prefix: "{{ instance }}-mysql-backup-"
   register: _mysql_backup_tmp
 
+- name: MySQL backup | Install the shared server recovery script
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
+
 - name: MySQL backup | Create and verify the logical recovery point
   block:
     - name: MySQL backup | Export all databases and grants consistently
       ansible.builtin.command:
         argv:
           - python3
-          - /usr/local/sbin/homelab-mysql-recovery
+          - "{{ database_server_recovery_script }}"
+          - mysql
           - backup
           - "{{ _mysql_backup_tmp.path }}"
       changed_when: true

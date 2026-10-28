@@ -325,19 +325,11 @@
       no_log: true
 
     - name: Plane restore | Verify the PostgreSQL dump is readable before mutation
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --volume
-          - "{{ _plane_restore_scratch.path }}/database:/restore:ro"
-          - "{{ app_config.backup.postgres_client_image }}"
-          - pg_restore
-          - --list
-          - /restore/plane.dump
-      changed_when: false
-      no_log: true
+      ansible.builtin.include_tasks: ../../../tasks/database/verify-dump.yml
+      vars:
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _plane_restore_scratch.path }}/database/plane.dump"
 
     - name: Plane restore | Stop the complete target Compose recovery unit
       community.docker.docker_compose_v2:
@@ -401,40 +393,11 @@
       no_log: true
 
     - name: Plane restore | Restore the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _plane_restore_scratch.path }}/database:/restore:ro"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_restore --clean --if-exists --no-owner --no-acl
-            --exit-on-error --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" /restore/plane.dump
-      environment:
-        DB_HOST: "{{ _plane_restore_database_backend.host }}"
-        DB_PORT: "{{ _plane_restore_database_backend.port }}"
-        DB_NAME: "{{ _plane_restore_database_name }}"
-        DB_USER: "{{ _plane_restore_database_user }}"
-        DB_PASSWORD: "{{ _plane_restore_database_password }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+      vars:
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _plane_restore_scratch.path }}/database/plane.dump"
 
     # Redis's RDB format is native to the named Redis service. The RDB is fetched to the
     # controller only as private transfer material, then installed while the backend is

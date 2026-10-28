@@ -16,7 +16,6 @@ catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore.yml").read_text())
 deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
-remove_source = yaml.safe_load((repo / "ansible/playbooks/apps/remove.yml").read_text())
 compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
 
@@ -34,16 +33,15 @@ def fixture_tasks(tasks, root, case):
         task.pop("no_log", None)
         if task.get("name") == "Mautic restore | Load the target domain declaration":
             task["ansible.builtin.include_vars"]["file"] = str(root / "no-lab-config.yml")
-        if task.get("name") == "Mautic restore | Create a private database client file":
-            # The production play runs as root on the Docker host. Keep the mode check,
-            # but let this local fixture write as the unprivileged gate user.
-            task["ansible.builtin.copy"].pop("owner", None)
-            task["ansible.builtin.copy"].pop("group", None)
         if task.get("name") == "Mautic restore | Converge the target database connection and URL":
             # The production play runs as root on the Docker host. Keep the mode check,
             # but let this local fixture write as the unprivileged gate user.
             task["ansible.builtin.lineinfile"].pop("owner", None)
             task["ansible.builtin.lineinfile"].pop("group", None)
+        include = task.get("ansible.builtin.include_tasks", "")
+        if "/tasks/database/" in include:
+            task["ansible.builtin.include_tasks"] = str(
+                repo / "gate/fixtures/database" / Path(include).name)
         if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -105,20 +103,6 @@ if 'proxmox-backup-client restore' in script:
     (data/'config'/'local.php').write_text("<?php\nreturn [\n  'db_host' => 'old-db',\n  'db_port' => '3306',\n  'db_name' => 'mautic',\n  'db_user' => 'mautic',\n  'db_password' => 'old-password',\n  'site_url' => 'https://old.example.invalid',\n  'default_timezone' => 'Pacific/Honolulu',\n);\n")
     (data/'media'/'files'/'recovered-contact.txt').write_text('recovered contact asset\n')
     raise SystemExit(0)
-if 'mariadb-dump' in script:
-    mount=next(value for value in volumes if value.endswith(':/work'))
-    scratch=Path(mount[:-len(':/work')])
-    (scratch/'database-before.sql').write_text('CREATE TABLE original;\n-- original database\n')
-    raise SystemExit(0)
-if 'sed' in script and 'DB_DUMP' in script:
-    dump=os.environ['DB_DUMP']
-    if dump.endswith('database-before.sql'):
-        (root/'db-state').write_text('original database\n')
-        raise SystemExit(0)
-    (root/'db-state').write_text('partial recovered database\n'
-                                 if case=='database-failure-after-move'
-                                 else 'recovered database\n')
-    raise SystemExit(7 if case=='database-failure-after-move' else 0)
 raise SystemExit(0)
 ''',
         "service": r'''#!/usr/bin/env python3
@@ -129,6 +113,26 @@ with Path(os.environ['MAUTIC_TEST_ROOT'],'services').open('a') as log:
     log.write(sys.argv[1]+'\n')
 ''',
         "health": "#!/bin/sh\nexit 0\n",
+        "database-fixture": r'''#!/usr/bin/env python3
+import os,sys
+from pathlib import Path
+action,dump,instance,name=sys.argv[1:]
+assert name=='mautic', sys.argv
+case=os.environ['MAUTIC_TEST_CASE']
+root=Path(os.environ['MAUTIC_TEST_ROOT'])
+dump=Path(dump)
+if action=='dump':
+    assert dump.name=='database-before.sql', dump
+    dump.write_text('CREATE TABLE original;\n-- original database\n')
+elif dump.name=='database-before.sql':
+    (root/'db-state').write_text('original database\n')
+else:
+    assert dump.name=='mautic.sql' and dump.read_text().startswith('CREATE TABLE'), dump
+    (root/'db-state').write_text('partial recovered database\n'
+                                 if case=='database-failure-after-move'
+                                 else 'recovered database\n')
+    raise SystemExit(7 if case=='database-failure-after-move' else 0)
+''',
     }
     for name, script in scripts.items():
         path = root / "bin" / name
@@ -283,7 +287,7 @@ def static_contract():
                        if task.get("name") == "Mautic backup | Dump the stopped instance's MariaDB database")
     archive = next(task for task in backup_tasks
                    if task.get("name") == "Mautic backup | Push one database and file archive to PBS")
-    assert "mariadb-dump" in backup_dump["ansible.builtin.command"]["argv"][-1]
+    assert backup_dump["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
     archive_argv = archive["ansible.builtin.command"]["argv"]
     archive_script = archive_argv[-1]
     for environment_name in [
@@ -307,10 +311,6 @@ def static_contract():
     assert restore_config["ansible.builtin.lineinfile"]["owner"] == "www-data"
     assert restore_config["ansible.builtin.lineinfile"]["group"] == "www-data"
     assert restore_config["ansible.builtin.lineinfile"]["mode"] == "0640"
-    client_file = next(task for task in restore_tasks
-                       if task.get("name") == "Mautic restore | Create a private database client file")
-    assert client_file["ansible.builtin.copy"]["owner"] == "root"
-    assert client_file["ansible.builtin.copy"]["mode"] == "0600"
     move = next(task for task in restore_tasks
                 if task.get("name") == "Mautic restore | Move the original data directory aside")
     put_back = next(task for task in restore_tasks
@@ -319,19 +319,6 @@ def static_contract():
     assert put_back["ansible.builtin.command"]["argv"][0] == "mv"
     assert "_mautic_restore_database_mutated" in str(restore_source)
     assert "database-before.sql" in str(restore_source)
-
-    removal = [
-        task
-        for play in remove_source
-        for section in ["pre_tasks", "tasks"]
-        for task in tasks_recursive(play.get(section, []))
-    ]
-    drop_db = next(task for task in removal
-                   if task.get("name") == "Drop Mautic's named MariaDB database")
-    drop_user = next(task for task in removal
-                     if task.get("name") == "Drop Mautic's database login on permitted client networks")
-    assert drop_db["community.mysql.mysql_db"]["state"] == "absent"
-    assert drop_user["community.mysql.mysql_user"]["state"] == "absent"
 
 
 def main():

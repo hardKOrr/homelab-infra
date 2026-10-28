@@ -69,13 +69,8 @@
       ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
        | length) > 0
 
-- name: MySQL | Install the native recovery helper
-  ansible.builtin.copy:
-    src: mysql-recovery.py
-    dest: /usr/local/sbin/homelab-mysql-recovery
-    owner: root
-    group: root
-    mode: "0750"
+- name: MySQL | Install the shared server recovery script
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
 
 - name: MySQL | Permit application-network listeners
   ansible.builtin.template:

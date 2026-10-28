@@ -219,6 +219,9 @@
 - name: MySQL restore | Apply the selected point with rollback protection
   when: restore_overwrite | bool
   block:
+    - name: MySQL restore | Install the shared server recovery script
+      ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
+
     - name: MySQL restore | Create private archive directories
       ansible.builtin.file:
         path: "{{ _mysql_restore_tmp.path }}/{{ item }}"
@@ -270,7 +273,7 @@
     - name: MySQL restore | Import the point and retain rollback state until verified
       ansible.builtin.command:
         argv: >-
-          {{ ['python3', '/usr/local/sbin/homelab-mysql-recovery', 'restore',
+          {{ ['python3', database_server_recovery_script, 'mysql', 'restore',
               _mysql_restore_tmp.path ~ '/source']
              + ([_mysql_restore_tmp.path ~ '/safety']
                 if restore_destination | default('existing') == 'existing'

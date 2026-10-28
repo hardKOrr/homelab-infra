@@ -32,13 +32,8 @@
       ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
        | length) > 0
 
-- name: MariaDB | Install the native recovery helper
-  ansible.builtin.copy:
-    src: mariadb-recovery.py
-    dest: /usr/local/sbin/homelab-mariadb-recovery
-    owner: root
-    group: root
-    mode: "0750"
+- name: MariaDB | Install the shared server recovery script
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
 
 - name: MariaDB | Permit application-network listeners
   ansible.builtin.template:

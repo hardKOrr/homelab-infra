@@ -46,6 +46,10 @@ def fixture_tasks(tasks, root, case):
             "fail-with-scrubbed-output.yml"
         ):
             task["ansible.builtin.include_tasks"] = str(scrub_failure_task)
+        include = task.get("ansible.builtin.include_tasks", "")
+        if "/tasks/database/" in include:
+            task["ansible.builtin.include_tasks"] = str(
+                repo / "gate/fixtures/database" / Path(include).name)
         if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -123,14 +127,6 @@ case=os.environ['FORGEJO_TEST_CASE']
 root=Path(os.environ['FORGEJO_TEST_ROOT'])
 script=args[-1] if args else ''
 volumes=[args[i+1] for i,value in enumerate(args[:-1]) if value=='--volume']
-if 'pg_dump --format=custom' in script:
-    if '/backup/database/forgejo.dump' in script:
-        scratch=Path(next(v.split(':',1)[0] for v in volumes if v.endswith(':/backup')))
-        (scratch/'database/forgejo.dump').write_text('new recovery database\n')
-    else:
-        scratch=Path(next(v.split(':',1)[0] for v in volumes if v.endswith(':/work')))
-        (scratch/'database-before.dump').write_text((root/'db-state').read_text())
-    raise SystemExit(0)
 if 'proxmox-backup-client backup data.pxar:/archive' in script:
     assert 'data.pxar:/archive --all-file-systems true' in script, script
     assert script.count('proxmox-backup-client backup ') == 1, script
@@ -173,27 +169,33 @@ if 'proxmox-backup-client restore' in script:
     if case=='incomplete-archive':
         (data/'gitea/conf/app.ini').unlink()
     raise SystemExit(0)
-if '--list' in args:
-    if not any(v.endswith(':/restore:ro') for v in volumes):
-        raise SystemExit(9)
-    raise SystemExit(0)
-if 'DROP SCHEMA IF EXISTS public CASCADE' in script:
-    dump=os.environ['DB_DUMP']
-    if dump.endswith('/archive/database/forgejo.dump'):
-        if case in ['db-failure-after-move', 'rollback-database-failure']:
-            (root/'db-state').write_text('partial recovered database\n')
-            raise SystemExit(7)
-        (root/'db-state').write_text('recovered database\n')
-    elif dump.endswith('/database-before.dump'):
-        if case=='rollback-database-failure':
-            raise SystemExit(8)
-        (root/'db-state').write_text(Path(next(v.split(':',1)[0] for v in volumes
-                                                if v.endswith(':/work:ro')),
-                                          'database-before.dump').read_text())
-    else:
-        raise SystemExit(10)
-    raise SystemExit(0)
 raise SystemExit(11)
+''',
+        "database-fixture": r'''#!/usr/bin/env python3
+import os,sys
+from pathlib import Path
+action,dump,instance,name=sys.argv[1:]
+assert (instance,name)==('forgejo','forgejo'), sys.argv
+case=os.environ['FORGEJO_TEST_CASE']
+root=Path(os.environ['FORGEJO_TEST_ROOT'])
+state=root/'db-state'
+dump=Path(dump)
+if action=='dump':
+    assert dump.parent.is_dir(), dump
+    dump.write_text('new recovery database\n' if dump.name=='forgejo.dump' else state.read_text())
+elif action=='verify-dump':
+    assert dump.read_text(), dump
+elif dump.name=='forgejo.dump':
+    if case in ['db-failure-after-move', 'rollback-database-failure']:
+        state.write_text('partial recovered database\n')
+        raise SystemExit(7)
+    state.write_text('recovered database\n')
+elif dump.name=='database-before.dump':
+    if case=='rollback-database-failure':
+        raise SystemExit(8)
+    state.write_text(dump.read_text())
+else:
+    raise SystemExit(10)
 ''',
     }
     for name, script in scripts.items():
@@ -222,7 +224,7 @@ def static_contract():
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
     assert defaults["backup"]["application_consistent"] is True
-    assert defaults["backup"]["postgres_client_image"] == "postgres:16-alpine"
+    assert "postgres_client_image" not in defaults["backup"]
     assert "backup" in catalog_source["applications"]["forgejo"]["actions"]
     assert "restore" in catalog_source["applications"]["forgejo"]["actions"]
     forward = defaults["firewall"]["inbound"][0]
@@ -296,7 +298,6 @@ def app_variables(root, server=None):
                            "key_url": "https://pbs.example.invalid:8007/proxmox-backup/file-restore.gpg",
                            "repository": "https://apt.example.invalid/debian/pbs",
                            "suite": "bookworm", "component": "main"},
-                "postgres_client_image": "test-postgres",
             },
         },
     }

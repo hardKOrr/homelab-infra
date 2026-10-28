@@ -20,7 +20,6 @@ RESTORE_PLAYBOOK = yaml.safe_load(
     (ROOT / "ansible/playbooks/maintenance/wordpress-restore.yml").read_text()
 )
 RUNDECK_RESTORE = yaml.safe_load((ROOT / "rundeck/jobs/wordpress-restore.yaml").read_text())[0]
-REMOVE_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/main.yml").read_text())
 WORDPRESS_COMPOSE = (ROOT / "ansible/roles/wordpress/templates/docker-compose.yml.j2").read_text()
 
@@ -47,44 +46,29 @@ if args[0]=='compose':
 
 if args[0]!='run':
     raise SystemExit(90)
+# The shared database client: -v DIR:/work ... IMAGE database-client.sh ACTION /work/FILE.
 entrypoint=args[args.index('--entrypoint')+1]
+if entrypoint!='/bin/sh' or args[-3]!='/usr/local/bin/database-client.sh':
+    raise SystemExit(91)
+assert os.environ['DB_ENGINE']=='mariadb' and os.environ['DB_NAME']=='wordpress'
+work=next(args[i+1] for i,value in enumerate(args) if value=='-v' and args[i+1].endswith(':/work'))
+action,file=args[-2],Path(work[:-len(':/work')])/Path(args[-1]).name
 database=root/'database-state.sql'
-if entrypoint=='/bin/sh':
-    if case=='missing-database-client-tools':
-        raise SystemExit(1)
-    if case=='mysql-client-tools':
-        print('mysql')
-        print('mysqldump')
-    else:
-        print('mariadb')
-        print('mariadb-dump')
-    raise SystemExit(0)
 with (root/'database-client.log').open('a') as log:
-    log.write(entrypoint+'\n')
-if entrypoint in ['mysqldump','mariadb-dump']:
+    log.write(action+'\n')
+if action=='dump':
     if case=='database-dump-failure':
         raise SystemExit(16)
-    sys.stdout.write(database.read_text())
+    file.write_text(database.read_text())
     raise SystemExit(0)
-if entrypoint not in ['mysql','mariadb']:
-    raise SystemExit(91)
-if any(value.startswith('--execute=SELECT CONCAT') for value in args):
-    if database.read_text().strip() not in ['', 'EMPTY']:
-        print('DROP TABLE IF EXISTS `wordpress_table`;')
-    raise SystemExit(0)
-input_sql=sys.stdin.read()
-if 'DROP TABLE IF EXISTS' in input_sql:
-    assert 'SET FOREIGN_KEY_CHECKS=0;' in input_sql
-    database.write_text('EMPTY\n')
-    raise SystemExit(0)
-if 'SNAPSHOT-DATABASE' in input_sql:
+if action!='restore':
+    raise SystemExit(92)
+dump=file.read_text()
+if 'SNAPSHOT-DATABASE' in dump:
     database.write_text('PARTIAL-DATABASE\n' if case=='database-import-failure'
                         else 'SNAPSHOT-DATABASE\n')
     raise SystemExit(17 if case=='database-import-failure' else 0)
-if 'ORIGINAL-DATABASE' in input_sql:
-    database.write_text('ORIGINAL-DATABASE\n')
-    raise SystemExit(0)
-raise SystemExit(92)
+database.write_text(dump)
 '''
 
 PBS = r'''#!/usr/bin/env python3
@@ -217,37 +201,6 @@ def check_wordpress_health_redirects():
     assert "200 <= status < 400" in recovery
 
 
-def check_remove_contract():
-    pre_tasks = REMOVE_PLAYBOOK[0]["pre_tasks"]
-    resolve = next(task for task in pre_tasks
-                   if task.get("name") == "Resolve WordPress's named database removal inputs")
-    assert "wordpress" in str(resolve["when"])
-    assert "delete_data" in str(resolve["when"])
-    validate = next(task for task in pre_tasks
-                    if task.get("name") == "Validate WordPress's named database removal inputs")
-    requirements = validate["ansible.builtin.assert"]["that"]
-    assert any("provider" in item and "mariadb" in item for item in requirements)
-    assert any("database_config.name" in item and "is match" in item for item in requirements)
-    assert any("database_config.role" in item and "is match" in item for item in requirements)
-    assert any("database_backend.client_hosts" in item for item in requirements)
-    consumers = next(task for task in pre_tasks
-                     if task.get("name") == "Check WordPress's database and role are not shared by another app")
-    assert "database_name" in str(consumers["ansible.builtin.set_fact"])
-    assert "database_user" in str(consumers["ansible.builtin.set_fact"])
-    assert "rejectattr('key', 'equalto', instance)" in str(consumers["ansible.builtin.set_fact"])
-    remove = next(task for task in REMOVE_PLAYBOOK[1]["tasks"]
-                  if task.get("name") == "Remove WordPress's named database and role")
-    assert "_rm_delete_data" in str(remove["when"])
-    operations = remove["block"]
-    drop_database = next(task for task in operations
-                         if task.get("name") == "Drop WordPress's named MariaDB database")
-    assert drop_database["community.mysql.mysql_db"]["state"] == "absent"
-    drop_role = next(task for task in operations
-                     if task.get("name") == "Drop WordPress's database login on permitted client networks")
-    assert drop_role["community.mysql.mysql_user"]["state"] == "absent"
-    assert drop_role["loop"] == "{{ hostvars['localhost']._rm_wordpress_database_backend.client_hosts }}"
-
-
 def run_restore(case):
     with tempfile.TemporaryDirectory(prefix="wordpress-recovery-test-") as directory:
         root = Path(directory)
@@ -303,7 +256,9 @@ def run_restore(case):
             "WORDPRESS_DB_NAME": "wordpress",
             "WORDPRESS_DB_USER": "wordpress",
             "WORDPRESS_DB_PASSWORD": "fixture-only",
+            "WORDPRESS_DB_PROVIDER": "mariadb",
             "WORDPRESS_DB_CLIENT_IMAGE": "mariadb:test",
+            "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
             "PBS_REPOSITORY": "test:store",
             "PBS_FINGERPRINT": "test",
             "PBS_PASSWORD": "fixture-only",
@@ -333,7 +288,7 @@ def run_restore(case):
             server.server_close()
             thread.join()
         compose_actions = (root / "compose.log").read_text().splitlines() if (root / "compose.log").exists() else []
-        success = case in {"success", "health-redirect", "mysql-client-tools"}
+        success = case in {"success", "health-redirect"}
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert content.is_dir()
         if success:
@@ -343,21 +298,15 @@ def run_restore(case):
             assert content.stat().st_ino != original_inode
             assert (root / "database-state.sql").read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
-            database_tools = (root / "database-client.log").read_text().splitlines()
-            if case == "mysql-client-tools":
-                assert "mysql" in database_tools and "mysqldump" in database_tools
-            else:
-                assert "mariadb" in database_tools and "mariadb-dump" in database_tools
+            database_actions = (root / "database-client.log").read_text().splitlines()
+            assert database_actions == ["dump", "restore"], database_actions
         else:
             assert (content / "original.txt").read_text() == "original media state\n"
             assert not (content / "restored.txt").exists()
             assert content.stat().st_ino == original_inode, "rollback must rename the original tree back"
             assert content.stat().st_mode == original_mode
             assert (root / "database-state.sql").read_text() == "ORIGINAL-DATABASE\n"
-            if case == "missing-database-client-tools":
-                assert compose_actions == [], compose_actions
-                assert "must provide a MariaDB/MySQL client and dump tool" in result.stderr
-            elif case == "database-dump-failure":
+            if case == "database-dump-failure":
                 assert compose_actions == ["stop", "start"], compose_actions
             else:
                 assert "WordPress rollback restored the previous content and database." in result.stderr
@@ -371,15 +320,12 @@ def main():
     check_wordpress_data_directory_access()
     check_wordpress_cli_uses_data_owner()
     check_wordpress_health_redirects()
-    check_remove_contract()
     run_restore("success")
-    run_restore("mysql-client-tools")
-    run_restore("missing-database-client-tools")
     run_restore("health-redirect")
     run_restore("database-dump-failure")
     run_restore("database-import-failure")
     run_restore("wp-cli-failure")
-    print("WordPress: scoped Remove, fresh safety point, restore and content/database rollback passed")
+    print("WordPress: fresh safety point, restore and content/database rollback passed")
 
 
 if __name__ == "__main__":

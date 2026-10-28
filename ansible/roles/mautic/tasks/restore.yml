@@ -302,18 +302,6 @@
           Mautic staging must share a filesystem with its data directory so the original
           can be moved aside and put back atomically. No restore changes were made.
 
-    - name: Mautic restore | Create a private database client file
-      ansible.builtin.copy:
-        dest: "{{ _mautic_restore_scratch.path }}/client.cnf"
-        content: |
-          [client]
-          user={{ _mautic_restore_database_user }}
-          password={{ _mautic_restore_database_password }}
-        owner: root
-        group: root
-        mode: "0600"
-      no_log: true
-
 - name: Mautic restore | Replace the database and file state
   when: restore_overwrite | bool
   block:
@@ -404,53 +392,11 @@
         _mautic_restore_service_stopped: true
 
     - name: Mautic restore | Preserve the target database before replacement
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _mautic_restore_scratch.path }}:/work"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
-            mariadb-dump --defaults-extra-file=/work/client.cnf \
-              --host="$DB_HOST" --port="$DB_PORT" \
-              --single-transaction --quick --skip-lock-tables --hex-blob --triggers \
-              --no-create-db --databases "$DB_NAME" > /work/database-before.sql
-            test -s /work/database-before.sql
-            grep -q '^CREATE TABLE ' /work/database-before.sql
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
-        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
-        DB_NAME: "{{ _mautic_restore_database_name }}"
-      no_log: true
-      register: _mautic_restore_safety_dump
-      failed_when: false
-      changed_when: true
-
-    - name: Mautic restore | Report a failed database safety dump
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
       vars:
-        scrub_failure_result: "{{ _mautic_restore_safety_dump }}"
-        scrub_failure_secrets:
-          - "{{ _mautic_restore_database_password }}"
-          - "{{ _mautic_restore_database_backend.host }}"
-          - "{{ _mautic_restore_database_name }}"
-        scrub_failure_context: Mautic restore | target MariaDB safety dump failed
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_dump_file: "{{ _mautic_restore_scratch.path }}/database-before.sql"
 
     - name: Mautic restore | Move the original data directory aside
       ansible.builtin.command:
@@ -551,63 +497,11 @@
         _mautic_restore_database_mutated: true
 
     - name: Mautic restore | Replace only the named MariaDB database contents
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _mautic_restore_scratch.path }}:/work"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_DUMP
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
-            tables=$(mariadb --defaults-extra-file=/work/client.cnf \
-              --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME" \
-              --batch --skip-column-names \
-              --execute="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()")
-            if [ -n "$tables" ]; then
-              { printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$tables"; } | \
-                mariadb --defaults-extra-file=/work/client.cnf \
-                  --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
-            fi
-            sed '/^USE `[^`]*`;/d' "$DB_DUMP" | \
-              mariadb --defaults-extra-file=/work/client.cnf \
-                --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
-        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
-        DB_NAME: "{{ _mautic_restore_database_name }}"
-        DB_DUMP: /work/archive/database/mautic.sql
-      no_log: true
-      register: _mautic_restore_database_replace
-      failed_when: false
-      changed_when: true
-
-    - name: Mautic restore | Report a failed database replacement
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
       vars:
-        scrub_failure_result: "{{ _mautic_restore_database_replace }}"
-        scrub_failure_secrets:
-          - "{{ _mautic_restore_database_password }}"
-          - "{{ _mautic_restore_database_backend.host }}"
-          - "{{ _mautic_restore_database_name }}"
-          - "{{ restore_snapshot }}"
-        scrub_failure_context: Mautic restore | database replacement failed
+        database_app_instance: "{{ restore_target }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_restore_file: "{{ _mautic_restore_scratch.path }}/archive/database/mautic.sql"
 
     - name: Mautic restore | Start the restored Mautic services
       community.docker.docker_compose_v2:
@@ -658,53 +552,22 @@
       when: _mautic_restore_data_moved | bool
 
     - name: Mautic restore | Put the original MariaDB database back
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _mautic_restore_scratch.path }}:/work"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_DUMP
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
-            tables=$(mariadb --defaults-extra-file=/work/client.cnf \
-              --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME" \
-              --batch --skip-column-names \
-              --execute="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()")
-            if [ -n "$tables" ]; then
-              { printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$tables"; } | \
-                mariadb --defaults-extra-file=/work/client.cnf \
-                  --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
-            fi
-            sed '/^USE `[^`]*`;/d' "$DB_DUMP" | \
-              mariadb --defaults-extra-file=/work/client.cnf \
-                --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
-        expand_argument_vars: false
-      environment:
-        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
-        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
-        DB_NAME: "{{ _mautic_restore_database_name }}"
-        DB_DUMP: /work/database-before.sql
-      register: _mautic_restore_database_rollback
-      failed_when: false
-      changed_when: true
-      no_log: true
       when: _mautic_restore_database_mutated | bool
+      block:
+        - name: Mautic restore | Load the saved target database
+          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+          vars:
+            database_app_instance: "{{ restore_target }}"
+            database_app_config: "{{ app_config.app.database }}"
+            database_restore_file: "{{ _mautic_restore_scratch.path }}/database-before.sql"
+
+        - name: Mautic restore | Record the database rollback
+          ansible.builtin.set_fact:
+            _mautic_restore_database_rolled_back: true
+      rescue:
+        - name: Mautic restore | Continue after a failed database rollback
+          ansible.builtin.set_fact:
+            _mautic_restore_database_rolled_back: false
 
     - name: Mautic restore | Record whether both originals were restored
       ansible.builtin.set_fact:
@@ -712,7 +575,7 @@
           {{ (not (_mautic_restore_data_moved | bool)
               or (_mautic_restore_data_rollback.rc | default(1) | int == 0))
              and (not (_mautic_restore_database_mutated | bool)
-                  or (_mautic_restore_database_rollback.rc | default(1) | int == 0)) }}
+                  or _mautic_restore_database_rolled_back | default(false) | bool) }}
 
     - name: Mautic restore | Report the failed restore
       ansible.builtin.fail:
