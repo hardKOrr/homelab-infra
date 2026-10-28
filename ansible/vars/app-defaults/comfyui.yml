@@ -43,6 +43,10 @@ comfyui_defaults:
     custom_nodes_path: "/opt/{{ instance }}/storage/custom_nodes"
     input_path: "/opt/{{ instance }}/storage/input"
     output_path: "/opt/{{ instance }}/storage/output"
+    # The ai-dock image runs ComfyUI as `user` (uid 1000) in group `ai-dock` (gid 1111);
+    # the mounted directories belong to that identity so the app can save to them.
+    run_uid: 1000
+    run_gid: 1111
     # The application archive covers storage_path, including downloaded checkpoints and
     # LoRAs. A model cache is not treated as disposable for this recovery contract.
 

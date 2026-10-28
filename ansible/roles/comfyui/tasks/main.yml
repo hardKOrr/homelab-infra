@@ -38,7 +38,7 @@
       NVIDIA Container Toolkit in the GPU guest before deploying ComfyUI.
   when: app_config.app.accelerator | default('cuda') == 'cuda'
 
-- name: ComfyUI | Create project and persistent storage directories
+- name: ComfyUI | Create the project and storage root directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -48,11 +48,9 @@
   loop:
     - "{{ comfyui_project_dir }}"
     - "{{ app_config.app.storage_path }}"
-    - "{{ app_config.app.models_path }}"
-    - "{{ app_config.app.config_path }}"
-    - "{{ app_config.app.custom_nodes_path }}"
-    - "{{ app_config.app.input_path }}"
-    - "{{ app_config.app.output_path }}"
+
+- name: ComfyUI | Give the mounted directories to the app's runtime user
+  ansible.builtin.include_tasks: storage-ownership.yml
 
 - name: ComfyUI | Assert the storage paths are inside the application storage root
   ansible.builtin.assert:

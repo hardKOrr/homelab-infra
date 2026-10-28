@@ -1,0 +1,16 @@
+---
+# Compose mounts each of these into the container, where ComfyUI runs unprivileged.
+- name: ComfyUI storage | Give the mounted directories to the app's runtime user
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.run_uid }}"
+    group: "{{ app_config.app.run_gid }}"
+    mode: "u=rwX,g=rX,o="
+    recurse: true
+  loop:
+    - "{{ app_config.app.models_path }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.custom_nodes_path }}"
+    - "{{ app_config.app.input_path }}"
+    - "{{ app_config.app.output_path }}"

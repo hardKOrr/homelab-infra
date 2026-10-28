@@ -80,6 +80,9 @@
       changed_when: true
       no_log: true
 
+    - name: ComfyUI restore | Give the restored directories to the app's runtime user
+      ansible.builtin.include_tasks: storage-ownership.yml
+
     - name: ComfyUI restore | Start ComfyUI
       community.docker.docker_compose_v2:
         project_src: "{{ comfyui_project_dir }}"
