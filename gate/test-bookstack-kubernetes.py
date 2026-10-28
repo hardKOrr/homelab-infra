@@ -131,11 +131,19 @@ def check_defaults_and_dispatch():
     )
 
     remove = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+    bookstack_remove_play = next(
+        play for play in remove if play.get("name") == "Remove BookStack | Delete its named database"
+    )
+    assert bookstack_remove_play["hosts"] == "localhost"
+    assert remove.index(bookstack_remove_play) > next(
+        index for index, play in enumerate(remove)
+        if play.get("name", "").startswith("Remove App | Stop ")
+    )
     bookstack_remove = next(
-        task for task in (remove[0].get("tasks", []) + remove[1].get("tasks", []))
+        task for task in bookstack_remove_play["tasks"]
         if task.get("name") == "Remove BookStack's named database and role"
     )
-    assert "kubernetes" in str(bookstack_remove["when"])
+    assert "delete_data" in str(bookstack_remove["when"])
 
 
 def check_workload_manifest():
