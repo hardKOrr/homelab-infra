@@ -49,8 +49,5 @@ odoo_defaults:
       repository: "http://download.proxmox.com/debian/pbs-client"
       suite: bookworm
       component: main
-    # Odoo's tracked PostgreSQL major is 16. The dump client is separate from the
-    # shared PostgreSQL guest and is used only for the named application database.
-    postgres_client_image: "postgres:16-alpine"
   crm:
     modules: [crm]

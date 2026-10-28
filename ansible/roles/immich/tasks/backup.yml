@@ -89,40 +89,11 @@
 - name: Immich backup | Archive the database and media to PBS
   block:
     - name: Immich backup | Dump the named PostgreSQL database
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _immich_backup_scratch.path }}:/backup"
-          - --env
-          - DB_HOST
-          - --env
-          - DB_PORT
-          - --env
-          - DB_NAME
-          - --env
-          - DB_USER
-          - --env
-          - DB_PASSWORD
-          - "{{ app_config.backup.postgres_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
-            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
-            --dbname="$DB_NAME" --file=/backup/immich.dump
-      environment:
-        DB_HOST: "{{ _immich_backup_database_backend.host }}"
-        DB_PORT: "{{ _immich_backup_database_backend.port }}"
-        DB_NAME: "{{ app_config.app.database.name }}"
-        DB_USER: "{{ _immich_backup_database_user }}"
-        DB_PASSWORD: "{{ _immich_backup_database_password }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+      vars:
+        database_app_instance: "{{ instance }}"
+        database_app_config: "{{ app_config.app.database }}"
+        database_dump_file: "{{ _immich_backup_scratch.path }}/immich.dump"
 
     - name: Immich backup | Push the database and durable media archives
       ansible.builtin.command:
