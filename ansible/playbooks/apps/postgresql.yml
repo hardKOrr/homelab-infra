@@ -30,13 +30,11 @@
   tasks:
     - name: Refresh inventory
       ansible.builtin.meta: refresh_inventory
-    - name: Resolve instance inventory group
-      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
-      vars:
-        tag_group_tag: "_{{ instance }}"
-    - name: Collect existing instance hosts
-      ansible.builtin.set_fact:
-        _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    - name: Resolve this instance's guest, reusing one Remove kept
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
+      vars: {resolve_guest_instance: "{{ instance }}"}
+    - ansible.builtin.set_fact:
+        _existing_hosts: "{{ resolve_guest_hosts }}"
     - name: Resolve PostgreSQL guest placement and check existing type
       ansible.builtin.include_tasks: ../../tasks/database/resolve-backend-placement.yml
     - name: Reuse existing PostgreSQL guest

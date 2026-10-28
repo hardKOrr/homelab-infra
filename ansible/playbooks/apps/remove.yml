@@ -36,6 +36,8 @@
 #         it as a live download client). See tasks/unwiring/registry.yml.
 #   3. Withdraw the instance's row and `_<instance>` tag from its Proxmox guest, unless
 #      it is a PostgreSQL guest that this playbook leaves in place for redeployment
+#      (a kept guest's next Deploy finds it again by exact name through
+#      tasks/proxmox/resolve-instance-guest.yml)
 #   4. Stop and remove the app on its host (compose down, or stop+disable the service)
 #   5. Notify via Ntfy: "<instance> removed"
 #

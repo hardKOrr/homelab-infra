@@ -66,14 +66,14 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
-    - name: Resolve the inventory group for this Home Assistant instance
-      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+    - name: Resolve this instance's guest, reusing one Remove kept
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars:
-        tag_group_tag: "_{{ instance }}"
+        resolve_guest_instance: "{{ instance }}"
 
     - name: Check for an existing Home Assistant VM
       ansible.builtin.set_fact:
-        _ha_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+        _ha_existing_hosts: "{{ resolve_guest_hosts }}"
 
     - name: Refuse ambiguous existing Home Assistant VMs
       ansible.builtin.assert:

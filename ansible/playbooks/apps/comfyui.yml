@@ -68,14 +68,14 @@
       ansible.builtin.meta: refresh_inventory
 
     - name: Resolve the tagged or uniquely named owned ComfyUI VM
-      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-app-vm.yml
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars:
-        resolve_app_vm_instance: "{{ instance }}"
+        resolve_guest_instance: "{{ instance }}"
 
     - name: Record the resolved ComfyUI VM candidates
       ansible.builtin.set_fact:
-        _comfyui_existing_hosts: "{{ resolve_app_vm_hosts }}"
-        _comfyui_needs_identity_record: "{{ resolve_app_vm_needs_tag | bool }}"
+        _comfyui_existing_hosts: "{{ resolve_guest_hosts }}"
+        _comfyui_needs_identity_record: "{{ resolve_guest_needs_tag | bool }}"
 
     - name: Resolve the existing ComfyUI VM node
       ansible.builtin.set_fact:
