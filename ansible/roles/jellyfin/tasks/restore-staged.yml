@@ -2,18 +2,15 @@
 # restore-swap.yml staged hook: the point must hold exactly one jellyfin.db that passes
 # SQLite's integrity check.
 - name: Jellyfin restore | Locate the recovered database
-  ansible.builtin.find:
-    paths: "{{ recovery_swap_stage }}/data"
-    patterns: jellyfin.db
-    recurse: true
-    file_type: file
+  ansible.builtin.command:
+    argv: [find, "{{ recovery_swap_stage }}/data", -type, f, -name, jellyfin.db]
   register: _jellyfin_restore_databases
   changed_when: false
 
 - name: Jellyfin restore | Require the restored users and library database
   ansible.builtin.assert:
     that:
-      - _jellyfin_restore_databases.matched | default(0) | int == 1
+      - _jellyfin_restore_databases.stdout_lines | length == 1
     fail_msg: >-
       The selected Jellyfin archive must contain exactly one jellyfin.db;
       refusing to replace the target with an incomplete recovery point.
@@ -29,5 +26,5 @@
         result=c.execute('PRAGMA integrity_check').fetchone()[0];
         c.close();
         sys.exit(0 if result == 'ok' else 1)
-      - "{{ _jellyfin_restore_databases.files[0].path }}"
+      - "{{ _jellyfin_restore_databases.stdout_lines | first }}"
   changed_when: false

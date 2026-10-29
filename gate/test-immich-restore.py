@@ -67,7 +67,7 @@ def main():
         "path": "{{ _immich_restore_media_path }}", "source": "media",
         "owner": "{{ app_config.media_storage.owner.uid | int }}",
         "group": "{{ app_config.media_storage.owner.gid | int }}",
-        "mode": "0750", "mount": True}]
+        "mount": True}]
     assert swap["recovery_swap_stop_services"] == ["immich-server", "immich-machine-learning"]
     assert swap["recovery_swap_compose_project"] == "{{ immich_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/api/server/ping")

@@ -57,7 +57,6 @@
         source: media
         owner: "{{ app_config.media_storage.owner.uid | int }}"
         group: "{{ app_config.media_storage.owner.gid | int }}"
-        mode: "0750"
         mount: true
     recovery_swap_stop_services: [immich-server, immich-machine-learning]
     recovery_swap_compose_project: "{{ immich_project_dir }}"

@@ -268,6 +268,14 @@ def main():
         assert args[args.index("--ignore-permissions") + 1] == "true"
         assert leftovers(root) == []
 
+        # A mount without a declared mode keeps the mode its owner or the operator gave it.
+        reset(root, mounts=[media["path"]])
+        (live / "media").chmod(0o755)
+        keep_mode = {key: value for key, value in media.items() if key != "mode"}
+        expect(run(root, [keep_mode], archives=["media.pxar"]), True, "mount keeps its mode")
+        assert (live / "media").stat().st_mode & 0o7777 == 0o755
+        (live / "media").chmod(0o770)
+
         # A mount rolls back as its owner too.
         reset(root, mounts=[media["path"]])
         before = tree(live)

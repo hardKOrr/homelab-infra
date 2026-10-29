@@ -423,7 +423,8 @@ and never the archive's, and starts the application. Any failure after the stop 
 originals back and starts them. A rollback copy left by an earlier failed run refuses the
 next restore until someone puts it back or removes it. A path that is a mount point, such
 as media on root-squashed NFS, swaps its contents inside `<path>/.restore-previous`, and
-each step there runs as the owner.
+each step there runs as the owner. The mount keeps its own mode unless the role declares
+one.
 Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
 ## Local conventions

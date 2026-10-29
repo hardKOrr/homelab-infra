@@ -10,7 +10,8 @@
 #             rollback copy from an earlier run
 #   aside     move PATH's state into its rollback copy
 #   install   put --source in place of PATH's state, give every file --owner and PATH
-#             --mode; with --mount the copy runs as --owner
+#             --mode; with --mount the copy runs as --owner, and the mount keeps its own
+#             mode when --mode is not given
 #   rollback  when a rollback copy exists, remove the replacement and put the copy back
 #   cleanup   remove the rollback copy after a successful restore
 #
@@ -98,10 +99,13 @@ case "$command" in
       || usage "install needs --source, an existing directory"
     [ -n "$owner" ] || usage "install needs --owner"
     if [ "$mount" = true ]; then
-      # The owner copies, so give the staged tree to the owner first.
+      # The owner copies, so give the staged tree to the owner first. Copying "$source/."
+      # also copies the staged directory's mode onto the mount, so without --mode the
+      # mount gets its own mode back.
       chown -R --no-dereference "$owner" "$source"
+      [ -n "$mode" ] || mode=$(as_owner stat -c %a .)
       as_owner cp -a --no-preserve=ownership "$source/." .
-      [ -z "$mode" ] || as_owner chmod "$mode" .
+      as_owner chmod "$mode" .
     else
       [ -e "$previous" ] && [ ! -e "$path" ] || usage "install needs $path moved aside first"
       mv -T -- "$source" "$path"
