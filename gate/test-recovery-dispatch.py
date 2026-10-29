@@ -367,17 +367,6 @@ def main():
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                 ],
             })
-        # Roles on tasks/backup/pbs-client-*.yml get this check from gate/test-pbs-client.py.
-        for app in ["observability"]:
-            for operation in ["backup", "restore"]:
-                tasks.append({
-                    "block": [{"ansible.builtin.include_role": {
-                        "name": app, "tasks_from": operation}},
-                        {"ansible.builtin.fail": {"msg": "Missing PBS was accepted"}}],
-                    "rescue": [{"ansible.builtin.assert": {"that": [
-                        "ansible_failed_result.msg is search('No usable PBS')",
-                        "not k8s_pbs_available"]}}],
-                })
         for app in ["tautulli", "deemix", "observability", "uptime-kuma"]:
             tasks.append({
                 "vars": {"restore_overwrite": True, "restore_snapshot": ""},

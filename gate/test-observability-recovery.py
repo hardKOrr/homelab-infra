@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/observability/tasks/backup.yml").read_text())
@@ -29,24 +31,10 @@ class Health(http.server.BaseHTTPRequestHandler):
 
 
 def fixture_tasks(tasks, root):
-    """Run production file and command tasks; stub PBS resolution and Compose."""
+    """Run production file and command tasks; stub the PBS client and Compose."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
-        if task.get("name") == "Observability backup | Push one application archive and retain the newest points":
-            # Synthetic PBS values only; show the shim's assertion when a fixture regresses.
-            task["no_log"] = False
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            restore_resolver = task.get("name", "").startswith("Observability restore")
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test-fingerprint",
-                "k8s_pbs_password": "test-password",
-            }
-            if restore_resolver:
-                task["no_log"] = True
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {
@@ -105,8 +93,6 @@ def base_variables(root, server):
             "backup": {
                 "enabled": True, "application_consistent": True,
                 "retention_days": 14, "datastore": "", "backup_id": "",
-                "client": {"key_url": "test", "repository": "test", "suite": "test",
-                           "component": "test", "image": "test"},
             },
         },
     }
@@ -125,45 +111,28 @@ def make_stubs(root):
     bin_dir = root / "bin"
     bin_dir.mkdir()
     scripts = {
-        "docker": r'''#!/usr/bin/env python3
+        "proxmox-backup-client": r'''#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['OBSERVABILITY_TEST_CASE']
-script=args[-1]
-assert os.environ.get('PBS_REPOSITORY') == 'test'
-assert os.environ.get('PBS_FINGERPRINT') == 'test-fingerprint'
-assert os.environ.get('PBS_PASSWORD') == 'test-password'
-if 'proxmox-backup-client backup' in script:
-    volumes=[args[i+1] for i,value in enumerate(args[:-1]) if value=='--volume']
-    root=Path(os.environ['OBSERVABILITY_TEST_ROOT'])
-    assert volumes == [str(root/'data')+':/source:ro'], volumes
-    assert 'proxmox-backup-client backup data.pxar:/source --backup-id' in script
-    assert 'proxmox-backup-client prune' in script
+root=Path(os.environ['OBSERVABILITY_TEST_ROOT'])
+if args[0]=='backup':
+    assert args==['backup', f'data.pxar:{root}/data'], args
     raise SystemExit(7 if case=='backup-failure' else 0)
-if 'proxmox-backup-client snapshot list' in script:
-    if case != 'missing-source-point':
-        print('backup-time 2026-10-15T22:00:00Z')
-    if case == 'missing-source-point':
-        print('backup-time 2026-10-16T01:00:00Z')
-    else:
-        print('backup-time 2026-10-16T01:00:00Z')
+if args[:2]==['snapshot','list']:
+    print('host/observability/2026-10-15T22:00:00Z')
     raise SystemExit(0)
-if 'proxmox-backup-client restore' in script:
-    assert os.environ['SNAPSHOT'] == 'host/observability/2026-10-15T22:00:00Z'
-    if case == 'extract-failure':
-        raise SystemExit(7)
-    mount=args[args.index('--volume')+1]
-    assert mount.endswith(':/restore'), mount
-    stage=Path(mount[:-9])
-    extracted=stage/'data'
-    (extracted/'grafana').mkdir(parents=True)
-    (extracted/'grafana/grafana.db').write_text('restored grafana database\n')
-    if case != 'incomplete-archive':
-        (extracted/'prometheus').mkdir()
-        (extracted/'prometheus/marker').write_text('restored prometheus data\n')
-    raise SystemExit(0)
-raise AssertionError(script)
+assert args[:3]==['restore','host/observability/2026-10-15T22:00:00Z','data.pxar'], args
+if case=='extract-failure':
+    raise SystemExit(7)
+extracted=Path(args[3])
+assert extracted.is_dir() and extracted.name=='data', extracted
+(extracted/'grafana').mkdir()
+(extracted/'grafana/grafana.db').write_text('restored grafana database\n')
+if case!='incomplete-archive':
+    (extracted/'prometheus').mkdir()
+    (extracted/'prometheus/marker').write_text('restored prometheus data\n')
 ''',
         "service": r'''#!/usr/bin/env python3
 import os,sys
@@ -201,8 +170,7 @@ def backup_check(case, server):
         result = run_tasks(root, backup_source, base_variables(root, server), case)
         success = case == "backup-success"
         assert (result.returncode == 0) == success, result.stdout + result.stderr
-        states = (root / "services").read_text().splitlines()
-        assert states == ["stopped", "present"], states
+        assert (root / "data/grafana/grafana.db").read_text() == "original grafana database\n"
 
 
 def restore_check(case, server):
@@ -236,7 +204,7 @@ def restore_check(case, server):
         assert not list(root.glob(".observability-pre-restore-*")), result.stdout + result.stderr
         assert not list(root.glob("observability-observability-restore-*"))
         if case in ["plan", "selected-plan", "foreign-group", "missing-pre-restore-point",
-                    "missing-source-point"]:
+                    "extract-failure", "incomplete-archive"]:
             assert not (root / "services").exists(), "plan or rejected restore stopped services"
         else:
             assert (root / "services").exists(), f"{case}: restore never reached its service boundary\n{result.stdout}{result.stderr}"
@@ -263,35 +231,22 @@ def check_contract():
     staging = next(task for task in all_tasks(restore_source) if task.get("name") ==
                    "Observability restore | Create a private staging directory")
     assert staging["ansible.builtin.tempfile"]["path"] == "{{ app_config.app.data_path | dirname }}"
-    backup_task = next(task for task in all_tasks(backup_source) if task.get("name") ==
-                       "Observability backup | Push one application archive and retain the newest points")
-    assert backup_task.get("no_log") is True
+    assert "client" not in defaults["backup"], "the shared client owns its pins"
+    upload = next(task for task in all_tasks(backup_source)
+                  if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
+    assert upload["vars"]["pbs_client_stop_services"] == ["prometheus", "grafana"]
     restored_path = next(task for task in all_tasks(restore_source) if task.get("name") ==
                          "Observability restore | Recreate the data directory")
     assert restored_path["ansible.builtin.file"]["owner"] == "root"
     assert restored_path["ansible.builtin.file"]["group"] == "root"
     assert restored_path["ansible.builtin.file"]["mode"] == "0755"
-    extract_task = next(task for task in all_tasks(restore_source) if task.get("name") ==
-                        "Observability restore | Extract the selected archive into staging")
-    extract_command = extract_task["ansible.builtin.command"]
-    extract_script = extract_command["argv"][-1]
-    assert extract_command["argv"][extract_command["argv"].index("--volume") + 1].endswith(":/restore")
-    for line in [
-        "install -d -m 0700 /restore/tmp /restore/home/.cache /restore/home/.config",
-        "export TMPDIR=/restore/tmp",
-        "export HOME=/restore/home",
-        "export XDG_CACHE_HOME=/restore/home/.cache",
-        "export XDG_CONFIG_HOME=/restore/home/.config",
-        'proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/data',
-    ]:
-        assert line in extract_script, line
+    names = [task.get("name") for task in all_tasks(restore_source)]
+    assert names.index("Observability restore | Refuse an incomplete archive") < names.index(
+        "Observability restore | Stop only Prometheus and Grafana"), "check the point before stopping"
     assert '{{ _observability_restore_tmp.path }}/data/.' in next(
         task for task in all_tasks(restore_source)
         if task.get("name") == "Observability restore | Copy the archived application state into place"
     )["ansible.builtin.command"]["argv"]
-    for task in all_tasks(restore_source):
-        if task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "docker":
-            assert task.get("no_log") is True, task.get("name")
 
 
 def main():
@@ -303,7 +258,7 @@ def main():
         for case in ["backup-success", "backup-failure"]:
             backup_check(case, server)
         for case in ["plan", "selected-plan", "foreign-group", "missing-pre-restore-point",
-                     "missing-source-point", "extract-failure", "incomplete-archive",
+                     "extract-failure", "incomplete-archive",
                      "move-failure", "copy-failure", "start-failure", "health-failure",
                      "success"]:
             restore_check(case, server)
