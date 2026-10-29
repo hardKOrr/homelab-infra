@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold the config file and resume directory.
+- name: qBittorrent restore | Check the staged configuration and resume directory
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop: [qBittorrent/qBittorrent.conf, qBittorrent/BT_backup]
+  register: _qbittorrent_restore_state
+
+- name: qBittorrent restore | Require a complete application archive
+  ansible.builtin.assert:
+    that:
+      - _qbittorrent_restore_state.results[0].stat.isreg | default(false)
+      - _qbittorrent_restore_state.results[1].stat.isdir | default(false)
+    fail_msg: >-
+      The selected qBittorrent point lacks qBittorrent.conf or BT_backup; the live config
+      has not been replaced.

@@ -11,88 +11,16 @@
       Home Assistant restore needs a PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots before selecting one.
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Home Assistant restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Home Assistant restore | Preview or replace the config directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Home Assistant restore | Create private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.config_path | dirname }}"
-    prefix: "{{ instance }}-home-assistant-restore-"
-  register: _ha_restore_tmp
-  when: restore_overwrite | bool
-
-- name: Home Assistant restore | Replace the application config from PBS
-  when: restore_overwrite | bool
-  block:
-    - name: Home Assistant restore | Stop Home Assistant
-      community.docker.docker_compose_v2:
-        project_src: "{{ home_assistant_project_dir }}"
-        state: stopped
-        services: [homeassistant]
-
-    - name: Home Assistant restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _ha_restore_tmp.path }}"
-
-    - name: Home Assistant restore | Replace the config directory after archive validation
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: absent
-
-    - name: Home Assistant restore | Recreate the config directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: directory
-        owner: root
-        group: root
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: 0
+        group: 0
         mode: "0750"
-
-    - name: Home Assistant restore | Copy the archived state into place
-      ansible.builtin.command:
-        argv: [cp, -a, "{{ _ha_restore_tmp.path }}/.", "{{ app_config.app.config_path }}/"]
-      changed_when: true
-      no_log: true
-
-    - name: Home Assistant restore | Start Home Assistant
-      community.docker.docker_compose_v2:
-        project_src: "{{ home_assistant_project_dir }}"
-        state: present
-        services: [homeassistant]
-
-    - name: Home Assistant restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/"
-        status_code: 200
-      register: _ha_restore_health
-      until: _ha_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Home Assistant restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Home Assistant restore | Leave the service stopped after a failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Home Assistant restore did not complete. The service is intentionally left
-          stopped; inspect the recovered config and retry after correcting the failure.
-  always:
-    - name: Home Assistant restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _ha_restore_tmp.path }}"
-        state: absent
-      when: _ha_restore_tmp.path is defined
+    recovery_swap_stop_services: [homeassistant]
+    recovery_swap_compose_project: "{{ home_assistant_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/"

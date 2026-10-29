@@ -1,0 +1,10 @@
+---
+# Install the native recovery helper from the running checkout. Deploy, Backup and Restore
+# each include this, so an operation never runs a helper an older Deploy left behind.
+- name: PostgreSQL | Install the native recovery helper
+  ansible.builtin.copy:
+    src: postgresql-recovery.py
+    dest: /usr/local/sbin/homelab-postgresql-recovery
+    owner: root
+    group: root
+    mode: "0750"

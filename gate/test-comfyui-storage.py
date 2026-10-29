@@ -10,6 +10,8 @@ import re
 
 import yaml
 
+from restore_swap_inputs import swap_inputs
+
 
 ROOT = Path(__file__).resolve().parent.parent
 ROLE = ROOT / "ansible/roles/comfyui"
@@ -34,12 +36,11 @@ def main():
     owned = {re.search(r"app\.(\w+_path)", item).group(1) for item in ownership["loop"]}
     assert owned == mounted, f"mounted {sorted(mounted)} but owned {sorted(owned)}"
 
-    for task_file in ("main.yml", "restore.yml"):
-        text = (ROLE / "tasks" / task_file).read_text()
-        assert "include_tasks: storage-ownership.yml" in text, task_file
-    restore = (ROLE / "tasks/restore.yml").read_text()
-    assert restore.index("storage-ownership.yml") > restore.index("Copy archived models")
-    assert restore.index("storage-ownership.yml") < restore.index("ComfyUI restore | Start ComfyUI")
+    assert "include_tasks: storage-ownership.yml" in (ROLE / "tasks/main.yml").read_text()
+    # The restore swap installs the tree as root, then hands the mounts back before the start.
+    swap = swap_inputs("comfyui")
+    assert swap["recovery_swap_replaced_hook"] == "{{ role_path }}/tasks/storage-ownership.yml"
+    assert [(p["owner"], p["group"]) for p in swap["recovery_swap_paths"]] == [(0, 0)]
 
     print("ComfyUI storage: every mounted directory belongs to the runtime user after deploy and restore")
 

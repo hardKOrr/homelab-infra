@@ -1,7 +1,6 @@
 ---
-# Restore one ComfyUI archive. Plan mode lists snapshots without changing the target;
-# overwrite mode validates into private staging, replaces only this app's storage tree,
-# and leaves the service stopped if anything after extraction fails.
+# Restore one ComfyUI archive (models and user state) through the shared swap. The storage
+# root stays root's; Deploy's storage-ownership.yml gives its directories to the runtime user.
 - name: ComfyUI restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
@@ -14,115 +13,24 @@
       ComfyUI restore needs a PBS-backed application recovery contract. Keep overwrite=false
       to list snapshots before selecting one.
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: ComfyUI restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: ComfyUI restore | Preview or replace the storage tree
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: ComfyUI restore | Create private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.storage_path | dirname }}"
-    prefix: "{{ instance }}-comfyui-restore-"
-  register: _comfyui_restore_tmp
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: ComfyUI restore | Replace application model/config state
-  when: restore_overwrite | bool
-  block:
-    - name: ComfyUI restore | Stop ComfyUI
-      community.docker.docker_compose_v2:
-        project_src: "{{ comfyui_project_dir }}"
-        state: stopped
-        services: [comfyui]
-
-    - name: ComfyUI restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _comfyui_restore_tmp.path }}"
-
-    - name: ComfyUI restore | Look for archived state in staging
-      ansible.builtin.find:
-        paths: "{{ _comfyui_restore_tmp.path }}"
-        file_type: any
-        hidden: true
-      register: _comfyui_restore_staged
-
-    - name: ComfyUI restore | Require a non-empty archive
-      ansible.builtin.assert:
-        that: _comfyui_restore_staged.matched > 0
-        fail_msg: >-
-          The selected ComfyUI recovery point is empty; the storage path has not been replaced.
-
-    - name: ComfyUI restore | Replace storage after archive validation
-      ansible.builtin.file:
-        path: "{{ app_config.app.storage_path }}"
-        state: absent
-
-    - name: ComfyUI restore | Recreate the storage root
-      ansible.builtin.file:
-        path: "{{ app_config.app.storage_path }}"
-        state: directory
-        owner: root
-        group: root
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.storage_path }}"
+        owner: 0
+        group: 0
         mode: "0750"
-
-    - name: ComfyUI restore | Copy archived models and configuration into place
-      ansible.builtin.command:
-        argv: [cp, -a, "{{ _comfyui_restore_tmp.path }}/.", "{{ app_config.app.storage_path }}/"]
-      changed_when: true
-      no_log: true
-
-    - name: ComfyUI restore | Give the restored directories to the app's runtime user
-      ansible.builtin.include_tasks: storage-ownership.yml
-
-    - name: ComfyUI restore | Start ComfyUI
-      community.docker.docker_compose_v2:
-        project_src: "{{ comfyui_project_dir }}"
-        state: present
-        services: [comfyui]
-
-    - name: ComfyUI restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/system_stats"
-        follow_redirects: none
-        status_code: [200, 302]
-      register: _comfyui_restore_health
-      until: _comfyui_restore_health.status | default(0) | int in [200, 302]
-      retries: >-
-        {{ comfyui_cpu_http_retries
-           if app_config.app.accelerator | default('cuda') == 'cpu'
-           else comfyui_http_retries }}
-      delay: "{{ comfyui_http_delay }}"
-      changed_when: false
-
-    - name: ComfyUI restore | Mark the application restore complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: ComfyUI restore | Leave the service stopped after a failed restore
-      ansible.builtin.command:
-        argv: [docker, compose, --project-directory, "{{ comfyui_project_dir }}", stop, comfyui]
-      changed_when: false
-      failed_when: false
-
-    - name: ComfyUI restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          ComfyUI restore did not complete. The service is intentionally left stopped;
-          inspect the recovered model/config tree and retry after correcting the failure.
-  always:
-    - name: ComfyUI restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _comfyui_restore_tmp.path }}"
-        state: absent
-      when: _comfyui_restore_tmp.path is defined
+    recovery_swap_stop_services: [comfyui]
+    recovery_swap_compose_project: "{{ comfyui_project_dir }}"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/storage-ownership.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/system_stats"
+    recovery_swap_health_status: [200, 302]
+    recovery_swap_health_follow_redirects: none
+    recovery_swap_health_retries: >-
+      {{ comfyui_cpu_http_retries
+         if app_config.app.accelerator | default('cuda') == 'cpu'
+         else comfyui_http_retries }}
+    recovery_swap_health_delay: "{{ comfyui_http_delay }}"

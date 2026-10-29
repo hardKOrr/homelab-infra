@@ -1,0 +1,14 @@
+---
+# restore-swap.yml staged hook: the point must hold a non-empty kuma.db.
+- name: Uptime Kuma restore | Check the staged database
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/kuma.db"
+  register: _kuma_restore_staged_database
+  changed_when: false
+
+- name: Uptime Kuma restore | Require the staged database
+  ansible.builtin.assert:
+    that: (_kuma_restore_staged_database.stat.size | default(0)) > 0
+    fail_msg: >-
+      The selected Uptime Kuma recovery point has no kuma.db; the live data has not
+      been replaced.

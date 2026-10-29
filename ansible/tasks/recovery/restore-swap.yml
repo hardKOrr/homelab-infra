@@ -1,0 +1,472 @@
+---
+# Replace an application's live state with a PBS recovery point, and put the original back
+# when anything fails. Every Docker and native role restore runs this file; the role
+# supplies its paths, services, owner and app-specific hooks.
+#
+# overwrite=false runs the shared preview (verify the point, download its index) and stops.
+# overwrite=true, in order:
+#   1. preview the point while the application still serves
+#   2. check every live path; refuse one that is missing, a link, not the declared mount,
+#      or still holds an earlier run's rollback copy
+#   3. extract every archive into private staging, still serving, and run the staged hook
+#      (validate the staged data); a failure here changes nothing on the live paths
+#   4. stop the services and run the stopped hook
+#   5. per path: move the live state aside, install the staged state, give every file the
+#      declared numeric owner and the path its mode (scripts/restore-swap.sh)
+#   6. run the replaced hook (database restore, config edits), start the services, wait for
+#      the health URL and run the verified hook; the restore is then complete
+#   On a failure in 4-6 it stops the services, removes the replacement, moves the original
+#   back, runs the rollback hook and starts the original. It removes the rollback copies and
+#   staging after success or a completed rollback, and keeps them otherwise.
+#
+# Inputs:
+#   recovery_swap_runtime        docker | native: the PBS client runtime and service kind
+#   recovery_swap_archives       archive names, e.g. [data.pxar]; each is extracted into
+#                                <staging>/<name without extension>
+#   recovery_swap_paths          the live directories to replace, each:
+#     path     absolute directory the application reads
+#     source   directory inside staging to install there; default the first archive's
+#              directory (`data` for data.pxar); may go deeper, such as `data/config`
+#     owner, group  numeric id or local name; every restored file gets it. The archive's
+#              ownership is never applied
+#     mode     mode of path itself, default 0750; files inside keep the archive's modes
+#     mount    true when path is an exact mount point (media on NFS): its contents are
+#              swapped and every step inside it runs as owner. source must be one archive's
+#              directory
+#     allow_empty  true when an empty source is a valid state; otherwise an empty source
+#              refuses the restore before anything stops
+#   recovery_swap_stop_services  Compose services in recovery_swap_compose_project (docker)
+#                                or systemd units (native), stopped for the swap
+#   recovery_swap_compose_project  Compose project directory for docker services
+#   recovery_swap_health_url     optional URL that answers recovery_swap_health_status
+#                                (a code or list, default 200) once the restored
+#                                application serves; recovery_swap_health_retries (default
+#                                60) and recovery_swap_health_delay (default 5) pace it, and
+#                                recovery_swap_health_follow_redirects (default safe) is
+#                                passed to the uri module
+#
+# Optional inputs:
+#   recovery_swap_staging_parent  where staging is created; default the first non-mount
+#                                path's parent (a rename, not a copy), else /var/tmp
+#   recovery_swap_ignore_permissions  extract without the archive's file modes too, for a
+#                                target that cannot hold them (nested Docker in an
+#                                unprivileged LXC)
+#   recovery_swap_backup_id, recovery_swap_pre_restore_backup_id  passed to
+#                                pbs-client-restore.yml as its group ids
+#
+# Hooks, each an optional task file (`{{ role_path }}/tasks/restore-<step>.yml`). They see
+# recovery_swap_stage, the staging directory:
+#   recovery_swap_staged_hook    validate staged data; the application still serves
+#   recovery_swap_stopped_hook   after the stop, before the swap (keep a rollback dump)
+#   recovery_swap_replaced_hook  after the swap, before the start (database restore)
+#   recovery_swap_verified_hook  after the start and health URL (app-level checks)
+#   recovery_swap_rollback_hook  after the original paths are back (database rollback)
+#
+# Sets _application_restore_complete when the restored application serves.
+
+- name: Restore swap | Read the request
+  ansible.builtin.set_fact:
+    _swap_overwrite: "{{ restore_overwrite | default(false) | bool }}"
+    _swap_archives: "{{ recovery_swap_archives | default([]) }}"
+    _swap_services: "{{ recovery_swap_stop_services | default([]) }}"
+    _swap_owner_names: >-
+      {{ (recovery_swap_paths | default([]) | map(attribute='owner', default='') | map('string') | list)
+         | reject('match', '^[0-9]*$') | unique }}
+    _swap_group_names: >-
+      {{ (recovery_swap_paths | default([]) | map(attribute='group', default='') | map('string') | list)
+         | reject('match', '^[0-9]*$') | unique }}
+    _swap_paths: []
+    _swap_stopped: false
+    _swap_rollback_complete: false
+    _swap_rollback_hook_failed: false
+    _application_restore_complete: false
+
+- name: Restore swap | Validate the request
+  ansible.builtin.assert:
+    that:
+      - recovery_swap_runtime | default('') in ['docker', 'native']
+      - _swap_archives | length > 0
+      - _swap_archives | select('match', '^[A-Za-z0-9][A-Za-z0-9_.-]*\.pxar$') | list | length == _swap_archives | length
+      - recovery_swap_paths | default([]) | length > 0
+      - recovery_swap_paths | map(attribute='path', default='') | map('string') | select('match', '^/[^/]') | list | length == recovery_swap_paths | length
+      - recovery_swap_paths | selectattr('owner', 'undefined') | list | length == 0
+      - recovery_swap_paths | selectattr('group', 'undefined') | list | length == 0
+      - _swap_services | length > 0
+      - recovery_swap_runtime == 'native' or recovery_swap_compose_project | default('') | length > 0
+    fail_msg: >-
+      The restore swap needs runtime docker or native, .pxar archives, absolute live paths
+      with an owner and group, and the services to stop (with their Compose project for
+      docker). Nothing was changed.
+
+# Runs on every restore, before anything stops: a point from another group, no PBS, or a
+# point without the archives fails while the application still serves.
+- name: Restore swap | List or verify the recovery point while the application serves
+  ansible.builtin.include_tasks: ../backup/pbs-client-restore.yml
+  vars:
+    pbs_client_runtime: "{{ recovery_swap_runtime }}"
+    pbs_client_archives: "{{ _swap_archives | map('community.general.dict_kv', 'name') | list }}"
+    pbs_client_overwrite: false
+    pbs_client_backup_id: "{{ recovery_swap_backup_id | default('') }}"
+    pbs_client_pre_restore_backup_id: "{{ recovery_swap_pre_restore_backup_id | default('') }}"
+
+- name: Restore swap | Replace the live state
+  when: _swap_overwrite
+  block:
+    - name: Restore swap | Read the uid of each named owner
+      ansible.builtin.command:
+        argv: [id, -u, "{{ item }}"]
+      loop: "{{ _swap_owner_names }}"
+      register: _swap_uids
+      changed_when: false
+
+    - name: Restore swap | Read the gid of each named group
+      ansible.builtin.command:
+        argv: [getent, group, "{{ item }}"]
+      loop: "{{ _swap_group_names }}"
+      register: _swap_gids
+      changed_when: false
+
+    - name: Restore swap | Resolve each live path
+      ansible.builtin.set_fact:
+        _swap_paths: >-
+          {{ _swap_paths + [{
+               'path': item.path,
+               'source': item.source | default(_swap_archives | first | regex_replace('\.pxar$', '')),
+               'owner': (item.owner | string if item.owner | string is match('^[0-9]+$')
+                         else _swap_uid_of[item.owner | string])
+                        ~ ':' ~
+                        (item.group | string if item.group | string is match('^[0-9]+$')
+                         else _swap_gid_of[item.group | string]),
+               'mode': item.mode | default('0750') | string,
+               'mount': item.mount | default(false) | bool,
+               'allow_empty': item.allow_empty | default(false) | bool
+             }] }}
+      loop: "{{ recovery_swap_paths }}"
+      loop_control:
+        label: "{{ item.path }}"
+      vars:
+        _swap_uid_of: >-
+          {{ dict(_swap_uids.results | default([]) | map(attribute='item')
+                  | zip(_swap_uids.results | default([]) | map(attribute='stdout') | map('trim'))) }}
+        _swap_gid_of: >-
+          {{ dict(_swap_gids.results | default([]) | map(attribute='item')
+                  | zip(_swap_gids.results | default([]) | map(attribute='stdout') | map('split', ':') | map(attribute=2))) }}
+
+    - name: Restore swap | Resolve staging
+      ansible.builtin.set_fact:
+        _swap_staging_parent: >-
+          {{ recovery_swap_staging_parent | default(
+               (_swap_paths | rejectattr('mount') | map(attribute='path') | map('dirname') | first)
+               if _swap_paths | rejectattr('mount') | list | length > 0 else '/var/tmp', true) }}
+        _swap_stems: "{{ _swap_archives | map('regex_replace', '\\.pxar$', '') | list }}"
+
+    - name: Restore swap | Require safe, separate paths and sources
+      ansible.builtin.assert:
+        that:
+          - item.path is not search('(^|/)\.\.?(/|$)')
+          - not item.path.endswith('/')
+          - item.path.count('/') >= 2
+          - item.source is match('^[A-Za-z0-9][A-Za-z0-9_.-]*(/[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
+          - item.source.split('/') | first in _swap_stems
+          - not item.mount or '/' not in item.source
+          - item.mode is match('^0?[0-7]{3,4}$')
+          - _swap_paths | map(attribute='path') | select('equalto', item.path) | list | length == 1
+          - >-
+            _swap_paths | map(attribute='path') | reject('equalto', item.path)
+            | select('match', '^' ~ (item.path | regex_escape) ~ '/') | list | length == 0
+          - not (_swap_staging_parent ~ '/').startswith(item.path ~ '/')
+          - >-
+            _swap_paths | map(attribute='source') | map('regex_replace', '$', '/')
+            | select('match', '^' ~ (item.source | regex_escape) ~ '/') | list | length == 1
+        fail_msg: >-
+          Restore path {{ item.path }} must be a normalized absolute directory at least two
+          levels deep, distinct from and not inside another restored path, with staging
+          outside it; its source {{ item.source }} must lie in one of the archives
+          ({{ _swap_stems | join(', ') }}) and neither hold nor sit inside another path's
+          source. Nothing was changed.
+      loop: "{{ _swap_paths }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Restore swap | Create private staging
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ _swap_staging_parent }}"
+        prefix: ".{{ instance }}-restore-"
+      register: _swap_stage_dir
+
+    - name: Restore swap | Publish the staging directory to hooks
+      ansible.builtin.set_fact:
+        recovery_swap_stage: "{{ _swap_stage_dir.path }}"
+
+    - name: Restore swap | Copy the swap script
+      ansible.builtin.copy:
+        src: scripts/restore-swap.sh
+        dest: "{{ recovery_swap_stage }}/restore-swap.sh"
+        mode: "0700"
+
+    - name: Restore swap | Check each live path
+      ansible.builtin.command:
+        argv: >-
+          {{ [recovery_swap_stage ~ '/restore-swap.sh', 'check', item.path]
+             + (['--mount', '--owner', item.owner] if item.mount else []) }}
+      loop: "{{ _swap_paths }}"
+      loop_control:
+        label: "{{ item.path }}"
+      changed_when: false
+
+    # A mount's owner copies its source out of staging, so it must be able to traverse it.
+    - name: Restore swap | Create the extraction directories
+      ansible.builtin.file:
+        path: "{{ recovery_swap_stage }}{{ '' if item == '' else '/' ~ item }}"
+        state: directory
+        mode: "{{ '0711' if _swap_paths | selectattr('mount') | list | length > 0 else '0700' }}"
+      loop: "{{ [''] + _swap_stems }}"
+
+    - name: Restore swap | Extract the selected point into staging
+      ansible.builtin.include_tasks: ../backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: "{{ recovery_swap_runtime }}"
+        pbs_client_backup_id: "{{ recovery_swap_backup_id | default('') }}"
+        pbs_client_pre_restore_backup_id: "{{ recovery_swap_pre_restore_backup_id | default('') }}"
+        pbs_client_archives: >-
+          {{ _swap_archives | map('community.general.dict_kv', 'name')
+             | zip(_swap_stems | map('regex_replace', '^', recovery_swap_stage ~ '/')
+                   | map('community.general.dict_kv', 'path'))
+             | map('combine') | list }}
+        # Ownership comes from the declared owner, and ACLs and xattrs are metadata a
+        # target such as an unprivileged LXC or a Kubernetes volume may not hold.
+        pbs_client_restore_args: >-
+          {{ ['--allow-existing-dirs', 'true', '--ignore-ownership', 'true',
+              '--ignore-acls', 'true', '--ignore-xattrs', 'true']
+             + (['--ignore-permissions', 'true']
+                if recovery_swap_ignore_permissions | default(false) | bool else []) }}
+
+    - name: Restore swap | Check each staged source
+      ansible.builtin.stat:
+        path: "{{ recovery_swap_stage }}/{{ item.source }}"
+      loop: "{{ _swap_paths }}"
+      loop_control:
+        label: "{{ item.source }}"
+      register: _swap_sources
+
+    - name: Restore swap | Require each staged source
+      ansible.builtin.assert:
+        that:
+          - item.stat.isdir | default(false)
+          - not (item.stat.islnk | default(false))
+        fail_msg: >-
+          The selected recovery point has no {{ item.item.source }} directory for
+          {{ item.item.path }}; the application still serves unchanged.
+      loop: "{{ _swap_sources.results }}"
+      loop_control:
+        label: "{{ item.item.source }}"
+
+    - name: Restore swap | Look for content in each staged source
+      ansible.builtin.command:
+        argv: [find, "{{ recovery_swap_stage }}/{{ item.source }}", -mindepth, "1", -print, -quit]
+      loop: "{{ _swap_paths | rejectattr('allow_empty') | list }}"
+      loop_control:
+        label: "{{ item.source }}"
+      register: _swap_content
+      changed_when: false
+
+    - name: Restore swap | Refuse an empty staged source
+      ansible.builtin.assert:
+        that: item.stdout | length > 0
+        fail_msg: >-
+          The selected recovery point's {{ item.item.source }} is empty; refusing to replace
+          {{ item.item.path }}. The application still serves unchanged.
+      loop: "{{ _swap_content.results }}"
+      loop_control:
+        label: "{{ item.item.source }}"
+
+    - name: Restore swap | Validate the staged data
+      ansible.builtin.include_tasks: "{{ recovery_swap_staged_hook }}"
+      when: recovery_swap_staged_hook | default('') | length > 0
+
+    - name: Restore swap | Swap, start and verify
+      block:
+        - name: Restore swap | Record the stop
+          ansible.builtin.set_fact:
+            _swap_stopped: true
+
+        - name: Restore swap | Stop the Compose services
+          community.docker.docker_compose_v2:
+            project_src: "{{ recovery_swap_compose_project }}"
+            state: stopped
+            services: "{{ _swap_services }}"
+          when: recovery_swap_runtime == 'docker'
+
+        - name: Restore swap | Stop the native services
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: stopped
+          loop: "{{ _swap_services if recovery_swap_runtime == 'native' else [] }}"
+
+        - name: Restore swap | Run the stopped hook
+          ansible.builtin.include_tasks: "{{ recovery_swap_stopped_hook }}"
+          when: recovery_swap_stopped_hook | default('') | length > 0
+
+        - name: Restore swap | Move the live state aside
+          ansible.builtin.command:
+            argv: >-
+              {{ [recovery_swap_stage ~ '/restore-swap.sh', 'aside', item.path]
+                 + (['--mount', '--owner', item.owner] if item.mount else []) }}
+          loop: "{{ _swap_paths }}"
+          loop_control:
+            label: "{{ item.path }}"
+          changed_when: true
+
+        - name: Restore swap | Install the restored state with its owner
+          ansible.builtin.command:
+            argv: >-
+              {{ [recovery_swap_stage ~ '/restore-swap.sh', 'install', item.path,
+                  '--source', recovery_swap_stage ~ '/' ~ item.source,
+                  '--owner', item.owner, '--mode', item.mode]
+                 + (['--mount'] if item.mount else []) }}
+          loop: "{{ _swap_paths }}"
+          loop_control:
+            label: "{{ item.path }}"
+          changed_when: true
+
+        - name: Restore swap | Run the replaced hook
+          ansible.builtin.include_tasks: "{{ recovery_swap_replaced_hook }}"
+          when: recovery_swap_replaced_hook | default('') | length > 0
+
+        - name: Restore swap | Start the Compose services
+          community.docker.docker_compose_v2:
+            project_src: "{{ recovery_swap_compose_project }}"
+            state: present
+            services: "{{ _swap_services }}"
+          when: recovery_swap_runtime == 'docker'
+
+        - name: Restore swap | Start the native services
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: started
+          loop: "{{ _swap_services if recovery_swap_runtime == 'native' else [] }}"
+
+        - name: Restore swap | Wait for the restored application
+          ansible.builtin.uri:
+            url: "{{ recovery_swap_health_url }}"
+            follow_redirects: "{{ recovery_swap_health_follow_redirects | default('safe') }}"
+            status_code: "{{ recovery_swap_health_status | default(200) }}"
+          register: _swap_health
+          until: _swap_health.status | default(0) in ([recovery_swap_health_status | default(200)] | flatten | map('int'))
+          retries: "{{ recovery_swap_health_retries | default(60) }}"
+          delay: "{{ recovery_swap_health_delay | default(5) }}"
+          changed_when: false
+          when: recovery_swap_health_url | default('') | length > 0
+
+        - name: Restore swap | Run the verified hook
+          ansible.builtin.include_tasks: "{{ recovery_swap_verified_hook }}"
+          when: recovery_swap_verified_hook | default('') | length > 0
+
+        - name: Restore swap | Mark the restore complete
+          ansible.builtin.set_fact:
+            _application_restore_complete: true
+      rescue:
+        - name: Restore swap | Keep the failure
+          ansible.builtin.set_fact:
+            _swap_failure: >-
+              {{ ansible_failed_result.results | default([]) | selectattr('failed', 'defined')
+                 | selectattr('failed') | map(attribute='stderr', default='') | select | join('; ')
+                 or ansible_failed_result.msg | default('the restore failed') }}
+
+        - name: Restore swap | Stop the failed replacement (Compose)
+          community.docker.docker_compose_v2:
+            project_src: "{{ recovery_swap_compose_project }}"
+            state: stopped
+            services: "{{ _swap_services }}"
+          failed_when: false
+          when: recovery_swap_runtime == 'docker'
+
+        - name: Restore swap | Stop the failed replacement (native)
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: stopped
+          loop: "{{ _swap_services if recovery_swap_runtime == 'native' else [] }}"
+          failed_when: false
+
+        - name: Restore swap | Put each original back
+          ansible.builtin.command:
+            argv: >-
+              {{ [recovery_swap_stage ~ '/restore-swap.sh', 'rollback', item.path]
+                 + (['--mount', '--owner', item.owner] if item.mount else []) }}
+          loop: "{{ _swap_paths }}"
+          loop_control:
+            label: "{{ item.path }}"
+          register: _swap_rollback
+          changed_when: _swap_rollback.stdout | default('') == 'rolled-back'
+          failed_when: false
+
+        - name: Restore swap | Run the rollback hook
+          when: recovery_swap_rollback_hook | default('') | length > 0
+          block:
+            - name: Restore swap | Run the application rollback
+              ansible.builtin.include_tasks: "{{ recovery_swap_rollback_hook }}"
+          rescue:
+            - name: Restore swap | Record the failed application rollback
+              ansible.builtin.set_fact:
+                _swap_rollback_hook_failed: true
+
+        - name: Restore swap | Record the rollback result
+          ansible.builtin.set_fact:
+            _swap_rollback_complete: >-
+              {{ _swap_rollback.results | map(attribute='rc') | select('ne', 0) | list | length == 0
+                 and not (_swap_rollback_hook_failed | default(false) | bool) }}
+
+        - name: Restore swap | Start the original Compose services
+          community.docker.docker_compose_v2:
+            project_src: "{{ recovery_swap_compose_project }}"
+            state: present
+            services: "{{ _swap_services }}"
+          register: _swap_restart_compose
+          failed_when: false
+          when:
+            - recovery_swap_runtime == 'docker'
+            - _swap_rollback_complete | bool
+
+        - name: Restore swap | Start the original native services
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: started
+          loop: "{{ _swap_services if recovery_swap_runtime == 'native' and _swap_rollback_complete | bool else [] }}"
+          register: _swap_restart_native
+          failed_when: false
+
+        - name: Restore swap | Fail with the rollback result
+          ansible.builtin.fail:
+            msg: >-
+              Restore of {{ instance }} failed: {{ _swap_failure }}.
+              {{ ('The original state is back and the services were started'
+                  ~ (' (start failed; start them by hand)'
+                     if _swap_restart_compose.failed | default(false)
+                        or _swap_restart_native.results | default([]) | selectattr('failed', 'defined')
+                           | selectattr('failed') | list | length > 0 else '') ~ '.')
+                 if _swap_rollback_complete | bool else
+                 'Rollback did not complete, so the services stay stopped. The original state is kept at '
+                 ~ (_swap_paths | map(attribute='path') | join(', ')) ~ ' (each rollback copy beside or inside it,'
+                 ~ ' named .restore-previous) and the restored data in ' ~ recovery_swap_stage ~ '.' }}
+  always:
+    - name: Restore swap | Remove the rollback copies
+      ansible.builtin.command:
+        argv: >-
+          {{ [recovery_swap_stage ~ '/restore-swap.sh', 'cleanup', item.path]
+             + (['--mount', '--owner', item.owner] if item.mount else []) }}
+      loop: "{{ _swap_paths }}"
+      loop_control:
+        label: "{{ item.path }}"
+      changed_when: true
+      when:
+        - recovery_swap_stage is defined
+        - _application_restore_complete | bool
+
+    - name: Restore swap | Remove staging
+      ansible.builtin.file:
+        path: "{{ _swap_stage_dir.path }}"
+        state: absent
+      when:
+        - _swap_stage_dir.path is defined
+        - _application_restore_complete | bool or _swap_rollback_complete | bool or not _swap_stopped | bool

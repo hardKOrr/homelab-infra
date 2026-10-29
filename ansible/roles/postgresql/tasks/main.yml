@@ -89,12 +89,7 @@
     update_cache: false
 
 - name: PostgreSQL | Install the native recovery helper when backups are enabled
-  ansible.builtin.copy:
-    src: postgresql-recovery.py
-    dest: /usr/local/sbin/homelab-postgresql-recovery
-    owner: root
-    group: root
-    mode: "0750"
+  ansible.builtin.include_tasks: install-recovery-helper.yml
   when: app_config.backup.enabled | default(false) | bool
 
 # The Debian package creates `main` only when postgresql-NN is first installed.

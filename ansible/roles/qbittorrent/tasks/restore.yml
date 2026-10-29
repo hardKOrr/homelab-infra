@@ -1,6 +1,5 @@
 ---
-# Restore one application-consistent qBittorrent config archive, with an explicit overwrite.
-
+# Restore one application-consistent qBittorrent config archive through the shared swap.
 - name: qBittorrent restore | Assert the restore contract
   ansible.builtin.assert:
     that:
@@ -13,185 +12,18 @@
       qBittorrent restore needs a PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots before selecting one.
 
-- name: qBittorrent restore | Initialize the rollback state
-  ansible.builtin.set_fact:
-    _application_restore_complete: false
-    _qbittorrent_restore_rolled_back: false
-    _qbittorrent_restore_moved: {rc: 1}
-
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: qBittorrent restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: qBittorrent restore | Preview or replace the config directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: qBittorrent restore | Create a private staging directory
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.config_path | dirname }}"
-    prefix: "{{ instance }}-qbittorrent-restore-"
-  register: _qbittorrent_restore_tmp
-  when: restore_overwrite | bool
-
-- name: qBittorrent restore | Stop and replace application state
-  when: restore_overwrite | bool
-  block:
-    # Keep the rollback copy on the config filesystem so moving the original is an
-    # atomic rename. It is outside config_path and cannot enter an application backup.
-    - name: qBittorrent restore | Create private rollback space beside the config directory
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ app_config.app.config_path | dirname }}"
-        prefix: .qbittorrent-pre-restore-
-      register: _qbittorrent_restore_previous
-
-    - name: qBittorrent restore | Stop only qBittorrent
-      community.docker.docker_compose_v2:
-        project_src: "{{ qbittorrent_project_dir }}"
-        state: stopped
-        services:
-          - "{{ instance }}"
-
-    - name: qBittorrent restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _qbittorrent_restore_tmp.path }}"
-
-    - name: qBittorrent restore | Validate the staged configuration and resume directory
-      ansible.builtin.stat:
-        path: "{{ _qbittorrent_restore_tmp.path }}/{{ item }}"
-      loop: [qBittorrent/qBittorrent.conf, qBittorrent/BT_backup]
-      register: _qbittorrent_restore_state
-
-    - name: qBittorrent restore | Require a complete application archive
-      ansible.builtin.assert:
-        that:
-          - _qbittorrent_restore_state.results[0].stat.isreg | default(false)
-          - _qbittorrent_restore_state.results[1].stat.isdir | default(false)
-
-    # Keep the original until the replacement passes its health check. The failure
-    # boundary can put it back after a copy, ownership, start or health-check failure.
-    - name: qBittorrent restore | Move the original config into rollback space
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ app_config.app.config_path }}"
-          - "{{ _qbittorrent_restore_previous.path }}/config"
-      register: _qbittorrent_restore_moved
-      changed_when: _qbittorrent_restore_moved.rc == 0
-      no_log: true
-
-    - name: qBittorrent restore | Recreate the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: directory
-        owner: "{{ app_config.app.puid | default(1313) }}"
-        group: "{{ app_config.app.pgid | default(1313) }}"
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
         mode: "0750"
-
-    - name: qBittorrent restore | Copy the archived application state into place
-      ansible.builtin.command:
-        argv:
-          - cp
-          - -a
-          - "{{ _qbittorrent_restore_tmp.path }}/."
-          - "{{ app_config.app.config_path }}/"
-      changed_when: true
-      no_log: true
-
-    - name: qBittorrent restore | Restore application data ownership
-      ansible.builtin.command:
-        argv: [chown, -R, "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}", "{{ app_config.app.config_path }}"]
-      changed_when: true
-      no_log: true
-
-    - name: qBittorrent restore | Start only qBittorrent
-      community.docker.docker_compose_v2:
-        project_src: "{{ qbittorrent_project_dir }}"
-        state: present
-        services:
-          - "{{ instance }}"
-
-    - name: qBittorrent restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}"
-        status_code: 200
-      register: _qbittorrent_restore_health
-      until: _qbittorrent_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: qBittorrent restore | Verify the canonical WebUI credential
-      ansible.builtin.include_tasks: login.yml
-      vars:
-        qbt_login_base: "http://localhost:{{ app_config.app.port }}"
-        qbt_login_user: "{{ homelabinfra_vault.media[instance].username }}"
-        qbt_login_password: "{{ homelabinfra_vault.media[instance].password }}"
-
-    - name: qBittorrent restore | Require an authenticated session
-      ansible.builtin.assert:
-        that:
-          - qbt_login_ok | bool
-          - qbt_login_cookie | length > 0
-        fail_msg: The restored WebUI refused the canonical credential.
-
-    - name: qBittorrent restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: qBittorrent restore | Stop only qBittorrent after failure
-      community.docker.docker_compose_v2:
-        project_src: "{{ qbittorrent_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-
-    - name: qBittorrent restore | Remove the failed replacement config
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: absent
-      when: _qbittorrent_restore_moved.rc | default(1) == 0
-
-    - name: qBittorrent restore | Put the original config back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _qbittorrent_restore_previous.path }}/config"
-          - "{{ app_config.app.config_path }}"
-      changed_when: true
-      no_log: true
-      when: _qbittorrent_restore_moved.rc | default(1) == 0
-
-    - name: qBittorrent restore | Record that rollback completed
-      ansible.builtin.set_fact:
-        _qbittorrent_restore_rolled_back: true
-
-    - name: qBittorrent restore | State that the service remains stopped
-      ansible.builtin.fail:
-        msg: >-
-          qBittorrent restore failed. The service was left stopped rather than serving
-          partial state. The original config was retained or put back; inspect the job
-          output and rerun the restore after correcting it.
-  always:
-    - name: qBittorrent restore | Remove rollback space only after health or rollback succeeded
-      ansible.builtin.file:
-        path: "{{ _qbittorrent_restore_previous.path }}"
-        state: absent
-      when:
-        - _qbittorrent_restore_previous.path is defined
-        - >-
-          (_application_restore_complete | bool) or (_qbittorrent_restore_rolled_back | bool)
-          or (_qbittorrent_restore_moved.rc | default(1) != 0)
-
-    - name: qBittorrent restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _qbittorrent_restore_tmp.path }}"
-        state: absent
-      when: _qbittorrent_restore_tmp.path is defined
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ qbittorrent_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

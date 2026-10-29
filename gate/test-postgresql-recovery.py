@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check PostgreSQL's native PBS contract and transactional recovery helper."""
+"""Check PostgreSQL's native PBS contract, its recovery helper and its restore swap inputs."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import os
@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import yaml
 
+from restore_swap_inputs import swap_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible/roles/postgresql"
@@ -120,8 +121,14 @@ def check_contract():
     pbs_client = task_named(main, "PostgreSQL | Install the pinned PBS client when backups are enabled")
     assert pbs_client["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper = task_named(main, "PostgreSQL | Install the native recovery helper when backups are enabled")
-    assert helper["ansible.builtin.copy"]["src"] == "postgresql-recovery.py"
-    assert helper["ansible.builtin.copy"]["mode"] == "0750"
+    assert helper["ansible.builtin.include_tasks"] == "install-recovery-helper.yml"
+    install = yaml.safe_load((ROLE / "tasks/install-recovery-helper.yml").read_text())[0]
+    assert install["ansible.builtin.copy"]["src"] == "postgresql-recovery.py"
+    assert install["ansible.builtin.copy"]["mode"] == "0750"
+    # Backup and Restore install the helper from their own checkout, never trusting the
+    # copy an older Deploy left on the guest.
+    for task_file in ("backup.yml", "restore.yml"):
+        assert "include_tasks: install-recovery-helper.yml" in (ROLE / "tasks" / task_file).read_text(), task_file
     socket_access = task_named(main, "PostgreSQL | Permit native recovery through the local superuser socket")
     assert socket_access["ansible.builtin.lineinfile"]["line"] == "local replication postgres peer"
     assert socket_access["ansible.builtin.lineinfile"]["insertbefore"] == "BOF"
@@ -144,12 +151,20 @@ def check_contract():
     restore = task_tree(ROLE / "tasks/restore.yml")
     assert task_named(restore, "PostgreSQL restore | Require the source point to belong to its backup group")
     assert task_named(restore, "PostgreSQL restore | Require the independent existing-target point")
-    download = task_named(restore, "PostgreSQL restore | Download the selected native archive")
-    assert download["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert download["vars"]["pbs_client_pre_restore_backup_id"] == "{{ _postgresql_restore_target_backup_id }}"
-    importer = task_named(restore, "PostgreSQL restore | Verify and apply the point transactionally")
-    assert "homelab-postgresql-recovery" in str(importer["ansible.builtin.command"]["argv"])
-    assert task_named(restore, "PostgreSQL restore | Remove private staging data")
+    assert task_named(restore, "PostgreSQL restore | Validate the target cluster identity")
+    swap = swap_inputs("postgresql")
+    assert swap["recovery_swap_runtime"] == "native"
+    assert swap["recovery_swap_archives"] == ["postgresql.pxar"]
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _postgresql_restore_target_backup_id }}"
+    [path] = swap["recovery_swap_paths"]
+    assert path["source"] == "postgresql/cluster"
+    # PostgreSQL refuses a data directory any wider than 0700.
+    assert (path["owner"], path["group"], path["mode"]) == ("postgres", "postgres", "0700")
+    assert swap["recovery_swap_stop_services"] == ["postgresql@{{ app_config.app.version }}-main"]
+    staged = (ROLE / "tasks/restore-staged.yml").read_text(encoding="utf-8")
+    assert "- verify\n" in staged and '"{{ recovery_swap_stage }}/postgresql"' in staged
+    verified = (ROLE / "tasks/restore-verified.yml").read_text(encoding="utf-8")
+    assert "check-live" in verified
 
 
 def check_native_verification_and_version_guard():
@@ -199,57 +214,28 @@ def check_native_verification_and_version_guard():
             restore_environment(previous)
 
 
-def check_restore_and_rollback():
-    with tempfile.TemporaryDirectory(prefix="homelab-postgresql-restore-test.") as temp:
+def check_live_cluster():
+    with tempfile.TemporaryDirectory(prefix="homelab-postgresql-live-test.") as temp:
         root = Path(temp)
         bin_dir = root / "bin"
         capture = install_command_stubs(bin_dir)
-        previous = fixture_environment(bin_dir, capture)
+        previous = fixture_environment(bin_dir, capture, PG_RECOVERY_TEST_FAIL_FIRST_READY="1")
         try:
-            source = root / "source"
-            source_cluster = bundle(source)
-            target = root / "data"
-            target.mkdir()
-            (target / "original-state").write_text("keep on failure\n", encoding="utf-8")
-
-            POSTGRESQL_RECOVERY.restore(source, target, "postgresql@16-main", 5432, "16")
-            assert (target / "recovery-canary").read_text(encoding="utf-8") == "selected recovery point\n"
-            assert not (target / "original-state").exists()
-            assert not list(root.glob(".homelab-postgresql-rollback-*"))
-            assert "stop postgresql@16-main" in (capture / "systemctl.log").read_text(encoding="utf-8")
-            assert "start postgresql@16-main" in (capture / "systemctl.log").read_text(encoding="utf-8")
-            assert "--host=/var/run/postgresql" in (capture / "runuser.log").read_text(encoding="utf-8")
-            assert source_cluster.exists() is False
-        finally:
-            restore_environment(previous)
-
-    with tempfile.TemporaryDirectory(prefix="homelab-postgresql-rollback-test.") as temp:
-        root = Path(temp)
-        bin_dir = root / "bin"
-        capture = install_command_stubs(bin_dir)
-        previous = fixture_environment(
-            bin_dir,
-            capture,
-            PG_RECOVERY_TEST_FAIL_FIRST_READY="1",
-        )
-        try:
-            source = root / "source"
-            bundle(source)
-            target = root / "data"
-            target.mkdir()
-            (target / "original-state").write_text("keep on failure\n", encoding="utf-8")
-
             try:
-                POSTGRESQL_RECOVERY.restore(source, target, "postgresql@16-main", 5432, "16")
+                POSTGRESQL_RECOVERY.main(["helper", "check-live", "5432"])
             except POSTGRESQL_RECOVERY.RecoveryError as error:
-                assert "original cluster was restored and verified" in str(error)
+                assert "did not become ready" in str(error)
             else:
-                raise AssertionError("an unhealthy restored cluster was not rolled back")
-
-            assert (target / "original-state").read_text(encoding="utf-8") == "keep on failure\n"
-            assert not (target / "recovery-canary").exists()
-            assert not list(root.glob(".homelab-postgresql-rollback-*"))
-            assert (capture / "ready-count").read_text(encoding="utf-8").strip() == "2"
+                raise AssertionError("a cluster that is not ready passed the live check")
+            assert POSTGRESQL_RECOVERY.main(["helper", "check-live", "5432"]) == 0
+            assert "--host=/var/run/postgresql" in (capture / "runuser.log").read_text(encoding="utf-8")
+            for argv in (["helper", "check-live", "0"], ["helper", "restore", "a", "b", "c", "5432", "16"]):
+                try:
+                    POSTGRESQL_RECOVERY.main(argv)
+                except POSTGRESQL_RECOVERY.RecoveryError as error:
+                    assert "usage" in str(error)
+                else:
+                    raise AssertionError(f"{argv} was accepted")
         finally:
             restore_environment(previous)
 
@@ -257,7 +243,7 @@ def check_restore_and_rollback():
 def main():
     check_contract()
     check_native_verification_and_version_guard()
-    check_restore_and_rollback()
+    check_live_cluster()
     print("PostgreSQL native recovery contract and helper checks passed.")
 
 

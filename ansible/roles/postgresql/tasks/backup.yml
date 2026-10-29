@@ -17,18 +17,8 @@
       PostgreSQL backup needs its application-consistent recovery contract, a safe
       backup id and a configured PBS target.
 
-- name: PostgreSQL backup | Require the installed recovery helper
-  ansible.builtin.stat:
-    path: /usr/local/sbin/homelab-postgresql-recovery
-  register: _postgresql_backup_helper
-  changed_when: false
-
-- name: PostgreSQL backup | Assert the recovery helper is installed
-  ansible.builtin.assert:
-    that: _postgresql_backup_helper.stat.exists | default(false)
-    fail_msg: >-
-      The PostgreSQL recovery helper is missing. Deploy the instance with the current
-      PostgreSQL role before requesting an application backup.
+- name: PostgreSQL backup | Install the recovery helper from this checkout
+  ansible.builtin.include_tasks: install-recovery-helper.yml
 
 - name: PostgreSQL backup | Discover the registered cluster
   ansible.builtin.command:
