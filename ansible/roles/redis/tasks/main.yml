@@ -5,8 +5,8 @@
 - name: Redis | Resolve database memory settings
   ansible.builtin.import_tasks: resolve-memory.yml
 
-- name: Redis | Install the PBS client repository when this lab declares app backups
-  ansible.builtin.include_tasks: install-pbs-client.yml
+- name: Redis | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
     - >-
@@ -25,17 +25,6 @@
     name: redis-server
     state: present
     update_cache: false
-
-- name: Redis | Install the PBS backup client
-  ansible.builtin.apt:
-    name: proxmox-backup-client
-    state: present
-    update_cache: false
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - >-
-      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
-       | length) > 0
 
 - name: Redis | Resolve backend password
   ansible.builtin.set_fact:
