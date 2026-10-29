@@ -46,14 +46,16 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-- name: Uptime Kuma restore | List or verify the recovery point without changing Uptime Kuma
+# Runs on every restore, before anything stops: a point from another group, no PBS,
+# or a point without the archives fails while the application still serves.
+- name: Uptime Kuma restore | List or verify the recovery point before changing Uptime Kuma
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
     pbs_client_runtime: docker
     pbs_client_backup_id: "{{ _kuma_restore_source_backup_id }}"
     pbs_client_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
     pbs_client_archives: [{name: data.pxar}]
-  when: not (restore_overwrite | bool)
+    pbs_client_overwrite: false
 
 - name: Uptime Kuma restore | Check the existing target data directory
   ansible.builtin.stat:

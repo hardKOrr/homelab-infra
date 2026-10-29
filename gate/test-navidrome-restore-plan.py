@@ -25,9 +25,9 @@ all_tasks = list(tasks_recursive(source))
 
 
 def main():
-    preview = named("Navidrome restore | List or verify the recovery point without changing the application")
+    preview = named("Navidrome restore | List or verify the recovery point before changing the application")
     assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert preview["when"] == "not (restore_overwrite | bool)"
+    assert preview["vars"]["pbs_client_overwrite"] is False and "when" not in preview
 
     # The stack host is an unprivileged LXC's nested Docker: the archive's ownership,
     # permissions, ACLs and xattrs cannot be applied there, so the role assigns them.

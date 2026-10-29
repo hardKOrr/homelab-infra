@@ -1,0 +1,25 @@
+---
+# Runs inside the shared PBS backup while Servarr is stopped, before the upload.
+# Environment overrides may never be written by Servarr. Put the verified effective key
+# into the stopped config.xml so the archive is self-contained.
+
+- name: Servarr backup | Persist the verified API key in config.xml
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys, xml.etree.ElementTree as ET
+        path = sys.argv[1]
+        tree = ET.parse(path)
+        key = tree.getroot().find('ApiKey')
+        if key is None:
+            key = ET.SubElement(tree.getroot(), 'ApiKey')
+        key.text = sys.stdin.read().strip()
+        if not key.text:
+            raise ValueError('Missing verified API key')
+        tree.write(path, encoding='utf-8', xml_declaration=True)
+      - "{{ app_config.app.config_path }}/config.xml"
+    stdin: "{{ _servarr_backup_key }}"
+  no_log: true
+  changed_when: true

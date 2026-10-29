@@ -19,12 +19,14 @@
     _qbittorrent_restore_rolled_back: false
     _qbittorrent_restore_moved: {rc: 1}
 
-- name: qBittorrent restore | List or verify the recovery point without changing the application
+# Runs on every restore, before anything stops: a point from another group, no PBS,
+# or a point without the archives fails while the application still serves.
+- name: qBittorrent restore | List or verify the recovery point before changing the application
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
     pbs_client_runtime: docker
     pbs_client_archives: [{name: data.pxar}]
-  when: not (restore_overwrite | bool)
+    pbs_client_overwrite: false
 
 - name: qBittorrent restore | Create a private staging directory
   ansible.builtin.tempfile:

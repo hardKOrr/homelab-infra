@@ -14,18 +14,6 @@
       Servarr needs its declared application-consistent backup contract and a
       configured PBS before an on-demand backup can run.
 
-- name: Servarr backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Servarr backup | Assert PBS is available
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Servarr. Deploy PBS and re-run this backup;
-      no local archive is treated as a recovery point.
-
 - name: Servarr backup | Resolve the application contract
   ansible.builtin.include_tasks: recovery-config.yml
 
@@ -83,98 +71,18 @@
   no_log: true
   changed_when: false
 
-- name: Servarr backup | Stop only Servarr
-  community.docker.docker_compose_v2:
-    project_src: "{{ servarr_project_dir }}"
-    state: stopped
-    services:
-      - "{{ instance }}"
+- name: Servarr backup | Quiesce Servarr and archive its data to PBS
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_compose_project: "{{ servarr_project_dir }}"
+    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+    pbs_client_backup_args: [--exclude, /logs, --exclude, /logs.db, --exclude, '/logs.db-*', --exclude, /Backups]
+    pbs_client_archives:
+      - name: data.pxar
+        path: "{{ app_config.app.config_path }}"
 
-- name: Servarr backup | Archive the quiesced data directory to PBS
-  block:
-    # Environment overrides may never be written by Servarr. Put the verified
-    # effective key into the stopped config.xml so the archive is self-contained.
-    - name: Servarr backup | Persist the verified API key in config.xml
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - |
-            import sys, xml.etree.ElementTree as ET
-            path = sys.argv[1]
-            tree = ET.parse(path)
-            key = tree.getroot().find('ApiKey')
-            if key is None:
-                key = ET.SubElement(tree.getroot(), 'ApiKey')
-            key.text = sys.stdin.read().strip()
-            if not key.text:
-                raise ValueError('Missing verified API key')
-            tree.write(path, encoding='utf-8', xml_declaration=True)
-          - "{{ app_config.app.config_path }}/config.xml"
-        stdin: "{{ _servarr_backup_key }}"
-      no_log: true
-      changed_when: true
-
-    - name: Servarr backup | Push one application archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ app_config.app.config_path }}:/source:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID" \
-              --exclude /logs --exclude /logs.db --exclude '/logs.db-*' --exclude /Backups
-            # A same-day pre-restore safety backup must retain the preceding recovery point.
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-      no_log: true
-      changed_when: true
-
-    - name: Servarr backup | Mark the backup complete
-      ansible.builtin.set_fact:
-        _application_backup_complete: true
-  always:
-    # A failed PBS upload must not leave the application down. The backup task's failure
-    # still propagates, while this service restart is limited to Servarr itself.
-    - name: Servarr backup | Start only Servarr
-      community.docker.docker_compose_v2:
-        project_src: "{{ servarr_project_dir }}"
-        state: present
-        services:
-          - "{{ instance }}"
+- name: Servarr backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true
