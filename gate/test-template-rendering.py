@@ -1666,12 +1666,14 @@ def backup_prune_keeps_the_previous_point():
         assert "proxmox-backup-client prune" in template.read_text(), f"{template} has no prune"
     bookstack_recovery = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
     recovery_text = bookstack_recovery.read_text()
-    assert "proxmox-backup-client prune" in recovery_text
+    assert "pbs_client backup" in recovery_text
     assert "--keep-last 3 --keep-daily" in recovery_text
     # Roles on the shared PBS client prune there; it refuses keep_last below 2.
     shared_backup = read("ansible/tasks/backup/pbs-client-backup.yml")
-    assert '--keep-last "$PBS_KEEP_LAST"' in shared_backup
     assert "_pbs_backup_keep_last | int >= 2" in shared_backup
+    shared_script = read("ansible/tasks/backup/scripts/pbs-client.sh")
+    assert '--keep-last "$keep_last"' in shared_script
+    assert '[ "$keep_last" -ge 2 ]' in shared_script
     scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
                if path.is_file() and path != bookstack_recovery
                and "--keep-daily" in path.read_text(errors="ignore")]
@@ -1808,7 +1810,7 @@ def plane_restore_environment_renders_the_canonical_hostname():
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
 
 
-def plane_restore_snapshot_extraction_uses_task_level_options():
+def plane_restore_extracts_every_archive_through_the_shared_client():
     restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
 
     def find_task(value, name):
@@ -1828,18 +1830,15 @@ def plane_restore_snapshot_extraction_uses_task_level_options():
 
     task = find_task(restore_tasks, "Plane restore | Extract the selected PBS snapshot")
     assert task is not None, "restore task does not extract the selected PBS snapshot"
-    command = task["ansible.builtin.command"]
-    assert set(command) == {"argv"}, "command module options must stay under argv"
-    assert set(task["environment"]) == {
-        "PBS_REPOSITORY",
-        "PBS_FINGERPRINT",
-        "PBS_PASSWORD",
-        "PBS_SNAPSHOT",
-        "PBS_KEY_URL",
-        "PBS_APT_REPO",
+    assert task["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert task["vars"]["pbs_client_runtime"] == "docker"
+    archives = {archive["name"]: archive["path"] for archive in task["vars"]["pbs_client_archives"]}
+    assert archives == {
+        f"{name}.pxar": f"{{{{ _plane_restore_scratch.path }}}}/{name}"
+        for name in ["database", "redis", "data", "object-storage"]
     }
-    assert task["no_log"] is True
-    assert task["changed_when"] is True
+    scratch = find_task(restore_tasks, "Plane restore | Allocate private scratch space")
+    assert scratch["ansible.builtin.tempfile"]["path"] == "/var/tmp", "scratch must stay outside /tmp"
 
 
 def plane_backup_maps_root_only_database_and_redis_config_for_containers():
@@ -1964,7 +1963,7 @@ if __name__ == "__main__":
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
     plane_restore_environment_renders_the_canonical_hostname()
     print("Template rendering: Plane restore environment renders the canonical hostname")
-    plane_restore_snapshot_extraction_uses_task_level_options()
+    plane_restore_extracts_every_archive_through_the_shared_client()
     print("Template rendering: Plane restore extraction keeps task options at task scope")
     plane_backup_maps_root_only_database_and_redis_config_for_containers()
     print(

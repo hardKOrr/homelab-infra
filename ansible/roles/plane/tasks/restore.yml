@@ -129,69 +129,19 @@
   when: restore_destination == 'new'
   no_log: true
 
-- name: Plane restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: Plane restore | List or verify source points without changing anything
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Plane restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Plane. Restore cannot proceed without the declared
-      recovery provider.
-
-- name: Plane restore | List available snapshots in plan mode
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - >-
-        PBS_APT_REPO={{ app_config.backup.client.repository }}
-        {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _plane_restore_backup_id }}"
-  register: _plane_restore_snapshots
-  changed_when: false
-  no_log: true
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _plane_restore_backup_id }}"
+    pbs_client_archives: [{name: database.pxar}, {name: redis.pxar}, {name: data.pxar}, {name: object-storage.pxar}]
   when: not (restore_overwrite | bool)
 
 - name: Plane restore | Report the read-only plan
   ansible.builtin.debug:
     msg:
       - "PLAN ONLY — nothing was changed."
-      - "Available Plane snapshots for host/{{ _plane_restore_backup_id }} were queried from PBS."
+      - "Plane recovery points for host/{{ _plane_restore_backup_id }} were read from PBS."
       - >-
         A selected point contains database.pxar ({{ _plane_restore_database_name }}),
         redis.pxar (the named Redis backend), data.pxar ({{ _plane_restore_data_path }}) and
@@ -199,9 +149,11 @@
       - "Re-run with recovery_point=<snapshot-id> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
 
+# Scratch stays outside /tmp, where the shared client puts its own tmpfs.
 - name: Plane restore | Allocate private scratch space
   ansible.builtin.tempfile:
     state: directory
+    path: /var/tmp
     prefix: plane-restore-
   register: _plane_restore_scratch
   changed_when: true
@@ -234,61 +186,37 @@
       ansible.builtin.set_fact:
         _plane_restore_lock_acquired: true
 
+    - name: Plane restore | Create a staging directory per archive
+      ansible.builtin.file:
+        path: "{{ _plane_restore_scratch.path }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: [database, redis, data, object-storage]
+
     - name: Plane restore | Extract the selected PBS snapshot
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _plane_restore_scratch.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - PBS_SNAPSHOT
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings /restore/database /restore/redis /restore/data /restore/object-storage
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$PBS_SNAPSHOT" database.pxar /restore/database
-            proxmox-backup-client restore "$PBS_SNAPSHOT" redis.pxar /restore/redis
-            proxmox-backup-client restore "$PBS_SNAPSHOT" data.pxar /restore/data
-            proxmox-backup-client restore "$PBS_SNAPSHOT" object-storage.pxar /restore/object-storage
-            test -s /restore/database/plane.dump
-            test -s /restore/database/plane-release.txt
-            test -s /restore/redis/dump.rdb
-            test -d /restore/data
-            test -d /restore/object-storage
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        PBS_SNAPSHOT: "{{ restore_snapshot }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _plane_restore_backup_id }}"
+        pbs_client_archives:
+          - {name: database.pxar, path: "{{ _plane_restore_scratch.path }}/database"}
+          - {name: redis.pxar, path: "{{ _plane_restore_scratch.path }}/redis"}
+          - {name: data.pxar, path: "{{ _plane_restore_scratch.path }}/data"}
+          - {name: object-storage.pxar, path: "{{ _plane_restore_scratch.path }}/object-storage"}
+
+    - name: Plane restore | Inspect the extracted dumps
+      ansible.builtin.stat:
+        path: "{{ _plane_restore_scratch.path }}/{{ item }}"
+      loop: [database/plane.dump, database/plane-release.txt, redis/dump.rdb]
+      register: _plane_restore_members
+
+    - name: Plane restore | Require every dump in the point
+      ansible.builtin.assert:
+        that: item.stat.size | default(0) > 0
+        fail_msg: "The selected Plane point has no {{ item.item }}; nothing was changed."
+      loop: "{{ _plane_restore_members.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     - name: Plane restore | Read the selected artifact's release identity
       ansible.builtin.command:

@@ -1,6 +1,8 @@
 #!/bin/bash
 # Application-consistent Plane backup runner. Credentials are read only from the root-only
-# environment file rendered by the deployment role; this script contains no secret values.
+# environment file rendered by the deployment role and the instance's root-only PBS client
+# settings; this script contains no secret values. The shared PBS client script
+# (tasks/backup/scripts/pbs-client.sh) uploads the point.
 set -Eeuo pipefail
 umask 077
 
@@ -18,8 +20,8 @@ set +a
 for required in PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH \
   PLANE_DB_HOST PLANE_DB_PORT PLANE_DB_NAME PLANE_DB_USER PLANE_DB_PASSWORD \
   PLANE_REDIS_HOST PLANE_REDIS_PORT PLANE_REDIS_PASSWORD PLANE_BACKUP_ID PLANE_RELEASE \
-  PLANE_PBS_IMAGE PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE DATABASE_CLIENT_SCRIPT \
-  PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD PBS_KEY_URL PBS_APT_REPO; do
+  PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE DATABASE_CLIENT_SCRIPT \
+  PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG; do
   [[ -n "${!required:-}" ]] || { echo "Plane recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
@@ -118,28 +120,10 @@ backup() {
   docker run --rm --volume "$work/redis:/backup:ro" "$PLANE_REDIS_IMAGE" \
     redis-check-rdb /backup/dump.rdb >/dev/null
 
-  docker run --rm --network host \
-    --volume "$work/database:/database:ro" \
-    --volume "$work/redis:/redis:ro" \
-    --volume "$PLANE_DATA_PATH:/data:ro" \
-    --volume "$PLANE_OBJECT_STORAGE_PATH:/object-storage:ro" \
-    --env PBS_REPOSITORY --env PBS_FINGERPRINT --env PBS_PASSWORD \
-    --env PBS_KEY_URL --env PBS_APT_REPO --env PLANE_BACKUP_ID \
-    "$PLANE_PBS_IMAGE" /bin/sh -ceu '
-      export DEBIAN_FRONTEND=noninteractive
-      apt-get update -qq
-      apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-      install -d -m 0755 /etc/apt/keyrings
-      curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-      printf "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] %s\\n" "$PBS_APT_REPO" \
-        > /etc/apt/sources.list.d/pbs-client.list
-      apt-get update -qq
-      apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-      proxmox-backup-client backup \
-        database.pxar:/database redis.pxar:/redis data.pxar:/data \
-        object-storage.pxar:/object-storage --backup-id "$PLANE_BACKUP_ID"
-      echo "Plane backup complete: host/$PLANE_BACKUP_ID (database, Redis, server/worker data and object storage)"
-    '
+  "$PBS_CLIENT_SCRIPT" backup --id "$PLANE_BACKUP_ID" --no-prune \
+    database.pxar:"$work/database" redis.pxar:"$work/redis" data.pxar:"$PLANE_DATA_PATH" \
+    object-storage.pxar:"$PLANE_OBJECT_STORAGE_PATH"
+  echo "Plane backup complete (database, Redis, server/worker data and object storage)"
 
   # Do not prune snapshots here. This recovery action preserves existing points; any PBS
   # datastore-wide retention policy is independent and must be verified separately.
