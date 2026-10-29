@@ -114,6 +114,14 @@ def check_contract():
     assert main.index(repo_prereqs) < main.index(repo_config)
     assert "{{ ansible_distribution_release }}" in repo_config["ansible.builtin.apt_repository"]["repo"]
 
+    assert defaults["app"]["data_path"] == "/var/lib/mysql"
+    initialize = task_named(main, "MySQL | Initialize an empty data directory")
+    root_login = task_named(main, "MySQL | Give a newly initialized root the socket login")
+    for task in (initialize, root_login):
+        assert "not _mysql_system_schema.stat.exists" in str(task["when"])
+    assert "IDENTIFIED WITH auth_socket" in str(root_login["ansible.builtin.command"]["argv"])
+    assert (main.index(initialize) < main.index(task_named(main, "MySQL | Enable and start service"))
+            < main.index(root_login))
     pbs_install = task_named(main, "MySQL | Install the pinned PBS client when this lab declares app backups")
     assert pbs_install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper_install = task_named(main, "MySQL | Install the shared server recovery script")

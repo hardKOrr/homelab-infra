@@ -22,6 +22,8 @@ mysql_defaults:
     tags: [_+lab, _-debian]
   app:
     port: 3306
+    # Remove with delete_data=true deletes it; Deploy initializes it again.
+    data_path: /var/lib/mysql
     service_name: mysql
     # MySQL account-host patterns allowed to connect to this backend. Keep
     # these within lab networks; `%` would permit any source address.
