@@ -114,33 +114,33 @@ def check_contract():
     assert main.index(repo_prereqs) < main.index(repo_config)
     assert "{{ ansible_distribution_release }}" in repo_config["ansible.builtin.apt_repository"]["repo"]
 
-    pbs_install = task_named(main, "MySQL | Install the PBS backup client")
-    assert pbs_install["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
+    pbs_install = task_named(main, "MySQL | Install the pinned PBS client when this lab declares app backups")
+    assert pbs_install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper_install = task_named(main, "MySQL | Install the shared server recovery script")
     assert helper_install["ansible.builtin.include_tasks"].endswith(
         "tasks/database/install-server-recovery.yml"
     )
 
     backup = task_tree(ROLE / "tasks/backup.yml")
-    assert any(
-        task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml")
-        for task in backup
-    )
+    assert task_named(backup, "MySQL backup | Create private staging space")[
+        "ansible.builtin.tempfile"]["path"] == "/var/tmp"
     upload = task_named(backup, "MySQL backup | Upload the logical archive to PBS")
-    assert "mysql.pxar:" in str(upload["ansible.builtin.command"]["argv"])
-    assert upload.get("no_log") is True
-    assert task_named(backup, "MySQL backup | Require a new recovery point")
-    assert task_named(backup, "MySQL backup | Verify that PBS stored the logical archive")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "mysql.pxar", "path": "{{ _mysql_backup_tmp.path }}"}
+    ]
     assert task_named(backup, "MySQL backup | Remove private staging data")
 
     restore = task_tree(ROLE / "tasks/restore.yml")
-    assert any(
-        task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml")
-        for task in restore
-    )
-    assert task_named(restore, "MySQL restore | Require the source point to belong to its backup group")
+    preview = task_named(restore, "MySQL restore | List or verify the recovery point without changing MySQL")
+    assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert preview["vars"]["pbs_client_archives"] == [{"name": "mysql.pxar"}]
     assert task_named(restore, "MySQL restore | Require the existing-target point to belong to its backup group")
-    assert task_named(restore, "MySQL restore | Verify the independent pre-restore archive")
+    safety = task_named(restore, "MySQL restore | Download the pre-restore safety archive")
+    assert safety["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert safety["vars"]["pbs_client_snapshot"] == "{{ _mysql_restore_prepoint }}"
+    assert safety["vars"]["pbs_client_archives"][0]["path"].endswith("/safety")
     importer = task_named(restore, "MySQL restore | Import the point and retain rollback state until verified")
     assert "database_server_recovery_script, 'mysql', 'restore'" in str(
         importer["ansible.builtin.command"]["argv"]

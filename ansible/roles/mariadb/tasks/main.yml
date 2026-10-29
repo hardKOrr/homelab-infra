@@ -13,19 +13,8 @@
     state: present
     update_cache: true
 
-- name: MariaDB | Install the PBS client repository when application backups are enabled
-  ansible.builtin.include_tasks: install-pbs-client.yml
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - >-
-      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
-       | length) > 0
-
-- name: MariaDB | Install the PBS backup client
-  ansible.builtin.apt:
-    name: proxmox-backup-client
-    state: present
-    update_cache: true
+- name: MariaDB | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
     - >-

@@ -130,27 +130,37 @@ def check_contract():
     ]
     helper = named(main, "MariaDB | Install the shared server recovery script")
     assert helper["ansible.builtin.include_tasks"].endswith("tasks/database/install-server-recovery.yml")
-    pbs = named(main, "MariaDB | Install the PBS backup client")
-    assert pbs["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
-    pbs_tasks = list(tasks(yaml.safe_load(
-        (ROLE / "tasks/install-pbs-client.yml").read_text(encoding="utf-8")
-    )))
-    prerequisites = named(pbs_tasks, "MariaDB PBS client | Install repository prerequisites")
-    assert prerequisites["ansible.builtin.apt"]["name"] == ["ca-certificates", "gnupg"]
-    assert prerequisites["ansible.builtin.apt"]["update_cache"] is False
+    pbs = named(main, "MariaDB | Install the pinned PBS client when this lab declares app backups")
+    assert pbs["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
 
     backup = list(tasks(yaml.safe_load((ROLE / "tasks/backup.yml").read_text(encoding="utf-8"))))
     export = named(backup, "MariaDB backup | Export all databases and grants consistently")
     assert export["ansible.builtin.command"]["argv"][-3:] == [
         "mariadb", "backup", "{{ _mariadb_backup_tmp.path }}"
     ]
+    staging = named(backup, "MariaDB backup | Create private staging space")
+    assert staging["ansible.builtin.tempfile"]["path"] == "/var/tmp"
     upload = named(backup, "MariaDB backup | Upload the logical archive to PBS")
-    assert "mariadb.pxar:{{ _mariadb_backup_tmp.path }}" in upload["ansible.builtin.command"]["argv"]
-    assert upload.get("no_log") is True
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "mariadb.pxar", "path": "{{ _mariadb_backup_tmp.path }}"}
+    ]
 
     restore = list(tasks(yaml.safe_load((ROLE / "tasks/restore.yml").read_text(encoding="utf-8"))))
-    selected = named(restore, "MariaDB restore | Require the selected logical archive")
-    assert "mariadb.pxar" in str(selected["ansible.builtin.assert"]["that"])
+    preview = named(restore, "MariaDB restore | List or verify the recovery point without changing MariaDB")
+    assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert preview["vars"]["pbs_client_archives"] == [{"name": "mariadb.pxar"}]
+    for name, staging in [("Download the selected recovery archive", "source"),
+                          ("Download the pre-restore safety archive", "safety")]:
+        download = named(restore, f"MariaDB restore | {name}")
+        assert download["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+        assert download["vars"]["pbs_client_archives"][0]["path"].endswith(f"/{staging}")
+    safety = named(restore, "MariaDB restore | Download the pre-restore safety archive")
+    assert safety["vars"]["pbs_client_snapshot"] == "{{ _mariadb_restore_prepoint }}"
+    assert safety["vars"]["pbs_client_backup_id"] == "{{ _mariadb_restore_target_backup_id }}"
+    assert named(restore, "MariaDB restore | Create private restore staging space")[
+        "ansible.builtin.tempfile"]["path"] == "/var/tmp"
     apply_restore = named(
         restore,
         "MariaDB restore | Import the point and retain rollback state until verified",
