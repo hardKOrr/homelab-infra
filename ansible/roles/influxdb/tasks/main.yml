@@ -84,8 +84,8 @@
     mode: "0644"
   notify: Restart InfluxDB
 
-- name: InfluxDB | Install the PBS client when this lab declares backups
-  ansible.builtin.include_tasks: install-pbs-client.yml
+- name: InfluxDB | Install the pinned PBS client when this lab declares backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
     - >-
