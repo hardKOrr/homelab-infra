@@ -386,7 +386,7 @@ def main():
                 ],
             })
         # Roles on tasks/backup/pbs-client-*.yml get this check from gate/test-pbs-client.py.
-        for app in ["plex", "karakeep", "observability"]:
+        for app in ["observability"]:
             for operation in ["backup", "restore"]:
                 tasks.append({
                     "block": [{"ansible.builtin.include_role": {
