@@ -1,31 +1,20 @@
 #!/usr/bin/env python3
-"""Exercise Karakeep's single-archive backup and two-directory restore rollback."""
+"""Exercise Karakeep's single-archive backup and check its two-directory restore swap inputs."""
 
 import copy
-import http.server
 import os
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 import yaml
 
 from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/backup.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/restore.yml").read_text())
-
-
-class Health(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(self.server.response_status)
-        self.end_headers()
-
-    def log_message(self, *_args):
-        pass
 
 
 def fixture_tasks(tasks, root):
@@ -88,52 +77,7 @@ if args[0] == 'backup':
     assert args == ['backup', f'data.pxar:{archive_root}'], args
     assert sorted(p.name for p in archive_root.iterdir()) == ['data', 'meilisearch']
     raise SystemExit(7 if case=='backup-failure' else 0)
-if args[:2] == ['snapshot', 'list']:
-    print('host/karakeep/2026-10-12T00:00:00Z')
-    raise SystemExit(0)
-assert args[:3] == ['restore', 'host/karakeep/2026-10-12T00:00:00Z', 'data.pxar'], args
-if case=='extract-failure':
-    raise SystemExit(7)
-stage=Path(args[3])
-assert stage.parent == Path(os.environ['KARAKEEP_TEST_ROOT']), stage
-(stage/'data').mkdir()
-(stage/'data'/'restored.sqlite').write_text('recovered database and assets\n')
-if case!='incomplete-archive':
-    (stage/'meilisearch').mkdir()
-    (stage/'meilisearch'/'restored-index').write_text('recovered search index\n')
-''',
-        "mv": r'''#!/usr/bin/env python3
-import os,subprocess,sys
-from pathlib import Path
-root=Path(os.environ['KARAKEEP_TEST_ROOT'])
-counter=root/'mv-count'
-count=int(counter.read_text())+1 if counter.exists() else 1
-counter.write_text(str(count))
-if os.environ['KARAKEEP_TEST_CASE']=='second-move-failure' and count==2:
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*sys.argv[1:]]).returncode)
-''',
-        "cp": r'''#!/usr/bin/env python3
-import os,subprocess,sys
-from pathlib import Path
-root=Path(os.environ['KARAKEEP_TEST_ROOT'])
-counter=root/'cp-count'
-count=int(counter.read_text())+1 if counter.exists() else 1
-counter.write_text(str(count))
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-case=os.environ['KARAKEEP_TEST_CASE']
-fail=(case=='data-copy-failure' and count==1) or (case=='search-copy-failure' and count==2)
-raise SystemExit(7 if fail else result.returncode)
-''',
-        "chown": r'''#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-root=Path(os.environ['KARAKEEP_TEST_ROOT'])
-counter=root/'chown-count'
-count=int(counter.read_text())+1 if counter.exists() else 1
-counter.write_text(str(count))
-if os.environ['KARAKEEP_TEST_CASE']=='ownership-failure' and count==2:
-    raise SystemExit(7)
+raise SystemExit('unexpected PBS client command')
 ''',
         "service": r'''#!/usr/bin/env python3
 import os,sys
@@ -142,8 +86,6 @@ assert sorted(sys.argv[2:]) == ['chrome','meilisearch','web'], sys.argv
 root=Path(os.environ['KARAKEEP_TEST_ROOT'])
 with (root/'services').open('a') as log:
     log.write(sys.argv[1]+'\n')
-if sys.argv[1]=='present' and os.environ['KARAKEEP_TEST_CASE']=='start-failure':
-    raise SystemExit(7)
 ''',
     }
     for name, script in scripts.items():
@@ -180,55 +122,25 @@ def backup_check(case):
         assert not (root / "project/.pbs-backup-root").exists(), "the archive root was left behind"
 
 
-def restore_check(case, server):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        make_stubs(root)
-        data = root / "data"
-        search = root / "meilisearch"
-        data.mkdir()
-        search.mkdir()
-        (data / "original.sqlite").write_text("original app state\n")
-        (search / "original-index").write_text("original index\n")
-        is_plan = case == "plan"
-        snapshot = ("host/other-app/2026-10-12T00:00:00Z" if case == "foreign-group"
-                    else "host/karakeep/2026-10-12T00:00:00Z")
-        server.response_status = 503 if case == "health-failure" else 200
-        variables = {
-            "instance": "karakeep", "karakeep_project_dir": str(root / "project"),
-            "karakeep_meilisearch_data_path": str(search),
-            "restore_snapshot": snapshot, "restore_overwrite": not is_plan,
-            "homelabinfra_infra": {"backups": {}},
-            "app_config": {
-                "app": {"data_path": str(data), "port": server.server_port},
-                "backup": {"enabled": True, "application_consistent": True},
-            },
-        }
-        result = run_play(root, restore_source, variables, case)
-        success = case in ["plan", "success"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-
-        if case == "success":
-            assert not (data / "original.sqlite").exists()
-            assert (data / "restored.sqlite").read_text() == "recovered database and assets\n"
-            assert not (search / "original-index").exists()
-            assert (search / "restored-index").read_text() == "recovered search index\n"
-        else:
-            assert (data / "original.sqlite").read_text() == "original app state\n"
-            assert not (data / "restored.sqlite").exists()
-            assert (search / "original-index").read_text() == "original index\n"
-            assert not (search / "restored-index").exists()
-
-        assert not list(root.glob(".karakeep-pre-restore-data-*")), result.stdout + result.stderr
-        assert not list(root.glob(".karakeep-pre-restore-search-*")), result.stdout + result.stderr
-        if case in ["plan", "foreign-group", "extract-failure", "incomplete-archive"]:
-            assert not (root / "services").exists(), "plan or rejected archive stopped services"
-        else:
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped", states
-            assert states[-1] == ("present" if success else "stopped"), states
-        if case == "foreign-group":
-            assert "must belong to host/karakeep/" in result.stdout
+def check_restore_swap():
+    """Karakeep supplies both directories from its one archive; gate/test-restore-swap.py
+    proves the swap, rollback and ownership."""
+    swap = swap_inputs("karakeep")
+    owner = {"owner": "{{ karakeep_data_uid }}", "group": "{{ karakeep_data_gid }}", "mode": "0750"}
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_paths"] == [
+        {"path": "{{ app_config.app.data_path }}", "source": "data/data", **owner},
+        {"path": "{{ karakeep_meilisearch_data_path }}", "source": "data/meilisearch", **owner,
+         "allow_empty": True},
+    ]
+    assert swap["recovery_swap_stop_services"] == ["web", "chrome", "meilisearch"]
+    assert swap["recovery_swap_compose_project"] == "{{ karakeep_project_dir }}"
+    assert swap["recovery_swap_health_url"].endswith("/api/health")
+    # Deploy creates both directories with the same owner the restore applies.
+    deploy = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/main.yml").read_text())
+    directories = next(t for t in deploy if t["name"] == "Karakeep | Create persistent application directories")
+    assert directories["ansible.builtin.file"]["owner"] == "{{ karakeep_data_uid }}"
+    assert directories["ansible.builtin.file"]["group"] == "{{ karakeep_data_gid }}"
 
 
 def main():
@@ -261,21 +173,10 @@ def main():
     assert any("open-app-access.yml" in task.get("ansible.builtin.include_tasks", "")
                for task in firewall_play["tasks"])
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        for case in ["backup-success", "backup-failure", "backup-missing-database"]:
-            backup_check(case)
-        for case in ["plan", "foreign-group", "extract-failure", "incomplete-archive",
-                     "second-move-failure", "data-copy-failure", "search-copy-failure",
-                     "ownership-failure", "start-failure", "health-failure", "success"]:
-            restore_check(case, server)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-    print("Karakeep: single-archive backup, selected-group guard and two-volume rollback passed")
+    for case in ["backup-success", "backup-failure", "backup-missing-database"]:
+        backup_check(case)
+    check_restore_swap()
+    print("Karakeep: single-archive backup and two-directory restore swap inputs passed")
 
 
 if __name__ == "__main__":

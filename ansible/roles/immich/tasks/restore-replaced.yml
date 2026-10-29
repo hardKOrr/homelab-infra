@@ -1,0 +1,13 @@
+---
+# restore-swap.yml replaced hook: the restored media is in place; load the archived dump
+# into the named database before Immich starts.
+- name: Immich restore | Record that the database is being replaced
+  ansible.builtin.set_fact:
+    _immich_restore_database_replaced: true
+
+- name: Immich restore | Restore the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_restore_file: "{{ recovery_swap_stage }}/database/immich.dump"

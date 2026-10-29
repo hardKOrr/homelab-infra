@@ -15,8 +15,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "1000"
-    group: "1000"
+    owner: "{{ karakeep_data_uid }}"
+    group: "{{ karakeep_data_gid }}"
     mode: "0750"
   loop:
     - "{{ app_config.app.data_path }}"

@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold the vault's SQLite database.
+- name: Vaultwarden restore | Check the staged SQLite database
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/db.sqlite3"
+  register: _vw_restore_staged_database
+  changed_when: false
+
+- name: Vaultwarden restore | Require a complete staged vault
+  ansible.builtin.assert:
+    that:
+      - _vw_restore_staged_database.stat.exists
+      - _vw_restore_staged_database.stat.isreg
+    fail_msg: >-
+      The selected Vaultwarden archive did not restore db.sqlite3; the current data
+      directory has not been replaced.

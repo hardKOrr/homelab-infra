@@ -1,0 +1,21 @@
+---
+# restore-swap.yml staged hook: the point must hold the Bolt metadata file and the engine.
+- name: InfluxDB restore | Check the staged Bolt metadata and engine
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop: [influxd.bolt, engine]
+  register: _influxdb_restore_staged_paths
+  changed_when: false
+
+- name: InfluxDB restore | Require complete staged state
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - not item.stat.islnk
+      - (item.item == 'engine' and item.stat.isdir) or (item.item == 'influxd.bolt' and item.stat.isreg)
+    fail_msg: >-
+      The selected InfluxDB recovery point is missing a required metadata or engine
+      path; the live instance has not been replaced.
+  loop: "{{ _influxdb_restore_staged_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"

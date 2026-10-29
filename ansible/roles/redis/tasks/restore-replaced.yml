@@ -1,0 +1,12 @@
+---
+# restore-swap.yml replaced hook: the swap gave every file the redis owner; the ACL file and
+# RDB get Deploy's modes before Redis reads them.
+- name: Redis restore | Protect the restored ACL file
+  ansible.builtin.file:
+    path: "{{ _redis_restore_acl_path }}"
+    mode: "0600"
+
+- name: Redis restore | Protect the restored RDB file
+  ansible.builtin.file:
+    path: "{{ _redis_restore_data_path }}/dump.rdb"
+    mode: "0640"

@@ -1,0 +1,27 @@
+---
+# restore-swap.yml staged hook: the point must hold a valid RDB and a non-empty ACL file.
+- name: Redis restore | Check the staged RDB and ACL file
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop: [dump.rdb, users.acl]
+  register: _redis_restore_staged_paths
+  changed_when: false
+
+- name: Redis restore | Require a complete staged export
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - not item.stat.islnk
+      - item.stat.size | int > 0
+    fail_msg: >-
+      The selected Redis recovery point is missing its RDB or ACL file; the live
+      instance has not been replaced.
+  loop: "{{ _redis_restore_staged_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Redis restore | Validate the staged RDB
+  ansible.builtin.command:
+    argv: [redis-check-rdb, "{{ recovery_swap_stage }}/data/dump.rdb"]
+  changed_when: false

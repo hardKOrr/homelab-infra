@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from restore_swap_inputs import swap_inputs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -258,68 +260,108 @@ def check_backup():
     ]
 
 
+# Fake redis-cli: accepts the password in $REDIS_TEST_ROOT/password, records ACL SETUSER's
+# new password there, and rewrites the ACL file with mode 0644 on ACL SAVE.
+FAKE_REDIS_CLI = """#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+root = Path(os.environ['REDIS_TEST_ROOT'])
+if os.environ.get('REDISCLI_AUTH') != (root / 'password').read_text():
+    raise SystemExit(1)
+args = sys.argv[sys.argv.index('-p') + 2:]
+if args[:4] == ['-x', 'ACL', 'SETUSER', 'default']:
+    (root / 'password').write_text(sys.stdin.read().removeprefix('>'))
+elif args == ['ACL', 'SAVE']:
+    acl = root / 'data/users.acl'
+    acl.write_text('user default on\\n')
+    acl.chmod(0o644)
+"""
+
+
+def run_hook(hook, root, variables=None):
+    tasks = read_yaml(f"ansible/roles/redis/tasks/restore-{hook}.yml")
+    for task in tasks:
+        task.pop("no_log", None)
+        if "until" in task:
+            task["retries"] = 1
+            task["delay"] = 0
+    playbook = root / "hook.yml"
+    playbook.write_text(yaml.safe_dump([{
+        "hosts": "localhost", "gather_facts": False,
+        "vars": {"recovery_swap_stage": str(root / "stage"),
+                 "_redis_restore_data_path": str(root / "data"),
+                 "_redis_restore_acl_path": str(root / "data/users.acl"),
+                 "_redis_restore_source_password": "source-password",
+                 "_redis_restore_target_password": "target-password",
+                 "app_config": {"app": {"port": 6379}}} | (variables or {}),
+        "tasks": tasks,
+    }]))
+    env = {"PATH": f"{root / 'bin'}:/usr/bin:/bin", "HOME": str(Path.home()), "ANSIBLE_NOCOLOR": "1",
+           "REDIS_TEST_ROOT": str(root)}
+    return subprocess.run([Path(sys.executable).with_name("ansible-playbook"),
+                           "-i", "localhost,", "-c", "local", str(playbook)],
+                          env=env, text=True, capture_output=True, check=False)
+
+
 def check_restore():
+    """Redis supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
+    swap = swap_inputs("redis")
+    assert swap["recovery_swap_paths"] == [{"path": "{{ _redis_restore_data_path }}",
+                                           "owner": "redis", "group": "redis", "mode": "0750"}]
+    assert swap["recovery_swap_runtime"] == "native"
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_stop_services"] == ["{{ _redis_restore_service_name }}"]
     restore = read_yaml("ansible/roles/redis/tasks/restore.yml")
-    tasks = list(tasks_recursive(restore))
-
-    source_guard = task_named(tasks, "Redis restore | Require the selected point to belong to its source group")
-    assert "_redis_restore_source_backup_id" in str(source_guard["ansible.builtin.assert"]["that"])
-    prepoint_guard = task_named(tasks, "Redis restore | Require an independent existing-target point")
-    assert "_redis_restore_target_backup_id" in str(prepoint_guard["ansible.builtin.assert"]["that"])
-
-    extract = task_named(tasks, "Redis restore | Extract the selected archive to staging")
-    staged_paths = task_named(tasks, "Redis restore | Validate staged native files")
-    validate = task_named(tasks, "Redis restore | Require a complete staged export")
-    transaction = task_named(tasks, "Redis restore | Replace the data directory transactionally")
-    stop = task_named(tasks, "Redis restore | Stop Redis before replacing data")
-    original = task_named(tasks, "Redis restore | Move the original data aside on the same filesystem")
-    rollback = task_named(tasks, "Redis restore | Put the original data back")
-    assert "dump.rdb" in str(staged_paths["loop"])
-    assert "users.acl" in str(staged_paths["loop"])
-    assert "not item.stat.islnk" in str(validate["ansible.builtin.assert"]["that"])
-    assert extract["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert "--allow-existing-dirs" in extract["vars"]["pbs_client_restore_args"]
-    preview = task_named(tasks, "Redis restore | List or verify the recovery point without changing Redis")
-    assert preview["vars"]["pbs_client_archives"] == [{"name": "data.pxar"}]
-    assert tasks.index(extract) < tasks.index(validate) < tasks.index(transaction)
-    transaction_block = transaction["block"]
-    assert transaction_block.index(stop) < transaction_block.index(original)
-    assert "mv" in rollback["ansible.builtin.command"]["argv"]
-
-    align = task_named(tasks, "Redis restore | Align the default user with the target Vaultwarden password")
-    align_argv = align["ansible.builtin.command"]["argv"]
-    assert align_argv[align_argv.index("ACL"):] == ["ACL", "SETUSER", "default", "resetpass"]
-    assert "-x" in align_argv
-    assert "_redis_restore_target_password" in align["ansible.builtin.command"]["stdin"]
-    assert align["ansible.builtin.command"]["stdin_add_newline"] is False
-    assert align.get("no_log") is True
-    reconcile = task_named(tasks, "Redis restore | Persist the reconciled ACL file")
-    assert reconcile.get("no_log") is True
+    names = [task.get("name") for task in restore]
+    assert names.index("Redis restore | Refuse an inactive target") < names.index(
+        "Redis restore | Preview or replace the data directory")
     restore_credentials = task_named(
-        tasks, "Redis restore | Resolve paths, credentials and recovery identities"
+        restore, "Redis restore | Resolve paths, credentials and recovery identities"
     )["ansible.builtin.set_fact"]["_redis_restore_target_password"]
     assert "homelabinfra_vault.apps" in str(restore_credentials)
     assert "restore_target | default(instance, true)" in str(restore_credentials)
-    acl_mode = task_named(tasks, "Redis restore | Restore the ACL file ownership and mode")
-    assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
-    assert acl_mode["ansible.builtin.file"]["group"] == "redis"
-    assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
-    assert tasks.index(reconcile) < tasks.index(acl_mode)
+    verified = read_yaml("ansible/roles/redis/tasks/restore-verified.yml")
+    for task in verified:
+        if "redis-cli" in str(task):
+            assert task.get("no_log") is True, task["name"]
 
-    target_auth = task_named(tasks, "Redis restore | Verify the target password after loading the ACL file")
-    source_auth = task_named(tasks, "Redis restore | Verify the source password when the target password differs")
-    for probe, registered in (
-        (target_auth, "_redis_restore_target_auth"),
-        (source_auth, "_redis_restore_source_auth"),
-    ):
-        assert probe["until"] == f"{registered}.rc == 0"
-        assert probe["retries"] == 30
-        assert probe["delay"] == 2
-        assert probe["failed_when"] is False
-        assert probe.get("no_log") is True
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "bin").mkdir()
+        (root / "stage/data").mkdir(parents=True)
+        check_rdb = root / "bin/redis-check-rdb"
+        check_rdb.write_text("#!/bin/sh\ngrep -q '^REDIS' \"$1\"\n")
+        check_rdb.chmod(0o755)
+        cli = root / "bin/redis-cli"
+        cli.write_text(FAKE_REDIS_CLI)
+        cli.chmod(0o755)
 
-    plan = task_named(tasks, "Redis restore | List or verify the recovery point without changing Redis")
-    assert "not (restore_overwrite | bool)" in plan["when"]
+        assert run_hook("staged", root).returncode != 0, "a point without dump.rdb must be refused"
+        (root / "stage/data/dump.rdb").write_text("not an rdb")
+        (root / "stage/data/users.acl").write_text("user default on\n")
+        assert run_hook("staged", root).returncode != 0, "an invalid RDB must be refused"
+        (root / "stage/data/dump.rdb").write_text("REDIS0011")
+        (root / "stage/data/users.acl").write_text("")
+        assert run_hook("staged", root).returncode != 0, "an empty ACL file must be refused"
+        (root / "stage/data/users.acl").write_text("user default on\n")
+        result = run_hook("staged", root)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        (root / "stage/data").rename(root / "data")
+        result = run_hook("replaced", root)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / "data/users.acl").stat().st_mode & 0o777 == 0o600
+        assert (root / "data/dump.rdb").stat().st_mode & 0o777 == 0o640
+
+        # Neither stored password works: the restored data belongs to some other instance.
+        (root / "password").write_text("unknown-password")
+        assert run_hook("verified", root).returncode != 0
+        # The restored ACL file holds the source password; the target password replaces it.
+        (root / "password").write_text("source-password")
+        result = run_hook("verified", root)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / "password").read_text() == "target-password"
+        assert (root / "data/users.acl").stat().st_mode & 0o777 == 0o600
 
 
 def check_remove_scope():
@@ -377,7 +419,7 @@ def main():
     check_backup()
     check_restore()
     check_remove_scope()
-    print("Redis: native LXC deploy, ACL and RDB PBS recovery, transactional restore, and scoped removal passed")
+    print("Redis: native LXC deploy, ACL and RDB PBS recovery, restore swap inputs and hooks, and scoped removal passed")
 
 
 if __name__ == "__main__":

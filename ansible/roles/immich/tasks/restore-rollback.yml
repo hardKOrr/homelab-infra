@@ -1,0 +1,10 @@
+---
+# restore-swap.yml rollback hook: the original media is back; when the restored dump was
+# loaded (or partly loaded), load the pre-restore dump the stopped hook kept.
+- name: Immich restore | Put the original database back
+  ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_restore_file: "{{ recovery_swap_stage }}/database/rollback.dump"
+  when: _immich_restore_database_replaced | default(false) | bool

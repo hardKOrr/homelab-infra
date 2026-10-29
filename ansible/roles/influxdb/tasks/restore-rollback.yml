@@ -1,0 +1,17 @@
+---
+# restore-swap.yml rollback hook: the original data is back, so a new target's Vaultwarden
+# item gets its own credentials back in case the verified hook had already replaced them.
+- name: InfluxDB restore | Revert new-target credentials after a failed restore
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ _influxdb_restore_target_credentials.admin_user }}"
+      admin_password: "{{ _influxdb_restore_target_credentials.admin_password }}"
+      operator_token: "{{ _influxdb_restore_target_credentials.operator_token }}"
+      organization: "{{ _influxdb_restore_target_credentials.organization }}"
+      bucket: "{{ _influxdb_restore_target_credentials.bucket }}"
+    vault_item_secret_fields: [admin_password, operator_token]
+  when: restore_destination | default('existing') == 'new'
+  no_log: true
