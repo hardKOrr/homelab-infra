@@ -39,29 +39,51 @@
       {{ pbs_client_context | default('PBS client') }}: the run needs runtime docker or
       native, a request, a pinned client suite and a resolved PBS target.
 
-# Ansible sends the script for this one run; pbs-client-script.yml installs it only on a
-# guest whose own recovery script needs it.
-- name: PBS client | Run the client
-  ansible.builtin.script:
-    cmd: "scripts/pbs-client.sh {{ pbs_client_args | map('string') | map('quote') | join(' ') }}"
-    executable: /bin/bash
-  vars:
-    _pbs_client_run_pin: "{{ _pbs_client_run.suites[_pbs_client_run.suite] }}"
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    PBS_CLIENT_RUNTIME: "{{ pbs_client_runtime }}"
-    PBS_CLIENT_TMPFS_SIZE: "{{ _pbs_client_run.tmpfs_size }}"
-    PBS_CLIENT_IMAGE: "{{ _pbs_client_run.image }}"
-    PBS_CLIENT_VERSION: "{{ _pbs_client_run_pin.version }}"
-    PBS_CLIENT_KEY_URL: "{{ _pbs_client_run_pin.key_url }}"
-    PBS_CLIENT_APT_SOURCE: >-
-      {{ _pbs_client_run.repository }} {{ _pbs_client_run.suite }} {{ _pbs_client_run.component }}
-  register: _pbs_client_run_result
-  failed_when: false
-  changed_when: pbs_client_changes | default(false) | bool
-  no_log: true
+# Each run copies the script into its own directory and removes it after; only a guest
+# whose own recovery script needs it keeps an installed copy (pbs-client-script.yml). The
+# command module runs it without a terminal, so the client's stderr stays out of stdout.
+# The directory is outside /tmp, which the native runtime covers with the client's tmpfs.
+- name: PBS client | Run the client script
+  block:
+    - name: PBS client | Create this run's script directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -pbs-client
+      register: _pbs_client_run_dir
+
+    - name: PBS client | Copy the client script
+      ansible.builtin.copy:
+        src: scripts/pbs-client.sh
+        dest: "{{ _pbs_client_run_dir.path }}/pbs-client.sh"
+        mode: "0700"
+
+    - name: PBS client | Run the client
+      ansible.builtin.command:
+        argv: "{{ [_pbs_client_run_dir.path ~ '/pbs-client.sh'] + pbs_client_args | map('string') | list }}"
+      vars:
+        _pbs_client_run_pin: "{{ _pbs_client_run.suites[_pbs_client_run.suite] }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        PBS_CLIENT_RUNTIME: "{{ pbs_client_runtime }}"
+        PBS_CLIENT_TMPFS_SIZE: "{{ _pbs_client_run.tmpfs_size }}"
+        PBS_CLIENT_IMAGE: "{{ _pbs_client_run.image }}"
+        PBS_CLIENT_VERSION: "{{ _pbs_client_run_pin.version }}"
+        PBS_CLIENT_KEY_URL: "{{ _pbs_client_run_pin.key_url }}"
+        PBS_CLIENT_APT_SOURCE: >-
+          {{ _pbs_client_run.repository }} {{ _pbs_client_run.suite }} {{ _pbs_client_run.component }}
+      register: _pbs_client_run_result
+      failed_when: false
+      changed_when: pbs_client_changes | default(false) | bool
+      no_log: true
+  always:
+    - name: PBS client | Remove this run's script directory
+      ansible.builtin.file:
+        path: "{{ _pbs_client_run_dir.path }}"
+        state: absent
+      when: _pbs_client_run_dir.path is defined
 
 - name: PBS client | Report a failed client run
   ansible.builtin.include_tasks: ../fail-with-scrubbed-output.yml
