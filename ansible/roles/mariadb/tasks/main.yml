@@ -31,6 +31,25 @@
     mode: "0644"
   notify: Restart MariaDB
 
+# Remove with delete_data=true deletes data_path and keeps the guest. The package only
+# initializes its data directory on first install, so Deploy does it here, exactly as the
+# package would, when no system schema exists. A directory holding data is never touched.
+- name: MariaDB | Check for the system schema
+  ansible.builtin.stat:
+    path: "{{ app_config.app.data_path }}/mysql"
+  register: _mariadb_system_schema
+
+- name: MariaDB | Initialize an empty data directory
+  ansible.builtin.command:
+    argv:
+      - mariadb-install-db
+      - --user=mysql
+      - "--datadir={{ app_config.app.data_path }}"
+      - --auth-root-authentication-method=socket
+      - --skip-test-db
+  changed_when: true
+  when: not _mariadb_system_schema.stat.exists
+
 - name: MariaDB | Enable and start service
   ansible.builtin.systemd:
     name: "{{ app_config.app.service_name }}"

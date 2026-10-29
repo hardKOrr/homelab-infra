@@ -130,6 +130,10 @@ def check_contract():
     ]
     helper = named(main, "MariaDB | Install the shared server recovery script")
     assert helper["ansible.builtin.include_tasks"].endswith("tasks/database/install-server-recovery.yml")
+    initialize = named(main, "MariaDB | Initialize an empty data directory")
+    assert "not _mariadb_system_schema.stat.exists" in str(initialize["when"])
+    assert "--datadir={{ app_config.app.data_path }}" in initialize["ansible.builtin.command"]["argv"]
+    assert main.index(initialize) < main.index(named(main, "MariaDB | Enable and start service"))
     pbs = named(main, "MariaDB | Install the pinned PBS client when this lab declares app backups")
     assert pbs["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
 
