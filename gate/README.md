@@ -38,6 +38,7 @@ templates.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-comfyui-storage.py`: every directory ComfyUI's Compose file mounts belongs to its runtime user after deploy and after restore.
 - `test-instance-guest-reuse.py`: `resolve-instance-guest.yml` reuses the one unclaimed same-name guest Remove kept, refuses ambiguous, wrong-type or claimed guests, and every own-guest playbook selects its guest through it.
+- `test-stack-ports.py`: applications that share a Docker stack publish distinct default host ports.
 - `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
 - `test-public-dns-preflight.py`: public address lookup agreement, unsafe address refusal, Cloudflare record ownership preflight, adoption, safe API failures, delayed record marking and its bounded timeout.
 - `test-public-dns-status.py`: public resolver matches, drift, missing answers, resolver failure, disabled estates and unchanged output when public DNS is not configured.

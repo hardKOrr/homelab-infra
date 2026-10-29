@@ -19,7 +19,7 @@ karakeep_defaults:
     image: ghcr.io/karakeep-app/karakeep:0.33.2
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
     meilisearch_image: getmeili/meilisearch:v1.41.0
-    port: 3000
+    port: 3005
     # SQLite database, uploaded assets and crawled archives. The role binds this path
     # into the application container as /data.
     data_path: "/opt/{{ instance }}/data"
