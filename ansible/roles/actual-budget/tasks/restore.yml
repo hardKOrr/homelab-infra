@@ -1,7 +1,7 @@
 ---
-# Restore one Actual Budget data.pxar archive. The generic Restore App playbook only
-# dispatches here for applications that explicitly declare this path; ordinary Docker
-# applications remain covered by their whole-guest PBS snapshots.
+# Restore Actual Budget's data directory through the shared swap. The generic Restore App
+# playbook only dispatches here for applications that explicitly declare this path;
+# ordinary Docker applications remain covered by their whole-guest PBS snapshots.
 
 - name: Actual Budget restore | Assert the restore contract
   ansible.builtin.assert:
@@ -15,112 +15,17 @@
       Actual Budget restore needs a PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots before selecting one.
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Actual Budget restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Actual Budget restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Actual Budget restore | Create a private staging directory
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.data_path | dirname }}"
-    prefix: "{{ instance }}-actual-budget-restore-"
-  register: _actual_budget_restore_tmp
-  when: restore_overwrite | bool
-
-- name: Actual Budget restore | Stop and replace application state
-  when: restore_overwrite | bool
-  block:
-    - name: Actual Budget restore | Stop only Actual Budget
-      community.docker.docker_compose_v2:
-        project_src: "{{ actual_budget_project_dir }}"
-        state: stopped
-        services:
-          - "{{ app_config.app.service_name }}"
-
-    - name: Actual Budget restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _actual_budget_restore_tmp.path }}"
-
-    # The archive is complete before the live path is removed. If extraction fails, the
-    # original data remains in place and the service is restored by the failure boundary.
-    - name: Actual Budget restore | Replace the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: absent
-
-    - name: Actual Budget restore | Recreate the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: directory
-        owner: "1001"
-        group: "1001"
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
+        owner: 1001
+        group: 1001
         mode: "0750"
-
-    - name: Actual Budget restore | Copy the archived application state into place
-      ansible.builtin.command:
-        argv:
-          - cp
-          - -a
-          - "{{ _actual_budget_restore_tmp.path }}/."
-          - "{{ app_config.app.data_path }}/"
-      changed_when: true
-      no_log: true
-
-    - name: Actual Budget restore | Restore application data ownership
-      ansible.builtin.command:
-        argv: [chown, -R, "1001:1001", "{{ app_config.app.data_path }}"]
-      changed_when: true
-      no_log: true
-
-    - name: Actual Budget restore | Start only Actual Budget
-      community.docker.docker_compose_v2:
-        project_src: "{{ actual_budget_project_dir }}"
-        state: present
-        services:
-          - "{{ app_config.app.service_name }}"
-
-    - name: Actual Budget restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}"
-        status_code: 200
-      register: _actual_budget_restore_health
-      until: _actual_budget_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    # Keep the canonical Vaultwarden password usable after restoring an older
-    # account.sqlite. This is still Actual's own authentication utility; the platform does
-    # not write or invent a second authentication database.
-    - name: Actual Budget restore | Reapply the Vaultwarden-owned server password
-      ansible.builtin.include_tasks: reset-password.yml
-      vars:
-        actual_budget_reset_password: "{{ app_config.app.server_password }}"
-      when: app_config.app.server_password | default('') | length > 0
-      no_log: true
-
-    - name: Actual Budget restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Actual Budget restore | State that the service remains stopped
-      ansible.builtin.fail:
-        msg: >-
-          Actual Budget restore failed. The service was left stopped rather than serving
-          partial state; inspect the job output and rerun the restore after correcting it.
-  always:
-    - name: Actual Budget restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _actual_budget_restore_tmp.path }}"
-        state: absent
-      when: _actual_budget_restore_tmp.path is defined
+    recovery_swap_stop_services: ["{{ app_config.app.service_name }}"]
+    recovery_swap_compose_project: "{{ actual_budget_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

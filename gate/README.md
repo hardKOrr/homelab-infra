@@ -59,11 +59,13 @@ templates.
 - `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, restore rollback and scoped guest removal.
 - `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, the live-cluster check, and the data directory, owner and mode PostgreSQL gives the restore swap.
 - `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, destination guards, and the restore swap inputs with the `kuma.db` and initialized-server hooks.
-- `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.
+- `test-servarr-recovery.py`: shared four-app dispatch, restore preview, the restore swap inputs and API key continuity: the staged hook refuses a point without the database or key, the replaced hook adopts the archived key in Compose, and the rollback hook puts the original Compose back.
 - `test-sabnzbd-clients.py`: authenticated category creation, unique client wiring, convergence and selected-client removal without changing siblings.
-- `test-sabnzbd-restore.py`: authenticated recovery, read-only preview, group guard and rollback after extraction, move, copy, ownership, start, health or credential publication failures.
-- `test-bazarr-restore.py`: authenticated recovery, read-only preview, group guard and rollback after copy, ownership, start, health or credential publication failures.
-- `test-deemix-restore.py`: read-only preview, group guard and rollback after extraction, move, copy, ownership, start or health failures.
+- `test-sabnzbd-restore.py`: SABnzbd's restore swap inputs, the staged hook refusing a point without an API key, and the authenticated queue check before the key is published.
+- `test-bazarr-restore.py`: Bazarr's restore swap inputs, Deploy and Restore reading the same API key, the staged hook refusing a point without one, and the authenticated settings check before the key is published.
+- `test-deemix-restore.py`: ARL continuity, backup inputs and Deemix's restore swap inputs.
+- `test-emby-restore.py`: Emby's restore swap inputs and the hook requiring the restored server to be Emby, accept the source account and hold a media library.
+- `test-actual-budget-restore.py`: Actual Budget's restore swap inputs and the hook reapplying the server password.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-proxmox-ha.py`: opt-in HA resource creation, idempotence, owned-resource removal, shared-storage refusal and Remove ordering.
@@ -77,7 +79,8 @@ templates.
 - `test-start-owned-guest.py`: exact owned stack guest start, readiness, repeat and refusal cases.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
-- `test-plex-restore.py`, `test-tautulli-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-plex-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-tautulli-restore.py`: the Plex connectivity check and Tautulli's restore swap inputs.
 - `test-qbittorrent-restore.py`: qBittorrent's restore swap inputs, and its staged-state and canonical-credential hooks run against fixtures.
 - `test-observability-recovery.py`: both-service quiescence, complete data archive, read-only preview, point/group guards and rollback after replacement failures.
 - `test-karakeep-recovery.py`: one-archive backup of both persistent volumes and restore

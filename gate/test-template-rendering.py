@@ -777,12 +777,9 @@ def emby_rendering():
         {"status": 200, "json": {"ProductName": "Emby Server"}}
     ), "incomplete public system-info response"
 
-    restore_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/restore.yml"))
-    restore_block = task_named(
-        restore_tasks, "Emby restore | Replace the application config from PBS"
-    )["block"]
+    restore_block = yaml.safe_load(read("ansible/roles/emby/tasks/restore-verified.yml"))
     restore_health = task_named(
-        restore_block, "Emby restore | Wait for the restored service"
+        restore_block, "Emby restore | Read the restored server identity"
     )
     restore_identity = task_named(
         restore_block, "Emby restore | Assert the restored service is Emby"

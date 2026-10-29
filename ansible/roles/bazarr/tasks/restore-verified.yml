@@ -1,0 +1,25 @@
+---
+# restore-swap.yml verified hook: the restored server accepts the archived API key, which
+# then replaces the stored one.
+- name: Bazarr restore | Verify the authenticated settings API
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/system/settings"
+    headers:
+      X-API-KEY: "{{ _bazarr_api_key }}"
+      Accept: application/json
+    status_code: 200
+  register: _bazarr_settings
+  until: _bazarr_settings.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Bazarr restore | Store and verify the restored API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _bazarr_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true

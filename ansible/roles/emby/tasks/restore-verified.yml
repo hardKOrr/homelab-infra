@@ -1,0 +1,74 @@
+---
+# restore-swap.yml verified hook: the restored server is Emby, accepts the source
+# app-owned account and has a media library; the account is then recorded for this instance.
+- name: Emby restore | Read the restored server identity
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/emby/System/Info/Public"
+    return_content: true
+    status_code: 200
+  register: _emby_restore_health
+  until:
+    - (_emby_restore_health.json | default({})).Id | default('') | length > 0
+    - (_emby_restore_health.json | default({})).ServerName | default('') | length > 0
+    - (_emby_restore_health.json | default({})).Version | default('') | length > 0
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Emby restore | Assert the restored service is Emby
+  ansible.builtin.assert:
+    that:
+      - (_emby_restore_health.json | default({})).Id | default('') | length > 0
+      - (_emby_restore_health.json | default({})).ServerName | default('') | length > 0
+      - (_emby_restore_health.json | default({})).Version | default('') | length > 0
+    fail_msg: "The restored endpoint did not identify as Emby."
+
+- name: Emby restore | Authenticate with the source app-owned account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/emby/Users/AuthenticateByName"
+    method: POST
+    headers:
+      X-Emby-Authorization: >-
+        MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
+        DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+    body_format: json
+    body:
+      Username: "{{ restore_source_emby_user }}"
+      Pw: "{{ restore_source_emby_password }}"
+    status_code: [200, 401]
+  register: _emby_restore_auth
+  changed_when: false
+  no_log: true
+
+- name: Emby restore | Assert the restored Emby account authenticates
+  ansible.builtin.assert:
+    that:
+      - _emby_restore_auth.status == 200
+      - (_emby_restore_auth.json.AccessToken | default('')) | length > 0
+    fail_msg: The restored Emby database did not accept its source credentials.
+
+- name: Emby restore | Verify the restored database has a media library
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/emby/Library/VirtualFolders/Query"
+    headers:
+      X-Emby-Token: "{{ _emby_restore_auth.json.AccessToken }}"
+    return_content: true
+    status_code: 200
+  register: _emby_restore_libraries
+  changed_when: false
+  no_log: true
+
+- name: Emby restore | Assert at least one library was restored
+  ansible.builtin.assert:
+    that: (_emby_restore_libraries.json.Items | default([]) | length) > 0
+    fail_msg: "The restored Emby account has no configured media libraries."
+
+- name: Emby restore | Record the source credentials for the target instance
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      username: "{{ restore_source_emby_user }}"
+      password: "{{ restore_source_emby_password }}"
+    vault_item_secret_fields: [password]
+  no_log: true

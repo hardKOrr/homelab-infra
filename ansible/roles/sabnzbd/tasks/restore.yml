@@ -1,5 +1,5 @@
 ---
-# Restore one application-consistent SABnzbd config archive, with an explicit overwrite.
+# Restore one application-consistent SABnzbd config archive through the shared swap.
 
 - name: SABnzbd restore | Assert the restore contract
   ansible.builtin.assert:
@@ -13,195 +13,17 @@
       SABnzbd restore needs a PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots before selecting one.
 
-- name: SABnzbd restore | Initialize the rollback state
-  ansible.builtin.set_fact:
-    _application_restore_complete: false
-    _sabnzbd_restore_rolled_back: false
-    _sabnzbd_restore_moved: {rc: 1}
-
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: SABnzbd restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: SABnzbd restore | Preview or replace the config directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: SABnzbd restore | Create a private staging directory
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.config_path | dirname }}"
-    prefix: "{{ instance }}-sabnzbd-restore-"
-  register: _sabnzbd_restore_tmp
-  when: restore_overwrite | bool
-
-- name: SABnzbd restore | Stop and replace application state
-  when: restore_overwrite | bool
-  block:
-    # Keep the rollback copy on the config filesystem so moving the original is an
-    # atomic rename. It is outside config_path and cannot enter an application backup.
-    - name: SABnzbd restore | Create private rollback space beside the config directory
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ app_config.app.config_path | dirname }}"
-        prefix: .sabnzbd-pre-restore-
-      register: _sabnzbd_restore_previous
-
-    - name: SABnzbd restore | Stop only SABnzbd
-      community.docker.docker_compose_v2:
-        project_src: "{{ sabnzbd_project_dir }}"
-        state: stopped
-        services:
-          - "{{ instance }}"
-
-    - name: SABnzbd restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _sabnzbd_restore_tmp.path }}"
-
-    # Keep the original until the replacement passes its health check. The failure
-    # boundary can put it back after a copy, ownership, start or health-check failure.
-    - name: SABnzbd restore | Move the original config into rollback space
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ app_config.app.config_path }}"
-          - "{{ _sabnzbd_restore_previous.path }}/config"
-      register: _sabnzbd_restore_moved
-      changed_when: _sabnzbd_restore_moved.rc == 0
-      no_log: true
-
-    - name: SABnzbd restore | Recreate the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: directory
-        owner: "{{ app_config.app.puid | default(1313) }}"
-        group: "{{ app_config.app.pgid | default(1313) }}"
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
         mode: "0750"
-
-    - name: SABnzbd restore | Copy the archived application state into place
-      ansible.builtin.command:
-        argv:
-          - cp
-          - -a
-          - "{{ _sabnzbd_restore_tmp.path }}/."
-          - "{{ app_config.app.config_path }}/"
-      changed_when: true
-      no_log: true
-
-    - name: SABnzbd restore | Restore application data ownership
-      ansible.builtin.command:
-        argv: [chown, -R, "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}", "{{ app_config.app.config_path }}"]
-      changed_when: true
-      no_log: true
-
-    - name: SABnzbd restore | Read the archived configuration
-      ansible.builtin.slurp:
-        src: "{{ app_config.app.config_path }}/sabnzbd.ini"
-      register: _sabnzbd_config
-      until: _sabnzbd_config.content is defined
-      retries: 30
-      delay: 2
-      changed_when: false
-      no_log: true
-
-    - name: SABnzbd restore | Extract the archived API key
-      ansible.builtin.set_fact:
-        _sabnzbd_api_key: >-
-          {{ (_sabnzbd_config.content | b64decode
-              | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
-              | default([], true) | join('')) }}
-      no_log: true
-
-    - name: SABnzbd restore | Require the archived API key
-      ansible.builtin.assert:
-        that: _sabnzbd_api_key | length > 0
-      no_log: true
-
-    - name: SABnzbd restore | Start only SABnzbd
-      community.docker.docker_compose_v2:
-        project_src: "{{ sabnzbd_project_dir }}"
-        state: present
-        services:
-          - "{{ instance }}"
-
-    - name: SABnzbd restore | Verify the authenticated queue API
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api?mode=queue&output=json&apikey={{ _sabnzbd_api_key | urlencode }}"
-        return_content: true
-        status_code: 200
-      register: _sabnzbd_queue
-      until: >-
-        (_sabnzbd_queue.status | default(0) == 200)
-        and (_sabnzbd_queue.json | default({})).queue is defined
-      retries: 30
-      delay: 2
-      changed_when: false
-      no_log: true
-
-    - name: SABnzbd restore | Store and verify the restored API key
-      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-      vars:
-        vault_item_name: "homelab-infra/media/{{ instance }}"
-        vault_item_fields:
-          api_key: "{{ _sabnzbd_api_key }}"
-        vault_item_secret_fields: [api_key]
-      no_log: true
-
-    - name: SABnzbd restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: SABnzbd restore | Stop only SABnzbd after failure
-      community.docker.docker_compose_v2:
-        project_src: "{{ sabnzbd_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-
-    - name: SABnzbd restore | Remove the failed replacement config
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: absent
-      when: _sabnzbd_restore_moved.rc | default(1) == 0
-
-    - name: SABnzbd restore | Put the original config back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _sabnzbd_restore_previous.path }}/config"
-          - "{{ app_config.app.config_path }}"
-      changed_when: true
-      no_log: true
-      when: _sabnzbd_restore_moved.rc | default(1) == 0
-
-    - name: SABnzbd restore | Record that rollback completed
-      ansible.builtin.set_fact:
-        _sabnzbd_restore_rolled_back: true
-
-    - name: SABnzbd restore | State that the service remains stopped
-      ansible.builtin.fail:
-        msg: >-
-          SABnzbd restore failed. The service was left stopped rather than serving
-          partial state. The original config was retained or put back; inspect the job
-          output and rerun the restore after correcting it.
-  always:
-    - name: SABnzbd restore | Remove rollback space only after health or rollback succeeded
-      ansible.builtin.file:
-        path: "{{ _sabnzbd_restore_previous.path }}"
-        state: absent
-      when:
-        - _sabnzbd_restore_previous.path is defined
-        - >-
-          (_application_restore_complete | bool) or (_sabnzbd_restore_rolled_back | bool)
-          or (_sabnzbd_restore_moved.rc | default(1) != 0)
-
-    - name: SABnzbd restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _sabnzbd_restore_tmp.path }}"
-        state: absent
-      when: _sabnzbd_restore_tmp.path is defined
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ sabnzbd_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

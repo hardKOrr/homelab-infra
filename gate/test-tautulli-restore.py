@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Tautulli's restore file operations and rollback against temporary local data."""
+"""Check Tautulli's Plex connectivity check and its restore swap inputs."""
 
 import copy
 import http.server
@@ -11,11 +11,10 @@ from pathlib import Path
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-source = yaml.safe_load((repo / "ansible/roles/tautulli/tasks/restore.yml").read_text())
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -26,123 +25,22 @@ class Health(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'<MediaContainer machineIdentifier="fixture"/>')
             return
-        self.send_response(self.server.response_status)
+        self.send_response(404)
         self.end_headers()
 
     def log_message(self, *_args):
         pass
 
 
-def fixture_tasks(tasks, root):
-    """Stub the PBS client and Compose; run the production file/command tasks."""
-    tasks = copy.deepcopy(tasks)
-    for task in tasks:
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        if "community.docker.docker_compose_v2" in task:
-            compose = task.pop("community.docker.docker_compose_v2")
-            task["ansible.builtin.command"] = {"argv": [
-                str(root / "bin/service"), compose["state"], *compose["services"]]}
-            task["changed_when"] = True
-        if "ansible.builtin.uri" in task:
-            task["retries"] = 1
-            task["delay"] = 0
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root)
-    return tasks
-
-
-def check(case, server):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "original.txt").write_text("original state\n")
-        before_mode = config.stat().st_mode
-        # The executable stubs are the process boundary for the PBS client and the
-        # unmodified production cp argv. Copy failure writes partial state before failing.
-        scripts = {
-            "proxmox-backup-client": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-if args[:2] == ['snapshot', 'list']:
-    raise SystemExit(0)
-assert args[:2] == ['restore', 'host/tautulli/2026-10-09T00:00:00Z'], args
-if os.environ['TAUTULLI_TEST_CASE'] == 'extract-failure':
-    raise SystemExit(7)
-assert args[2] == 'data.pxar'
-staging=Path(args[3])
-Path(staging, 'restored.txt').write_text('restored state\\n')
-""",
-            "cp": """#!/usr/bin/env python3
-import os,subprocess,sys
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['TAUTULLI_TEST_CASE']=='copy-failure' else result.returncode)
-""",
-            "mv": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['TAUTULLI_TEST_CASE']=='move-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*sys.argv[1:]]).returncode)
-""",
-            "chown": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['TAUTULLI_TEST_CASE']=='ownership-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/chown',*sys.argv[1:]]).returncode)
-""",
-            "service": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['tautulli']
-with Path(os.environ['TAUTULLI_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-if sys.argv[1]=='present' and os.environ['TAUTULLI_TEST_CASE']=='start-failure':
-    raise SystemExit(7)
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        snapshot = "host/tautulli/2026-10-09T00:00:00Z"
-        server.response_status = 503 if case == "health-failure" else 200
-        plays = [{"hosts": "localhost", "gather_facts": False, "vars": {
-            "instance": "tautulli", "tautulli_project_dir": str(root),
-            "restore_snapshot": snapshot, "restore_overwrite": case != "plan",
-            "homelabinfra_infra": {"backups": {}},
-            "app_config": {"app": {"config_path": str(config), "puid": os.getuid(),
-                                   "pgid": os.getgid(), "port": server.server_port},
-                           "backup": {"enabled": True, "application_consistent": True}},
-        }, "tasks": fixture_tasks(source, root)}]
-        path = root / "restore.yml"
-        path.write_text(yaml.safe_dump(plays))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "TAUTULLI_TEST_CASE": case, "TAUTULLI_TEST_ROOT": str(root),
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                env=env, text=True, capture_output=True, check=False)
-        success = case in ["success", "plan"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert config.exists()
-        if case == "success":
-            assert not (config / "original.txt").exists()
-            assert (config / "restored.txt").read_text() == "restored state\n"
-        else:
-            assert (config / "original.txt").read_text() == "original state\n"
-            assert not (config / "restored.txt").exists()
-            assert config.stat().st_mode == before_mode
-        assert not list(root.glob(".tautulli-pre-restore-*")), result.stdout + result.stderr
-        if case == "plan":
-            assert not (root / "services").exists(), "read-only restore stopped service"
-        else:
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped"
-            assert states[-1] == ("present" if success else "stopped")
+def check_swap():
+    """Tautulli supplies its paths and health URL; gate/test-restore-swap.py proves the swap."""
+    swap = swap_inputs("tautulli")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
+                    "group": "{{ app_config.app.pgid }}", "mode": "0750"}
+    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_compose_project"] == "{{ tautulli_project_dir }}"
+    assert swap["recovery_swap_health_url"] == "http://localhost:{{ app_config.app.port }}"
 
 
 def main():
@@ -171,14 +69,12 @@ def main():
             result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                     env=env, text=True, capture_output=True, check=False)
             assert result.returncode == 0, result.stdout + result.stderr
-        for case in ["plan", "extract-failure", "move-failure", "copy-failure",
-                     "ownership-failure", "start-failure", "health-failure", "success"]:
-            check(case, server)
+        check_swap()
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Tautulli: read-only plan, successful restore and failure rollback passed")
+    print("Tautulli: Plex connectivity check and restore swap inputs passed")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,21 @@
+---
+# restore-swap.yml staged hook: the point must hold sabnzbd.ini with its API key.
+- name: SABnzbd restore | Read the archived configuration
+  ansible.builtin.slurp:
+    src: "{{ recovery_swap_stage }}/data/sabnzbd.ini"
+  register: _sabnzbd_config
+  no_log: true
+
+- name: SABnzbd restore | Extract the archived API key
+  ansible.builtin.set_fact:
+    _sabnzbd_api_key: >-
+      {{ (_sabnzbd_config.content | b64decode
+          | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
+          | default([], true) | join('')) }}
+  no_log: true
+
+- name: SABnzbd restore | Require the archived API key
+  ansible.builtin.assert:
+    that: _sabnzbd_api_key | length > 0
+    fail_msg: The selected SABnzbd point has no API key; the live config has not been replaced.
+  no_log: true

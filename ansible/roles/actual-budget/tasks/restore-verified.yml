@@ -1,0 +1,10 @@
+---
+# restore-swap.yml verified hook. Keep the canonical Vaultwarden password usable after
+# restoring an older account.sqlite. This is still Actual's own authentication utility; the
+# platform does not write or invent a second authentication database.
+- name: Actual Budget restore | Reapply the Vaultwarden-owned server password
+  ansible.builtin.include_tasks: reset-password.yml
+  vars:
+    actual_budget_reset_password: "{{ app_config.app.server_password }}"
+  when: app_config.app.server_password | default('') | length > 0
+  no_log: true

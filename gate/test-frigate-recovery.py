@@ -1,58 +1,24 @@
 #!/usr/bin/env python3
-"""Exercise Frigate's CPU-only templates and native restore rollback."""
+"""Exercise Frigate's CPU-only templates, backup inputs and restore-swap hook.
+
+gate/test-restore-swap.py proves the swap and rollback; this test proves Frigate's staged
+check and the inputs it passes.
+"""
 
 import copy
-import http.server
 import os
 import sqlite3
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-restore_source = yaml.safe_load((repo / "ansible/roles/frigate/tasks/restore.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/frigate/tasks/backup.yml").read_text())
-
-
-class Health(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        assert self.path == "/api/auth/first_time_login"
-        self.send_response(self.server.response_status)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b"true")
-
-    def log_message(self, *_args):
-        pass
-
-
-def fixture_tasks(tasks, root):
-    """Stub only the PBS client and Compose; execute production file/command tasks."""
-    tasks = copy.deepcopy(tasks)
-    for task in tasks:
-        task.pop("no_log", None)
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        if "community.docker.docker_compose_v2" in task:
-            compose = task.pop("community.docker.docker_compose_v2")
-            task["ansible.builtin.command"] = {"argv": [
-                str(root / "bin/service"), compose["state"], *compose["services"]]}
-            task["changed_when"] = True
-        if task.get("name") == "Frigate restore | Recreate the config directory":
-            task["ansible.builtin.file"]["owner"] = os.getuid()
-            task["ansible.builtin.file"]["group"] = os.getgid()
-        if "ansible.builtin.uri" in task:
-            task["retries"] = 1
-            task["delay"] = 0
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root)
-    return tasks
 
 
 def test_cpu_templates():
@@ -130,17 +96,14 @@ def test_public_health_endpoints():
                         return found
         raise AssertionError(f"Missing health task: {name}")
 
-    contracts = [
-        (deploy_tasks, "Frigate | Wait for the public API endpoint"),
-        (restore_source, "Frigate restore | Wait for the restored public API endpoint"),
-    ]
-    for tasks, name in contracts:
-        task = find_task(tasks, name)
-        uri = task["ansible.builtin.uri"]
-        assert uri["url"].endswith("/api/auth/first_time_login")
-        assert uri["status_code"] == 200
-        assert uri["return_content"] is False
-        assert task["no_log"] is False
+    task = find_task(deploy_tasks, "Frigate | Wait for the public API endpoint")
+    uri = task["ansible.builtin.uri"]
+    assert uri["url"].endswith("/api/auth/first_time_login")
+    assert uri["status_code"] == 200
+    assert uri["return_content"] is False
+    assert task["no_log"] is False
+    # The shared swap waits for a 200 without reading the body.
+    assert swap_inputs("frigate")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
 
 
 def test_deploy_preflight():
@@ -175,117 +138,33 @@ def test_deploy_preflight():
         assert (result.returncode == 0) == should_pass, result.stdout + result.stderr
 
 
-def check_restore(case, server):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "config.yml").write_text("original config\n")
-        (config / "original.txt").write_text("original state\n")
-        before_mode = config.stat().st_mode
-        scripts = {
-            "proxmox-backup-client": """#!/usr/bin/env python3
-import os,sqlite3,sys
-from pathlib import Path
-args=sys.argv[1:]
-if args[:2] == ['snapshot', 'list']:
-    print('host/frigate/2026-10-09T00:00:00Z')
-else:
-    assert args[:3] == ['restore', 'host/frigate/2026-10-09T00:00:00Z', 'data.pxar'], args
-    case=os.environ['FRIGATE_TEST_CASE']
-    if case=='extract-failure':
-        raise SystemExit(7)
-    target=Path(args[3])
-    target.mkdir(parents=True,exist_ok=True)
-    if case!='archive-missing-config':
-        (target/'config.yml').write_text('detectors: {}\\n')
-    if case=='integrity-failure':
-        (target/'frigate.db').write_text('not a sqlite database')
-    elif case!='archive-missing-db':
-        db=sqlite3.connect(target/'frigate.db')
-        db.execute('create table canary(name text)')
-        db.execute("insert into canary values ('p2-canary-frigate-test')")
-        db.commit();db.close()
-""",
-            "cp": """#!/usr/bin/env python3
-import os,subprocess,sys
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['FRIGATE_TEST_CASE']=='copy-failure' else result.returncode)
-""",
-            "mv": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['FRIGATE_TEST_CASE']=='move-failure': raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*sys.argv[1:]]).returncode)
-""",
-            "service": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['frigate']
-with Path(os.environ['FRIGATE_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': raise SystemExit(7)
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        snapshot = "host/frigate/2026-10-09T00:00:00Z"
-        server.response_status = 503 if case == "health-failure" else 200
-        plays = [{
-            "hosts": "localhost", "gather_facts": False,
-            "vars": {
-                "instance": "frigate", "frigate_project_dir": str(root),
-                "frigate_http_retries": 1, "frigate_http_delay": 0,
-                "restore_snapshot": "" if case == "plan" else snapshot,
-                "restore_overwrite": case != "plan",
-                "restore_pre_restore_point": "" if case == "missing-prepoint" else "host/frigate/2026-10-10T00:00:00Z",
-                "homelabinfra_infra": {"backups": {}},
-                "app_config": {
-                    "app": {"config_path": str(config), "port": server.server_port},
-                    "backup": {"enabled": True, "application_consistent": True},
-                },
-            },
-            "tasks": fixture_tasks(restore_source, root),
-        }]
-        playbook = root / "restore.yml"
-        playbook.write_text(yaml.safe_dump(plays))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "FRIGATE_TEST_CASE": case, "FRIGATE_TEST_ROOT": str(root),
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
-                                env=env, text=True, capture_output=True, check=False)
-        success = case in ["success", "plan"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert config.exists()
-        if case == "success":
-            assert not (config / "original.txt").exists()
-            assert (config / "config.yml").read_text() == "detectors: {}\n"
-            with sqlite3.connect(config / "frigate.db") as db:
-                assert db.execute("select name from canary").fetchone()[0] == "p2-canary-frigate-test"
-        else:
-            assert (config / "original.txt").read_text() == "original state\n"
-            assert (config / "config.yml").read_text() == "original config\n"
-            assert config.stat().st_mode == before_mode
-        assert not list(root.glob(".frigate-pre-restore-*")), result.stdout + result.stderr
-        if case in ["plan", "missing-prepoint"]:
-            assert not (root / "services").exists(), "read-only/rejected restore stopped service"
-        else:
-            states = (root / "services").read_text().splitlines()
-            pre_move_failure = case in [
-                "extract-failure", "archive-missing-config", "archive-missing-db",
-                "integrity-failure", "move-failure",
-            ]
-            if success or pre_move_failure:
-                expected_states = ["stopped", "present"]
-            elif case in ["start-failure", "health-failure"]:
-                expected_states = ["stopped", "present", "stopped"]
-            else:
-                expected_states = ["stopped", "stopped"]
-            assert states == expected_states, states
+def check_restore_swap():
+    swap = swap_inputs("frigate")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.config_path }}", "owner": 0, "group": 0, "mode": "0750"}
+    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_compose_project"] == "{{ frigate_project_dir }}"
+    assert swap["recovery_swap_health_retries"] == "{{ frigate_http_retries | default(60) }}"
+    hook = yaml.safe_load((repo / "ansible/roles/frigate/tasks/restore-staged.yml").read_text())
+    for case in ["missing-config", "missing-db", "integrity-failure", "complete"]:
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            data = stage / "data"
+            data.mkdir()
+            if case != "missing-config":
+                (data / "config.yml").write_text("detectors: {}\n")
+            if case == "integrity-failure":
+                (data / "frigate.db").write_text("not a sqlite database")
+            elif case != "missing-db":
+                sqlite3.connect(data / "frigate.db").close()
+            playbook = stage / "hook.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"recovery_swap_stage": str(stage)}, "tasks": hook,
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                                    text=True, capture_output=True, check=False)
+            assert (result.returncode == 0) == (case == "complete"), case + result.stdout + result.stderr
 
 
 def check_backup():
@@ -323,20 +202,9 @@ def main():
     test_cpu_templates()
     test_public_health_endpoints()
     test_deploy_preflight()
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        for case in ["plan", "missing-prepoint", "extract-failure",
-                     "archive-missing-config", "archive-missing-db", "integrity-failure",
-                     "move-failure", "copy-failure", "start-failure", "health-failure", "success"]:
-            check_restore(case, server)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
+    check_restore_swap()
     check_backup()
-    print("Frigate: CPU-only templates, backup inputs and integrity hook, read-only plan, and restore rollback passed")
+    print("Frigate: CPU-only templates, backup inputs and integrity hook, restore swap inputs and staged check passed")
 
 
 if __name__ == "__main__":
