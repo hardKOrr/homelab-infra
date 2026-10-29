@@ -1,0 +1,20 @@
+---
+# Runs inside the shared PBS backup while Odoo is stopped, before the upload.
+
+- name: Odoo backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _odoo_backup_scratch.path }}/odoo.dump"
+
+- name: Odoo backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _odoo_backup_scratch.path }}/odoo.dump"
+  register: _odoo_backup_dump
+  changed_when: false
+
+- name: Odoo backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _odoo_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: Odoo's database dump is empty; refusing to publish the recovery point.

@@ -76,8 +76,6 @@ ALLOWLIST = {
     "pbs-client-invocation": {
         "ansible/roles/bookstack/files/bookstack-recovery",
         "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/odoo/tasks/backup.yml",
-        "ansible/roles/odoo/tasks/restore.yml",
         "ansible/roles/open-webui/files/open-webui-recovery",
         "ansible/roles/open-webui/tasks/restore.yml",
         "ansible/roles/plane/files/plane-recovery",
@@ -87,8 +85,6 @@ ALLOWLIST = {
     },
     "pbs-client-install": {
         "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/odoo/tasks/backup.yml",
-        "ansible/roles/odoo/tasks/restore.yml",
         "ansible/roles/open-webui/files/open-webui-recovery",
         "ansible/roles/open-webui/tasks/main.yml",
         "ansible/roles/open-webui/tasks/restore.yml",
