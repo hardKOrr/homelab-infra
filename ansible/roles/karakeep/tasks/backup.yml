@@ -11,18 +11,6 @@
       Karakeep needs its declared application-consistent backup contract and a configured
       PBS before an on-demand backup can run.
 
-- name: Karakeep backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Karakeep backup | Assert PBS is available
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Karakeep. Deploy PBS and re-run this backup; no local
-      archive is treated as a recovery point.
-
 - name: Karakeep backup | Resolve its persistent paths
   ansible.builtin.set_fact:
     _karakeep_backup_data_path: "{{ app_config.app.data_path }}"
@@ -81,75 +69,43 @@
       No non-empty Karakeep SQLite database exists in the configured data volume; refusing
       to create an incomplete recovery point.
 
-- name: Karakeep backup | Stop only this instance's services
-  community.docker.docker_compose_v2:
-    project_src: "{{ karakeep_project_dir }}"
-    state: stopped
-    services: [web, chrome, meilisearch]
+# data.pxar holds data/ and meilisearch/. Both directories appear inside an empty
+# archive root that exists only for the backup, so the point keeps that layout.
+- name: Karakeep backup | Create the empty archive root
+  ansible.builtin.file:
+    path: "{{ karakeep_project_dir }}/.pbs-backup-root/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: [data, meilisearch]
 
 - name: Karakeep backup | Archive the quiesced application state to PBS
   block:
-    - name: Karakeep backup | Push one data archive and retain the newest points
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _karakeep_backup_data_path }}:/source/data:ro"
-          - --volume
-          - "{{ _karakeep_backup_search_path }}:/source/meilisearch:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - >-
-            PBS_APT_REPO={{ app_config.backup.client.repository }}
-            {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup data.pxar:/source --all-file-systems true \
-              --backup-id "$BACKUP_ID"
-            # Keep the two newest points, plus the configured daily retention window.
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID (data.pxar)"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-      no_log: true
-      changed_when: true
+    - name: Karakeep backup | Stop only this instance's services and push one data archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "{{ karakeep_project_dir }}"
+        pbs_client_stop_services: [web, chrome, meilisearch]
+        pbs_client_backup_args: [--all-file-systems, "true"]
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ karakeep_project_dir }}/.pbs-backup-root"
+        pbs_client_backup_mounts:
+          - path: "{{ _karakeep_backup_data_path }}"
+            target: "{{ karakeep_project_dir }}/.pbs-backup-root/data"
+          - path: "{{ _karakeep_backup_search_path }}"
+            target: "{{ karakeep_project_dir }}/.pbs-backup-root/meilisearch"
 
     - name: Karakeep backup | Mark the backup complete
       ansible.builtin.set_fact:
         _application_backup_complete: true
   always:
-    - name: Karakeep backup | Start only this instance's services
-      community.docker.docker_compose_v2:
-        project_src: "{{ karakeep_project_dir }}"
-        state: present
-        services: [web, chrome, meilisearch]
+    # rmdir removes only the empty mount points, never data.
+    - name: Karakeep backup | Remove the empty archive root
+      ansible.builtin.command:
+        argv:
+          - rmdir
+          - "{{ karakeep_project_dir }}/.pbs-backup-root/data"
+          - "{{ karakeep_project_dir }}/.pbs-backup-root/meilisearch"
+          - "{{ karakeep_project_dir }}/.pbs-backup-root"
+      changed_when: true

@@ -6,6 +6,7 @@ lookup is replaced by fixed facts. Fake `docker`, `unshare`, `mount` and
 `proxmox-backup-client` executables on PATH record every call, so the test proves:
 - both runtimes put /tmp on a bounded tmpfs and run every client call with its cache there;
 - the Docker runtime installs the pinned client build;
+- an extra mount puts a host directory inside an archive in both runtimes;
 - a backup names its point by the chosen UTC time, verifies the archives, keeps two
   points and proves the previous point survived pruning;
 - preview with a point runs the client (archive check, index download, catalog read)
@@ -344,6 +345,30 @@ def main():
                  "pbs_client_keep_last": 1}
         expect(run(root, "pbs-client-backup.yml", short), False, "keep_last 1")
         assert not calls(root)
+
+        # One archive can hold several host directories: each appears at its target inside
+        # the archive path, bind-mounted privately (native) or as a container mount (docker).
+        combined, extra = root / "data/combined", root / "data/extra"
+        (combined / "inner").mkdir(parents=True)
+        extra.mkdir()
+        for runtime in ["native", "docker"]:
+            reset_logs(root)
+            nested = {"pbs_client_runtime": runtime,
+                      "pbs_client_archives": [{"name": "data.pxar", "path": str(combined)}],
+                      "pbs_client_backup_args": ["--all-file-systems", "true"],
+                      "pbs_client_backup_mounts": [{"path": str(extra), "target": str(combined / "inner")}]}
+            expect(run(root, "pbs-client-backup.yml", nested), True, f"{runtime} nested mount")
+            if runtime == "native":
+                mounts = (root / "mount.log").read_text()
+                assert f"--bind {extra} {combined / 'inner'}" in mounts, mounts
+                assert f"-o remount,bind,ro {combined / 'inner'}" in mounts, mounts
+            else:
+                docker = json.loads((root / "docker.log").read_text().splitlines()[0])
+                assert f"--volume={extra}:{combined / 'inner'}:ro" in docker, docker
+        reset_logs(root)
+        outside = nested | {"pbs_client_backup_mounts": [{"path": str(extra), "target": str(root / "stage/data")}]}
+        expect(run(root, "pbs-client-backup.yml", outside), False, "mount target outside the archive")
+        assert not calls(root), "a mount outside every archive must fail before the client runs"
 
         staged_in_tmp = {"pbs_client_runtime": "native",
                          "pbs_client_archives": [{"name": "data.pxar", "path": "/tmp/stage"}]}

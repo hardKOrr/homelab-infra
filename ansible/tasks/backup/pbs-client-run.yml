@@ -11,7 +11,10 @@
 #                          native  the client installed by pbs-client-install.yml
 #   pbs_client_script    shell run by `sh -ceu`; it calls proxmox-backup-client, writes
 #                        what the caller parses to stdout and everything else to stderr
-#   pbs_client_mounts    [{path, mode: ro|rw}] host paths the script reads or writes
+#   pbs_client_mounts    [{path, mode: ro|rw, target}] host paths the script reads or
+#                        writes, each seen at `target` (default its own path). A target
+#                        under another mount's path places that directory inside it, so
+#                        one archive can hold several host directories
 #   pbs_client_env       optional mapping of extra non-secret environment variables
 #   pbs_client_context   label for a failure message
 #   pbs_client_changes   true when the script changes PBS or the host
@@ -29,7 +32,8 @@
 # mounts that tmpfs for the container's life. Natively the tmpfs is mounted in a private
 # mount namespace, so it disappears with the client process even when the run fails, and
 # the host's own /tmp is never touched. The same reason keeps every path in
-# pbs_client_mounts out of /tmp.
+# pbs_client_mounts out of /tmp. A mount with its own target is a bind mount in that same
+# private namespace natively, and a container mount under Docker; neither reaches the host.
 
 - name: PBS client | Load the client pins
   ansible.builtin.include_vars:
@@ -39,7 +43,9 @@
   ansible.builtin.set_fact:
     _pbs_client_run: >-
       {{ pbs_client_defaults | combine(pbs_client_source | default(app_config.backup.client | default({}), true), recursive=True) }}
-    _pbs_client_run_mounts: "{{ pbs_client_mounts | default([]) }}"
+    _pbs_client_run_mounts: >-
+      [{% for mount in pbs_client_mounts | default([]) %}{{ mount
+      | combine({'target': mount.target | default(mount.path, true)}) | to_json }}{{ '' if loop.last else ',' }}{% endfor %}]
 
 - name: PBS client | Validate the run request
   ansible.builtin.assert:
@@ -48,8 +54,8 @@
       - pbs_client_script | default('') | length > 0
       - _pbs_client_run.suite in _pbs_client_run.suites
       - k8s_pbs_available | default(false) | bool
-      - _pbs_client_run_mounts | map(attribute='path') | select('match', '^/(tmp)?$|^/tmp/') | list | length == 0
-      - _pbs_client_run_mounts | map(attribute='path') | reject('match', '^/') | list | length == 0
+      - ((_pbs_client_run_mounts | map(attribute='path') | list) + (_pbs_client_run_mounts | map(attribute='target') | list)) | select('match', '^/(tmp)?$|^/tmp/') | list | length == 0
+      - ((_pbs_client_run_mounts | map(attribute='path') | list) + (_pbs_client_run_mounts | map(attribute='target') | list)) | reject('match', '^/') | list | length == 0
       - _pbs_client_run_mounts | map(attribute='mode') | difference(['ro', 'rw']) | length == 0
     fail_msg: >-
       {{ pbs_client_context | default('PBS client') }}: the run needs runtime docker or
@@ -66,11 +72,12 @@
   vars:
     _pbs_client_run_pin: "{{ _pbs_client_run.suites[_pbs_client_run.suite] }}"
     _pbs_client_run_paths: "{{ _pbs_client_run_mounts | map(attribute='path') | list }}"
+    _pbs_client_run_targets: "{{ _pbs_client_run_mounts | map(attribute='target') | list }}"
     _pbs_client_run_docker_argv: >-
       {{ ['docker', 'run', '--rm', '--network', 'host',
           '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777,size=' ~ _pbs_client_run.tmpfs_size]
          + (_pbs_client_run_paths
-            | zip(_pbs_client_run_paths, _pbs_client_run_mounts | map(attribute='mode'))
+            | zip(_pbs_client_run_targets, _pbs_client_run_mounts | map(attribute='mode'))
             | map('join', ':') | map('regex_replace', '^', '--volume=') | list)
          + (_pbs_client_run_env.keys() | map('regex_replace', '^', '--env=') | list)
          + [_pbs_client_run.image, '/bin/sh', '-ceu'] }}
@@ -99,6 +106,12 @@
         exit 5
       }
       mount -t tmpfs -o "rw,nosuid,nodev,mode=1777,size=$PBS_CLIENT_TMPFS_SIZE" pbs-client-tmp /tmp
+      {% for mount in _pbs_client_run_mounts if mount.target != mount.path %}
+      mount --bind {{ mount.path | quote }} {{ mount.target | quote }}
+      {% if mount.mode == 'ro' %}
+      mount -o remount,bind,ro {{ mount.target | quote }}
+      {% endif %}
+      {% endfor %}
       {% endif %}
       export HOME=/tmp/.pbs-client XDG_CACHE_HOME=/tmp/.pbs-client/cache XDG_RUNTIME_DIR=/tmp/.pbs-client/run
       mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
