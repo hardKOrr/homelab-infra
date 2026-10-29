@@ -84,8 +84,15 @@ def main():
                 ],
             }]
             path = Path(directory) / "plan.yml"
+            # The plan runs the shared PBS client in a container; record that call instead.
+            fake_bin = Path(directory) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "docker").write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$PBS_SNAPSHOT\" >> \"$0.log\"\n")
+            (fake_bin / "docker").chmod(0o755)
             env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-                                "ANSIBLE_ROLES_PATH": str(repo / "ansible/roles")}
+                                "ANSIBLE_ROLES_PATH": str(repo / "ansible/roles"),
+                                "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"}
 
             def run(tasks, overrides=None, failure=None):
                 candidate = [{**play[0], "vars": play[0]["vars"] | (overrides or {}), "tasks": tasks}]
@@ -99,6 +106,7 @@ def main():
                     assert result.returncode == 0, output
 
             run(play[0]["tasks"])
+            assert (fake_bin / "docker.log").read_text().split() == ["host/plex/fixture"]
             run([{"ansible.builtin.include_role": {"name": "plex", "tasks_from": "restore"}}],
                 {"restore_backup_id": "plex-source", "restore_snapshot": "host/plex-source/fixture"})
             # The production role must reject a different group before stopping Plex.
