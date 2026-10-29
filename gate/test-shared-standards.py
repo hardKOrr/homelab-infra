@@ -38,6 +38,36 @@ DATABASE_DUMP = re.compile(
 )
 K8S_JOB = re.compile(r"^\s*kind:\s*[\"']?(?:CronJob|Job)\b", re.MULTILINE)
 PBS_CLIENT = re.compile(r"proxmox-backup-client")
+# Moving or copying state into place: an `mv`/`cp` argv, a shell `mv` or `cp -a` command,
+# or Python's os.replace/shutil.move.
+RESTORE_SWAP = re.compile(
+    r"^\s*-\s*[\"']?(?:mv|cp)[\"']?\s*$"
+    r"|argv:\s*\[\s*[\"']?(?:mv|cp)\b"
+    r"|(?:^\s*|[;&|(]\s*|\bthen\s+|\bif\s+)(?:mv|cp\s+-a)\s"
+    r"|\bos\.replace\(|\bshutil\.move\(",
+    re.MULTILINE,
+)
+# Assigning ownership to restored files: chown/setpriv, a recursive file task, os.chown.
+RESTORE_OWNERSHIP = re.compile(
+    r"^\s*-\s*[\"']?(?:chown|setpriv)[\"']?\s*$"
+    r"|argv:\s*\[\s*[\"']?(?:chown|setpriv)\b"
+    r"|\b(?:chown|setpriv)\s+-"
+    r"|^\s*recurse:\s*(?:true|yes)\b"
+    r"|\bos\.chown\(",
+    re.MULTILINE,
+)
+# A role's restore task files and its guest-side recovery scripts. Deploy may still move
+# files and set ownership.
+RESTORE_CODE = ("ansible/roles/*/tasks/*restore*", "ansible/roles/*/files/*recovery*")
+RESTORE_SWAP_SHARED = (
+    "ansible/tasks/recovery/restore-swap.yml",
+    "ansible/tasks/recovery/scripts/restore-swap.sh",
+)
+
+
+def in_restore_code(path):
+    return any(fnmatch(path, pattern) for pattern in RESTORE_CODE)
+
 
 # primitive: (description, shared files allowed to contain it, matcher)
 PRIMITIVES = {
@@ -71,14 +101,78 @@ PRIMITIVES = {
         and bool(K8S_JOB.search(code))
         and bool(PBS_CLIENT.search(code)),
     ),
+    "restore-swap": (
+        "a restore moving live state aside or restored state into place",
+        RESTORE_SWAP_SHARED,
+        lambda path, code: in_restore_code(path) and bool(RESTORE_SWAP.search(code)),
+    ),
+    "restore-ownership": (
+        "a restore assigning ownership to restored files",
+        RESTORE_SWAP_SHARED,
+        lambda path, code: in_restore_code(path) and bool(RESTORE_OWNERSHIP.search(code)),
+    ),
 }
 
-# Every role now uses the shared code, so each set stays empty; never add a row.
+# Rows only leave. The first four sets are empty: every role uses that shared code.
 ALLOWLIST = {
     "pbs-client-invocation": set(),
     "pbs-client-install": set(),
     "database-dump": set(),
     "k8s-recovery-job": set(),
+    "restore-swap": {
+        "ansible/roles/actual-budget/tasks/restore.yml",
+        "ansible/roles/authentik/tasks/restore.yml",
+        "ansible/roles/bazarr/tasks/restore.yml",
+        "ansible/roles/bookstack/files/bookstack-recovery",
+        "ansible/roles/comfyui/tasks/restore.yml",
+        "ansible/roles/deemix/tasks/restore.yml",
+        "ansible/roles/emby/tasks/restore.yml",
+        "ansible/roles/forgejo/tasks/restore.yml",
+        "ansible/roles/frigate/tasks/restore.yml",
+        "ansible/roles/home-assistant/tasks/restore.yml",
+        "ansible/roles/immich/tasks/restore.yml",
+        "ansible/roles/influxdb/tasks/restore.yml",
+        "ansible/roles/jellyfin/tasks/restore.yml",
+        "ansible/roles/karakeep/tasks/restore.yml",
+        "ansible/roles/mautic/tasks/restore.yml",
+        "ansible/roles/n8n/tasks/restore-docker.yml",
+        "ansible/roles/navidrome/tasks/restore.yml",
+        "ansible/roles/ntfy/tasks/restore.yml",
+        "ansible/roles/observability/tasks/restore.yml",
+        "ansible/roles/odoo/tasks/restore.yml",
+        "ansible/roles/ollama/tasks/restore.yml",
+        "ansible/roles/open-webui/tasks/restore.yml",
+        "ansible/roles/plane/tasks/restore.yml",
+        "ansible/roles/plex/tasks/restore.yml",
+        "ansible/roles/postgresql/files/postgresql-recovery.py",
+        "ansible/roles/qbittorrent/tasks/restore.yml",
+        "ansible/roles/redis/tasks/restore.yml",
+        "ansible/roles/sabnzbd/tasks/restore.yml",
+        "ansible/roles/servarr/tasks/restore.yml",
+        "ansible/roles/tautulli/tasks/restore.yml",
+        "ansible/roles/uptime-kuma/tasks/restore.yml",
+        "ansible/roles/vaultwarden/tasks/restore.yml",
+        "ansible/roles/wordpress/files/wordpress-recovery",
+    },
+    "restore-ownership": {
+        "ansible/roles/actual-budget/tasks/restore.yml",
+        "ansible/roles/bazarr/tasks/restore.yml",
+        "ansible/roles/deemix/tasks/restore.yml",
+        "ansible/roles/emby/tasks/restore.yml",
+        "ansible/roles/immich/tasks/restore.yml",
+        "ansible/roles/influxdb/tasks/restore.yml",
+        "ansible/roles/jellyfin/tasks/restore.yml",
+        "ansible/roles/karakeep/tasks/restore.yml",
+        "ansible/roles/navidrome/tasks/restore.yml",
+        "ansible/roles/ntfy/tasks/restore.yml",
+        "ansible/roles/plex/tasks/restore.yml",
+        "ansible/roles/qbittorrent/tasks/restore.yml",
+        "ansible/roles/redis/tasks/restore.yml",
+        "ansible/roles/sabnzbd/tasks/restore.yml",
+        "ansible/roles/servarr/tasks/restore.yml",
+        "ansible/roles/tautulli/tasks/restore.yml",
+        "ansible/roles/vaultwarden/tasks/restore.yml",
+    },
 }
 
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
@@ -139,6 +233,20 @@ def check_comment_handling():
     assert not is_prose("ansible/roles/plane/files/plane-recovery")
 
 
+def check_restore_matchers():
+    for line in ["argv: [mv, --, a, b]", "  - mv", "if rm -rf -- x && mv -T -- a b; then",
+                 "os.replace(target, rollback)", "  cp -a src/. dest/"]:
+        assert RESTORE_SWAP.search(line), line
+    for line in ["- name: Move the live data aside", "argv: [mvn, x]", "removed: true"]:
+        assert not RESTORE_SWAP.search(line), line
+    for line in ["argv: [chown, -R, a]", "  - setpriv", "chown -R ntfy:ntfy x", "    recurse: true"]:
+        assert RESTORE_OWNERSHIP.search(line), line
+    assert not RESTORE_OWNERSHIP.search("owner: root")
+    assert in_restore_code("ansible/roles/plex/tasks/restore.yml")
+    assert in_restore_code("ansible/roles/wordpress/files/wordpress-recovery")
+    assert not in_restore_code("ansible/roles/plex/tasks/main.yml")
+
+
 def check_shared_globs():
     for primitive, (_, shared, _) in PRIMITIVES.items():
         for path in ALLOWLIST[primitive]:
@@ -149,6 +257,7 @@ def check_shared_globs():
 
 def main():
     check_comment_handling()
+    check_restore_matchers()
     check_shared_globs()
     failures = []
     for primitive, paths in found_primitives().items():
