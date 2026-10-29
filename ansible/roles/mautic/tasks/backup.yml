@@ -19,7 +19,7 @@
     _mautic_backup_data_path: "{{ app_config.app.data_path | default('') }}"
     _mautic_backup_id: >-
       {{ app_config.backup.backup_id | default('', true) or instance }}
-    _mautic_backup_restart_failed: false
+    _mautic_backup_root: "{{ app_config.app.data_path | default('') | dirname }}/.pbs-backup-root"
     _application_backup_complete: false
   no_log: true
 
@@ -42,18 +42,6 @@
       Mautic backup needs its named MariaDB backend, application database credential,
       non-root data path and a configured PBS target.
   no_log: true
-
-- name: Mautic backup | Resolve PBS
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Mautic backup | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Mautic. Deploy PBS and retry; a local dump is not a
-      recovery point.
 
 - name: Mautic backup | Inspect persistent file state
   ansible.builtin.stat:
@@ -81,139 +69,50 @@
   loop_control:
     label: "{{ item.item }}"
 
-- name: Mautic backup | Allocate private archive space
-  ansible.builtin.tempfile:
-    state: directory
-    prefix: "{{ instance }}-mautic-backup-"
-  register: _mautic_backup_scratch
-  changed_when: true
-
-- name: Mautic backup | Create the archive layout
+# data.pxar holds database/ and mautic/. The archive root sits beside the data directory,
+# outside /tmp (the client's tmpfs), and exists only for the backup; the data directory is
+# mounted read-only at mautic/ inside the client container.
+- name: Mautic backup | Create the empty archive root
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ _mautic_backup_root }}/{{ item }}"
     state: directory
     mode: "0700"
-  loop:
-    - "{{ _mautic_backup_scratch.path }}/payload"
-    - "{{ _mautic_backup_scratch.path }}/payload/database"
-    - "{{ _mautic_backup_scratch.path }}/payload/mautic"
+  loop: [database, mautic]
 
 - name: Mautic backup | Quiesce Mautic and publish one paired recovery point
   block:
-    - name: Mautic backup | Stop only this instance's services
-      community.docker.docker_compose_v2:
-        project_src: "{{ mautic_project_dir }}"
-        state: stopped
-        services: [mautic_web, mautic_cron, mautic_worker]
-
-    - name: Mautic backup | Dump the stopped instance's MariaDB database
-      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+    - name: Mautic backup | Stop this instance, dump its database and push one data archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        database_app_instance: "{{ instance }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_dump_file: "{{ _mautic_backup_scratch.path }}/payload/database/mautic.sql"
-
-    - name: Mautic backup | Push one database and file archive to PBS
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _mautic_backup_scratch.path }}:/work"
-          - --volume
-          - "{{ _mautic_backup_data_path }}:/work/payload/mautic:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            test -s /work/payload/database/mautic.sql
-            test -s /work/payload/mautic/config/local.php
-            test -d /work/payload/mautic/media/files
-            test -d /work/payload/mautic/media/images
-            proxmox-backup-client backup data.pxar:/work/payload \
-              --all-file-systems true --backup-id "$BACKUP_ID"
-            # Keep exactly the two newest snapshots in host/<instance>.
-            proxmox-backup-client prune "host/$BACKUP_ID" \
-              --keep-last 2
-            echo "Mautic backup complete: host/$BACKUP_ID (database and file state in data.pxar)"
-        expand_argument_vars: false
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ _mautic_backup_id }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-      no_log: true
-      register: _mautic_backup_pbs_upload
-      failed_when: false
-      changed_when: true
-
-    - name: Mautic backup | Report a failed PBS archive upload
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _mautic_backup_pbs_upload }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-          - "{{ app_config.backup.client.key_url }}"
-          - "{{ app_config.backup.client.repository }}"
-          - "{{ homelabinfra_infra.backups.host }}"
-          - "host/{{ _mautic_backup_id }}"
-        scrub_failure_context: Mautic backup | PBS archive upload failed
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "{{ mautic_project_dir }}"
+        pbs_client_stop_services: [mautic_web, mautic_cron, mautic_worker]
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_backup_id: "{{ _mautic_backup_id }}"
+        # Mautic keeps exactly the two newest points.
+        pbs_client_keep_daily: ""
+        pbs_client_backup_args: [--all-file-systems, "true"]
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _mautic_backup_root }}"
+        pbs_client_backup_mounts:
+          - path: "{{ _mautic_backup_data_path }}"
+            target: "{{ _mautic_backup_root }}/mautic"
 
     - name: Mautic backup | Mark the recovery artifact complete
       ansible.builtin.set_fact:
         _application_backup_complete: true
   always:
-    - name: Mautic backup | Restart only this instance after backup
-      block:
-        - name: Mautic backup | Start this instance's services
-          community.docker.docker_compose_v2:
-            project_src: "{{ mautic_project_dir }}"
-            state: present
-            services: [mautic_web, mautic_cron, mautic_worker]
-      rescue:
-        - name: Mautic backup | Record a failed service restart
-          ansible.builtin.set_fact:
-            _mautic_backup_restart_failed: true
-
-    - name: Mautic backup | Remove private scratch files
+    - name: Mautic backup | Remove the database dump
       ansible.builtin.file:
-        path: "{{ _mautic_backup_scratch.path }}"
+        path: "{{ _mautic_backup_root }}/database"
         state: absent
 
-- name: Mautic backup | Fail if Mautic did not restart
-  ansible.builtin.fail:
-    msg: >-
-      Mautic's backup attempt ended, but its services did not restart. Check the Compose
-      project at {{ mautic_project_dir }} before retrying.
-  when: _mautic_backup_restart_failed | bool
+    # rmdir removes only the empty mount point and root, never data.
+    - name: Mautic backup | Remove the empty archive root
+      ansible.builtin.command:
+        argv:
+          - rmdir
+          - "{{ _mautic_backup_root }}/mautic"
+          - "{{ _mautic_backup_root }}"
+      changed_when: true

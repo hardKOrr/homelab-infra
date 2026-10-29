@@ -24,6 +24,7 @@
     _application_restore_complete: false
     _observability_restore_rolled_back: false
     _observability_restore_moved: {rc: 1}
+    _observability_restore_stopped: false
   no_log: true
 
 - name: Observability restore | Validate the source snapshot group
@@ -38,68 +39,13 @@
       host/{{ _observability_restore_backup_id }}/; refusing another backup group's archive.
   when: restore_snapshot | default('') | length > 0
 
-- name: Observability restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: Observability restore | List or verify the recovery point without changing Observability
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Observability restore | Assert PBS is available
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Observability. Deploy PBS before listing or restoring
-      application data.
-
-- name: Observability restore | List available recovery points
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  register: _observability_restore_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _observability_restore_backup_id }}"
-  no_log: true
-
-- name: Observability restore | Print available recovery points
-  ansible.builtin.debug:
-    msg: >-
-      PBS recovery points for host/{{ _observability_restore_backup_id }}:
-      {{ _observability_restore_snapshots.stdout }}
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _observability_restore_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
+  when: not (restore_overwrite | bool)
 
 - name: Observability restore | Explain the read-only selected-point plan
   ansible.builtin.debug:
@@ -130,119 +76,8 @@
     - restore_overwrite | bool
     - restore_destination | default('existing') == 'existing'
 
-- name: Observability restore | List source recovery points before overwrite
-  when: restore_overwrite | bool
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  register: _observability_restore_source_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _observability_restore_backup_id }}"
-  no_log: true
-
-- name: Observability restore | List target recovery points before overwrite
-  when:
-    - restore_overwrite | bool
-    - _observability_restore_target_backup_id != _observability_restore_backup_id
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  register: _observability_restore_target_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _observability_restore_target_backup_id }}"
-  no_log: true
-
-- name: Observability restore | Verify the selected source recovery point exists
-  ansible.builtin.assert:
-    that:
-      - (restore_snapshot.split('/')[-1]) in (_observability_restore_source_snapshots.stdout | default(''))
-    fail_msg: >-
-      The selected Observability recovery point was not found in
-      host/{{ _observability_restore_backup_id }}/; refusing to replace application data.
-  when: restore_overwrite | bool
-
-- name: Observability restore | Verify the independent pre-restore point exists
-  ansible.builtin.assert:
-    that:
-      - >-
-        (restore_pre_restore_point.split('/')[-1]) in
-        ((_observability_restore_source_snapshots.stdout
-          if _observability_restore_target_backup_id == _observability_restore_backup_id
-          else _observability_restore_target_snapshots.stdout) | default(''))
-    fail_msg: >-
-      The pre_restore_point was not found in host/{{ _observability_restore_target_backup_id }}/;
-      refusing to replace the existing Observability data.
-  when:
-    - restore_overwrite | bool
-    - restore_destination | default('existing') == 'existing'
+# The shared restore proves the selected point and the pre-restore point each hold
+# data.pxar before it extracts anything.
 
 - name: Observability restore | Check the existing target data path
   ansible.builtin.stat:
@@ -284,62 +119,21 @@
         prefix: .observability-pre-restore-
       register: _observability_restore_previous
 
-    - name: Observability restore | Stop only Prometheus and Grafana
-      community.docker.docker_compose_v2:
-        project_src: "{{ observability_project_dir }}"
-        state: stopped
-        services: [prometheus, grafana]
+    - name: Observability restore | Create the extraction directory
+      ansible.builtin.file:
+        path: "{{ _observability_restore_tmp.path }}/data"
+        state: directory
+        mode: "0700"
 
     - name: Observability restore | Extract the selected archive into staging
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _observability_restore_tmp.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            # The client overlay rejects O_TMPFILE. Keep its cache and temporary files on
-            # the mounted scratch directory; PBS also needs a new archive target directory.
-            install -d -m 0700 /restore/tmp /restore/home/.cache /restore/home/.config
-            export TMPDIR=/restore/tmp
-            export HOME=/restore/home
-            export XDG_CACHE_HOME=/restore/home/.cache
-            export XDG_CONFIG_HOME=/restore/home/.config
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/data
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_snapshot }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _observability_restore_backup_id }}"
+        pbs_client_pre_restore_backup_id: "{{ _observability_restore_target_backup_id }}"
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _observability_restore_tmp.path }}/data"
 
     - name: Observability restore | Check the staged Grafana database
       ansible.builtin.stat:
@@ -364,6 +158,16 @@
         fail_msg: >-
           The selected archive does not contain both Grafana's database and Prometheus's
           data directory; the existing Observability state was not moved.
+
+    - name: Observability restore | Stop only Prometheus and Grafana
+      community.docker.docker_compose_v2:
+        project_src: "{{ observability_project_dir }}"
+        state: stopped
+        services: [prometheus, grafana]
+
+    - name: Observability restore | Record the stopped services
+      ansible.builtin.set_fact:
+        _observability_restore_stopped: true
 
     - name: Observability restore | Move the original data into rollback space
       ansible.builtin.command:
@@ -431,6 +235,7 @@
         project_src: "{{ observability_project_dir }}"
         state: stopped
         services: [prometheus, grafana]
+      when: _observability_restore_stopped | bool
 
     - name: Observability restore | Remove failed replacement data
       ansible.builtin.file:
@@ -438,7 +243,7 @@
         state: absent
       when: >-
         _observability_restore_moved.rc | default(1) == 0
-        or restore_destination | default('existing') == 'new'
+        or (restore_destination | default('existing') == 'new' and _observability_restore_stopped | bool)
 
     - name: Observability restore | Put the original data back
       ansible.builtin.command:
@@ -457,9 +262,11 @@
     - name: Observability restore | State that the service remains stopped
       ansible.builtin.fail:
         msg: >-
-          Observability restore failed. Prometheus and Grafana were left stopped rather
-          than serving partial state. The original data was retained or put back; inspect
-          the job output and rerun the restore after correcting the failure.
+          Observability restore failed. {{ 'Prometheus and Grafana were left stopped rather
+          than serving partial state.' if _observability_restore_stopped | bool else
+          'Prometheus and Grafana kept running; the point failed its checks before anything
+          stopped.' }} The original data was retained or put back; inspect the job output
+          and rerun the restore after correcting the failure.
   always:
     - name: Observability restore | Remove rollback space only after success or rollback
       ansible.builtin.file:

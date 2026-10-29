@@ -1668,10 +1668,13 @@ def backup_prune_keeps_the_previous_point():
     recovery_text = bookstack_recovery.read_text()
     assert "proxmox-backup-client prune" in recovery_text
     assert "--keep-last 3 --keep-daily" in recovery_text
+    # Roles on the shared PBS client prune there; it refuses keep_last below 2.
+    shared_backup = read("ansible/tasks/backup/pbs-client-backup.yml")
+    assert '--keep-last "$PBS_KEEP_LAST"' in shared_backup
+    assert "_pbs_backup_keep_last | int >= 2" in shared_backup
     scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
                if path.is_file() and path != bookstack_recovery
                and "--keep-daily" in path.read_text(errors="ignore")]
-    assert len(scripts) > len(templates_with_inline_pruning), scripts
     for script in scripts:
         contents = script.read_text()
         command_argvs = []

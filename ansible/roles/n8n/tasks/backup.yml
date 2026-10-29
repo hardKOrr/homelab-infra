@@ -47,18 +47,6 @@
       backup can run.
   no_log: true
 
-- name: n8n backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: n8n backup | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for n8n. Deploy PBS and re-run this backup; no local
-      archive is treated as a recovery point.
-
 - name: n8n backup | Check the instance data path
   ansible.builtin.stat:
     path: "{{ _n8n_backup_data_path }}"
@@ -74,101 +62,36 @@
       n8n data path {{ _n8n_backup_data_path }} is missing; refusing to create a recovery
       point that would omit instance assets and source-control state.
 
+# The dump directory is outside /tmp, which the client's tmpfs replaces.
 - name: n8n backup | Allocate private scratch space
   ansible.builtin.tempfile:
     state: directory
+    path: /var/tmp
     prefix: n8n-backup-
   register: _n8n_backup_scratch
   changed_when: true
 
 - name: n8n backup | Quiesce n8n and archive database plus data
   block:
-    - name: n8n backup | Stop only the n8n service
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ instance }}"
-        state: stopped
-        services: [n8n]
-
-    - name: n8n backup | Dump the named PostgreSQL database
-      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+    # PostgreSQL and every other service on the shared services guest stay untouched.
+    - name: n8n backup | Stop n8n, dump its database and push both archives
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        database_app_instance: "{{ instance }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_dump_file: "{{ _n8n_backup_scratch.path }}/n8n.dump"
-
-    - name: n8n backup | Push the paired database and data snapshot to PBS
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _n8n_backup_scratch.path }}:/backup:ro"
-          - --volume
-          - "{{ _n8n_backup_data_path }}:/data:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - RETENTION_DAYS
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            test -s /backup/n8n.dump
-            proxmox-backup-client backup database.pxar:/backup data.pxar:/data \
-              --backup-id "$BACKUP_ID"
-            # A same-day pre-restore safety backup must retain the preceding recovery point.
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID (database plus n8n data)"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-      no_log: true
-      changed_when: true
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "/opt/{{ instance }}"
+        pbs_client_stop_services: [n8n]
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_archives:
+          - name: database.pxar
+            path: "{{ _n8n_backup_scratch.path }}"
+          - name: data.pxar
+            path: "{{ _n8n_backup_data_path }}"
 
     - name: n8n backup | Mark the paired recovery artifact complete
       ansible.builtin.set_fact:
         _application_backup_complete: true
   always:
-    # A failed PBS upload must not leave n8n down. PostgreSQL and every other service on
-    # the shared services guest remain untouched.
-    - name: n8n backup | Start only the n8n service after the attempt
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ instance }}"
-        state: present
-        services: [n8n]
-
-- name: n8n backup | Remove private scratch data
-  ansible.builtin.file:
-    path: "{{ _n8n_backup_scratch.path }}"
-    state: absent
-  when: _n8n_backup_scratch.path is defined
+    - name: n8n backup | Remove private scratch data
+      ansible.builtin.file:
+        path: "{{ _n8n_backup_scratch.path }}"
+        state: absent

@@ -85,18 +85,6 @@
       refusing to replace application data with another backup group's archive.
   when: restore_snapshot | default('') | length > 0
 
-- name: Mautic restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Mautic restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Mautic. Deploy PBS before listing or restoring its
-      database and uploaded files.
-
 - name: Mautic restore | Verify the independent pre-restore point
   when:
     - restore_overwrite | bool
@@ -113,142 +101,15 @@
           host/{{ _mautic_restore_target_backup_id }}/. Back up the exact target and
           verify that point before retrying.
 
-    - name: Mautic restore | Confirm the target recovery point exists in PBS
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client snapshot files "$SNAPSHOT" >/dev/null
-        expand_argument_vars: false
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_pre_restore_point }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-      no_log: true
-      register: _mautic_restore_prepoint_check
-      failed_when: false
-      changed_when: false
+# The shared restore proves this point holds data.pxar before it extracts anything.
 
-    - name: Mautic restore | Report a missing pre-restore point
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _mautic_restore_prepoint_check }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-          - "{{ restore_pre_restore_point }}"
-          - "{{ app_config.backup.client.key_url }}"
-          - "{{ app_config.backup.client.repository }}"
-          - "{{ homelabinfra_infra.backups.host }}"
-        scrub_failure_context: Mautic restore | target pre-restore point is unavailable
-
-- name: Mautic restore | List snapshots when planning without a selection
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - PBS_KEY_URL
-      - --env
-      - PBS_APT_REPO
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-    expand_argument_vars: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _mautic_restore_backup_id }}"
-    PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-    PBS_APT_REPO: >-
-      {{ app_config.backup.client.repository }}
-      {{ app_config.backup.client.suite }}
-      {{ app_config.backup.client.component }}
-  register: _mautic_restore_snapshots
-  failed_when: false
-  changed_when: false
-  no_log: true
-
-- name: Mautic restore | Report a failed snapshot listing
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+- name: Mautic restore | List or verify the recovery point without changing Mautic
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    scrub_failure_result: "{{ _mautic_restore_snapshots }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-      - "{{ app_config.backup.client.key_url }}"
-      - "{{ app_config.backup.client.repository }}"
-      - "{{ homelabinfra_infra.backups.host }}"
-      - "host/{{ _mautic_restore_backup_id }}"
-    scrub_failure_context: Mautic restore | PBS snapshot listing failed
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-
-- name: Mautic restore | Print the available recovery points
-  ansible.builtin.debug:
-    msg: >-
-      PBS snapshots for host/{{ _mautic_restore_backup_id }}:
-      {{ _mautic_restore_snapshots.stdout }}
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _mautic_restore_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
+  when: not (restore_overwrite | bool)
 
 - name: Mautic restore | Explain the selected read-only plan
   ansible.builtin.debug:
@@ -305,81 +166,51 @@
 - name: Mautic restore | Replace the database and file state
   when: restore_overwrite | bool
   block:
-    - name: Mautic restore | Extract and validate the selected data.pxar
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --tmpfs
-          - /tmp
-          - --tmpfs
-          - /root/.cache
-          - --volume
-          - "{{ _mautic_restore_scratch.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings /restore/archive
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore --allow-existing-dirs true \
-              "$SNAPSHOT" data.pxar /restore/archive
-            test -s /restore/archive/database/mautic.sql
-            grep -q '^CREATE TABLE ' /restore/archive/database/mautic.sql
-            test -s /restore/archive/mautic/config/local.php
-            test -d /restore/archive/mautic/media/files
-            test -d /restore/archive/mautic/media/images
-        expand_argument_vars: false
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_snapshot }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-      no_log: true
-      register: _mautic_restore_extract
-      failed_when: false
-      changed_when: true
+    - name: Mautic restore | Create the extraction directory
+      ansible.builtin.file:
+        path: "{{ _mautic_restore_scratch.path }}/archive"
+        state: directory
+        mode: "0700"
 
-    - name: Mautic restore | Report an invalid or unreadable archive
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+    - name: Mautic restore | Extract the selected data.pxar
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        scrub_failure_result: "{{ _mautic_restore_extract }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-          - "{{ restore_snapshot }}"
-          - "{{ app_config.backup.client.key_url }}"
-          - "{{ app_config.backup.client.repository }}"
-          - "{{ homelabinfra_infra.backups.host }}"
-        scrub_failure_context: Mautic restore | selected data.pxar could not be extracted
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _mautic_restore_backup_id }}"
+        pbs_client_pre_restore_backup_id: "{{ _mautic_restore_target_backup_id }}"
+        pbs_client_restore_args: [--allow-existing-dirs, "true"]
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _mautic_restore_scratch.path }}/archive"
+
+    - name: Mautic restore | Check the archived database, configuration and media
+      ansible.builtin.stat:
+        path: "{{ _mautic_restore_scratch.path }}/archive/{{ item }}"
+      loop:
+        - database/mautic.sql
+        - mautic/config/local.php
+        - mautic/media/files
+        - mautic/media/images
+      register: _mautic_restore_archived
+      changed_when: false
+
+    - name: Mautic restore | Refuse an incomplete archive
+      ansible.builtin.assert:
+        that: >-
+          (item.item.endswith(('.sql', '.php')) and item.stat.isreg | default(false)
+           and item.stat.size | default(0) | int > 0)
+          or (item.item.startswith('mautic/media/') and item.stat.isdir | default(false))
+        fail_msg: >-
+          The selected Mautic archive lacks {{ item.item }}; the original database and
+          files stay untouched.
+      loop: "{{ _mautic_restore_archived.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Mautic restore | Require table definitions in the database dump
+      ansible.builtin.command:
+        argv: [grep, -q, "^CREATE TABLE ", "{{ _mautic_restore_scratch.path }}/archive/database/mautic.sql"]
+      changed_when: false
 
     - name: Mautic restore | Stop only the target Mautic services
       community.docker.docker_compose_v2:

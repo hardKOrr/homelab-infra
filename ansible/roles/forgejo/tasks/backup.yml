@@ -16,8 +16,7 @@
          | default(app_config.app.database_password | default(''), true) }}
     _forgejo_backup_database_name: "{{ app_config.app.database.name | default('') }}"
     _forgejo_backup_data_path: "{{ app_config.app.data_path | default('') }}"
-    _forgejo_backup_service_stopped: false
-    _forgejo_backup_restart_failed: false
+    _forgejo_backup_root: "{{ app_config.app.data_path | default('') | dirname }}/.pbs-backup-root"
   no_log: true
 
 - name: Forgejo backup | Assert the native recovery contract
@@ -39,18 +38,6 @@
       data path, and a configured PBS target before an application-consistent archive can
       run.
 
-- name: Forgejo backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Forgejo backup | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Forgejo. Deploy PBS and re-run this backup; no local
-      archive is treated as a recovery point.
-
 - name: Forgejo backup | Check the instance data directory
   ansible.builtin.stat:
     path: "{{ _forgejo_backup_data_path }}"
@@ -67,148 +54,47 @@
       Forgejo data path {{ _forgejo_backup_data_path }} is missing or is not a real
       directory; refusing to omit repositories, LFS, attachments, or application secrets.
 
-- name: Forgejo backup | Allocate private scratch space
-  ansible.builtin.tempfile:
-    state: directory
-    prefix: forgejo-backup-
-  register: _forgejo_backup_scratch
-  changed_when: true
-
-- name: Forgejo backup | Create the database archive directory
+# data.pxar holds database/ and forgejo/. The archive root sits beside the data directory,
+# outside /tmp (the client's tmpfs), and exists only for the backup; the data directory is
+# mounted read-only at forgejo/ inside the client container.
+- name: Forgejo backup | Create the empty archive root
   ansible.builtin.file:
-    path: "{{ _forgejo_backup_scratch.path }}/database"
+    path: "{{ _forgejo_backup_root }}/{{ item }}"
     state: directory
     mode: "0700"
-
-- name: Forgejo backup | Create the data mount point in the archive root
-  ansible.builtin.file:
-    path: "{{ _forgejo_backup_scratch.path }}/forgejo"
-    state: directory
-    mode: "0700"
+  loop: [database, forgejo]
 
 - name: Forgejo backup | Quiesce Forgejo and upload the paired archive
   block:
-    - name: Forgejo backup | Stop only the Forgejo service
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ instance }}"
-        state: stopped
-        services: [forgejo]
-
-    - name: Forgejo backup | Mark Forgejo stopped
-      ansible.builtin.set_fact:
-        _forgejo_backup_service_stopped: true
-
-    - name: Forgejo backup | Dump the named PostgreSQL database
-      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+    - name: Forgejo backup | Stop Forgejo, dump its database and push one data archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        database_app_instance: "{{ instance }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_dump_file: "{{ _forgejo_backup_scratch.path }}/database/forgejo.dump"
-
-    - name: Forgejo backup | Push one database and data archive to PBS
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _forgejo_backup_scratch.path }}:/archive:ro"
-          - --volume
-          - "{{ _forgejo_backup_data_path }}:/archive/forgejo:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - RETENTION_DAYS
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            test -s /archive/database/forgejo.dump
-            test -d /archive/forgejo
-            proxmox-backup-client backup data.pxar:/archive --all-file-systems true \
-              --backup-id "$BACKUP_ID"
-            # Keep the two newest snapshots plus the configured daily points; restore keeps
-            # its pre-restore safety copy in local scratch, not as a PBS snapshot.
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID (Forgejo database and data)"
-        expand_argument_vars: false
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-      no_log: true
-      register: _forgejo_backup_pbs_upload
-      failed_when: false
-      changed_when: true
-
-    - name: Forgejo backup | Report a failed PBS archive upload
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _forgejo_backup_pbs_upload }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-          - "{{ app_config.backup.client.key_url }}"
-          - "{{ app_config.backup.client.repository }}"
-          - "{{ homelabinfra_infra.backups.host }}"
-          - "host/{{ app_config.backup.backup_id | default('', true) or instance }}"
-        scrub_failure_context: Forgejo backup | PBS archive upload failed
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "/opt/{{ instance }}"
+        pbs_client_stop_services: [forgejo]
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_backup_args: [--all-file-systems, "true"]
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _forgejo_backup_root }}"
+        pbs_client_backup_mounts:
+          - path: "{{ _forgejo_backup_data_path }}"
+            target: "{{ _forgejo_backup_root }}/forgejo"
 
     - name: Forgejo backup | Mark the paired recovery artifact complete
       ansible.builtin.set_fact:
         _application_backup_complete: true
   always:
-    - name: Forgejo backup | Start Forgejo after the attempt
-      block:
-        - name: Start only the Forgejo service
-          community.docker.docker_compose_v2:
-            project_src: "/opt/{{ instance }}"
-            state: present
-            services: [forgejo]
-      rescue:
-        - name: Record a Forgejo restart failure
-          ansible.builtin.set_fact:
-            _forgejo_backup_restart_failed: true
-      when: _forgejo_backup_service_stopped | bool
-
-    - name: Forgejo backup | Remove private scratch data
+    - name: Forgejo backup | Remove the database dump
       ansible.builtin.file:
-        path: "{{ _forgejo_backup_scratch.path }}"
+        path: "{{ _forgejo_backup_root }}/database"
         state: absent
-      when: _forgejo_backup_scratch.path is defined
 
-- name: Forgejo backup | Require Forgejo to have restarted
-  ansible.builtin.assert:
-    that: not (_forgejo_backup_restart_failed | bool)
-    fail_msg: >-
-      Forgejo's backup attempt finished, but its service did not return to the running
-      state. Check the application guest before retrying.
+    # rmdir removes only the empty mount point and root, never data.
+    - name: Forgejo backup | Remove the empty archive root
+      ansible.builtin.command:
+        argv:
+          - rmdir
+          - "{{ _forgejo_backup_root }}/forgejo"
+          - "{{ _forgejo_backup_root }}"
+      changed_when: true
