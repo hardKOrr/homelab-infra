@@ -47,18 +47,8 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-- name: PostgreSQL restore | Require the installed recovery helper
-  ansible.builtin.stat:
-    path: /usr/local/sbin/homelab-postgresql-recovery
-  register: _postgresql_restore_helper
-  changed_when: false
-
-- name: PostgreSQL restore | Assert the recovery helper is installed
-  ansible.builtin.assert:
-    that: _postgresql_restore_helper.stat.exists | default(false)
-    fail_msg: >-
-      The PostgreSQL recovery helper is missing. Deploy the instance with the current
-      PostgreSQL role before requesting an application restore.
+- name: PostgreSQL restore | Install the recovery helper from this checkout
+  ansible.builtin.include_tasks: install-recovery-helper.yml
 
 # Read-only, so the preview checks the target cluster too.
 - name: PostgreSQL restore | Discover the target cluster before mutation

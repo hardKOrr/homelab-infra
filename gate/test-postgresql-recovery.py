@@ -121,8 +121,14 @@ def check_contract():
     pbs_client = task_named(main, "PostgreSQL | Install the pinned PBS client when backups are enabled")
     assert pbs_client["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper = task_named(main, "PostgreSQL | Install the native recovery helper when backups are enabled")
-    assert helper["ansible.builtin.copy"]["src"] == "postgresql-recovery.py"
-    assert helper["ansible.builtin.copy"]["mode"] == "0750"
+    assert helper["ansible.builtin.include_tasks"] == "install-recovery-helper.yml"
+    install = yaml.safe_load((ROLE / "tasks/install-recovery-helper.yml").read_text())[0]
+    assert install["ansible.builtin.copy"]["src"] == "postgresql-recovery.py"
+    assert install["ansible.builtin.copy"]["mode"] == "0750"
+    # Backup and Restore install the helper from their own checkout, never trusting the
+    # copy an older Deploy left on the guest.
+    for task_file in ("backup.yml", "restore.yml"):
+        assert "include_tasks: install-recovery-helper.yml" in (ROLE / "tasks" / task_file).read_text(), task_file
     socket_access = task_named(main, "PostgreSQL | Permit native recovery through the local superuser socket")
     assert socket_access["ansible.builtin.lineinfile"]["line"] == "local replication postgres peer"
     assert socket_access["ansible.builtin.lineinfile"]["insertbefore"] == "BOF"
