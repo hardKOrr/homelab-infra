@@ -1,0 +1,17 @@
+---
+# Runs inside the shared PBS backup while Jellyfin is stopped, before the upload.
+
+- name: Jellyfin backup | Check the stopped database integrity
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import sqlite3,sys;
+        c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);
+        result=c.execute('PRAGMA integrity_check').fetchone()[0];
+        c.close();
+        sys.exit(0 if result == 'ok' else 1)
+      - "{{ _jellyfin_backup_database_path }}"
+  changed_when: false
+  no_log: true
