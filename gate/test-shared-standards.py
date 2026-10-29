@@ -74,9 +74,6 @@ PRIMITIVES = {
 # Frozen today. Parts 02-04 remove rows as roles move onto the shared code; never add one.
 ALLOWLIST = {
     "pbs-client-invocation": {
-        "ansible/roles/authentik/tasks/backup.yml",
-        "ansible/roles/authentik/tasks/install-pbs-client.yml",
-        "ansible/roles/authentik/tasks/restore.yml",
         "ansible/roles/bookstack/files/bookstack-recovery",
         "ansible/roles/bookstack/tasks/main.yml",
         "ansible/roles/forgejo/tasks/backup.yml",
@@ -105,7 +102,6 @@ ALLOWLIST = {
         "ansible/roles/wordpress/tasks/main.yml",
     },
     "pbs-client-install": {
-        "ansible/roles/authentik/tasks/install-pbs-client.yml",
         "ansible/roles/bookstack/tasks/main.yml",
         "ansible/roles/forgejo/tasks/backup.yml",
         "ansible/roles/forgejo/tasks/restore.yml",

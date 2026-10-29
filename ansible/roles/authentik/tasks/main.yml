@@ -41,8 +41,8 @@
 #   authentik_api_url, authentik_api_token
 
 # ── Resolve the image tag ─────────────────────────────────────────────────────
-- name: Install the PBS client for Authentik recovery
-  ansible.builtin.include_tasks: install-pbs-client.yml
+- name: Install the pinned PBS client for Authentik recovery
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
 
 - name: Get latest Authentik release
   ansible.builtin.uri:

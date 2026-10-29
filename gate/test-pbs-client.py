@@ -11,7 +11,7 @@ lookup is replaced by fixed facts. Fake `docker`, `unshare`, `mount` and
 - preview with a point runs the client (archive check, index download, catalog read)
   and extracts nothing; overwrite extracts every archive into its staging path;
 - a lab without PBS, a point outside the source group and keep_last below 2 fail before
-  the client runs;
+  the client runs; a pre-restore point without the archives fails before any extract;
 - every role restore that stops its application before extracting first runs the shared
   preview on every restore, so those failures happen while the application still serves.
 """
@@ -317,6 +317,20 @@ def main():
                    "pbs_client_overwrite": False}
         expect(run(root, "pbs-client-restore.yml", foreign), False, "foreign point")
         assert not calls(root), "a point outside the group must fail before the client runs"
+
+        reset_logs(root)
+        pbs = json.loads(state.read_text())
+        pbs["host/gate-target"] = [{"time": 1767225600, "files": ["index.json.blob"]}]
+        state.write_text(json.dumps(pbs))
+        safety_lacks_archive = overwrite | {
+            "pbs_client_runtime": "native",
+            "pbs_client_pre_restore_point": "host/gate-target/2026-01-01T00:00:00Z",
+            "pbs_client_pre_restore_backup_id": "gate-target"}
+        result = run(root, "pbs-client-restore.yml", safety_lacks_archive)
+        expect(result, False, "pre-restore point without the archives")
+        assert "lacks data.pxar" in result.stdout + result.stderr
+        assert not any(c["args"][0] == "restore" for c in calls(root))
+        assert not list((root / "stage/data").iterdir()), "extracted despite a bad pre-restore point"
 
         reset_logs(root)
         for task_file in ["pbs-client-backup.yml", "pbs-client-restore.yml"]:

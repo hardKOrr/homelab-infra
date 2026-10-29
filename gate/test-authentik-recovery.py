@@ -3,7 +3,6 @@
 
 import copy
 import http.server
-import json
 import os
 import shutil
 import subprocess
@@ -13,10 +12,11 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-SCRUB_FAILURE_TASK = ROOT / "ansible/tasks/fail-with-scrubbed-output.yml"
 
 
 def read_yaml(path):
@@ -53,34 +53,12 @@ def fixture_tasks(tasks, root, case):
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         task.pop("no_log", None)
-        if task.get("name", "").endswith("Resolve the PBS client target"):
-            task.pop("ansible.builtin.include_tasks", None)
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": "authentik-test@pbs.invalid:datastore",
-                "k8s_pbs_fingerprint": "test-fingerprint",
-                "k8s_pbs_password": "test-password",
-            }
-        if task.get("ansible.builtin.include_tasks", "").endswith(
-            "fail-with-scrubbed-output.yml"
-        ):
-            task["ansible.builtin.include_tasks"] = str(SCRUB_FAILURE_TASK)
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {
                 "argv": [str(root / "bin/service"), compose["state"]]
             }
-        if task.get("name") == "Authentik restore | Extract the selected PBS archive":
-            task["ansible.builtin.command"]["argv"][0] = str(root / "bin/proxmox-backup-client")
-        elif task.get("name", "").startswith("Authentik ") and "proxmox-backup-client" in str(
-            task.get("ansible.builtin.command", {}).get("argv", [])
-        ):
-            task["ansible.builtin.command"]["argv"][0] = str(root / "bin/proxmox-backup-client")
-        if task.get("name") == "Authentik restore | Require the installed PBS client":
-            task["ansible.builtin.stat"]["path"] = str(root / "bin/proxmox-backup-client")
-        if task.get("name") == "Authentik backup | Require the installed PBS client":
-            task["ansible.builtin.stat"]["path"] = str(root / "bin/proxmox-backup-client")
         if task.get("name") in [
             "Authentik backup | Read the running Compose services",
             "Authentik restore | Inspect running Compose services for diagnostics",
@@ -138,22 +116,9 @@ if args[0]=='backup':
     if case=='backup-failure':
         print('fixture upload failed',file=sys.stderr)
         raise SystemExit(8)
-    if case!='backup-no-new-snapshot':
-        (root/'new-snapshot-created').touch()
     raise SystemExit(0)
 if args[:2]==['snapshot','list']:
-    snapshots=[{'backup-time':1792112400}]
-    if (root/'new-snapshot-created').exists():
-        snapshots.append({'backup-time':1792116000})
-    print(json.dumps(snapshots))
-    raise SystemExit(0)
-if args[:2]==['snapshot','files']:
-    if case=='safety-point-missing' and '00:30:00Z' in args[2]:
-        print(json.dumps([]))
-        raise SystemExit(0)
-    print(json.dumps(['data.pxar']))
-    raise SystemExit(0)
-if args[0]=='prune':
+    print('host/authentik/2026-10-16T00:00:00Z')
     raise SystemExit(0)
 if args[0]=='restore':
     if case=='extract-failure':
@@ -253,8 +218,8 @@ def check_contract_and_secret_continuity():
 
     main = read_yaml(ROOT / "ansible/roles/authentik/tasks/main.yml")
     main_tasks = list(tasks_recursive(main))
-    install = task_named(main_tasks, "Install the PBS client for Authentik recovery")
-    assert install["ansible.builtin.include_tasks"] == "install-pbs-client.yml"
+    install = task_named(main_tasks, "Install the pinned PBS client for Authentik recovery")
+    assert install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     marker = task_named(main_tasks, "Check whether this instance already has a PostgreSQL database")
     assert "{{ app_config.app.data_path }}/database/PG_VERSION" in marker["ansible.builtin.stat"]["path"]
     guard = task_named(main_tasks, "Refuse to replace credentials for an initialized database")
@@ -266,36 +231,20 @@ def check_contract_and_secret_continuity():
     assert "_authentik_recorded_sso.secret_key" in secret_text
     assert "_authentik_recorded_sso.admin_password" in secret_text
 
-    pbs = read_yaml(ROOT / "ansible/roles/authentik/tasks/install-pbs-client.yml")
-    pbs_tasks = list(tasks_recursive(pbs))
-    supported = task_named(pbs_tasks, "Authentik PBS client | Require a supported Debian release")
-    assert supported["ansible.builtin.assert"]["that"] == [
-        "ansible_distribution == 'Debian'",
-        "ansible_distribution_release in ['bookworm', 'trixie']",
-    ]
-
 
 def check_backup_and_restore_contract():
     backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
     backup_tasks = list(tasks_recursive(backup))
     assert "data.pxar" in str(backup)
-    assert "proxmox-backup-client" in str(backup)
     assert "state: stopped" in yaml.safe_dump(backup)
     assert "state: present" in yaml.safe_dump(backup)
     assert "PG_VERSION" in str(backup)
     assert "_authentik_backup_expected_services" in str(backup)
-    assert task_named(backup_tasks, "Authentik backup | Report a failed PBS upload")["ansible.builtin.include_tasks"].endswith(
-        "fail-with-scrubbed-output.yml"
-    )
-    baseline = task_named(backup_tasks, "Authentik backup | Read the existing recovery points")
-    assert baseline["ansible.builtin.command"]["argv"][-2:] == ["--output-format", "json"]
-    verify_new_snapshot = task_named(
-        backup_tasks, "Authentik backup | Confirm PBS recorded a new recovery point"
-    )
-    assert any("_authentik_backup_snapshots_before.stdout" in condition
-               and "_authentik_backup_snapshots.stdout" in condition
-               and "length" in condition
-               for condition in verify_new_snapshot["ansible.builtin.assert"]["that"])
+    upload = task_named(backup_tasks, "Authentik backup | Upload the complete data directory to PBS")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _authentik_backup_data_path }}"}
+    ]
 
     restore = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
     restore_tasks = list(tasks_recursive(restore))
@@ -309,7 +258,6 @@ def check_backup_and_restore_contract():
     assert "state: stopped" in yaml.safe_dump(restore)
     assert "state: present" in yaml.safe_dump(restore)
     assert "not (restore_overwrite | bool)" in str(restore)
-    assert "No Authentik data was changed" in str(restore)
     assert not any(
         task.get("name") == "Authentik restore | Require all four target services to be running"
         for task in restore_tasks
@@ -317,13 +265,14 @@ def check_backup_and_restore_contract():
     assert task_named(
         restore_tasks, "Authentik restore | Report service status without gating recovery"
     )
-    assert task_named(
-        restore_tasks, "Authentik restore | Require the independent safety archive"
+    preview = task_named(
+        restore_tasks, "Authentik restore | List or verify the recovery point before changing Authentik"
     )
-    for task in restore_tasks:
-        argv = task.get("ansible.builtin.command", {}).get("argv", [])
-        if len(argv) > 2 and argv[:2] == ["proxmox-backup-client", "snapshot"] and "files" in argv:
-            assert "--output-format" not in argv
+    assert preview["vars"]["pbs_client_overwrite"] is False and "when" not in preview
+    extract = task_named(restore_tasks, "Authentik restore | Extract the selected PBS archive")
+    assert extract["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _authentik_restore_stage.path }}/data"}
+    ]
 
     remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
     remove_tasks = list(tasks_recursive(remove))
@@ -352,7 +301,6 @@ def check_transactional_restore_fixtures():
         "postgresql-down",
         "health-failure",
         "extract-failure",
-        "safety-point-missing",
     ]:
         with tempfile.TemporaryDirectory(prefix="authentik-recovery-") as tmp:
             root = Path(tmp)
@@ -381,15 +329,12 @@ def check_transactional_restore_fixtures():
                 else:
                     assert result.returncode != 0, result.stdout + result.stderr
                     assert marker == "original"
-                    if case == "safety-point-missing":
-                        expected_events = []
-                    elif case == "health-failure":
+                    if case == "health-failure":
                         expected_events = ["stopped", "present", "stopped", "present"]
                     else:
                         expected_events = ["stopped", "stopped", "present"]
                     assert events == expected_events
-                    if case != "safety-point-missing":
-                        assert "rollback" in result.stdout.lower() or "rollback" in result.stderr.lower()
+                    assert "rollback" in result.stdout.lower() or "rollback" in result.stderr.lower()
             finally:
                 server.shutdown()
                 server.server_close()
@@ -398,7 +343,7 @@ def check_transactional_restore_fixtures():
 
 def check_backup_restarts_the_instance():
     backup_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
-    for case in ["success", "backup-failure", "backup-no-new-snapshot"]:
+    for case in ["success", "backup-failure"]:
         with tempfile.TemporaryDirectory(prefix="authentik-backup-") as tmp:
             root = Path(tmp)
             write_fixture_scripts(root)
@@ -421,10 +366,7 @@ def check_backup_restarts_the_instance():
                 else:
                     assert result.returncode != 0, result.stdout + result.stderr
                     output = result.stdout.lower() + result.stderr.lower()
-                    if case == "backup-no-new-snapshot":
-                        assert "new pbs recovery point" in output, output
-                    else:
-                        assert "backup" in output, output
+                    assert "backup" in output, output
             finally:
                 server.shutdown()
                 server.server_close()

@@ -20,9 +20,6 @@ authentik_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
-    client:
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      component: main
 
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
