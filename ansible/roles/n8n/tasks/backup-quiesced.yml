@@ -1,0 +1,20 @@
+---
+# Runs inside the shared PBS backup while n8n is stopped, before the upload.
+
+- name: n8n backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _n8n_backup_scratch.path }}/n8n.dump"
+
+- name: n8n backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _n8n_backup_scratch.path }}/n8n.dump"
+  register: _n8n_backup_dump
+  changed_when: false
+
+- name: n8n backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _n8n_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: n8n's database dump is empty; refusing to publish the recovery point.
