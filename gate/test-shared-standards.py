@@ -45,6 +45,7 @@ PRIMITIVES = {
         "a proxmox-backup-client invocation",
         (
             "ansible/tasks/backup/pbs-client*.yml",
+            "ansible/tasks/backup/scripts/pbs-client.sh",
             "ansible/templates/kubernetes/recovery-*.yaml.j2",
         ),
         lambda path, code: bool(PBS_CLIENT.search(code)),
@@ -53,6 +54,7 @@ PRIMITIVES = {
         "installing the PBS client package or repository",
         (
             "ansible/tasks/backup/pbs-client*.yml",
+            "ansible/tasks/backup/scripts/pbs-client.sh",
             "ansible/templates/kubernetes/recovery-*.yaml.j2",
         ),
         lambda path, code: bool(PBS_CLIENT_INSTALL.search(code)),
@@ -71,29 +73,10 @@ PRIMITIVES = {
     ),
 }
 
-# Frozen today. Parts 02-04 remove rows as roles move onto the shared code; never add one.
+# Every role now uses the shared code, so each set stays empty; never add a row.
 ALLOWLIST = {
-    "pbs-client-invocation": {
-        "ansible/roles/bookstack/files/bookstack-recovery",
-        "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/open-webui/files/open-webui-recovery",
-        "ansible/roles/open-webui/tasks/restore.yml",
-        "ansible/roles/plane/files/plane-recovery",
-        "ansible/roles/plane/tasks/restore.yml",
-        "ansible/roles/wordpress/files/wordpress-recovery",
-        "ansible/roles/wordpress/tasks/main.yml",
-    },
-    "pbs-client-install": {
-        "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/open-webui/files/open-webui-recovery",
-        "ansible/roles/open-webui/tasks/main.yml",
-        "ansible/roles/open-webui/tasks/restore.yml",
-        "ansible/roles/open-webui/templates/open-webui-recovery.env.j2",
-        "ansible/roles/plane/files/plane-recovery",
-        "ansible/roles/plane/tasks/restore.yml",
-        "ansible/roles/plane/templates/plane-recovery.env.j2",
-        "ansible/roles/wordpress/tasks/main.yml",
-    },
+    "pbs-client-invocation": set(),
+    "pbs-client-install": set(),
     "database-dump": set(),
     "k8s-recovery-job": set(),
 }
