@@ -1,7 +1,9 @@
 #!/bin/bash
 # Application-consistent Open WebUI capture runner. It uses the product's documented
-# stop-and-copy boundary for the complete persistent data directory and PBS's native pxar
-# member. Credentials are supplied only by the root-only config rendered by the role.
+# stop-and-copy boundary for the complete persistent data directory, checks webui.db, and
+# uploads the directory as data.pxar through the shared PBS client script
+# (tasks/backup/scripts/pbs-client.sh). Credentials are supplied only by the root-only
+# client settings the role installs; this script contains none.
 set -Eeuo pipefail
 umask 077
 
@@ -17,8 +19,7 @@ set -a
 set +a
 
 for required in OPEN_WEBUI_PROJECT_DIR OPEN_WEBUI_SERVICE OPEN_WEBUI_DATA_PATH \
-  OPEN_WEBUI_CLIENT_IMAGE OPEN_WEBUI_PBS_KEY_URL OPEN_WEBUI_PBS_APT_REPO \
-  PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD OPEN_WEBUI_BACKUP_ID; do
+  OPEN_WEBUI_IMAGE OPEN_WEBUI_BACKUP_ID PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG; do
   [[ -n "${!required:-}" ]] || { echo "Open WebUI recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
@@ -55,33 +56,20 @@ backup() {
     exit 1
   fi
   lock_acquired=1
-  export BACKUP_ID="$OPEN_WEBUI_BACKUP_ID"
   # SQLite is single-instance state. Stop this Compose service before checking or reading
   # the data tree; selected Ollama/LiteLLM services and their model stores stay untouched.
   "${compose[@]}" stop "$OPEN_WEBUI_SERVICE" >/dev/null
   stopped=1
   restart_on_failure=1
-  docker run --rm --network host \
-    --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
-    --env PBS_REPOSITORY --env PBS_FINGERPRINT --env PBS_PASSWORD \
-    --env BACKUP_ID \
-    --env "PBS_KEY_URL=$OPEN_WEBUI_PBS_KEY_URL" \
-    --env "PBS_APT_REPO=$OPEN_WEBUI_PBS_APT_REPO" \
-    "$OPEN_WEBUI_CLIENT_IMAGE" /bin/sh -ceu '
-      export DEBIAN_FRONTEND=noninteractive
-      apt-get update -qq
-      apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null
-      install -d -m 0755 /etc/apt/keyrings
-      curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-      echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-        > /etc/apt/sources.list.d/proxmox-backup-client.list
-      apt-get update -qq
-      apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-      test -s /source/webui.db
-      test "$(sqlite3 -readonly /source/webui.db "PRAGMA integrity_check;")" = ok
-      proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
-      echo "Open WebUI backup complete: host/$BACKUP_ID (data.pxar; SQLite integrity verified)"
-    '
+  # The pinned Open WebUI image's own Python checks the database it will open.
+  docker run --rm --network none --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
+    --entrypoint python3 "$OPEN_WEBUI_IMAGE" -c '
+import sqlite3, sys
+result = sqlite3.connect("file:/source/webui.db?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
+sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)'
+  # Open WebUI keeps every point; PBS's own retention prunes the group.
+  "$PBS_CLIENT_SCRIPT" backup --id "$OPEN_WEBUI_BACKUP_ID" --no-prune data.pxar:"$OPEN_WEBUI_DATA_PATH"
+  echo "Open WebUI backup complete (data.pxar; SQLite integrity verified)"
   "${compose[@]}" start "$OPEN_WEBUI_SERVICE" >/dev/null
   stopped=0
   restart_on_failure=0
