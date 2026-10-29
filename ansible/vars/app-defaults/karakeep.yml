@@ -19,7 +19,7 @@ karakeep_defaults:
     image: ghcr.io/karakeep-app/karakeep:0.33.2
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
     meilisearch_image: getmeili/meilisearch:v1.41.0
-    port: 3000
+    port: 3005
     # SQLite database, uploaded assets and crawled archives. The role binds this path
     # into the application container as /data.
     data_path: "/opt/{{ instance }}/data"
@@ -54,9 +54,3 @@ karakeep_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
-    client:
-      image: buildpack-deps:bookworm-curl
-      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      suite: bookworm
-      component: main

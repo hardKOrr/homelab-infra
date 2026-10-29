@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/backup.yml").read_text())
@@ -30,23 +32,7 @@ def fixture_tasks(tasks, root):
     """Keep production path and command tasks; stub only PBS and Compose boundaries."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
-        if task.get("name") == "Karakeep backup | Push one data archive and retain the newest points":
-            # Test values are synthetic; unhide this boundary so a stub failure is useful.
-            task["no_log"] = False
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            restore_resolver = task.get("name", "").startswith("Karakeep restore")
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": ("pbs-user@pbs.example.invalid:archive"
-                                       if restore_resolver else "test"),
-                "k8s_pbs_fingerprint": ("pbs-fingerprint-secret"
-                                         if restore_resolver else "test"),
-                "k8s_pbs_password": ("pbs-password-secret" if restore_resolver else "test"),
-            }
-            if restore_resolver:
-                task["no_log"] = True
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {"argv": [
@@ -91,35 +77,24 @@ def run_play(root, tasks, variables, case):
 def make_stubs(root):
     (root / "bin").mkdir()
     scripts = {
-        "docker": r'''#!/usr/bin/env python3
+        "proxmox-backup-client": r'''#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['KARAKEEP_TEST_CASE']
-expected_repository = ('test' if case.startswith('backup-')
-                       else 'pbs-user@pbs.example.invalid:archive')
-assert os.environ.get('PBS_REPOSITORY') == expected_repository
-script=args[-1]
-if 'proxmox-backup-client backup' in script:
-    volumes=[args[i+1] for i,value in enumerate(args[:-1]) if value=='--volume']
-    root=Path(os.environ['KARAKEEP_TEST_ROOT'])
-    assert volumes == [str(root/'data')+':/source/data:ro',
-                       str(root/'meilisearch')+':/source/meilisearch:ro'], volumes
-    assert script.count('proxmox-backup-client backup ') == 1, script
-    assert 'proxmox-backup-client backup data.pxar:/source --all-file-systems true' in script, script
-    assert '--backup-id' in script, script
-    assert 'proxmox-backup-client prune "host/' in script and '--keep-last 2' in script, script
+root=Path(os.environ['KARAKEEP_TEST_ROOT'])
+if args[0] == 'backup':
+    archive_root = root/'project'/'.pbs-backup-root'
+    assert args == ['backup', f'data.pxar:{archive_root}'], args
+    assert sorted(p.name for p in archive_root.iterdir()) == ['data', 'meilisearch']
     raise SystemExit(7 if case=='backup-failure' else 0)
-if 'SNAPSHOT' not in os.environ:
+if args[:2] == ['snapshot', 'list']:
     print('host/karakeep/2026-10-12T00:00:00Z')
     raise SystemExit(0)
+assert args[:3] == ['restore', 'host/karakeep/2026-10-12T00:00:00Z', 'data.pxar'], args
 if case=='extract-failure':
-    print(os.environ['PBS_REPOSITORY'], os.environ['SNAPSHOT'], os.environ['PBS_PASSWORD'],
-          os.environ['PBS_FINGERPRINT'], file=sys.stderr)
     raise SystemExit(7)
-mount=args[args.index('--volume')+1]
-assert mount.endswith(':/restore'), mount
-stage=Path(mount[:-9])
+stage=Path(args[3])
 assert stage.parent == Path(os.environ['KARAKEEP_TEST_ROOT']), stage
 (stage/'data').mkdir()
 (stage/'data'/'restored.sqlite').write_text('recovered database and assets\n')
@@ -194,10 +169,7 @@ def backup_check(case):
             "karakeep_meilisearch_data_path": str(search), "homelabinfra_infra": {"backups": {}},
             "app_config": {
                 "app": {"data_path": str(data)},
-                "backup": {"enabled": True, "application_consistent": True,
-                           "client": {"image": "test", "key_url": "test",
-                                      "repository": "test", "suite": "test",
-                                      "component": "test"}},
+                "backup": {"enabled": True, "application_consistent": True},
             },
         }
         result = run_play(root, backup_source, variables, case)
@@ -205,11 +177,7 @@ def backup_check(case):
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert (data / "original.sqlite").read_text() == "original app state\n"
         assert (search / "original-index").read_text() == "original index\n"
-        if case == "backup-missing-database":
-            assert not (root / "services").exists(), "missing database stopped the app"
-        else:
-            states = (root / "services").read_text().splitlines()
-            assert states == ["stopped", "present"], states
+        assert not (root / "project/.pbs-backup-root").exists(), "the archive root was left behind"
 
 
 def restore_check(case, server):
@@ -233,10 +201,7 @@ def restore_check(case, server):
             "homelabinfra_infra": {"backups": {}},
             "app_config": {
                 "app": {"data_path": str(data), "port": server.server_port},
-                "backup": {"enabled": True, "application_consistent": True,
-                           "client": {"image": "test", "key_url": "test",
-                                      "repository": "test", "suite": "test",
-                                      "component": "test"}},
+                "backup": {"enabled": True, "application_consistent": True},
             },
         }
         result = run_play(root, restore_source, variables, case)
@@ -264,10 +229,6 @@ def restore_check(case, server):
             assert states[-1] == ("present" if success else "stopped"), states
         if case == "foreign-group":
             assert "must belong to host/karakeep/" in result.stdout
-        if case == "extract-failure":
-            for secret in ["pbs-user@pbs.example.invalid:archive", "pbs-fingerprint-secret",
-                           "pbs-password-secret", snapshot]:
-                assert secret not in result.stdout, result.stdout
 
 
 def main():
@@ -282,10 +243,16 @@ def main():
     assert {"backup", "restore"} <= set(actions)
     assert "rollback" not in actions
     backup_task = next(task for task in all_tasks(backup_source)
-                       if task.get("name") == "Karakeep backup | Push one data archive and retain the newest points")
-    assert backup_task["environment"] and backup_task["changed_when"] is True
-    assert backup_task["no_log"] is True
-    assert "--all-file-systems true" in backup_task["ansible.builtin.command"]["argv"][-1]
+                       if task.get("name") == "Karakeep backup | Stop only this instance's services and push one data archive")
+    assert backup_task["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    backup_vars = backup_task["vars"]
+    assert backup_vars["pbs_client_runtime"] == "docker"
+    assert backup_vars["pbs_client_stop_services"] == ["web", "chrome", "meilisearch"]
+    assert backup_vars["pbs_client_backup_args"] == ["--all-file-systems", "true"]
+    # One data.pxar keeps the data/ and meilisearch/ layout of every earlier point.
+    archive_root = backup_vars["pbs_client_archives"][0]["path"]
+    assert [m["target"] for m in backup_vars["pbs_client_backup_mounts"]] == [
+        archive_root + "/data", archive_root + "/meilisearch"]
     backup_guard = next(task for task in all_tasks(backup_source)
                         if task.get("name") == "Karakeep backup | Require a non-empty SQLite database before backup")
     assert backup_guard["ansible.builtin.assert"]["that"]

@@ -13,19 +13,8 @@
     state: present
     update_cache: true
 
-- name: MariaDB | Install the PBS client repository when application backups are enabled
-  ansible.builtin.include_tasks: install-pbs-client.yml
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - >-
-      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
-       | length) > 0
-
-- name: MariaDB | Install the PBS backup client
-  ansible.builtin.apt:
-    name: proxmox-backup-client
-    state: present
-    update_cache: true
+- name: MariaDB | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
     - >-
@@ -41,6 +30,25 @@
     dest: /etc/mysql/mariadb.conf.d/z-homelab-infra.cnf
     mode: "0644"
   notify: Restart MariaDB
+
+# Remove with delete_data=true deletes data_path and keeps the guest. The package only
+# initializes its data directory on first install, so Deploy does it here, exactly as the
+# package would, when no system schema exists. A directory holding data is never touched.
+- name: MariaDB | Check for the system schema
+  ansible.builtin.stat:
+    path: "{{ app_config.app.data_path }}/mysql"
+  register: _mariadb_system_schema
+
+- name: MariaDB | Initialize an empty data directory
+  ansible.builtin.command:
+    argv:
+      - mariadb-install-db
+      - --user=mysql
+      - "--datadir={{ app_config.app.data_path }}"
+      - --auth-root-authentication-method=socket
+      - --skip-test-db
+  changed_when: true
+  when: not _mariadb_system_schema.stat.exists
 
 - name: MariaDB | Enable and start service
   ansible.builtin.systemd:

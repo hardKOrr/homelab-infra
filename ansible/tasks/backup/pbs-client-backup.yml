@@ -6,6 +6,10 @@
 #   pbs_client_archives       [{name: data.pxar, path: /abs/dir}], one or more
 #   pbs_client_backup_args    optional extra `backup` arguments, such as
 #                             ['--exclude', '/logs'] or ['--all-file-systems', 'true']
+#   pbs_client_backup_mounts  optional [{path, target}]: host directories seen read-only at
+#                             `target`, an existing empty directory inside an archive path,
+#                             so one archive holds several host directories. Pass
+#                             ['--all-file-systems', 'true'] so the client enters them
 #   pbs_client_backup_id      optional; default `backup.backup_id`, else `instance`
 #   pbs_client_keep_last      optional, default 2 and never less
 #   pbs_client_keep_daily     optional, default `backup.retention_days` (14); '' omits it
@@ -34,6 +38,7 @@
       {{ pbs_client_keep_daily | default(app_config.backup.retention_days | default(14), true) }}
     _pbs_backup_archives: "{{ pbs_client_archives | default([]) }}"
     _pbs_backup_services: "{{ pbs_client_stop_services | default([]) }}"
+    _pbs_backup_mounts: "{{ pbs_client_backup_mounts | default([]) }}"
     pbs_client_recovery_point: ""
 
 - name: PBS backup | Validate the backup request
@@ -46,10 +51,16 @@
       - _pbs_backup_archives | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9_.-]*\.(pxar|img|conf|log)$') | list | length == _pbs_backup_archives | length
       - _pbs_backup_archives | map(attribute='name') | unique | list | length == _pbs_backup_archives | length
       - _pbs_backup_services | length == 0 or pbs_client_runtime == 'native' or pbs_client_compose_project | default('') | length > 0
+      - _pbs_backup_mounts | rejectattr('target', 'defined') | list | length == 0
+      - >-
+        _pbs_backup_mounts | map(attribute='target') | select('match',
+        '^(' ~ (_pbs_backup_archives | map(attribute='path') | map('regex_escape') | join('|')) ~ ')/')
+        | list | length == _pbs_backup_mounts | length
     fail_msg: >-
       PBS backup needs a safe backup id, keep_last of at least 2 so the previous point
       survives a same-day backup, and uniquely named archives
       (<name>.pxar|img|conf|log). Docker services to stop need their Compose project.
+      Each extra mount needs a target inside an archive path.
 
 - name: PBS backup | Resolve the PBS client target
   ansible.builtin.include_tasks: resolve-pbs-target.yml
@@ -71,6 +82,25 @@
     label: "{{ item.name }}"
   register: _pbs_backup_sources
   changed_when: false
+
+- name: PBS backup | Check each extra mount source and target
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ (_pbs_backup_mounts | map(attribute='path') | list) + (_pbs_backup_mounts | map(attribute='target') | list) }}"
+  register: _pbs_backup_mount_paths
+  changed_when: false
+
+- name: PBS backup | Require real extra mount directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.isdir | default(false)
+      - not (item.stat.islnk | default(false))
+    fail_msg: >-
+      {{ item.item }} is missing, a link, or not a directory; refusing to create a recovery
+      point without it.
+  loop: "{{ _pbs_backup_mount_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: PBS backup | Require real archive sources
   ansible.builtin.assert:
@@ -119,7 +149,8 @@
       vars:
         pbs_client_context: "PBS backup of host/{{ _pbs_backup_id }}"
         pbs_client_changes: true
-        pbs_client_mounts: "{{ _pbs_backup_archives | map('combine', {'mode': 'ro'}) | list }}"
+        pbs_client_mounts: >-
+          {{ (_pbs_backup_archives + _pbs_backup_mounts) | map('combine', {'mode': 'ro'}) | list }}
         pbs_client_env:
           PBS_BACKUP_ID: "{{ _pbs_backup_id }}"
           PBS_KEEP_LAST: "{{ _pbs_backup_keep_last }}"

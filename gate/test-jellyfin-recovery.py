@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/backup.yml").read_text())
@@ -69,15 +71,8 @@ def fixture_tasks(tasks, root):
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         include = task.get("ansible.builtin.include_tasks", "")
-        if include.endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test",
-                "k8s_pbs_password": "test",
-            }
+        if stub_pbs_client(task, root / "bin/proxmox-backup-client"):
+            pass
         elif include.endswith("upsert-item.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -127,22 +122,11 @@ def check_backup(fail_upload, db_relative="data/jellyfin.db"):
         with sqlite3.connect(config / db_relative) as db:
             db.execute("create table canary(value text)")
             db.execute("insert into canary values ('library-user-config')")
-        write_script(root, "docker", """#!/usr/bin/env python3
+        write_script(root, "proxmox-backup-client", """#!/usr/bin/env python3
 import os,sys
 args=sys.argv[1:]
-assert os.environ['PBS_REPOSITORY']=='test'
-assert args[args.index('--volume')+1] == os.environ['JELLYFIN_TEST_ROOT']+'/config:/source:ro'
-assert 'backup data.pxar:/source --backup-id "$BACKUP_ID"' in args[-1]
-assert '--keep-last 2' in args[-1]
-assert os.environ['BACKUP_ID']=='jellyfin'
+assert args == ['backup', 'data.pxar:' + os.environ['JELLYFIN_TEST_ROOT'] + '/config'], args
 raise SystemExit(7 if os.environ['FAIL_UPLOAD']=='1' else 0)
-""")
-        write_script(root, "service", """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['jellyfin']
-with Path(os.environ['JELLYFIN_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
 """)
         defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/jellyfin.yml").read_text())["jellyfin_defaults"]
         defaults["app"]["config_path"] = str(config)
@@ -163,7 +147,34 @@ with Path(os.environ['JELLYFIN_TEST_ROOT'],'services').open('a') as log:
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
                                 env=env, text=True, capture_output=True, check=False)
         assert (result.returncode != 0) == fail_upload, result.stdout + result.stderr
-        assert (root / "services").read_text().splitlines() == ["stopped", "present"]
+
+
+def check_backup_inputs_and_hook():
+    """The shared PBS client stops, uploads and restarts; Jellyfin supplies its inputs and an
+    integrity check that runs while it is stopped."""
+    upload = next(t for t in backup_source if t["name"] == "Jellyfin backup | Stop and archive only Jellyfin")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_compose_project"] == "{{ jellyfin_project_dir }}"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
+    assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
+    hook = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/backup-quiesced.yml").read_text())
+    for healthy in [True, False]:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "jellyfin.db"
+            if healthy:
+                sqlite3.connect(database).close()
+            else:
+                database.write_text("not a sqlite database")
+            playbook = Path(directory) / "hook.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"_jellyfin_backup_database_path": str(database)},
+                "tasks": hook,
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                                    text=True, capture_output=True, check=False)
+            assert (result.returncode == 0) == healthy, result.stdout + result.stderr
 
 
 def check_restore(case, server, db_relative="data/jellyfin.db"):
@@ -175,20 +186,16 @@ def check_restore(case, server, db_relative="data/jellyfin.db"):
         (config / "original.txt").write_text("fresh deploy state\n")
         with sqlite3.connect(config / db_relative) as db:
             db.execute("create table original(value text)")
-        write_script(root, "docker", """#!/usr/bin/env python3
+        write_script(root, "proxmox-backup-client", """#!/usr/bin/env python3
 import os,sqlite3,sys
 from pathlib import Path
 args=sys.argv[1:]
-assert os.environ.get('PBS_REPOSITORY') == 'test'
-if 'snapshot list' in args[-1]:
+if args[:2] == ['snapshot', 'list']:
     print('host/jellyfin/2026-10-10T00:00:00Z')
 else:
-    assert os.environ['SNAPSHOT'] == 'host/jellyfin/2026-10-10T00:00:00Z'
-    assert args[args.index('--tmpfs')+1] == '/tmp:rw,noexec,nosuid,nodev,size=256m'
+    assert args[:3] == ['restore', 'host/jellyfin/2026-10-10T00:00:00Z', 'data.pxar'], args
     if os.environ['JELLYFIN_TEST_CASE']=='extract-failure': raise SystemExit(7)
-    mount=args[args.index('--volume')+1]
-    assert mount.endswith(':/restore')
-    target=Path(mount[:-9])
+    target=Path(args[3])
     relative=Path(os.environ['JELLYFIN_TEST_DB_RELATIVE'])
     database=target/relative
     if os.environ['JELLYFIN_TEST_CASE']!='archive-missing-db':
@@ -254,9 +261,7 @@ raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0
                 "app_config": {
                     "app": {"config_path": str(config), "port": server.server_port,
                             "puid": os.getuid(), "pgid": os.getgid()},
-                    "backup": {"enabled": True, "application_consistent": True,
-                               "client": {"key_url": "test", "repository": "test",
-                                          "suite": "test", "component": "test", "image": "test"}},
+                    "backup": {"enabled": True, "application_consistent": True},
                 },
             },
             "tasks": fixture_tasks(restore_source, root),
@@ -330,6 +335,7 @@ def main():
     check_backup(False)
     check_backup(True)
     check_backup(False, "data/data/jellyfin.db")
+    check_backup_inputs_and_hook()
     print("Jellyfin: native PBS backup, read-only planning, app/group guards, API verification, and restore rollback passed")
 
 

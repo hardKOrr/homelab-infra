@@ -24,18 +24,6 @@
     fail_msg: "Plex recovery state must not overlap declared media or the transcode path."
   loop: "{{ app_config.app.mounts | default([], true) }}"
 
-- name: Plex restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Plex restore | Assert PBS is available
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Plex. Deploy PBS before listing or restoring
-      application data.
-
 - name: Plex restore | Keep transcode outside recovery state
   ansible.builtin.assert:
     that:
@@ -60,61 +48,15 @@
       restore_snapshot.startswith('host/' ~ _plex_restore_backup_id ~ '/')
     fail_msg: "The selected Plex snapshot must belong to the requested host backup group."
 
-- name: Plex restore | List available snapshots
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-  register: _plex_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _plex_restore_backup_id }}"
-  no_log: true
-
-- name: Plex restore | Print available snapshots
-  ansible.builtin.debug:
-    msg: "PBS snapshots for host/{{ _plex_restore_backup_id }}:\n{{ _plex_snapshots.stdout }}"
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-
-- name: Plex restore | Explain the read-only plan
-  ansible.builtin.debug:
-    msg: >-
-      No data was changed. Re-run with snapshot=<PBS snapshot ID> and overwrite=true to
-      replace {{ plex_state_path }} from one application-consistent data.pxar.
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+# Runs on every restore, before the stop below: a point from another group, an
+# unreachable PBS or a point without data.pxar fails while Plex still serves.
+- name: Plex restore | List or verify the recovery point before changing Plex
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _plex_restore_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
+    pbs_client_overwrite: false
 
 - name: Plex restore | Create a private staging directory
   ansible.builtin.tempfile:
@@ -144,48 +86,13 @@
           - "{{ instance }}"
 
     - name: Plex restore | Extract the selected archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ _plex_restore_tmp.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-          - --env
-          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_snapshot }}"
-      no_log: true
-      changed_when: true
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _plex_restore_backup_id }}"
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _plex_restore_tmp.path }}"
 
     - name: Plex restore | Check the staged recovery unit
       ansible.builtin.stat:

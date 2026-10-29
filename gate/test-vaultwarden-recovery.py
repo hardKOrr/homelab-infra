@@ -13,6 +13,8 @@ import threading
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE_PLAYBOOK = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
@@ -176,22 +178,9 @@ def check_contract_and_dispatch():
     assert "destroy_guest" in str(unregister["when"])
     assert "delete_data" in str(unregister["when"])
 
-    pbs_client = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/install-pbs-client.yml")
-    pbs_tasks = list(tasks_recursive(pbs_client))
-    supported = task_named(pbs_tasks, "Vaultwarden PBS client | Require a supported Debian release")
-    assert supported["ansible.builtin.assert"]["that"] == [
-        "ansible_distribution == 'Debian'",
-        "ansible_distribution_release in ['bookworm', 'trixie']",
-    ]
-    bookworm_key = task_named(pbs_tasks, "Vaultwarden PBS client | Select the Debian Bookworm signing key")
-    assert bookworm_key["ansible.builtin.set_fact"]["_vaultwarden_pbs_keyring"].endswith(
-        "proxmox-release-bookworm.gpg")
-    trixie_key = task_named(pbs_tasks, "Vaultwarden PBS client | Select the Debian Trixie signing key")
-    assert trixie_key["ansible.builtin.set_fact"]["_vaultwarden_pbs_key_url"].endswith(
-        "proxmox-archive-keyring-trixie.gpg")
-    repository = task_named(pbs_tasks, "Vaultwarden PBS client | Configure the signed client repository")
-    assert "{{ ansible_distribution_release }}" in repository["ansible.builtin.copy"]["content"]
-    assert "{{ _vaultwarden_pbs_keyring }}" in repository["ansible.builtin.copy"]["content"]
+    main = list(tasks_recursive(read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/main.yml")))
+    install = task_named(main, "Install the pinned PBS client when this lab declares application backups")
+    assert install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
 
 
 def check_remove_absent_database_backend_cleanup():
@@ -366,23 +355,15 @@ def check_remove_absent_database_backend_cleanup():
 
 def check_backup_role():
     tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/backup.yml")
-    names = [task.get("name", "") for task in tasks_recursive(tasks)]
-    assert "Vaultwarden backup | Resolve the PBS client target" in names
-    assert "Vaultwarden backup | Stop only this instance" in names
-    upload = task_named(tasks_recursive(tasks), "Vaultwarden backup | Upload the complete data directory to PBS")
-    upload_argv = upload["ansible.builtin.command"]["argv"]
-    assert "data.pxar:{{ _vw_backup_data_path }}" in upload_argv
-    assert "--backup-id" in upload_argv and upload.get("no_log") is True
-    assert set(upload["environment"]) == {"PBS_REPOSITORY", "PBS_FINGERPRINT", "PBS_PASSWORD"}
-
+    upload = task_named(tasks_recursive(tasks), "Vaultwarden backup | Quiesce and archive the application")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ _vw_backup_service_name }}"]
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _vw_backup_data_path }}"}
+    ]
     assert any(task.get("name") == "Vaultwarden backup | Check the SQLite database"
                for task in tasks_recursive(tasks))
-    verify = task_named(tasks_recursive(tasks), "Vaultwarden backup | Confirm the recovery group contains a snapshot")
-    assert "_vw_backup_id in _vw_backup_snapshots.stdout" in verify["ansible.builtin.assert"]["that"]
-    prune = task_named(tasks_recursive(tasks), "Vaultwarden backup | Retain the two newest points and daily history")
-    assert prune["ansible.builtin.command"]["argv"][-4:] == [
-        "--keep-last", "2", "--keep-daily", "{{ app_config.backup.retention_days | default(14) | int }}"
-    ]
     backup_play = next(play for play in read_yaml(ROOT / "ansible/playbooks/maintenance/backup-app.yml")
                        if play.get("name") == "Backup App | Run the application-owned backup")
     assert backup_play["tasks"][-1]["name"] == "Fail if application backup degraded"
@@ -393,9 +374,10 @@ def check_restore_transaction():
     all_tasks = list(tasks_recursive(tasks))
     assert "Vaultwarden restore | Validate the selected source group" in [task.get("name") for task in all_tasks]
     assert "Vaultwarden restore | Validate the independent pre-restore group" in [task.get("name") for task in all_tasks]
-    source_archive = task_named(all_tasks, "Vaultwarden restore | Verify the selected archive")
-    assert source_archive["ansible.builtin.command"]["argv"][1:3] == ["snapshot", "files"]
-    assert source_archive.get("no_log") is True
+    preview = task_named(all_tasks, "Vaultwarden restore | List or verify the recovery point before changing the vault")
+    assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert preview["vars"]["pbs_client_archives"] == [{"name": "data.pxar"}]
+    assert preview["vars"]["pbs_client_overwrite"] is False and "when" not in preview
 
     replace = task_named(all_tasks, "Vaultwarden restore | Replace and verify the data directory")
     block = replace["block"]
@@ -407,9 +389,9 @@ def check_restore_transaction():
     health_i = names.index("Vaultwarden restore | Wait for the restored API")
     assert extract_i < db_i < move_i < install_i < health_i
     extract = block[extract_i]
-    assert extract.get("no_log") is True
-    assert extract["ansible.builtin.command"]["argv"][1:4] == [
-        "restore", "{{ _vw_restore_snapshot }}", "data.pxar"
+    assert extract["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert extract["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _vw_restore_stage.path }}/data"}
     ]
 
     rescue_names = [task.get("name") for task in replace["rescue"]]
@@ -430,34 +412,13 @@ def fixture_tasks(tasks, root):
     """Stub PBS and systemd boundaries while running the production restore operations."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": "fixture",
-                "k8s_pbs_fingerprint": "fixture",
-                "k8s_pbs_password": "fixture",
-            }
-        elif task.get("ansible.builtin.include_tasks", "").endswith("fail-with-scrubbed-output.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task["ansible.builtin.fail"] = {
-                "msg": "fixture reports a scrubbed PBS command failure: {{ scrub_failure_result.rc }} {{ scrub_failure_result.stderr }}"
-            }
-            task["when"] = (
-                "not (scrub_failure_result.skipped | default(false) | bool) and "
-                "(scrub_failure_result.rc is not defined or "
-                "scrub_failure_result.failed | default(false) | bool or "
-                "scrub_failure_result.rc | int != 0)"
-            )
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if "ansible.builtin.systemd_service" in task:
             service = task.pop("ansible.builtin.systemd_service")
             task["ansible.builtin.command"] = {
                 "argv": [str(root / "bin/service"), service["state"], service["name"]]
             }
             task["changed_when"] = True
-        if task.get("ansible.builtin.stat", {}).get("path") == "/usr/bin/proxmox-backup-client":
-            task["ansible.builtin.stat"]["path"] = str(root / "bin/proxmox-backup-client")
         if "ansible.builtin.uri" in task:
             task["ansible.builtin.uri"]["url"] = task["ansible.builtin.uri"]["url"].replace(
                 "localhost", "127.0.0.1")
@@ -506,7 +467,6 @@ def check_restore_runtime(case, server):
             "proxmox-backup-client": """#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
-assert os.environ.get('PBS_REPOSITORY') == 'fixture'
 case = os.environ['VAULTWARDEN_TEST_CASE']
 if args[:2] == ['snapshot', 'list']:
     print('host/vaultwarden-family/2026-10-14T00:00:00Z')

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 source = yaml.safe_load((repo / "ansible/roles/plex/tasks/restore.yml").read_text())
@@ -34,13 +36,7 @@ def fixture_tasks(tasks, root):
     """Stub PBS, Compose and Vault publication; run production state and HTTP tasks."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True, "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test", "k8s_pbs_password": "test",
-            }
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         if task.get("ansible.builtin.include_tasks", "").endswith("upsert-item.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -77,20 +73,19 @@ def check(case, server):
                     for p in config.rglob("*") if p.is_file()}
         before_inode = config.stat().st_ino
         before_mode = config.stat().st_mode
-        # The executable stubs are the process boundary for the unmodified production
-        # Docker and cp argv. Copy failure writes partial state before failing.
+        # The executable stubs are the process boundary for the PBS client and the
+        # unmodified production cp argv. Copy failure writes partial state before failing.
         scripts = {
-            "docker": """#!/usr/bin/env python3
+            "proxmox-backup-client": """#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
-assert os.environ.get('PBS_REPOSITORY') == 'test'
-assert 'host/plex/2026-10-09T00:00:00Z' == os.environ['SNAPSHOT']
+args=sys.argv[1:]
+if args[:2] == ['snapshot', 'list']:
+    raise SystemExit(0)
+assert args[:3] == ['restore', 'host/plex/2026-10-09T00:00:00Z', 'data.pxar'], args
 if os.environ['PLEX_TEST_CASE'] == 'extract-failure':
     raise SystemExit(7)
-args=sys.argv[1:]
-mount=args[args.index('--volume')+1]
-assert mount.endswith(':/restore')
-stage = Path(mount[:-9])
+stage = Path(args[3])
 (stage / 'restored.txt').write_text('restored state\\n')
 (stage / 'Preferences.xml').write_text('<Preferences PlexOnlineToken="restored token"/>')
 (stage / 'Plug-in Support/Databases').mkdir(parents=True)
@@ -147,10 +142,7 @@ if sys.argv[1]=='present' and os.environ['PLEX_TEST_CASE']=='start-failure':
             "app_config": {"app": {"config_path": str(config.parent), "mounts": [],
                                    "transcode_path": str(root / "transcode"), "puid": os.getuid(),
                                    "pgid": os.getgid(), "port": server.server_port},
-                           "backup": {"enabled": True, "application_consistent": True,
-                                      "client": {"key_url": "test", "repository": "test",
-                                                 "suite": "test", "component": "test",
-                                                 "image": "test"}}},
+                           "backup": {"enabled": True, "application_consistent": True}},
         }, "tasks": fixture_tasks(source, root)}]
         path = root / "restore.yml"
         path.write_text(yaml.safe_dump(plays))

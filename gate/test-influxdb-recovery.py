@@ -14,6 +14,8 @@ import tempfile
 import threading
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = yaml.safe_load(
@@ -146,10 +148,7 @@ def transform_transaction(tasks, fake_bin):
     """Replace machine service controls while retaining production file operations."""
     transformed = copy.deepcopy(tasks)
     for task in transformed:
-        if task.get("name") == "InfluxDB restore | Report a failed data extraction":
-            task["when"] = False
-        if task.get("name") == "InfluxDB restore | Extract the selected archive to staging":
-            task.pop("no_log", None)
+        stub_pbs_client(task, fake_bin / "proxmox-backup-client")
         if "ansible.builtin.systemd_service" in task:
             service = task.pop("ansible.builtin.systemd_service")
             task["ansible.builtin.command"] = {
@@ -330,66 +329,17 @@ def check_restore_transaction():
     assert "InfluxDB restore | Verify the restored operator token" in block_names
 
 
-def check_backup_snapshot_identity():
-    task_names = (
-        "InfluxDB backup | Validate the recovery points after upload",
-        "InfluxDB backup | Read recovery point timestamps",
-        "InfluxDB backup | Find the newly added recovery point timestamp",
-        "InfluxDB backup | Require one new recovery point",
-        "InfluxDB backup | Format the verified recovery point",
-    )
-    resolution_tasks = copy.deepcopy([
-        task_named(list(all_tasks(BACKUP)), name) for name in task_names
-    ])
-    for task in resolution_tasks:
-        task.pop("no_log", None)
-    assert all("ansible.builtin.command" not in task for task in resolution_tasks)
-    assert "| difference(" in str(resolution_tasks[2])
-    assert "strftime(" in str(resolution_tasks[-1])
-    assert "utc=true" in str(resolution_tasks[-1])
-
-    before = [{"backup-time": 1792371000}, {"backup-time": 1792371500}]
-    added = 1792371600
-    after = before + [{"backup-time": added}]
-    expected = (
-        "host/fixture/"
-        + datetime.datetime.fromtimestamp(added, datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-    )
-    playbook = [{
-        "hosts": "localhost",
-        "connection": "local",
-        "gather_facts": False,
-        "vars": {
-            "_influxdb_backup_snapshots_before": {"stdout": json.dumps(before)},
-            "_influxdb_backup_snapshots_after": {"stdout": json.dumps(after)},
-            "_influxdb_backup_id": "fixture",
-        },
-        "tasks": resolution_tasks + [{
-            "name": "Assert fixture snapshot identity",
-            "ansible.builtin.assert": {
-                "that": "_influxdb_backup_recovery_point == expected_recovery_point"
-            },
-            "vars": {"expected_recovery_point": expected},
-        }],
-    }]
-    with tempfile.TemporaryDirectory(prefix="homelab-influxdb-backup-point.") as directory:
-        fixture = Path(directory) / "backup-point.yml"
-        fixture.write_text(yaml.safe_dump(playbook), encoding="utf-8")
-        result = subprocess.run(
-            [find_ansible_playbook(), "-i", "localhost,", str(fixture)],
-            cwd=ROOT,
-            env=os.environ | {
-                "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg"),
-                "ANSIBLE_NOCOLOR": "1",
-                "ANSIBLE_STDOUT_CALLBACK": "default",
-            },
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    assert result.returncode == 0, result.stdout + result.stderr
+def check_backup_uses_shared_client():
+    upload = task_named(list(all_tasks(BACKUP)), "InfluxDB backup | Upload the quiesced data directory")
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ _influxdb_backup_service_name }}"]
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _influxdb_backup_data_path }}"}
+    ]
+    restore = list(all_tasks(RESTORE))
+    preview = task_named(restore, "InfluxDB restore | List or verify the recovery point without changing InfluxDB")
+    assert preview["vars"]["pbs_client_archives"] == [{"name": "data.pxar"}]
 
 
 def check_removed_guest_reuse():
@@ -573,7 +523,7 @@ def check_removed_guest_reuse():
 def main():
     check_contract_and_wiring()
     check_restore_transaction()
-    check_backup_snapshot_identity()
+    check_backup_uses_shared_client()
     check_removed_guest_reuse()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), InfluxFixture)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -586,7 +536,7 @@ def main():
         server.shutdown()
         thread.join(timeout=2)
         server.server_close()
-    print("InfluxDB: native recovery, internal HTTPS wiring, backup identity, archive restore and post-move rollback passed")
+    print("InfluxDB: native recovery, internal HTTPS wiring, shared PBS client, archive restore and post-move rollback passed")
 
 
 if __name__ == "__main__":

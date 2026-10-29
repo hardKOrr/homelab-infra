@@ -59,23 +59,14 @@ def check_defaults_and_deploy():
     assert provision_guest["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
     redis_main = read_yaml("ansible/roles/redis/tasks/main.yml")
-    install_repo = task_named(redis_main, "Redis | Install the PBS client repository when this lab declares app backups")
-    assert install_repo["ansible.builtin.include_tasks"] == "install-pbs-client.yml"
+    install_repo = task_named(redis_main, "Redis | Install the pinned PBS client when this lab declares app backups")
+    assert install_repo["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     assert "backup.enabled" in str(install_repo["when"])
     apt_refresh = task_named(redis_main, "Redis | Refresh apt metadata when stale")
     assert apt_refresh["ansible.builtin.apt"]["cache_valid_time"] >= 3600
     assert apt_refresh["changed_when"] is False
     redis_package = task_named(redis_main, "Redis | Install server")
     assert redis_package["ansible.builtin.apt"]["update_cache"] is False
-    pbs_package = task_named(redis_main, "Redis | Install the PBS backup client")
-    assert pbs_package["ansible.builtin.apt"]["update_cache"] is False
-
-    pbs_repo_tasks = read_yaml("ansible/roles/redis/tasks/install-pbs-client.yml")
-    repo_source = task_named(pbs_repo_tasks, "Redis PBS client | Configure the signed client repository")
-    assert repo_source["register"] == "_redis_pbs_repository_source"
-    repo_refresh = task_named(pbs_repo_tasks, "Redis PBS client | Refresh apt metadata when the repository changes")
-    assert "_redis_pbs_repository_source.changed" in str(repo_refresh["when"])
-    assert repo_refresh["changed_when"] is False
 
     acl_file = task_named(redis_main, "Redis | Create the ACL file without replacing existing users")
     assert acl_file["ansible.builtin.copy"]["content"] == ""
@@ -260,13 +251,11 @@ def check_backup():
     assert backup_tasks.index(rdb) < backup_tasks.index(acl_copy)
 
     upload = task_named(backup_tasks, "Redis backup | Upload the native export to PBS")
-    assert "data.pxar:{{ _redis_backup_stage.path }}" in upload["ansible.builtin.command"]["argv"]
-    assert set(upload["environment"]) == {"PBS_REPOSITORY", "PBS_FINGERPRINT", "PBS_PASSWORD"}
-    assert upload.get("no_log") is True
-    snapshot_delta = task_named(backup_tasks, "Redis backup | Require one new recovery point")
-    assert "_redis_backup_added_snapshot_times | length == 1" in str(snapshot_delta["ansible.builtin.assert"]["that"])
-    prune = task_named(backup_tasks, "Redis backup | Retain recent and daily recovery points")
-    assert prune["ansible.builtin.command"]["argv"][prune["ansible.builtin.command"]["argv"].index("--keep-last") + 1] == "2"
+    assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
+    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_archives"] == [
+        {"name": "data.pxar", "path": "{{ _redis_backup_stage.path }}"}
+    ]
 
 
 def check_restore():
@@ -288,8 +277,10 @@ def check_restore():
     assert "dump.rdb" in str(staged_paths["loop"])
     assert "users.acl" in str(staged_paths["loop"])
     assert "not item.stat.islnk" in str(validate["ansible.builtin.assert"]["that"])
-    assert extract.get("no_log") is True
-    assert "--allow-existing-dirs" in extract["ansible.builtin.command"]["argv"]
+    assert extract["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
+    assert "--allow-existing-dirs" in extract["vars"]["pbs_client_restore_args"]
+    preview = task_named(tasks, "Redis restore | List or verify the recovery point without changing Redis")
+    assert preview["vars"]["pbs_client_archives"] == [{"name": "data.pxar"}]
     assert tasks.index(extract) < tasks.index(validate) < tasks.index(transaction)
     transaction_block = transaction["block"]
     assert transaction_block.index(stop) < transaction_block.index(original)
@@ -327,7 +318,7 @@ def check_restore():
         assert probe["failed_when"] is False
         assert probe.get("no_log") is True
 
-    plan = task_named(tasks, "Redis restore | Show the read-only recovery point plan")
+    plan = task_named(tasks, "Redis restore | List or verify the recovery point without changing Redis")
     assert "not (restore_overwrite | bool)" in plan["when"]
 
 

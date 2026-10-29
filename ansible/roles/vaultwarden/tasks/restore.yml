@@ -57,159 +57,16 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-- name: Vaultwarden restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+# Runs on every restore, before the stop below: a point from another group, an
+# unreachable PBS or a point without data.pxar fails while the vault still serves.
+- name: Vaultwarden restore | List or verify the recovery point before changing the vault
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Vaultwarden restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Vaultwarden. Deploy PBS before listing or restoring
-      application data.
-
-- name: Vaultwarden restore | Require the installed PBS client
-  ansible.builtin.stat:
-    path: /usr/bin/proxmox-backup-client
-  register: _vw_restore_client
-  changed_when: false
-
-- name: Vaultwarden restore | Require the client binary
-  ansible.builtin.assert:
-    that: _vw_restore_client.stat.exists and _vw_restore_client.stat.isreg
-    fail_msg: >-
-      Vaultwarden has no installed PBS client. Deploy the instance with the current
-      Vaultwarden role before requesting an application restore.
-
-- name: Vaultwarden restore | List source recovery points
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - list
-      - "host/{{ _vw_restore_source_backup_id }}"
-      - --output-format
-      - text
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _vw_restore_snapshots
-  failed_when: false
-  changed_when: false
-  no_log: true
-
-- name: Vaultwarden restore | Report a failed snapshot listing
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _vw_restore_snapshots }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Vaultwarden restore | PBS snapshot listing failed
-
-- name: Vaultwarden restore | Show source recovery points in plan mode
-  ansible.builtin.debug:
-    msg: "PBS recovery points for host/{{ _vw_restore_source_backup_id }}:\n{{ _vw_restore_snapshots.stdout }}"
-  when:
-    - not (restore_overwrite | bool)
-    - _vw_restore_snapshot | length == 0
-
-- name: Vaultwarden restore | Verify the selected archive
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - files
-      - "{{ _vw_restore_snapshot }}"
-      - --output-format
-      - json
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _vw_restore_source_files
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when: _vw_restore_snapshot | length > 0
-
-- name: Vaultwarden restore | Report an unavailable source archive
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _vw_restore_source_files }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Vaultwarden restore | selected PBS point is unavailable
-  when: _vw_restore_snapshot | length > 0
-
-- name: Vaultwarden restore | Require the full data archive
-  ansible.builtin.assert:
-    that: "'data.pxar' in _vw_restore_source_files.stdout"
-    fail_msg: >-
-      Recovery point {{ _vw_restore_snapshot }} has no data.pxar archive for Vaultwarden.
-  when: _vw_restore_snapshot | length > 0
-
-- name: Vaultwarden restore | Verify the independent pre-restore point
-  ansible.builtin.command:
-    expand_argument_vars: false
-    argv:
-      - proxmox-backup-client
-      - snapshot
-      - files
-      - "{{ restore_pre_restore_point }}"
-      - --output-format
-      - json
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-  register: _vw_restore_prepoint_files
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Vaultwarden restore | Report an unavailable pre-restore archive
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _vw_restore_prepoint_files }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-    scrub_failure_context: Vaultwarden restore | pre-restore point is unavailable
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Vaultwarden restore | Require the independent safety archive
-  ansible.builtin.assert:
-    that: "'data.pxar' in _vw_restore_prepoint_files.stdout"
-    fail_msg: >-
-      Pre-restore point {{ restore_pre_restore_point }} has no data.pxar archive for the
-      target Vaultwarden instance.
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Vaultwarden restore | Explain the selected read-only plan
-  ansible.builtin.debug:
-    msg: >-
-      No Vaultwarden data was changed. Re-run with overwrite=true and
-      pre_restore_point=<independent target recovery point> to replace
-      {{ _vw_restore_data_path }} from {{ _vw_restore_snapshot }}.
-  when:
-    - not (restore_overwrite | bool)
-    - _vw_restore_snapshot | length > 0
+    pbs_client_runtime: native
+    pbs_client_backup_id: "{{ _vw_restore_source_backup_id }}"
+    pbs_client_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
+    pbs_client_overwrite: false
 
 - name: Vaultwarden restore | Check the target data directory
   ansible.builtin.stat:
@@ -252,32 +109,14 @@
         state: stopped
 
     - name: Vaultwarden restore | Extract the selected PBS archive
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - restore
-          - "{{ _vw_restore_snapshot }}"
-          - data.pxar
-          - "{{ _vw_restore_stage.path }}/data"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _vw_restore_extract
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Vaultwarden restore | Report an invalid or unreadable archive
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        scrub_failure_result: "{{ _vw_restore_extract }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Vaultwarden restore | PBS archive extraction failed
+        pbs_client_runtime: native
+        pbs_client_backup_id: "{{ _vw_restore_source_backup_id }}"
+        pbs_client_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _vw_restore_stage.path }}/data"
 
     - name: Vaultwarden restore | Check the staged SQLite database
       ansible.builtin.stat:

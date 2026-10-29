@@ -22,31 +22,6 @@
       Vaultwarden backup needs its application-consistent contract, a non-root data path,
       a safe backup id and a configured PBS target.
 
-- name: Vaultwarden backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
-  vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Vaultwarden backup | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Vaultwarden. Deploy PBS and retry; no local archive
-      is treated as a recovery point.
-
-- name: Vaultwarden backup | Require the installed PBS client
-  ansible.builtin.stat:
-    path: /usr/bin/proxmox-backup-client
-  register: _vw_backup_client
-  changed_when: false
-
-- name: Vaultwarden backup | Require the client binary
-  ansible.builtin.assert:
-    that: _vw_backup_client.stat.exists and _vw_backup_client.stat.isreg
-    fail_msg: >-
-      Vaultwarden has no installed PBS client. Deploy the instance with the current
-      Vaultwarden role before requesting an application backup.
-
 - name: Vaultwarden backup | Check the complete data directory
   ansible.builtin.stat:
     path: "{{ _vw_backup_data_path }}"
@@ -71,126 +46,17 @@
       Vaultwarden data path {{ _vw_backup_data_path }} is missing, linked or has no
       db.sqlite3; refusing to create an incomplete application recovery point.
 
-- name: Vaultwarden backup | Check whether the service is running
-  ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _vw_backup_service_name }}"]
-  register: _vw_backup_service_state
-  changed_when: false
-  failed_when: false
-
+# The shared backup stops the service for the upload and restarts it when it was running.
 - name: Vaultwarden backup | Quiesce and archive the application
-  block:
-    - name: Vaultwarden backup | Stop only this instance
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_backup_service_name }}"
-        state: stopped
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+  vars:
+    pbs_client_runtime: native
+    pbs_client_backup_id: "{{ _vw_backup_id }}"
+    pbs_client_stop_services: ["{{ _vw_backup_service_name }}"]
+    pbs_client_archives:
+      - name: data.pxar
+        path: "{{ _vw_backup_data_path }}"
 
-    - name: Vaultwarden backup | Upload the complete data directory to PBS
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - backup
-          - "data.pxar:{{ _vw_backup_data_path }}"
-          - --backup-id
-          - "{{ _vw_backup_id }}"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _vw_backup_upload
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Vaultwarden backup | Report a failed PBS upload
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _vw_backup_upload }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Vaultwarden backup | PBS archive upload failed
-
-    - name: Vaultwarden backup | Verify and list the recovery point
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - snapshot
-          - list
-          - "host/{{ _vw_backup_id }}"
-          - --output-format
-          - text
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _vw_backup_snapshots
-      failed_when: false
-      changed_when: false
-      no_log: true
-
-    - name: Vaultwarden backup | Report a failed recovery-point check
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _vw_backup_snapshots }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Vaultwarden backup | recovery point could not be verified
-
-    - name: Vaultwarden backup | Confirm the recovery group contains a snapshot
-      ansible.builtin.assert:
-        that:
-          - _vw_backup_id in _vw_backup_snapshots.stdout
-          - _vw_backup_snapshots.stdout | length > 0
-        fail_msg: >-
-          Vaultwarden backup completed without a verifiable snapshot in
-          host/{{ _vw_backup_id }}.
-
-    - name: Vaultwarden backup | Show the verified recovery points
-      ansible.builtin.debug:
-        msg: "PBS recovery points for host/{{ _vw_backup_id }}:\n{{ _vw_backup_snapshots.stdout }}"
-
-    - name: Vaultwarden backup | Retain the two newest points and daily history
-      ansible.builtin.command:
-        expand_argument_vars: false
-        argv:
-          - proxmox-backup-client
-          - prune
-          - "host/{{ _vw_backup_id }}"
-          - --keep-last
-          - "2"
-          - --keep-daily
-          - "{{ app_config.backup.retention_days | default(14) | int }}"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-      register: _vw_backup_prune
-      failed_when: false
-      changed_when: true
-      no_log: true
-
-    - name: Vaultwarden backup | Report a failed retention update
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _vw_backup_prune }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-        scrub_failure_context: Vaultwarden backup | PBS retention update failed
-
-    - name: Vaultwarden backup | Mark the backup complete
-      ansible.builtin.set_fact:
-        _application_backup_complete: true
-  always:
-    - name: Vaultwarden backup | Restart only this instance when it was running
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_backup_service_name }}"
-        state: started
-      when: _vw_backup_service_state.rc | default(1) == 0
+- name: Vaultwarden backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true
