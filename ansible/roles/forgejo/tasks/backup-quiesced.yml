@@ -1,0 +1,20 @@
+---
+# Runs inside the shared PBS backup while Forgejo is stopped, before the upload.
+
+- name: Forgejo backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _forgejo_backup_root }}/database/forgejo.dump"
+
+- name: Forgejo backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _forgejo_backup_root }}/database/forgejo.dump"
+  register: _forgejo_backup_dump
+  changed_when: false
+
+- name: Forgejo backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _forgejo_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: Forgejo's database dump is empty; refusing to publish the recovery point.

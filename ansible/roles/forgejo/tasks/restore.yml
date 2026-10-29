@@ -80,92 +80,13 @@
       refusing to replace the instance with another application's archive.
   when: restore_snapshot | default('') | length > 0
 
-- name: Forgejo restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+- name: Forgejo restore | List or verify the recovery point without changing Forgejo
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
-
-- name: Forgejo restore | Require PBS
-  ansible.builtin.assert:
-    that: k8s_pbs_available | bool
-    fail_msg: >-
-      No usable PBS is recorded for Forgejo. Deploy PBS before listing or restoring its
-      paired database and data archive.
-
-- name: Forgejo restore | List available snapshots in plan mode
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network
-      - host
-      - --env
-      - PBS_REPOSITORY
-      - --env
-      - PBS_FINGERPRINT
-      - --env
-      - PBS_PASSWORD
-      - --env
-      - BACKUP_ID
-      - --env
-      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
-      - --env
-      - >-
-        PBS_APT_REPO={{ app_config.backup.client.repository }}
-        {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-      - "{{ app_config.backup.client.image }}"
-      - /bin/sh
-      - -ceu
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-          > /etc/apt/sources.list.d/pbs-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-        proxmox-backup-client snapshot list "host/$BACKUP_ID"
-    expand_argument_vars: false
-  register: _forgejo_restore_snapshots
-  changed_when: false
-  environment:
-    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-    PBS_PASSWORD: "{{ k8s_pbs_password }}"
-    BACKUP_ID: "{{ _forgejo_restore_backup_id }}"
-  failed_when: false
-  no_log: true
-
-- name: Forgejo restore | Report a failed snapshot listing
-  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-  vars:
-    scrub_failure_result: "{{ _forgejo_restore_snapshots }}"
-    scrub_failure_secrets:
-      - "{{ k8s_pbs_password }}"
-      - "{{ k8s_pbs_fingerprint }}"
-      - "{{ k8s_pbs_repository }}"
-      - "{{ app_config.backup.client.key_url }}"
-      - "{{ app_config.backup.client.repository }}"
-      - "{{ homelabinfra_infra.backups.host }}"
-      - "host/{{ _forgejo_restore_backup_id }}"
-    scrub_failure_context: FORGEJO_RESTORE_STAGE=snapshot-list | PBS snapshot listing failed
-
-- name: Forgejo restore | Print the available recovery points
-  ansible.builtin.debug:
-    msg: "PBS snapshots for host/{{ _forgejo_restore_backup_id }}:\n{{ _forgejo_restore_snapshots.stdout }}"
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
-
-- name: Forgejo restore | Explain the selected read-only plan
-  ansible.builtin.debug:
-    msg: >-
-      No data was changed. The selected Forgejo snapshot contains one data.pxar with the
-      named PostgreSQL database and {{ _forgejo_restore_data_path }}. Re-run with
-      overwrite=true only after verifying the target and its pre-restore recovery point.
-  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+    pbs_client_runtime: docker
+    pbs_client_backup_id: "{{ _forgejo_restore_backup_id }}"
+    pbs_client_archives: [{name: data.pxar}]
+  when: not (restore_overwrite | bool)
 
 - name: Forgejo restore | Inspect the existing target data directory
   ansible.builtin.stat:
@@ -212,79 +133,42 @@
 - name: Forgejo restore | Extract and validate the paired archive
   when: restore_overwrite | bool
   block:
-    - name: Forgejo restore | Extract the selected PBS archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          # Keep PBS temporary and cache paths off the Docker overlay; this avoids the
-          # unsupported temporary-file operation reported by the client during restore.
-          - --tmpfs
-          - /tmp
-          - --tmpfs
-          - /root/.cache
-          - --volume
-          - "{{ _forgejo_restore_scratch.path }}:/restore"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - SNAPSHOT
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings /restore/archive
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/pbs-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore --allow-existing-dirs true \
-              "$SNAPSHOT" data.pxar /restore/archive
-            test -s /restore/archive/database/forgejo.dump
-            test -s /restore/archive/forgejo/gitea/conf/app.ini
-        expand_argument_vars: false
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        SNAPSHOT: "{{ restore_snapshot }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: >-
-          {{ app_config.backup.client.repository }}
-          {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-      no_log: true
-      changed_when: true
-      failed_when: false
-      register: _forgejo_restore_extract_result
+    - name: Forgejo restore | Create the extraction directory
+      ansible.builtin.file:
+        path: "{{ _forgejo_restore_scratch.path }}/archive"
+        state: directory
+        mode: "0700"
 
-    - name: Forgejo restore | Report a failed archive extraction
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+    - name: Forgejo restore | Extract the selected PBS archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        scrub_failure_result: "{{ _forgejo_restore_extract_result }}"
-        scrub_failure_secrets:
-          - "{{ k8s_pbs_password }}"
-          - "{{ k8s_pbs_fingerprint }}"
-          - "{{ k8s_pbs_repository }}"
-          - "{{ restore_snapshot }}"
-          - "{{ app_config.backup.client.key_url }}"
-          - "{{ app_config.backup.client.repository }}"
-          - "{{ homelabinfra_infra.backups.host }}"
-        scrub_failure_context: FORGEJO_RESTORE_STAGE=archive-extraction | PBS archive extraction failed
+        pbs_client_runtime: docker
+        pbs_client_backup_id: "{{ _forgejo_restore_backup_id }}"
+        pbs_client_restore_args: [--allow-existing-dirs, "true"]
+        pbs_client_archives:
+          - name: data.pxar
+            path: "{{ _forgejo_restore_scratch.path }}/archive"
+
+    - name: Forgejo restore | Check the archived dump and configuration
+      ansible.builtin.stat:
+        path: "{{ _forgejo_restore_scratch.path }}/archive/{{ item }}"
+      loop:
+        - database/forgejo.dump
+        - forgejo/gitea/conf/app.ini
+      register: _forgejo_restore_archived
+      changed_when: false
+
+    - name: Forgejo restore | Refuse an incomplete archive
+      ansible.builtin.assert:
+        that:
+          - item.stat.isreg | default(false)
+          - item.stat.size | default(0) | int > 0
+        fail_msg: >-
+          The selected Forgejo archive lacks a non-empty {{ item.item }}; the original
+          database and data stay untouched.
+      loop: "{{ _forgejo_restore_archived.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
       ansible.builtin.include_tasks: ../../../tasks/database/verify-dump.yml

@@ -38,12 +38,6 @@ forgejo_defaults:
     timeout_seconds: 3600
     scratch_size: 2
     encryption: none
-    client:
-      image: "buildpack-deps:bookworm-curl"
-      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      suite: bookworm
-      component: main
   # Direct Git-over-SSH is separate from the HTTP route. Publish it to the WAN only
   # when an instance config explicitly enables this forward.
   firewall:
