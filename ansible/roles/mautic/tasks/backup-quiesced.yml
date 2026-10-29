@@ -1,0 +1,20 @@
+---
+# Runs inside the shared PBS backup while Mautic is stopped, before the upload.
+
+- name: Mautic backup | Dump the stopped instance's MariaDB database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _mautic_backup_root }}/database/mautic.sql"
+
+- name: Mautic backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _mautic_backup_root }}/database/mautic.sql"
+  register: _mautic_backup_dump
+  changed_when: false
+
+- name: Mautic backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _mautic_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: Mautic's database dump is empty; refusing to publish the recovery point.

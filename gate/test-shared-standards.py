@@ -76,8 +76,6 @@ ALLOWLIST = {
     "pbs-client-invocation": {
         "ansible/roles/bookstack/files/bookstack-recovery",
         "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/mautic/tasks/backup.yml",
-        "ansible/roles/mautic/tasks/restore.yml",
         "ansible/roles/n8n/tasks/backup.yml",
         "ansible/roles/n8n/tasks/restore-docker.yml",
         "ansible/roles/observability/tasks/backup.yml",
@@ -93,8 +91,6 @@ ALLOWLIST = {
     },
     "pbs-client-install": {
         "ansible/roles/bookstack/tasks/main.yml",
-        "ansible/roles/mautic/tasks/backup.yml",
-        "ansible/roles/mautic/tasks/restore.yml",
         "ansible/roles/n8n/tasks/backup.yml",
         "ansible/roles/n8n/tasks/restore-docker.yml",
         "ansible/roles/observability/tasks/backup.yml",

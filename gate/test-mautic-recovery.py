@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from pbs_client_stub import stub_pbs_client
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_text())
@@ -38,25 +40,11 @@ def fixture_tasks(tasks, root, case):
             # but let this local fixture write as the unprivileged gate user.
             task["ansible.builtin.lineinfile"].pop("owner", None)
             task["ansible.builtin.lineinfile"].pop("group", None)
+        stub_pbs_client(task, root / "bin/proxmox-backup-client")
         include = task.get("ansible.builtin.include_tasks", "")
         if "/tasks/database/" in include:
             task["ansible.builtin.include_tasks"] = str(
                 repo / "gate/fixtures/database" / Path(include).name)
-        if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True,
-                "k8s_pbs_repository": "pbs-user@pbs.example.invalid:archive",
-                "k8s_pbs_fingerprint": "pbs-fingerprint-secret",
-                "k8s_pbs_password": "pbs-password-secret",
-            }
-        if task.get("ansible.builtin.include_tasks", "").endswith(
-            "fail-with-scrubbed-output.yml"
-        ):
-            task["ansible.builtin.include_tasks"] = str(
-                repo / "ansible/tasks/fail-with-scrubbed-output.yml"
-            )
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {
@@ -78,22 +66,15 @@ def fixture_tasks(tasks, root, case):
 def make_stubs(root):
     (root / "bin").mkdir()
     scripts = {
-        "docker": r'''#!/usr/bin/env python3
+        "proxmox-backup-client": r'''#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['MAUTIC_TEST_CASE']
-root=Path(os.environ['MAUTIC_TEST_ROOT'])
-script=args[-1]
-volumes=[args[i+1] for i,value in enumerate(args[:-1]) if value=='--volume']
-if 'proxmox-backup-client snapshot files' in script:
-    assert os.environ['SNAPSHOT']=='host/mautic/2026-10-14T01:00:00Z'
-    raise SystemExit(0)
-if 'proxmox-backup-client restore' in script:
+if args[0]=='restore':
     assert case in ['success','database-failure-after-move']
-    mount=next(value for value in volumes if value.endswith(':/restore'))
-    scratch=Path(mount[:-len(':/restore')])
-    archive=scratch/'archive'
+    archive=Path(args[3])
+    assert archive.is_dir() and archive.name=='archive', archive
     (archive/'database').mkdir(parents=True)
     (archive/'database'/'mautic.sql').write_text('CREATE TABLE recovered;\n-- recovered database\n')
     data=archive/'mautic'
@@ -190,8 +171,6 @@ def run_restore(case):
                 "routing": {"subdomain": "mautic"},
                 "backup": {
                     "enabled": True, "application_consistent": True,
-                    "client": {"image": "test", "key_url": "test", "repository": "test",
-                               "suite": "test", "component": "test"},
                 },
             },
         }
@@ -273,34 +252,18 @@ def static_contract():
     assert deploy_names.index(verify_runtime["name"]) < deploy_names.index(wait_health["name"])
     assert deploy_names.index(wait_health["name"]) < deploy_names.index(start_background["name"])
 
-    backup_tasks = list(tasks_recursive(backup_source))
-    backup_block = next(task for task in backup_source
-                        if task.get("name") == "Mautic backup | Quiesce Mautic and publish one paired recovery point")
-    backup_restart = next(task for task in tasks_recursive(backup_block.get("always", []))
-                          if task.get("name") == "Mautic backup | Start this instance's services")
-    assert backup_restart["community.docker.docker_compose_v2"]["state"] == "present"
-    assert backup_restart["community.docker.docker_compose_v2"]["services"] == [
-        "mautic_web", "mautic_cron", "mautic_worker"
-    ]
-    assert "when" not in backup_restart, "always must restart services after a partial stop failure"
-    backup_dump = next(task for task in backup_tasks
-                       if task.get("name") == "Mautic backup | Dump the stopped instance's MariaDB database")
-    archive = next(task for task in backup_tasks
-                   if task.get("name") == "Mautic backup | Push one database and file archive to PBS")
-    assert backup_dump["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
-    archive_argv = archive["ansible.builtin.command"]["argv"]
-    archive_script = archive_argv[-1]
-    for environment_name in [
-        "PBS_REPOSITORY", "PBS_FINGERPRINT", "PBS_PASSWORD", "BACKUP_ID",
-        "PBS_KEY_URL", "PBS_APT_REPO",
-    ]:
-        assert any(
-            archive_argv[index:index + 2] == ["--env", environment_name]
-            for index in range(len(archive_argv) - 1)
-        ), f"Docker backup upload must pass {environment_name} into the PBS client container"
-    assert "data.pxar:/work/payload" in archive_script
-    assert "--keep-last 2" in archive_script
-    assert "--keep-daily" not in archive_script
+    assert "client" not in config["backup"], "the shared client owns its pins"
+    upload = next(task for task in tasks_recursive(backup_source)
+                  if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
+    assert upload["vars"]["pbs_client_stop_services"] == ["mautic_web", "mautic_cron", "mautic_worker"]
+    assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
+    assert upload["vars"]["pbs_client_keep_daily"] == "", "Mautic keeps only the two newest points"
+    assert upload["vars"]["pbs_client_backup_args"] == ["--all-file-systems", "true"]
+    assert upload["vars"]["pbs_client_backup_mounts"] == [{
+        "path": "{{ _mautic_backup_data_path }}", "target": "{{ _mautic_backup_root }}/mautic"}]
+    hook = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup-quiesced.yml").read_text())
+    assert hook[0]["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
+    assert hook[0]["vars"]["database_dump_file"] == "{{ _mautic_backup_root }}/database/mautic.sql"
     assert "mautic_config_file" in str(backup_source)
     assert "mautic_media_files_dir" in str(backup_source)
     assert "mautic_media_images_dir" in str(backup_source)
