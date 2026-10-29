@@ -71,27 +71,25 @@ if 'SNAPSHOT-DATABASE' in dump:
 database.write_text(dump)
 '''
 
+# Plays the shared PBS client script: `extract --point P --pre-restore-point Q NAME:DIR...`.
+# gate/test-pbs-client.py proves the script itself.
 PBS = r'''#!/usr/bin/env python3
 import os,shutil,sys
 from pathlib import Path
 
 args=sys.argv[1:]
 root=Path(os.environ['WORDPRESS_TEST_ROOT'])
-snapshot=os.environ['WORDPRESS_TEST_SNAPSHOT']
-if args[:2]==['snapshot','list']:
-    print(snapshot)
-    raise SystemExit(0)
-if args[:2]==['snapshot','files']:
-    if args[2]!=os.environ['WORDPRESS_TEST_PRE_RESTORE_POINT']:
-        raise SystemExit(94)
-    raise SystemExit(0)
-if args[0]=='restore':
-    destination=Path(args[3])
-    destination.mkdir(parents=True,exist_ok=True)
-    source=root/('snapshot-database' if args[2]=='database.pxar' else 'snapshot-content')
+if args[:2]!=['extract','--point'] or args[3]!='--pre-restore-point':
+    raise SystemExit(93)
+if args[2]!=os.environ['WORDPRESS_TEST_SNAPSHOT'] or args[4]!=os.environ['WORDPRESS_TEST_PRE_RESTORE_POINT']:
+    raise SystemExit(94)
+for spec in args[5:]:
+    name,destination=spec.split(':',1)
+    if not Path(destination).is_dir():
+        raise SystemExit(64)
+    source=root/('snapshot-database' if name=='database.pxar' else 'snapshot-content')
     shutil.copytree(source,destination,dirs_exist_ok=True)
-    raise SystemExit(0)
-raise SystemExit(93)
+print('extracted')
 '''
 
 
@@ -207,7 +205,7 @@ def run_restore(case):
         bin_dir = root / "bin"
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
-        write_executable(bin_dir / "proxmox-backup-client", PBS)
+        write_executable(bin_dir / "pbs-client.sh", PBS)
         write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
 
         project = root / "project"
@@ -259,9 +257,8 @@ def run_restore(case):
             "WORDPRESS_DB_PROVIDER": "mariadb",
             "WORDPRESS_DB_CLIENT_IMAGE": "mariadb:test",
             "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
-            "PBS_REPOSITORY": "test:store",
-            "PBS_FINGERPRINT": "test",
-            "PBS_PASSWORD": "fixture-only",
+            "PBS_CLIENT_SCRIPT": str(bin_dir / "pbs-client.sh"),
+            "PBS_CLIENT_CONFIG": str(root / "pbs-client.env"),
             "PBS_BACKUP_ID": "wordpress",
             "PBS_RETENTION_DAYS": "14",
         }

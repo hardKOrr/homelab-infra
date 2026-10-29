@@ -2,7 +2,9 @@
 # Application-consistent WordPress recovery helper.
 #
 # This file deliberately contains no credentials. The role writes one root-only env file
-# from the canonical Vaultwarden item. One PBS snapshot contains the named SQL dump and
+# from the canonical Vaultwarden item, and the shared PBS client script
+# (tasks/backup/scripts/pbs-client.sh) reads the instance's root-only client settings. One
+# PBS snapshot contains the named SQL dump and
 # wp-content (uploads, themes and operator-installed plugins), so a restore cannot pair
 # media with a different database point in time. WordPress core and wp-config.php come
 # from the target's pinned image and target environment rather than the source archive;
@@ -25,7 +27,7 @@ for required in WORDPRESS_PROJECT_DIR WORDPRESS_SERVICE WORDPRESS_DATA_PATH \
   WORDPRESS_ADMIN_USER WORDPRESS_ADMIN_EMAIL WORDPRESS_ADMIN_NAME WORDPRESS_ADMIN_PASSWORD \
   WORDPRESS_DB_HOST WORDPRESS_DB_PORT WORDPRESS_DB_NAME WORDPRESS_DB_USER \
   WORDPRESS_DB_PASSWORD WORDPRESS_DB_PROVIDER WORDPRESS_DB_CLIENT_IMAGE DATABASE_CLIENT_SCRIPT \
-  PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD PBS_BACKUP_ID PBS_RETENTION_DAYS; do
+  PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG PBS_BACKUP_ID PBS_RETENTION_DAYS; do
   [[ -n "${!required:-}" ]] || { echo "WordPress recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
@@ -120,8 +122,8 @@ wp_cli() {
   "${compose[@]}" run --rm --no-deps wordpress-cli "$@" --allow-root
 }
 
-pbs_env() {
-  env PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" PBS_FINGERPRINT="$PBS_FINGERPRINT" "$@"
+pbs_client() {
+  "$PBS_CLIENT_SCRIPT" "$@"
 }
 
 wait_for_login() {
@@ -175,26 +177,25 @@ backup() {
   mkdir -p "$work/database"
   database_client dump "$work/database/database.sql"
   echo "dumped WordPress database $WORDPRESS_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
-  pbs_env proxmox-backup-client backup \
-    database.pxar:"$work/database" content.pxar:"$WORDPRESS_CONTENT_PATH" \
-    --backup-id "$PBS_BACKUP_ID"
-  # A same-day pre-restore safety backup must retain the preceding recovery point.
-  pbs_env proxmox-backup-client prune \
-    "host/$PBS_BACKUP_ID" --keep-last 2 --keep-daily "$PBS_RETENTION_DAYS"
-  echo "WordPress backup complete: host/$PBS_BACKUP_ID in ${PBS_REPOSITORY##*:}"
+  # The shared client keeps the preceding point through a same-day pre-restore backup.
+  pbs_client backup --id "$PBS_BACKUP_ID" --keep-last 2 --keep-daily "$PBS_RETENTION_DAYS" \
+    database.pxar:"$work/database" content.pxar:"$WORDPRESS_CONTENT_PATH"
+  echo "WordPress backup complete"
   "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
   stopped=0
 }
 
 plan() {
-  # A plan never calls Docker and never writes the application data path.
-  pbs_env proxmox-backup-client snapshot list "host/$restore_backup_id"
+  # A plan never stops WordPress and never writes the application data path. With a
+  # snapshot it runs the same client path a restore uses.
+  pbs_client list --id "$restore_backup_id"
   if [[ -n "${SNAPSHOT:-}" ]]; then
     case "$SNAPSHOT" in
       host/$restore_backup_id/*) ;;
       *) echo "snapshot is not in the WordPress backup group host/$restore_backup_id" >&2; exit 1 ;;
     esac
-    pbs_env proxmox-backup-client snapshot files "$SNAPSHOT"
+    pbs_client verify --point "$SNAPSHOT" database.pxar content.pxar >/dev/null
+    echo "$SNAPSHOT holds database.pxar and content.pxar; nothing was changed."
   else
     echo "No snapshot selected; nothing was changed."
   fi
@@ -228,13 +229,16 @@ restore() {
     echo "pre-restore point must be no more than one hour old" >&2
     exit 1
   fi
-  pbs_env proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
   [[ -d "$WORDPRESS_CONTENT_PATH" && ! -L "$WORDPRESS_CONTENT_PATH" ]] || {
     echo "WordPress content path must be an existing directory before restore: $WORDPRESS_CONTENT_PATH" >&2
     exit 1
   }
-  pbs_env proxmox-backup-client restore "$SNAPSHOT" database.pxar "$work/database"
-  pbs_env proxmox-backup-client restore "$SNAPSHOT" content.pxar "$work/content"
+  local content_owner content_mode
+  content_owner=$(stat -c '%u:%g' "$WORDPRESS_CONTENT_PATH")
+  content_mode=$(stat -c '%a' "$WORDPRESS_CONTENT_PATH")
+  mkdir "$work/database" "$work/content"
+  pbs_client extract --point "$SNAPSHOT" --pre-restore-point "$PRE_RESTORE_POINT" \
+    database.pxar:"$work/database" content.pxar:"$work/content"
 
   # Capture the target database before either live copy changes. Move wp-content beside
   # itself so the rename stays on the same filesystem and can restore its inode on error.
@@ -249,6 +253,8 @@ restore() {
   mv -T -- "$WORDPRESS_CONTENT_PATH" "$original_content_path"
   original_content_saved=1
   cp -a "$work/content" "$WORDPRESS_CONTENT_PATH"
+  chown "$content_owner" "$WORDPRESS_CONTENT_PATH"
+  chmod "$content_mode" "$WORDPRESS_CONTENT_PATH"
 
   # The target's Compose env points wp-config.php at the target backend credentials.
   # Repair site URLs and administrator access after a cross-instance database restore;

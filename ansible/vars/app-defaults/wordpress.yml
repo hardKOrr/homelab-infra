@@ -53,9 +53,3 @@ wordpress_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
-    client:
-      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
-      # Client-only repository, not the PBS server's subscription repository.
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      suite: bookworm
-      component: main
