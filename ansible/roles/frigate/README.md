@@ -33,7 +33,7 @@ Frigate's [first-time login API](https://docs.frigate.video/integrations/api/fir
 Restore previews by default, validates the selected snapshot group and staged config and
 database, then keeps the original directory beside the live path on the same filesystem
 until the restored service passes health checks. Any later failure puts the original
-directory back and leaves Frigate stopped.
+directory back and starts it.
 
 ## Recovery procedure
 

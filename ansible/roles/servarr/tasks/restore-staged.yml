@@ -1,0 +1,60 @@
+---
+# restore-swap.yml staged hook: the point must hold the database and a config.xml with an
+# API key, and Compose must carry exactly the two key overrides the restore will rewrite.
+- name: Servarr restore | Check the staged recovery unit
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop:
+    - "{{ app_config.app.media_kind }}.db"
+    - config.xml
+  register: _servarr_restore_files
+
+- name: Servarr restore | Refuse an incomplete archive
+  ansible.builtin.assert:
+    that: item.stat.isreg | default(false)
+    fail_msg: "The archive lacks the Servarr database or config.xml; live state was preserved."
+  loop: "{{ _servarr_restore_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Servarr restore | Read the restored config.xml
+  ansible.builtin.slurp:
+    src: "{{ recovery_swap_stage }}/data/config.xml"
+  register: _servarr_restored_config
+  no_log: true
+
+- name: Servarr restore | Resolve the restored API key
+  ansible.builtin.set_fact:
+    _servarr_restored_key: >-
+      {{ (_servarr_restored_config.content | b64decode
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join('')) }}
+  no_log: true
+
+- name: Servarr restore | Require the archived API key
+  ansible.builtin.assert:
+    that: _servarr_restored_key | length > 0
+    fail_msg: "Restored config.xml lacks ApiKey; live state was preserved."
+
+# The rollback hook writes this content back, so the original config.xml is never masked
+# by the restored key.
+- name: Servarr restore | Read the Compose key overrides
+  ansible.builtin.slurp:
+    src: "{{ servarr_project_dir }}/docker-compose.yml"
+  register: _servarr_restore_compose
+  no_log: true
+
+- name: Servarr restore | Resolve the Compose override names
+  ansible.builtin.set_fact:
+    _servarr_restore_override_names: >-
+      {{ (_servarr_restore_compose.content | b64decode
+          | regex_findall('(?m)^\s*- (' ~ (app_config.app.media_kind | upper)
+                          ~ '__(?:AUTH__)?APIKEY)=.*$')) | sort }}
+  no_log: true
+
+- name: Servarr restore | Require both Compose key overrides
+  ansible.builtin.assert:
+    that: >-
+      _servarr_restore_override_names ==
+      [(app_config.app.media_kind | upper) ~ '__APIKEY',
+       (app_config.app.media_kind | upper) ~ '__AUTH__APIKEY']
+    fail_msg: "Compose must contain exactly one legacy and one AUTH API-key override; live state was preserved."

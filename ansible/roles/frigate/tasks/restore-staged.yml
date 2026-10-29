@@ -1,0 +1,31 @@
+---
+# restore-swap.yml staged hook: the point must hold config.yml and an intact frigate.db.
+- name: Frigate restore | Validate the staged configuration and database
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop: [config.yml, frigate.db]
+  register: _frigate_restore_state
+
+- name: Frigate restore | Require a complete application archive
+  ansible.builtin.assert:
+    that:
+      - _frigate_restore_state.results[0].stat.isreg | default(false)
+      - _frigate_restore_state.results[1].stat.isreg | default(false)
+    fail_msg: >-
+      The selected Frigate archive must contain config.yml and frigate.db under its
+      data.pxar root; no target state has been replaced.
+
+- name: Frigate restore | Check the archived database integrity
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import sqlite3,sys;
+        c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);
+        result=c.execute('PRAGMA integrity_check').fetchone()[0];
+        c.close();
+        sys.exit(0 if result == 'ok' else 1)
+      - "{{ recovery_swap_stage }}/data/frigate.db"
+  changed_when: false
+  no_log: true

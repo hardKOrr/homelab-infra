@@ -1,0 +1,24 @@
+---
+# restore-swap.yml verified hook: the restored server answers with the archived key, which
+# then replaces the stored one.
+- name: Servarr restore | Wait for the restored service
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    headers:
+      X-Api-Key: "{{ _servarr_restored_key }}"
+    status_code: 200
+  register: _servarr_restore_health
+  until: _servarr_restore_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Servarr restore | Publish the verified restored key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _servarr_restored_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true

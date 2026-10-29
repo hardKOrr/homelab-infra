@@ -231,11 +231,11 @@ A check that cannot be read back counts as unverified.
 For a stateless application, skip backup and restore and prove a fresh deploy recreates
 its configuration and wiring. For multiple instances, verify siblings stay intact. If the
 application has no backup and restore yet, build them in the repository before step 4.
-For those new implementations, `restore.yml` must move the original state aside on the
-same filesystem before replacing it and put it back on any later failure, as
-[`roles/tautulli/tasks/restore.yml`](roles/tautulli/tasks/restore.yml) and
-[`roles/plex/tasks/restore.yml`](roles/plex/tasks/restore.yml) do. Add gate regressions for
-failures after the move.
+For those new implementations, `restore.yml` replaces state through the shared
+[`tasks/recovery/restore-swap.yml`](tasks/recovery/restore-swap.yml), which moves the
+original aside on the same filesystem and puts it back on any later failure, as
+[`roles/tautulli/tasks/restore.yml`](roles/tautulli/tasks/restore.yml) does. App-specific
+checks go in its hooks, with a gate test that runs them.
 Restoring a whole stack guest does not prove one application's restore.
 
 MariaDB native recovery runs `mariadb-dump` over the guest's local root socket with a global
@@ -263,7 +263,7 @@ snapshots are retained alongside daily retention so a pre-restore safety backup
 keeps the prior recovery point. Restore previews until `overwrite=true`, checks
 the source group, and keeps the original config on its filesystem until the
 replacement passes health checks. Any later failure puts the original back and
-leaves the service stopped. An empty ARL supports settings-only use; the human
+starts it. An empty ARL supports settings-only use; the human
 route still uses its declared Authentik access path. Deploy preserves an existing
 or restored `.arl` when the configured ARL is empty, and publishes that effective
 value to the canonical media credential for Lidarr. A non-empty configured ARL
@@ -289,8 +289,7 @@ database/configuration, then adopts the archived API key in Compose and the cano
 Deploy keeps that key and the recovered application state.
 Restore requires both Compose API-key overrides before replacing state, and retains the
 original config directory beside the live path until verified recovery succeeds. A failed
-restore leaves the service stopped and reports the retained directory for inspection;
-it does not automatically put that directory back or revert the Compose API-key overrides.
+restore puts the original directory and Compose API-key overrides back and starts it.
 
 Bazarr native recovery stops only the selected service and archives its config directory
 as one PBS `data.pxar` in `host/<instance>`, excluding `log` and `cache`. Backup retains
@@ -298,7 +297,7 @@ the two newest snapshots alongside daily retention, preserving the selected reco
 point when the fresh instance is backed up. Restore previews until `overwrite=true`,
 checks the source group, and retains the original directory on the same filesystem until
 an authenticated settings check and canonical API-key publication succeed. A failure
-puts the original state back and leaves Bazarr stopped. The final Deploy keeps the
+puts the original state back and starts it. The final Deploy keeps the
 restored API key, language profiles and settings.
 
 Observability native recovery stops only its Prometheus and Grafana Compose services and
@@ -322,7 +321,7 @@ are excluded; external media mounts stay outside the archive. Backup keeps the t
 snapshots alongside daily retention. Restore previews until `overwrite=true`, checks the
 source group, and keeps the original directory beside the config path until the archived
 API key passes an authenticated queue check and is published to the canonical credential
-item. A failure puts the original directory back and leaves SABnzbd stopped. Deploy keeps
+item. A failure puts the original directory back and starts it. Deploy keeps
 the recovered INI, API key, categories and application settings.
 
 qBittorrent native recovery stops only the selected service and archives its config,
@@ -331,7 +330,7 @@ Logs and downloads are excluded; payloads remain on the external media mount. Ba
 keeps the two newest snapshots alongside daily retention. Restore previews until
 `overwrite=true`, validates the backup group and staged configuration, and retains the
 original config on the same filesystem until the canonical WebUI credential works.
-Failure puts the original state back and leaves the service stopped. Deploy preserves
+Failure puts the original state back and starts it. Deploy preserves
 recovered preferences and torrents and registers only this client in deployed torrent
 consumers. Remove withdraws only entries that address the owned client.
 

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Run Bazarr's restore file operations and rollback against temporary local data."""
+"""Run Bazarr's restore-swap hooks and check its swap inputs.
+
+gate/test-restore-swap.py proves the swap and rollback. This test proves what Bazarr adds:
+the staged point must hold the API key Deploy reads, and the restored server must accept it
+before it is published.
+"""
 
 import base64
-import copy
 import http.server
 import os
 import subprocess
@@ -12,11 +16,11 @@ from pathlib import Path
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-source = yaml.safe_load((repo / "ansible/roles/bazarr/tasks/restore.yml").read_text())
+role = repo / "ansible/roles/bazarr"
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -30,125 +34,53 @@ class Health(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def fixture_tasks(tasks, root, case):
-    """Stub the PBS client, Compose and Vault publication; run the production file/command tasks."""
-    tasks = copy.deepcopy(tasks)
+def run_hook(hook, stage, port, extra_tasks=()):
+    tasks = yaml.safe_load((role / f"tasks/restore-{hook}.yml").read_text())
     for task in tasks:
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        if task.get("ansible.builtin.include_tasks", "").endswith("upsert-item.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.assert"] = {"that": ["_bazarr_api_key == 'fixture-key'"]}
-            if case == "credential-failure":
-                task["ansible.builtin.assert"] = {"that": [False]}
-        if "community.docker.docker_compose_v2" in task:
-            compose = task.pop("community.docker.docker_compose_v2")
-            task["ansible.builtin.command"] = {"argv": [
-                str(root / "bin/service"), compose["state"], *compose["services"]]}
-            task["changed_when"] = True
+        task.pop("no_log", None)
         if "ansible.builtin.uri" in task:
             task["retries"] = 1
             task["delay"] = 0
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root, case)
-    return tasks
-
-
-def check(case, server):
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("upsert-item.yml"):
+            # Vaultwarden is the external boundary; publication must carry the archived key.
+            del task["ansible.builtin.include_tasks"]
+            task["ansible.builtin.assert"] = {"that": ["vault_item_fields.api_key == 'fixture-key'"]}
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "original.txt").write_text("original state\n")
-        before_mode = config.stat().st_mode
-        # The executable stubs are the process boundary for the PBS client and the
-        # unmodified production cp argv. Copy failure writes partial state before failing.
-        scripts = {
-            "proxmox-backup-client": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-if args[:2] == ['snapshot', 'list']:
-    raise SystemExit(0)
-assert args[:2] == ['restore', 'host/bazarr/2026-10-09T00:00:00Z'], args
-if os.environ['BAZARR_TEST_CASE'] == 'extract-failure':
-    raise SystemExit(7)
-assert args[2] == 'data.pxar'
-staging=Path(args[3])
-Path(staging, 'restored.txt').write_text('restored state\\n')
-Path(staging, 'config').mkdir()
-text='general: {}\\n' if os.environ['BAZARR_TEST_CASE']=='missing-auth' else 'auth:\\n  apikey: fixture-key\\n'
-Path(staging, 'config/config.yaml').write_text(text)
-""",
-            "cp": """#!/usr/bin/env python3
-import os,subprocess,sys
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['BAZARR_TEST_CASE']=='copy-failure' else result.returncode)
-""",
-            "mv": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['BAZARR_TEST_CASE']=='move-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*sys.argv[1:]]).returncode)
-""",
-            "chown": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['BAZARR_TEST_CASE']=='ownership-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/chown',*sys.argv[1:]]).returncode)
-""",
-            "service": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['bazarr']
-with Path(os.environ['BAZARR_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-if sys.argv[1]=='present' and os.environ['BAZARR_TEST_CASE']=='start-failure':
-    raise SystemExit(7)
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        snapshot = "host/bazarr/2026-10-09T00:00:00Z"
-        server.response_status = 503 if case == "health-failure" else 200
-        plays = [{"hosts": "localhost", "gather_facts": False, "vars": {
-            "instance": "bazarr",
-            "restore_snapshot": snapshot, "restore_overwrite": case != "plan",
-            "homelabinfra_infra": {"backups": {}},
-            "app_config": {"app": {"config_path": str(config), "puid": os.getuid(),
-                                   "pgid": os.getgid(), "port": server.server_port},
-                           "backup": {"enabled": True, "application_consistent": True}},
-        }, "tasks": fixture_tasks(source, root, case)}]
-        path = root / "restore.yml"
-        path.write_text(yaml.safe_dump(plays))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "BAZARR_TEST_CASE": case, "BAZARR_TEST_ROOT": str(root),
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                env=env, text=True, capture_output=True, check=False)
-        success = case in ["success", "plan"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert config.exists()
-        if case == "success":
-            assert not (config / "original.txt").exists()
-            assert (config / "restored.txt").read_text() == "restored state\n"
-        else:
-            assert (config / "original.txt").read_text() == "original state\n"
-            assert not (config / "restored.txt").exists()
-            assert config.stat().st_mode == before_mode
-        assert not list(root.glob(".bazarr-pre-restore-*")), result.stdout + result.stderr
-        if case == "plan":
-            assert not (root / "services").exists(), "read-only restore stopped service"
-        else:
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped"
-            assert states[-1] == ("present" if success else "stopped")
+        play = Path(directory) / "play.yml"
+        play.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"instance": "bazarr", "recovery_swap_stage": str(stage),
+                     "_bazarr_api_key": "fixture-key", "app_config": {"app": {"port": port}}},
+            "tasks": tasks + list(extra_tasks),
+        }]))
+        env = os.environ | {"ANSIBLE_NOCOLOR": "1"}
+        return subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
+                              env=env, text=True, capture_output=True, check=False)
+
+
+def check_swap(server):
+    swap = swap_inputs("bazarr")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
+                    "group": "{{ app_config.app.pgid }}", "mode": "0750"}
+    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_compose_project"] == "/opt/{{ instance }}"
+    with tempfile.TemporaryDirectory() as directory:
+        stage = Path(directory)
+        result = run_hook("staged", stage, server.server_port)
+        assert result.returncode != 0, "a point without config.yaml must be refused"
+        (stage / "data/config").mkdir(parents=True)
+        (stage / "data/config/config.yaml").write_text("general: {}\n")
+        result = run_hook("staged", stage, server.server_port)
+        assert result.returncode != 0, "a point without an API key must be refused"
+        (stage / "data/config/config.yaml").write_text("auth:\n  apikey: fixture-key\n")
+        result = run_hook("staged", stage, server.server_port, [
+            {"ansible.builtin.assert": {"that": ["_bazarr_api_key == 'fixture-key'"]}}])
+        assert result.returncode == 0, result.stdout + result.stderr
+        for status, ok in [(503, False), (200, True)]:
+            server.response_status = status
+            result = run_hook("verified", stage, server.server_port)
+            assert (result.returncode == 0) == ok, result.stdout + result.stderr
 
 
 def main():
@@ -158,7 +90,7 @@ def main():
     try:
         # Deploy and Restore must read the same nested YAML credential.
         deploy = yaml.safe_load((repo / "ansible/roles/bazarr/tasks/main.yml").read_text())
-        restore = next(t["block"] for t in source if "block" in t)
+        restore = yaml.safe_load((role / "tasks/restore-staged.yml").read_text())
         for tasks, extract_name, guard_name in [
             (deploy, "Extract the Bazarr API key", "Assert Bazarr generated an API key"),
             (restore, "Bazarr restore | Extract the archived API key",
@@ -187,14 +119,12 @@ def main():
                     result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                             text=True, capture_output=True, check=False)
                     assert result.returncode == 0, result.stdout + result.stderr
-        for case in ["plan", "extract-failure", "move-failure", "copy-failure",
-                     "ownership-failure", "start-failure", "health-failure", "credential-failure", "missing-auth", "success"]:
-            check(case, server)
+        check_swap(server)
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Bazarr: read-only plan, successful restore and failure rollback passed")
+    print("Bazarr: restore swap inputs, staged API key and authenticated settings hooks passed")
 
 
 if __name__ == "__main__":

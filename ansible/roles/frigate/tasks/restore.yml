@@ -1,6 +1,6 @@
 ---
-# Restore one Frigate config/database archive. The original directory stays on its
-# filesystem until the replacement is healthy, and is put back after any later failure.
+# Restore one Frigate config/database archive through the shared swap. The staged
+# config.yml and frigate.db must be complete and the database intact before Frigate stops.
 
 - name: Frigate restore | Assert the restore contract
   ansible.builtin.assert:
@@ -15,182 +15,20 @@
       Frigate restore needs its PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots; overwrite requires a fresh target recovery point.
 
-- name: Frigate restore | Initialize the rollback state
-  ansible.builtin.set_fact:
-    _application_restore_complete: false
-    _frigate_restore_rolled_back: false
-    _frigate_restore_moved: {rc: 1}
-
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Frigate restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Frigate restore | Preview or replace the config directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Frigate restore | Create a private staging directory
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.config_path | dirname }}"
-    prefix: "{{ instance }}-frigate-restore-"
-  register: _frigate_restore_tmp
-  when: restore_overwrite | bool
-
-- name: Frigate restore | Stop and replace application state
-  when: restore_overwrite | bool
-  block:
-    - name: Frigate restore | Create private rollback space beside the config directory
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ app_config.app.config_path | dirname }}"
-        prefix: .frigate-pre-restore-
-      register: _frigate_restore_previous
-
-    - name: Frigate restore | Stop only Frigate
-      community.docker.docker_compose_v2:
-        project_src: "{{ frigate_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-
-    - name: Frigate restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _frigate_restore_tmp.path }}"
-
-    - name: Frigate restore | Validate the staged configuration and database
-      ansible.builtin.stat:
-        path: "{{ _frigate_restore_tmp.path }}/{{ item }}"
-      loop: [config.yml, frigate.db]
-      register: _frigate_restore_state
-
-    - name: Frigate restore | Require a complete application archive
-      ansible.builtin.assert:
-        that:
-          - _frigate_restore_state.results[0].stat.isreg | default(false)
-          - _frigate_restore_state.results[1].stat.isreg | default(false)
-        fail_msg: >-
-          The selected Frigate archive must contain config.yml and frigate.db under its
-          data.pxar root; no target state has been replaced.
-
-    - name: Frigate restore | Check the archived database integrity
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - >-
-            import sqlite3,sys;
-            c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);
-            result=c.execute('PRAGMA integrity_check').fetchone()[0];
-            c.close();
-            sys.exit(0 if result == 'ok' else 1)
-          - "{{ _frigate_restore_tmp.path }}/frigate.db"
-      changed_when: false
-      no_log: true
-
-    - name: Frigate restore | Move the original config into rollback space
-      ansible.builtin.command:
-        argv: [mv, "{{ app_config.app.config_path }}", "{{ _frigate_restore_previous.path }}/config"]
-      register: _frigate_restore_moved
-      changed_when: _frigate_restore_moved.rc == 0
-      no_log: true
-
-    - name: Frigate restore | Recreate the config directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: directory
-        owner: root
-        group: root
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: 0
+        group: 0
         mode: "0750"
-
-    - name: Frigate restore | Copy the archived application state into place
-      ansible.builtin.command:
-        argv: [cp, -a, "{{ _frigate_restore_tmp.path }}/.", "{{ app_config.app.config_path }}/"]
-      changed_when: true
-      no_log: true
-
-    - name: Frigate restore | Start only Frigate
-      community.docker.docker_compose_v2:
-        project_src: "{{ frigate_project_dir }}"
-        state: present
-        services: ["{{ instance }}"]
-
-    - name: Frigate restore | Wait for the restored public API endpoint
-      ansible.builtin.uri:
-        # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
-        url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
-        return_content: false
-        status_code: 200
-      register: _frigate_restore_health
-      until: _frigate_restore_health.status | default(0) == 200
-      retries: "{{ frigate_http_retries | default(60) }}"
-      delay: "{{ frigate_http_delay | default(5) }}"
-      changed_when: false
-      no_log: false
-
-    - name: Frigate restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Frigate restore | Stop only Frigate after failure
-      community.docker.docker_compose_v2:
-        project_src: "{{ frigate_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-      when: _frigate_restore_moved.rc | default(1) == 0
-
-    - name: Frigate restore | Remove the failed replacement config
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: absent
-      when: _frigate_restore_moved.rc | default(1) == 0
-
-    - name: Frigate restore | Put the original config back
-      ansible.builtin.command:
-        argv: [mv, "{{ _frigate_restore_previous.path }}/config", "{{ app_config.app.config_path }}"]
-      changed_when: true
-      no_log: true
-      when: _frigate_restore_moved.rc | default(1) == 0
-
-    - name: Frigate restore | Restart Frigate when the original config was untouched
-      community.docker.docker_compose_v2:
-        project_src: "{{ frigate_project_dir }}"
-        state: present
-        services: ["{{ instance }}"]
-      when: _frigate_restore_moved.rc | default(1) != 0
-
-    - name: Frigate restore | Record that rollback completed
-      ansible.builtin.set_fact:
-        _frigate_restore_rolled_back: true
-
-    - name: Frigate restore | Report the restore failure
-      ansible.builtin.fail:
-        msg: >-
-          Frigate restore failed.
-          {% if _frigate_restore_moved.rc | default(1) != 0 %}
-          The original config was untouched and Frigate was restarted.
-          {% else %}
-          The original config was put back and Frigate was left stopped.
-          {% endif %}
-          Inspect the job output and rerun the restore after correcting it.
-  always:
-    - name: Frigate restore | Remove rollback space only after health or rollback succeeded
-      ansible.builtin.file:
-        path: "{{ _frigate_restore_previous.path }}"
-        state: absent
-      when:
-        - _frigate_restore_previous.path is defined
-        - >-
-          (_application_restore_complete | bool) or (_frigate_restore_rolled_back | bool)
-          or (_frigate_restore_moved.rc | default(1) != 0)
-
-    - name: Frigate restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _frigate_restore_tmp.path }}"
-        state: absent
-      when: _frigate_restore_tmp.path is defined
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ frigate_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+    recovery_swap_health_retries: "{{ frigate_http_retries | default(60) }}"
+    recovery_swap_health_delay: "{{ frigate_http_delay | default(5) }}"

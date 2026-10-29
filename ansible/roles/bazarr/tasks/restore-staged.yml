@@ -1,0 +1,19 @@
+---
+# restore-swap.yml staged hook: the point must hold the API key Deploy reads.
+- name: Bazarr restore | Read the archived configuration
+  ansible.builtin.slurp:
+    src: "{{ recovery_swap_stage }}/data/config/config.yaml"
+  register: _bazarr_config
+  no_log: true
+
+- name: Bazarr restore | Extract the archived API key
+  ansible.builtin.set_fact:
+    _bazarr_api_key: >-
+      {{ ((_bazarr_config.content | b64decode | from_yaml).auth | default({})).apikey | default('') }}
+  no_log: true
+
+- name: Bazarr restore | Require the archived API key
+  ansible.builtin.assert:
+    that: _bazarr_api_key | length > 0
+    fail_msg: The selected Bazarr point has no API key; the live config has not been replaced.
+  no_log: true

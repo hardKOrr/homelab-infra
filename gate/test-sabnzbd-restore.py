@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Run SABnzbd's restore file operations and rollback against temporary local data."""
+"""Run SABnzbd's restore-swap hooks and check its swap inputs.
 
-import copy
+gate/test-restore-swap.py proves the swap and rollback. This test proves what SABnzbd adds:
+the staged point must hold sabnzbd.ini with an API key, and the restored queue API must
+accept that key before it is published.
+"""
+
 import http.server
 import os
 import subprocess
@@ -11,159 +15,83 @@ from pathlib import Path
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-source = yaml.safe_load((repo / "ansible/roles/sabnzbd/tasks/restore.yml").read_text())
+role = repo / "ansible/roles/sabnzbd"
 
 
-class Health(http.server.BaseHTTPRequestHandler):
+class Queue(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         assert self.path == "/api?mode=queue&output=json&apikey=fixture-key"
-        self.send_response(self.server.response_status)
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"queue": {}}' if self.server.response_status == 200 and not self.server.reject_key else b'{"error": "API Key Incorrect"}')
+        self.wfile.write(b'{"error": "API Key Incorrect"}' if self.server.reject_key else b'{"queue": {}}')
 
     def log_message(self, *_args):
         pass
 
 
-def fixture_tasks(tasks, root, case):
-    """Stub the PBS client, Compose and Vault publication; run the production file/command tasks."""
-    tasks = copy.deepcopy(tasks)
+def run_hook(hook, stage, port, extra_tasks=()):
+    tasks = yaml.safe_load((role / f"tasks/restore-{hook}.yml").read_text())
     for task in tasks:
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        if task.get("ansible.builtin.include_tasks", "").endswith("upsert-item.yml"):
-            del task["ansible.builtin.include_tasks"]
-            task.pop("vars", None)
-            task["ansible.builtin.assert"] = {"that": ["_sabnzbd_api_key == 'fixture-key'"]}
-            if case == "credential-failure":
-                task["ansible.builtin.assert"] = {"that": [False]}
-        if "community.docker.docker_compose_v2" in task:
-            compose = task.pop("community.docker.docker_compose_v2")
-            task["ansible.builtin.command"] = {"argv": [
-                str(root / "bin/service"), compose["state"], *compose["services"]]}
-            task["changed_when"] = True
+        task.pop("no_log", None)
         if "ansible.builtin.uri" in task:
             task["retries"] = 1
             task["delay"] = 0
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root, case)
-    return tasks
-
-
-def check(case, server):
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("upsert-item.yml"):
+            # Vaultwarden is the external boundary; publication must carry the archived key.
+            del task["ansible.builtin.include_tasks"]
+            task["ansible.builtin.assert"] = {"that": ["vault_item_fields.api_key == 'fixture-key'"]}
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "config"
-        config.mkdir()
-        (config / "original.txt").write_text("original state\n")
-        before_mode = config.stat().st_mode
-        # The executable stubs are the process boundary for the PBS client and the
-        # unmodified production cp argv. Copy failure writes partial state before failing.
-        scripts = {
-            "proxmox-backup-client": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-if args[:2] == ['snapshot', 'list']:
-    raise SystemExit(0)
-assert args[:2] == ['restore', 'host/sabnzbd/2026-10-09T00:00:00Z'], args
-if os.environ['SABNZBD_TEST_CASE'] == 'extract-failure':
-    raise SystemExit(7)
-assert args[2] == 'data.pxar'
-staging=Path(args[3])
-Path(staging, 'restored.txt').write_text('restored state\\n')
-text='[misc]\\n' if os.environ['SABNZBD_TEST_CASE']=='missing-auth' else '[misc]\\napi_key = fixture-key\\n'
-Path(staging, 'sabnzbd.ini').write_text(text)
-""",
-            "cp": """#!/usr/bin/env python3
-import os,subprocess,sys
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['SABNZBD_TEST_CASE']=='copy-failure' else result.returncode)
-""",
-            "mv": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['SABNZBD_TEST_CASE']=='move-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*sys.argv[1:]]).returncode)
-""",
-            "chown": """#!/usr/bin/env python3
-import os,subprocess,sys
-if os.environ['SABNZBD_TEST_CASE']=='ownership-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/chown',*sys.argv[1:]]).returncode)
-""",
-            "service": """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['sabnzbd']
-with Path(os.environ['SABNZBD_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-if sys.argv[1]=='present' and os.environ['SABNZBD_TEST_CASE']=='start-failure':
-    raise SystemExit(7)
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script)
-            path.chmod(0o700)
-        snapshot = "host/sabnzbd/2026-10-09T00:00:00Z"
-        server.response_status = 503 if case == "health-failure" else 200
-        server.reject_key = case == "invalid-key"
-        plays = [{"hosts": "localhost", "gather_facts": False, "vars": {
-            "instance": "sabnzbd", "sabnzbd_project_dir": str(root),
-            "restore_snapshot": snapshot, "restore_overwrite": case != "plan",
-            "homelabinfra_infra": {"backups": {}},
-            "app_config": {"app": {"config_path": str(config), "puid": os.getuid(),
-                                   "pgid": os.getgid(), "port": server.server_port},
-                           "backup": {"enabled": True, "application_consistent": True}},
-        }, "tasks": fixture_tasks(source, root, case)}]
-        path = root / "restore.yml"
-        path.write_text(yaml.safe_dump(plays))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "SABNZBD_TEST_CASE": case, "SABNZBD_TEST_ROOT": str(root),
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                env=env, text=True, capture_output=True, check=False)
-        success = case in ["success", "plan"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert config.exists()
-        if case == "success":
-            assert not (config / "original.txt").exists()
-            assert (config / "restored.txt").read_text() == "restored state\n"
-        else:
-            assert (config / "original.txt").read_text() == "original state\n"
-            assert not (config / "restored.txt").exists()
-            assert config.stat().st_mode == before_mode
-        assert not list(root.glob(".sabnzbd-pre-restore-*")), result.stdout + result.stderr
-        if case == "plan":
-            assert not (root / "services").exists(), "read-only restore stopped service"
-        else:
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped"
-            assert states[-1] == ("present" if success else "stopped")
+        play = Path(directory) / "play.yml"
+        play.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"instance": "sabnzbd", "recovery_swap_stage": str(stage),
+                     "_sabnzbd_api_key": "fixture-key", "app_config": {"app": {"port": port}}},
+            "tasks": tasks + list(extra_tasks),
+        }]))
+        env = os.environ | {"ANSIBLE_NOCOLOR": "1"}
+        return subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
+                              env=env, text=True, capture_output=True, check=False)
 
 
 def main():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
+    swap = swap_inputs("sabnzbd")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
+                    "group": "{{ app_config.app.pgid }}", "mode": "0750"}
+    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_compose_project"] == "{{ sabnzbd_project_dir }}"
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Queue)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "extract-failure", "move-failure", "copy-failure",
-                     "ownership-failure", "start-failure", "health-failure", "credential-failure", "missing-auth", "invalid-key", "success"]:
-            check(case, server)
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            result = run_hook("staged", stage, server.server_port)
+            assert result.returncode != 0, "a point without sabnzbd.ini must be refused"
+            (stage / "data").mkdir()
+            for ini in ["[misc]\nhost = 0.0.0.0\n", "[misc]\napi_key = \n"]:
+                (stage / "data/sabnzbd.ini").write_text(ini)
+                result = run_hook("staged", stage, server.server_port)
+                assert result.returncode != 0, "a point without an API key must be refused"
+            (stage / "data/sabnzbd.ini").write_text("[misc]\n  api_key = fixture-key  \n")
+            result = run_hook("staged", stage, server.server_port, [
+                {"ansible.builtin.assert": {"that": ["_sabnzbd_api_key == 'fixture-key'"]}}])
+            assert result.returncode == 0, result.stdout + result.stderr
+            for reject, ok in [(True, False), (False, True)]:
+                server.reject_key = reject
+                result = run_hook("verified", stage, server.server_port)
+                assert (result.returncode == 0) == ok, result.stdout + result.stderr
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
-    print("SABnzbd: read-only plan, successful restore and failure rollback passed")
+    print("SABnzbd: restore swap inputs, staged API key and authenticated queue hooks passed")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+---
+# restore-swap.yml rollback hook: the original config is back, so Compose gets its original
+# key overrides back before the original starts.
+- name: Servarr restore | Put the original Compose key overrides back
+  ansible.builtin.copy:
+    content: "{{ _servarr_restore_compose.content | b64decode }}"
+    dest: "{{ servarr_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
