@@ -62,6 +62,3 @@ vaultwarden_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
-    client:
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      component: main

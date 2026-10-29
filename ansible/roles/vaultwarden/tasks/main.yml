@@ -26,8 +26,8 @@
 #   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
 
 # ── Install ───────────────────────────────────────────────────────────────────
-- name: Install the PBS client when this lab declares application backups
-  ansible.builtin.include_tasks: install-pbs-client.yml
+- name: Install the pinned PBS client when this lab declares application backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
     - >-
@@ -44,17 +44,6 @@
       - ca-certificates
     state: present
     update_cache: true
-
-- name: Install the PBS backup client
-  ansible.builtin.apt:
-    name: proxmox-backup-client
-    state: present
-    update_cache: false
-  when:
-    - app_config.backup.enabled | default(false) | bool
-    - >-
-      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
-       | length) > 0
 
 - name: Check installed vaultwarden version
   ansible.builtin.command:
