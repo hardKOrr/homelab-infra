@@ -414,6 +414,16 @@ client path: it checks the point's archives and downloads its index without touc
 application. A role that stops its application before extracting runs that preview on
 every restore first (`pbs_client_overwrite: false`), so a point from another group, a
 missing PBS, or a point without the archives fails while the application still serves.
+
+A Docker or native restore replaces live state through `tasks/recovery/restore-swap.yml`.
+It extracts and checks the point while the application still serves, stops it, moves each
+live directory aside to `.<name>.restore-previous` beside it (a rename on the same
+filesystem), installs the restored directory, gives every file the declared numeric owner
+and never the archive's, and starts the application. Any failure after the stop puts the
+originals back and starts them. A rollback copy left by an earlier failed run refuses the
+next restore until someone puts it back or removes it. A path that is a mount point, such
+as media on root-squashed NFS, swaps its contents inside `<path>/.restore-previous`, and
+each step there runs as the owner.
 Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
 ## Local conventions

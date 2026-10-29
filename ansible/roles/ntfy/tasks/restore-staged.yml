@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold the auth database.
+- name: Ntfy restore | Check the staged auth database
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ _ntfy_restore_auth_relative }}"
+  register: _ntfy_restore_staged_auth_database
+  changed_when: false
+
+- name: Ntfy restore | Require the staged auth database
+  ansible.builtin.assert:
+    that:
+      - _ntfy_restore_staged_auth_database.stat.isreg | default(false)
+      - not (_ntfy_restore_staged_auth_database.stat.islnk | default(false))
+    fail_msg: >-
+      The selected Ntfy recovery point is missing its auth database; live state has not
+      been replaced. An empty message cache is a valid recovery point.

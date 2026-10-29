@@ -1,0 +1,12 @@
+---
+# restore-swap.yml verified hook: the ntfy CLI reads the restored auth database.
+- name: Ntfy restore | Read the restored auth database
+  ansible.builtin.command:
+    argv: [ntfy, user, list]
+  register: _ntfy_restore_users
+  changed_when: false
+
+- name: Ntfy restore | Require the auth database to be readable
+  ansible.builtin.assert:
+    that: _ntfy_restore_users.rc == 0
+    fail_msg: Ntfy's restored auth database could not be read by the ntfy CLI.

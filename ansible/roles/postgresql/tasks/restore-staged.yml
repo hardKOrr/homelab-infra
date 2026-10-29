@@ -1,0 +1,11 @@
+---
+# restore-swap.yml staged hook: the staged base backup passes pg_verifybackup and matches
+# the target's major version.
+- name: PostgreSQL restore | Verify the staged base backup
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/homelab-postgresql-recovery
+      - verify
+      - "{{ recovery_swap_stage }}/postgresql"
+      - "{{ app_config.app.version }}"
+  changed_when: false

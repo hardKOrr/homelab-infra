@@ -33,11 +33,17 @@
 #     mount    true when path is an exact mount point (media on NFS): its contents are
 #              swapped and every step inside it runs as owner. source must be one archive's
 #              directory
+#     allow_empty  true when an empty source is a valid state; otherwise an empty source
+#              refuses the restore before anything stops
 #   recovery_swap_stop_services  Compose services in recovery_swap_compose_project (docker)
 #                                or systemd units (native), stopped for the swap
 #   recovery_swap_compose_project  Compose project directory for docker services
 #   recovery_swap_health_url     optional URL that answers recovery_swap_health_status
-#                                (default 200) once the restored application serves
+#                                (a code or list, default 200) once the restored
+#                                application serves; recovery_swap_health_retries (default
+#                                60) and recovery_swap_health_delay (default 5) pace it, and
+#                                recovery_swap_health_follow_redirects (default safe) is
+#                                passed to the uri module
 #
 # Optional inputs:
 #   recovery_swap_staging_parent  where staging is created; default the first non-mount
@@ -132,7 +138,8 @@
                         (item.group | string if item.group | string is match('^[0-9]+$')
                          else _swap_gid_of[item.group | string]),
                'mode': item.mode | default('0750') | string,
-               'mount': item.mount | default(false) | bool
+               'mount': item.mount | default(false) | bool,
+               'allow_empty': item.allow_empty | default(false) | bool
              }] }}
       loop: "{{ recovery_swap_paths }}"
       loop_control:
@@ -255,6 +262,25 @@
       loop_control:
         label: "{{ item.item.source }}"
 
+    - name: Restore swap | Look for content in each staged source
+      ansible.builtin.command:
+        argv: [find, "{{ recovery_swap_stage }}/{{ item.source }}", -mindepth, "1", -print, -quit]
+      loop: "{{ _swap_paths | rejectattr('allow_empty') | list }}"
+      loop_control:
+        label: "{{ item.source }}"
+      register: _swap_content
+      changed_when: false
+
+    - name: Restore swap | Refuse an empty staged source
+      ansible.builtin.assert:
+        that: item.stdout | length > 0
+        fail_msg: >-
+          The selected recovery point's {{ item.item.source }} is empty; refusing to replace
+          {{ item.item.path }}. The application still serves unchanged.
+      loop: "{{ _swap_content.results }}"
+      loop_control:
+        label: "{{ item.item.source }}"
+
     - name: Restore swap | Validate the staged data
       ansible.builtin.include_tasks: "{{ recovery_swap_staged_hook }}"
       when: recovery_swap_staged_hook | default('') | length > 0
@@ -324,11 +350,12 @@
         - name: Restore swap | Wait for the restored application
           ansible.builtin.uri:
             url: "{{ recovery_swap_health_url }}"
+            follow_redirects: "{{ recovery_swap_health_follow_redirects | default('safe') }}"
             status_code: "{{ recovery_swap_health_status | default(200) }}"
           register: _swap_health
-          until: _swap_health.status | default(0) == recovery_swap_health_status | default(200) | int
-          retries: 60
-          delay: 5
+          until: _swap_health.status | default(0) in ([recovery_swap_health_status | default(200)] | flatten | map('int'))
+          retries: "{{ recovery_swap_health_retries | default(60) }}"
+          delay: "{{ recovery_swap_health_delay | default(5) }}"
           changed_when: false
           when: recovery_swap_health_url | default('') | length > 0
 

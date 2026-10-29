@@ -1,28 +1,20 @@
 ---
-# Restore the complete, stopped Uptime Kuma data directory. Stage the PBS archive
-# beside the live path, validate it before swapping, and put the old directory back
-# if the replacement does not start as the initialized server.
-- name: Uptime Kuma restore | Resolve paths and recovery identities
+# Restore the complete Uptime Kuma data directory through the shared swap. The staged point
+# must hold kuma.db, and the restored server must answer as the initialized server.
+- name: Uptime Kuma restore | Resolve the recovery identities
   ansible.builtin.set_fact:
-    _kuma_restore_data_path: "{{ app_config.app.data_path | default('') }}"
     _kuma_restore_source_backup_id: >-
       {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
     _kuma_restore_target_backup_id: >-
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
     _kuma_restore_snapshot: "{{ restore_snapshot | default('') }}"
-    _application_restore_complete: false
-    _kuma_restore_previous_moved: false
-    _kuma_restore_new_installed: false
-    _kuma_restore_rollback_complete: false
 
-- name: Uptime Kuma restore | Assert the recovery contract and safe paths
+- name: Uptime Kuma restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
-      - _kuma_restore_data_path is match('^/[^/].*')
-      - _kuma_restore_data_path != '/'
       - _kuma_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - _kuma_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - restore_overwrite is defined
@@ -46,183 +38,20 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Uptime Kuma restore | List or verify the recovery point before changing Uptime Kuma
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Uptime Kuma restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _kuma_restore_source_backup_id }}"
-    pbs_client_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Uptime Kuma restore | Check the existing target data directory
-  ansible.builtin.stat:
-    path: "{{ _kuma_restore_data_path }}"
-  register: _kuma_restore_target_data
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Uptime Kuma restore | Refuse an unsafe target directory
-  ansible.builtin.assert:
-    that:
-      - _kuma_restore_target_data.stat.exists
-      - _kuma_restore_target_data.stat.isdir
-      - not (_kuma_restore_target_data.stat.islnk | default(false))
-    fail_msg: >-
-      Uptime Kuma restore target {{ _kuma_restore_data_path }} is missing, not a directory
-      or linked; refusing to replace it.
-  when: restore_overwrite | bool
-
-- name: Uptime Kuma restore | Create same-filesystem staging space
-  ansible.builtin.tempfile:
-    state: directory
-    path: "{{ _kuma_restore_data_path | dirname }}"
-    prefix: .uptime-kuma-restore-
-  register: _kuma_restore_stage
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Uptime Kuma restore | Create the staged data directory
-  ansible.builtin.file:
-    path: "{{ _kuma_restore_stage.path }}/restored"
-    state: directory
-    mode: "0700"
-  when: restore_overwrite | bool
-
-- name: Uptime Kuma restore | Replace and verify the application data
-  when: restore_overwrite | bool
-  block:
-    - name: Uptime Kuma restore | Stop only the Uptime Kuma service
-      community.docker.docker_compose_v2:
-        project_src: "{{ uptime_kuma_project_dir }}"
-        state: stopped
-        services: [uptime-kuma]
-
-    - name: Uptime Kuma restore | Validate both PBS points and extract the selected one
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _kuma_restore_source_backup_id }}"
-        pbs_client_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _kuma_restore_stage.path }}/restored"
-
-    - name: Uptime Kuma restore | Check the staged database
-      ansible.builtin.stat:
-        path: "{{ _kuma_restore_stage.path }}/restored/kuma.db"
-      register: _kuma_restore_staged_database
-      changed_when: false
-
-    - name: Uptime Kuma restore | Require the staged database
-      ansible.builtin.assert:
-        that: (_kuma_restore_staged_database.stat.size | default(0)) > 0
-        fail_msg: >-
-          The selected Uptime Kuma recovery point has no kuma.db; the live data has not
-          been replaced.
-
-    - name: Uptime Kuma restore | Move the live data aside for rollback
-      ansible.builtin.command:
-        argv:
-          - mv
-          - --
-          - "{{ _kuma_restore_data_path }}"
-          - "{{ _kuma_restore_stage.path }}/previous"
-      changed_when: true
-
-    - name: Uptime Kuma restore | Record the rollback copy
-      ansible.builtin.set_fact:
-        _kuma_restore_previous_moved: true
-
-    - name: Uptime Kuma restore | Install the validated data directory
-      ansible.builtin.command:
-        argv:
-          - mv
-          - --
-          - "{{ _kuma_restore_stage.path }}/restored"
-          - "{{ _kuma_restore_data_path }}"
-      changed_when: true
-
-    - name: Uptime Kuma restore | Record the installed replacement
-      ansible.builtin.set_fact:
-        _kuma_restore_new_installed: true
-
-    - name: Uptime Kuma restore | Start only the Uptime Kuma service
-      community.docker.docker_compose_v2:
-        project_src: "{{ uptime_kuma_project_dir }}"
-        state: present
-        services: [uptime-kuma]
-
-    - name: Uptime Kuma restore | Wait for the initialized server
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
-        return_content: true
-        status_code: 200
-      register: _kuma_restore_health
-      until:
-        - _kuma_restore_health.status | default(0) == 200
-        - (_kuma_restore_health.json | default({})).type | default('') == 'entryPage'
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Uptime Kuma restore | Mark the application restore complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Uptime Kuma restore | Stop the failed replacement
-      community.docker.docker_compose_v2:
-        project_src: "{{ uptime_kuma_project_dir }}"
-        state: stopped
-        services: [uptime-kuma]
-      failed_when: false
-      when: _kuma_restore_new_installed | bool
-
-    - name: Uptime Kuma restore | Remove only the incomplete replacement
-      ansible.builtin.file:
-        path: "{{ _kuma_restore_data_path }}"
-        state: absent
-      failed_when: false
-      when: _kuma_restore_new_installed | bool
-
-    - name: Uptime Kuma restore | Put the original data directory back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - --
-          - "{{ _kuma_restore_stage.path }}/previous"
-          - "{{ _kuma_restore_data_path }}"
-      register: _kuma_restore_rollback_move
-      failed_when: false
-      when: _kuma_restore_previous_moved | bool
-
-    - name: Uptime Kuma restore | Restart the original service after rollback
-      community.docker.docker_compose_v2:
-        project_src: "{{ uptime_kuma_project_dir }}"
-        state: present
-        services: [uptime-kuma]
-      register: _kuma_restore_rollback_start
-      failed_when: false
-
-    - name: Uptime Kuma restore | Record whether rollback completed
-      ansible.builtin.set_fact:
-        _kuma_restore_rollback_complete: >-
-          {{ (_kuma_restore_rollback_move.rc | default(0) == 0)
-             and not (_kuma_restore_rollback_start.failed | default(false) | bool) }}
-
-    - name: Uptime Kuma restore | Fail with the rollback result
-      ansible.builtin.fail:
-        msg: >-
-          Uptime Kuma restore failed. {{ 'The original data was restored and the service restarted.'
-          if _kuma_restore_rollback_complete | bool else
-          'Rollback did not complete; recovery staging was preserved at ' ~ _kuma_restore_stage.path ~ '.' }}
-  always:
-    - name: Uptime Kuma restore | Remove staging after success or completed rollback
-      ansible.builtin.file:
-        path: "{{ _kuma_restore_stage.path }}"
-        state: absent
-      when:
-        - _kuma_restore_stage.path is defined
-        - _application_restore_complete | bool or _kuma_restore_rollback_complete | bool
+    recovery_swap_runtime: docker
+    recovery_swap_backup_id: "{{ _kuma_restore_source_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
+        owner: 0
+        group: 0
+        mode: "0750"
+    recovery_swap_stop_services: [uptime-kuma]
+    recovery_swap_compose_project: "{{ uptime_kuma_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

@@ -36,7 +36,7 @@ templates.
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-generate-ip-vmid.py`: `generate-ip.yml` never reallocates the address an existing guest's VMID encodes, such as an ISO appliance whose config shows no address.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
-- `test-comfyui-storage.py`: every directory ComfyUI's Compose file mounts belongs to its runtime user after deploy and after restore.
+- `test-comfyui-storage.py`: every directory ComfyUI's Compose file mounts belongs to its runtime user after deploy, and the restore swap hands them back through the same task file.
 - `test-instance-guest-reuse.py`: `resolve-instance-guest.yml` reuses the one unclaimed same-name guest Remove kept, refuses ambiguous, wrong-type or claimed guests, and every own-guest playbook selects its guest through it.
 - `test-stack-ports.py`: applications that share a Docker stack publish distinct default host ports.
 - `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
@@ -54,11 +54,11 @@ templates.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
 - `test-plex-hardware-transcoding.py`: Plex hardware decoding/encoding preferences follow the declared `/dev/dri` device and converge on repeat runs.
-- `test-ntfy-recovery.py`: native auth/cache archives, read-only planning, group guards and two-directory rollback.
+- `test-ntfy-recovery.py`: native auth/cache archives and the two paths, owner and auth-database checks Ntfy gives the restore swap.
 - `test-influxdb-recovery.py`: native data archive, restore credential checks and transactional rollback after replacement failures.
 - `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, restore rollback and scoped guest removal.
-- `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, restore health checks and rollback.
-- `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, archive and destination guards, monitor-data restore ordering and rollback.
+- `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, the live-cluster check, and the data directory, owner and mode PostgreSQL gives the restore swap.
+- `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, destination guards, and the restore swap inputs with the `kuma.db` and initialized-server hooks.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.
 - `test-sabnzbd-clients.py`: authenticated category creation, unique client wiring, convergence and selected-client removal without changing siblings.
 - `test-sabnzbd-restore.py`: authenticated recovery, read-only preview, group guard and rollback after extraction, move, copy, ownership, start, health or credential publication failures.
@@ -77,7 +77,8 @@ templates.
 - `test-start-owned-guest.py`: exact owned stack guest start, readiness, repeat and refusal cases.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
-- `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-plex-restore.py`, `test-tautulli-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-qbittorrent-restore.py`: qBittorrent's restore swap inputs, and its staged-state and canonical-credential hooks run against fixtures.
 - `test-observability-recovery.py`: both-service quiescence, complete data archive, read-only preview, point/group guards and rollback after replacement failures.
 - `test-karakeep-recovery.py`: one-archive backup of both persistent volumes and restore
   rollback after either original directory moves.
@@ -99,7 +100,8 @@ templates.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
 - `test-k8s-recovery-jobs.py`: the shared Kubernetes backup CronJob and restore Job keep the PBS client on tmpfs, read the rotated PBS fingerprint, keep the previous point through a same-day backup, preview through the client read-only, and load the database before replacing volumes; each Kubernetes app's archives, database step and stop list render through them.
-- `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files (the allowlist of older copies is now empty); README and full-line comment mentions do not count.
+- `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files (those allowlists are empty). A restore moving state into place or assigning ownership appears only in the shared restore swap; its allowlists of older role copies only shrink. README and full-line comment mentions do not count.
+- `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. `restore_swap_inputs.py` reads a role's inputs for its own test.
 - `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
 - `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
 

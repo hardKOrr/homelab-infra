@@ -1,0 +1,13 @@
+---
+# restore-swap.yml verified hook: the restored server answers as the initialized server,
+# not the first-run setup page.
+- name: Uptime Kuma restore | Wait for the initialized server
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
+    return_content: true
+    status_code: 200
+  register: _kuma_restore_health
+  until: (_kuma_restore_health.json | default({})).type | default('') == 'entryPage'
+  retries: 30
+  delay: 5
+  changed_when: false

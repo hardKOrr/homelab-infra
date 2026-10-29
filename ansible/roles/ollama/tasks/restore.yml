@@ -1,7 +1,5 @@
 ---
-# Restore one Ollama archive. Plan mode lists snapshots without changing the target;
-# overwrite mode validates into private staging, replaces only this app's storage tree,
-# and leaves the service stopped if anything after extraction fails.
+# Restore one Ollama archive (models and configuration) through the shared swap.
 - name: Ollama restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
@@ -14,108 +12,16 @@
       Ollama restore needs a PBS-backed application recovery contract. Keep overwrite=false
       to list snapshots before selecting one.
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Ollama restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Ollama restore | Preview or replace the storage tree
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Ollama restore | Create private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    # Beside the data, outside /tmp: the PBS client's private tmpfs covers /tmp.
-    path: "{{ app_config.app.storage_path | dirname }}"
-    prefix: "{{ instance }}-ollama-restore-"
-  register: _ollama_restore_tmp
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Ollama restore | Replace application model/config state
-  when: restore_overwrite | bool
-  block:
-    - name: Ollama restore | Stop Ollama
-      community.docker.docker_compose_v2:
-        project_src: "{{ ollama_project_dir }}"
-        state: stopped
-        services: [ollama]
-
-    - name: Ollama restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _ollama_restore_tmp.path }}"
-
-    - name: Ollama restore | Look for archived state in staging
-      ansible.builtin.find:
-        paths: "{{ _ollama_restore_tmp.path }}"
-        file_type: any
-        hidden: true
-      register: _ollama_restore_staged
-
-    - name: Ollama restore | Require a non-empty archive
-      ansible.builtin.assert:
-        that: _ollama_restore_staged.matched > 0
-        fail_msg: >-
-          The selected Ollama recovery point is empty; the storage path has not been replaced.
-
-    - name: Ollama restore | Replace storage after archive validation
-      ansible.builtin.file:
-        path: "{{ app_config.app.storage_path }}"
-        state: absent
-
-    - name: Ollama restore | Recreate the storage root
-      ansible.builtin.file:
-        path: "{{ app_config.app.storage_path }}"
-        state: directory
-        owner: root
-        group: root
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.storage_path }}"
+        owner: 0
+        group: 0
         mode: "0750"
-
-    - name: Ollama restore | Copy archived models and configuration into place
-      ansible.builtin.command:
-        argv: [cp, -a, "{{ _ollama_restore_tmp.path }}/.", "{{ app_config.app.storage_path }}/"]
-      changed_when: true
-      no_log: true
-
-    - name: Ollama restore | Start Ollama
-      community.docker.docker_compose_v2:
-        project_src: "{{ ollama_project_dir }}"
-        state: present
-        services: [ollama]
-
-    - name: Ollama restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/tags"
-        status_code: 200
-      register: _ollama_restore_health
-      until: _ollama_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Ollama restore | Mark the application restore complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Ollama restore | Leave the service stopped after a failed restore
-      ansible.builtin.command:
-        argv: [docker, compose, --project-directory, "{{ ollama_project_dir }}", stop, ollama]
-      changed_when: false
-      failed_when: false
-
-    - name: Ollama restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Ollama restore did not complete. The service is intentionally left stopped;
-          inspect the recovered model/config tree and retry after correcting the failure.
-  always:
-    - name: Ollama restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _ollama_restore_tmp.path }}"
-        state: absent
-      when: _ollama_restore_tmp.path is defined
+    recovery_swap_stop_services: [ollama]
+    recovery_swap_compose_project: "{{ ollama_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/tags"

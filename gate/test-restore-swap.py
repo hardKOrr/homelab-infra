@@ -231,6 +231,16 @@ def main():
         assert tree(live) == before and not lines(root, "services.log")
         assert not list(live.glob(".gate-app-restore-*"))
 
+        # An empty source is refused before the stop unless the path allows it.
+        reset(root)
+        (root / "point/data/config/app.ini").unlink()
+        expect(run(root, [data, config]), False, "empty source")
+        assert not lines(root, "services.log")
+        reset(root)
+        (root / "point/data/config/app.ini").unlink()
+        expect(run(root, [data, dict(config, allow_empty=True)]), True, "allowed empty source")
+        assert tree(live / "app/config") == {}
+
         # A missing source in the point is refused before the stop.
         reset(root)
         expect(run(root, [dict(config, source="data/absent")]), False, "missing source")

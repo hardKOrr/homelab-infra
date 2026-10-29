@@ -1,4 +1,6 @@
 ---
+# Restore Navidrome's data directory through the shared swap. The external music library
+# is never part of the archive or the swap.
 - name: Navidrome restore | Assert data stays inside its named project
   ansible.builtin.assert:
     that:
@@ -21,131 +23,19 @@
       Navidrome restore needs PBS, an explicit snapshot for overwrite=true, and
       overwrite=false for a read-only plan.
 
-# Runs on every restore, before anything stops: a point from another group, no PBS,
-# or a point without the archives fails while the application still serves.
-- name: Navidrome restore | List or verify the recovery point before changing the application
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+# The stack host is an unprivileged LXC's nested Docker: the archive's file modes cannot
+# be applied there, so the swap assigns the container user's ownership and the mode.
+- name: Navidrome restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Navidrome restore | Create private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    # Keep the archive outside the directory being replaced and close to its data.
-    path: "{{ app_config.app.data_path | dirname }}"
-    prefix: "{{ instance }}-navidrome-restore-"
-  register: _navidrome_restore_tmp
-  when: restore_overwrite | bool
-
-- name: Navidrome restore | Replace application data from PBS
-  when: restore_overwrite | bool
-  block:
-    - name: Navidrome restore | Stop the named service
-      community.docker.docker_compose_v2:
-        project_src: "{{ navidrome_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-
-    - name: Navidrome restore | Extract the selected archive into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_restore_args: [--allow-existing-dirs, 'true', --ignore-acls, 'true', --ignore-ownership, 'true', --ignore-permissions, 'true', --ignore-xattrs, 'true']
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _navidrome_restore_tmp.path }}"
-
-    - name: Navidrome restore | Require a non-empty data archive
-      ansible.builtin.command:
-        argv: [find, "{{ _navidrome_restore_tmp.path }}", -mindepth, "1", -maxdepth, "1", -print, -quit]
-      register: _navidrome_restore_archive_entry
-      changed_when: false
-
-    - name: Navidrome restore | Assert the selected snapshot contains application state
-      ansible.builtin.assert:
-        that: _navidrome_restore_archive_entry.stdout | length > 0
-        fail_msg: >-
-          The selected PBS snapshot contains no Navidrome data; refusing to replace
-          the target. The external music library was not touched.
-
-    - name: Navidrome restore | Replace the data directory after validation
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: absent
-
-    - name: Navidrome restore | Recreate the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: directory
-        owner: "{{ app_config.app.puid | default(1313) }}"
-        group: "{{ app_config.app.pgid | default(1313) }}"
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_ignore_permissions: true
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
+        owner: "{{ app_config.app.puid | default(1313) | int }}"
+        group: "{{ app_config.app.pgid | default(1313) | int }}"
         mode: "0750"
-
-    - name: Navidrome restore | Copy the archived state into place
-      ansible.builtin.command:
-        argv: [cp, -a, "{{ _navidrome_restore_tmp.path }}/.", "{{ app_config.app.data_path }}/"]
-      changed_when: true
-      no_log: true
-
-    - name: Navidrome restore | Set data ownership for the container user
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: directory
-        owner: "{{ app_config.app.puid | default(1313) }}"
-        group: "{{ app_config.app.pgid | default(1313) }}"
-        recurse: true
-
-    - name: Navidrome restore | Normalize the data directory mode
-      ansible.builtin.file:
-        path: "{{ app_config.app.data_path }}"
-        state: directory
-        owner: "{{ app_config.app.puid | default(1313) }}"
-        group: "{{ app_config.app.pgid | default(1313) }}"
-        # cp -a applies the archive root's mode to this directory. Keep Deploy a no-op.
-        mode: "0750"
-
-    - name: Navidrome restore | Start the named service
-      community.docker.docker_compose_v2:
-        project_src: "{{ navidrome_project_dir }}"
-        state: present
-        services: ["{{ instance }}"]
-
-    - name: Navidrome restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/ping"
-        status_code: 200
-      register: _navidrome_restore_health
-      until: _navidrome_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Navidrome restore | Assert the restored service is healthy
-      ansible.builtin.assert:
-        that: _navidrome_restore_health.status == 200
-        fail_msg: The restored Navidrome service did not answer /ping.
-
-    - name: Navidrome restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Navidrome restore | Stop the named service after a failed restore
-      community.docker.docker_compose_v2:
-        project_src: "{{ navidrome_project_dir }}"
-        state: stopped
-        services: ["{{ instance }}"]
-
-    - name: Navidrome restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Navidrome restore did not complete. The named service is intentionally left
-          stopped; inspect the recovered data and retry after correcting the failure.
-          The external music library was not touched.
-  always:
-    - name: Navidrome restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _navidrome_restore_tmp.path }}"
-        state: absent
-      when: _navidrome_restore_tmp.path is defined
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ navidrome_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/ping"

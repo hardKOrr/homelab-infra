@@ -60,21 +60,12 @@
       The PostgreSQL recovery helper is missing. Deploy the instance with the current
       PostgreSQL role before requesting an application restore.
 
-- name: PostgreSQL restore | List or verify the recovery point without changing PostgreSQL
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-  vars:
-    pbs_client_runtime: native
-    pbs_client_backup_id: "{{ _postgresql_restore_source_backup_id }}"
-    pbs_client_pre_restore_backup_id: "{{ _postgresql_restore_target_backup_id }}"
-    pbs_client_archives: [{name: postgresql.pxar}]
-  when: not (restore_overwrite | bool)
-
+# Read-only, so the preview checks the target cluster too.
 - name: PostgreSQL restore | Discover the target cluster before mutation
   ansible.builtin.command:
     argv: [pg_lsclusters, --no-header]
   register: _postgresql_restore_clusters
   changed_when: false
-  when: restore_overwrite | bool
 
 - name: PostgreSQL restore | Resolve the target data directory
   ansible.builtin.set_fact:
@@ -84,91 +75,32 @@
     _postgresql_restore_main_lines: >-
       {{ _postgresql_restore_clusters.stdout_lines | default([])
          | select('match', '^' ~ (app_config.app.version | string) ~ '[ ]+main[ ]+') | list }}
-  when: restore_overwrite | bool
 
-- name: PostgreSQL restore | Require one target main cluster and its existing data directory
-  when: restore_overwrite | bool
-  block:
-    - name: PostgreSQL restore | Validate the target cluster identity
-      ansible.builtin.assert:
-        that:
-          - _postgresql_restore_cluster_lines | length == 1
-          - _postgresql_restore_main_lines | length == 1
-          - (_postgresql_restore_main_lines[0].split()[2] | int) == (app_config.app.port | int)
-        fail_msg: >-
-          PostgreSQL restore requires exactly the configured main cluster and port;
-          the current instance has not been changed.
+- name: PostgreSQL restore | Validate the target cluster identity
+  ansible.builtin.assert:
+    that:
+      - _postgresql_restore_cluster_lines | length == 1
+      - _postgresql_restore_main_lines | length == 1
+      - (_postgresql_restore_main_lines[0].split()[2] | int) == (app_config.app.port | int)
+    fail_msg: >-
+      PostgreSQL restore requires exactly the configured main cluster and port;
+      the current instance has not been changed.
 
-    - name: PostgreSQL restore | Set target service and data directory
-      ansible.builtin.set_fact:
-        _postgresql_restore_service: >-
-          postgresql@{{ app_config.app.version }}-main
-        _postgresql_restore_data_directory: "{{ _postgresql_restore_main_lines[0].split()[5] }}"
-
-    - name: PostgreSQL restore | Inspect the target data directory
-      ansible.builtin.stat:
-        path: "{{ _postgresql_restore_data_directory }}"
-      register: _postgresql_restore_data_stat
-      changed_when: false
-
-    - name: PostgreSQL restore | Require a real target data directory
-      ansible.builtin.assert:
-        that:
-          - _postgresql_restore_data_stat.stat.isdir | default(false)
-          - not (_postgresql_restore_data_stat.stat.islnk | default(false))
-        fail_msg: >-
-          PostgreSQL restore requires a real existing cluster data directory; the target
-          has not been changed.
-
-- name: PostgreSQL restore | Create private same-filesystem staging space
-  ansible.builtin.tempfile:
-    path: "{{ _postgresql_restore_data_directory | dirname }}"
-    state: directory
-    prefix: .homelab-postgresql-restore-
-  register: _postgresql_restore_tmp
-  when: restore_overwrite | bool
-
-- name: PostgreSQL restore | Apply the selected point with same-filesystem rollback
-  when: restore_overwrite | bool
-  block:
-    - name: PostgreSQL restore | Create the private source directory
-      ansible.builtin.file:
-        path: "{{ _postgresql_restore_tmp.path }}/source"
-        state: directory
-        owner: root
-        group: root
+# The helper verifies the staged base backup (manifest, major version) before the stop and
+# reads the restored cluster as the local superuser after the start.
+- name: PostgreSQL restore | Preview or replace the cluster data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: native
+    recovery_swap_backup_id: "{{ _postgresql_restore_source_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _postgresql_restore_target_backup_id }}"
+    recovery_swap_archives: [postgresql.pxar]
+    recovery_swap_paths:
+      - path: "{{ _postgresql_restore_main_lines[0].split()[5] }}"
+        source: postgresql/cluster
+        owner: postgres
+        group: postgres
         mode: "0700"
-
-    - name: PostgreSQL restore | Download the selected native archive
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: native
-        pbs_client_backup_id: "{{ _postgresql_restore_source_backup_id }}"
-        pbs_client_pre_restore_backup_id: "{{ _postgresql_restore_target_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: postgresql.pxar
-            path: "{{ _postgresql_restore_tmp.path }}/source"
-
-    - name: PostgreSQL restore | Verify and apply the point transactionally
-      ansible.builtin.command:
-        argv:
-          - /usr/local/sbin/homelab-postgresql-recovery
-          - restore
-          - "{{ _postgresql_restore_tmp.path }}/source"
-          - "{{ _postgresql_restore_data_directory }}"
-          - "{{ _postgresql_restore_service }}"
-          - "{{ app_config.app.port }}"
-          - "{{ app_config.app.version }}"
-      register: _postgresql_restore_apply
-      changed_when: true
-
-    - name: PostgreSQL restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  always:
-    - name: PostgreSQL restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _postgresql_restore_tmp.path }}"
-        state: absent
-      when: _postgresql_restore_tmp.path is defined
+    recovery_swap_stop_services: ["postgresql@{{ app_config.app.version }}-main"]
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

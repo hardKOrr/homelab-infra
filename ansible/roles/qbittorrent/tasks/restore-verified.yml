@@ -1,0 +1,15 @@
+---
+# restore-swap.yml verified hook: the restored WebUI accepts the canonical credential.
+- name: qBittorrent restore | Verify the canonical WebUI credential
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/login.yml"
+  vars:
+    qbt_login_base: "http://localhost:{{ app_config.app.port }}"
+    qbt_login_user: "{{ homelabinfra_vault.media[instance].username }}"
+    qbt_login_password: "{{ homelabinfra_vault.media[instance].password }}"
+
+- name: qBittorrent restore | Require an authenticated session
+  ansible.builtin.assert:
+    that:
+      - qbt_login_ok | bool
+      - qbt_login_cookie | length > 0
+    fail_msg: The restored WebUI refused the canonical credential.

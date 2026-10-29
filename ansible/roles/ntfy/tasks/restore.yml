@@ -1,338 +1,47 @@
 ---
-# Restore Ntfy's auth database and message cache as one application recovery unit.
-# Both replacements are staged and validated first; live directories stay available
-# for rollback until the restored service passes health and auth-database checks.
-- name: Ntfy restore | Resolve source, target, paths and recovery identity
+# Restore Ntfy's auth database and message cache as one recovery unit through the shared
+# swap. Both live directories stay available for rollback until the restored service
+# passes its health and auth-database checks.
+- name: Ntfy restore | Resolve the auth database location
   ansible.builtin.set_fact:
-    _ntfy_restore_data_path: "{{ app_config.app.data_path | default('') }}"
-    _ntfy_restore_cache_path: "{{ app_config.app.cache_path | default('') }}"
-    _ntfy_restore_auth_file: "{{ ntfy_auth_file }}"
-    _ntfy_restore_cache_file: "{{ ntfy_cache_file }}"
     _ntfy_restore_auth_relative: >-
       {{ ntfy_auth_file | replace((app_config.app.data_path | default('')).rstrip('/') ~ '/', '') }}
-    _ntfy_restore_service_name: "{{ app_config.app.service_name | default(ntfy_service_name) }}"
-    _ntfy_restore_snapshot: "{{ restore_snapshot | default('') }}"
-    _application_restore_complete: false
-    _ntfy_restore_data_moved: false
-    _ntfy_restore_cache_moved: false
-    _ntfy_restore_data_installed: false
-    _ntfy_restore_cache_installed: false
-    _ntfy_restore_rollback_complete: false
 
-- name: Ntfy restore | Assert the recovery contract and safe paths
+- name: Ntfy restore | Assert the recovery contract and separate paths
   ansible.builtin.assert:
     that:
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
-      - _ntfy_restore_data_path is match('^/[^/].*')
-      - _ntfy_restore_cache_path is match('^/[^/].*')
-      - _ntfy_restore_data_path != '/'
-      - _ntfy_restore_cache_path != '/'
-      - _ntfy_restore_data_path != _ntfy_restore_cache_path
-      - not _ntfy_restore_data_path.startswith(_ntfy_restore_cache_path.rstrip('/') ~ '/')
-      - not _ntfy_restore_cache_path.startswith(_ntfy_restore_data_path.rstrip('/') ~ '/')
-      - _ntfy_restore_auth_file.startswith(_ntfy_restore_data_path.rstrip('/') ~ '/')
-      - _ntfy_restore_cache_file.startswith(_ntfy_restore_cache_path.rstrip('/') ~ '/')
+      - ntfy_auth_file.startswith(app_config.app.data_path.rstrip('/') ~ '/')
+      - ntfy_cache_file.startswith(app_config.app.cache_path.rstrip('/') ~ '/')
       - _ntfy_restore_auth_relative | length > 0
       - restore_overwrite is defined
-      - (_ntfy_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - homelabinfra_infra.backups is defined
     fail_msg: >-
-      Ntfy restore needs its application-consistent contract, separate data/cache paths,
-      PBS, and a selected recovery point for overwrite=true.
+      Ntfy restore needs its application-consistent contract, its auth database inside the
+      data path and its cache inside the cache path, PBS, and a selected recovery point for
+      overwrite=true.
 
-- name: Ntfy restore | List or verify the recovery point without changing Ntfy
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Ntfy restore | Preview or replace the data and cache directories
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: native
-    pbs_client_archives: [{name: data.pxar}, {name: cache.pxar}]
-  when: not (restore_overwrite | bool)
-
-- name: Ntfy restore | Check the live data and cache directories
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ _ntfy_restore_data_path }}"
-    - "{{ _ntfy_restore_cache_path }}"
-  register: _ntfy_restore_targets
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Ntfy restore | Refuse unsafe live state paths
-  ansible.builtin.assert:
-    that:
-      - item.stat.exists
-      - item.stat.isdir
-      - not item.stat.islnk
-    fail_msg: >-
-      Ntfy restore target {{ item.item }} is missing, linked or not a directory.
-  loop: "{{ _ntfy_restore_targets.results }}"
-  loop_control:
-    label: "{{ item.item }}"
-  when: restore_overwrite | bool
-
-- name: Ntfy restore | Replace and verify both state directories
-  when: restore_overwrite | bool
-  block:
-    - name: Ntfy restore | Create private staging directories beside each live path
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ item.path | dirname }}"
-        prefix: "{{ item.prefix }}"
-      loop:
-        - path: "{{ _ntfy_restore_data_path }}"
-          prefix: .ntfy-restore-data-
-        - path: "{{ _ntfy_restore_cache_path }}"
-          prefix: .ntfy-restore-cache-
-      register: _ntfy_restore_stages
-
-    - name: Ntfy restore | Create private rollback directories beside each live path
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ item.path | dirname }}"
-        prefix: "{{ item.prefix }}"
-      loop:
-        - path: "{{ _ntfy_restore_data_path }}"
-          prefix: .ntfy-pre-restore-data-
-        - path: "{{ _ntfy_restore_cache_path }}"
-          prefix: .ntfy-pre-restore-cache-
-      register: _ntfy_restore_previous
-
-    - name: Ntfy restore | Create auth and cache staging targets
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0700"
-      loop:
-        - "{{ _ntfy_restore_stages.results[0].path }}/data"
-        - "{{ _ntfy_restore_stages.results[1].path }}/cache"
-
-    - name: Ntfy restore | Extract the selected point into staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: native
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _ntfy_restore_stages.results[0].path }}/data"
-          - name: cache.pxar
-            path: "{{ _ntfy_restore_stages.results[1].path }}/cache"
-
-    - name: Ntfy restore | Stop only this instance
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_restore_service_name }}"
-        state: stopped
-
-    - name: Ntfy restore | Record that the service is stopped
-      ansible.builtin.set_fact:
-        _ntfy_restore_service_stopped: true
-
-    - name: Ntfy restore | Check the staged auth database
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop:
-        - "{{ _ntfy_restore_stages.results[0].path }}/data/{{ _ntfy_restore_auth_relative }}"
-      register: _ntfy_restore_staged_auth_database
-      changed_when: false
-      no_log: true
-
-    - name: Ntfy restore | Require the staged auth database
-      ansible.builtin.assert:
-        that:
-          - item.stat.exists
-          - item.stat.isreg
-          - not item.stat.islnk
-        fail_msg: >-
-          The selected Ntfy recovery point is missing its auth database; live state has
-          not been replaced. An empty message cache is a valid recovery point.
-      loop: "{{ _ntfy_restore_staged_auth_database.results }}"
-      no_log: true
-
-    - name: Ntfy restore | Move the original auth data aside on the same filesystem
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_data_path }}"
-          - "{{ _ntfy_restore_previous.results[0].path }}/state"
-      register: _ntfy_restore_move_data
-      changed_when: _ntfy_restore_move_data.rc == 0
-
-    - name: Ntfy restore | Record the original auth data move
-      ansible.builtin.set_fact:
-        _ntfy_restore_data_moved: true
-
-    - name: Ntfy restore | Move the original cache aside on the same filesystem
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_cache_path }}"
-          - "{{ _ntfy_restore_previous.results[1].path }}/state"
-      register: _ntfy_restore_move_cache
-      changed_when: _ntfy_restore_move_cache.rc == 0
-
-    - name: Ntfy restore | Record the original cache move
-      ansible.builtin.set_fact:
-        _ntfy_restore_cache_moved: true
-
-    - name: Ntfy restore | Move the staged auth data into place
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_stages.results[0].path }}/data"
-          - "{{ _ntfy_restore_data_path }}"
-      register: _ntfy_restore_install_data
-      changed_when: _ntfy_restore_install_data.rc == 0
-
-    - name: Ntfy restore | Record the auth data replacement
-      ansible.builtin.set_fact:
-        _ntfy_restore_data_installed: true
-
-    - name: Ntfy restore | Move the staged cache into place
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_stages.results[1].path }}/cache"
-          - "{{ _ntfy_restore_cache_path }}"
-      register: _ntfy_restore_install_cache
-      changed_when: _ntfy_restore_install_cache.rc == 0
-
-    - name: Ntfy restore | Record the cache replacement
-      ansible.builtin.set_fact:
-        _ntfy_restore_cache_installed: true
-
-    - name: Ntfy restore | Restore application data ownership
-      ansible.builtin.command:
-        argv:
-          - chown
-          - -R
-          - ntfy:ntfy
-          - "{{ _ntfy_restore_data_path }}"
-          - "{{ _ntfy_restore_cache_path }}"
-      changed_when: true
-
-    - name: Ntfy restore | Set data and cache directory permissions
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
+    recovery_swap_runtime: native
+    recovery_swap_archives: [data.pxar, cache.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
+        source: data
         owner: ntfy
         group: ntfy
         mode: "0750"
-      loop:
-        - "{{ _ntfy_restore_data_path }}"
-        - "{{ _ntfy_restore_cache_path }}"
-
-    - name: Ntfy restore | Start only this instance
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_restore_service_name }}"
-        state: started
-
-    - name: Ntfy restore | Wait for the restored service
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/v1/health"
-        status_code: 200
-      register: _ntfy_restore_health
-      until: _ntfy_restore_health.status | default(0) == 200
-      retries: 30
-      delay: 5
-      changed_when: false
-
-    - name: Ntfy restore | Read the restored auth database
-      ansible.builtin.command:
-        argv: [ntfy, user, list]
-      register: _ntfy_restore_users
-      changed_when: false
-
-    - name: Ntfy restore | Require the auth database to be readable
-      ansible.builtin.assert:
-        that: _ntfy_restore_users.rc == 0
-        fail_msg: Ntfy's restored auth database could not be read by the ntfy CLI.
-
-    - name: Ntfy restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Ntfy restore | Stop the service after a failed replacement
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_restore_service_name }}"
-        state: stopped
-
-    - name: Ntfy restore | Remove the failed auth replacement
-      ansible.builtin.file:
-        path: "{{ _ntfy_restore_data_path }}"
-        state: absent
-      when: _ntfy_restore_data_installed | bool
-
-    - name: Ntfy restore | Remove the failed cache replacement
-      ansible.builtin.file:
-        path: "{{ _ntfy_restore_cache_path }}"
-        state: absent
-      when: _ntfy_restore_cache_installed | bool
-
-    - name: Ntfy restore | Put the original auth data back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_previous.results[0].path }}/state"
-          - "{{ _ntfy_restore_data_path }}"
-      changed_when: true
-      when: _ntfy_restore_data_moved | bool
-
-    - name: Ntfy restore | Put the original cache back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _ntfy_restore_previous.results[1].path }}/state"
-          - "{{ _ntfy_restore_cache_path }}"
-      changed_when: true
-      when: _ntfy_restore_cache_moved | bool
-
-    - name: Ntfy restore | Record the completed rollback
-      ansible.builtin.set_fact:
-        _ntfy_restore_rollback_complete: true
-
-    - name: Ntfy restore | Restart the service after rollback
-      ansible.builtin.systemd_service:
-        name: "{{ _ntfy_restore_service_name }}"
-        state: started
-      when: _ntfy_restore_rollback_complete | bool
-
-    - name: Ntfy restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Ntfy restore failed. The original auth database and cache were restored and the
-          service restarted. If rollback itself failed, inspect the retained directories
-          beside {{ _ntfy_restore_data_path }} and {{ _ntfy_restore_cache_path }} before
-          retrying.
-  always:
-    - name: Ntfy restore | Remove auth rollback data after success or rollback
-      ansible.builtin.file:
-        path: "{{ _ntfy_restore_previous.results[0].path }}"
-        state: absent
-      when:
-        - _ntfy_restore_previous.results is defined
-        - >-
-          (_application_restore_complete | bool)
-          or (_ntfy_restore_rollback_complete | bool)
-          or not (_ntfy_restore_data_moved | bool)
-
-    - name: Ntfy restore | Remove cache rollback data after success or rollback
-      ansible.builtin.file:
-        path: "{{ _ntfy_restore_previous.results[1].path }}"
-        state: absent
-      when:
-        - _ntfy_restore_previous.results is defined
-        - >-
-          (_application_restore_complete | bool)
-          or (_ntfy_restore_rollback_complete | bool)
-          or not (_ntfy_restore_cache_moved | bool)
-
-    - name: Ntfy restore | Remove private staging data after success or rollback
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ _ntfy_restore_stages.results | default([]) }}"
-      when:
-        - item.path is defined
-        - >-
-          (_application_restore_complete | bool)
-          or (_ntfy_restore_rollback_complete | bool)
-          or not (_ntfy_restore_data_moved | bool and _ntfy_restore_cache_moved | bool)
+      # An empty message cache is a valid recovery point.
+      - path: "{{ app_config.app.cache_path }}"
+        source: cache
+        owner: ntfy
+        group: ntfy
+        mode: "0750"
+        allow_empty: true
+    recovery_swap_stop_services: ["{{ app_config.app.service_name | default(ntfy_service_name) }}"]
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/v1/health"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

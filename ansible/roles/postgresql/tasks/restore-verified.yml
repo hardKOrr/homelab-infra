@@ -1,0 +1,11 @@
+---
+# restore-swap.yml verified hook: the restored cluster is ready and answers the local
+# superuser.
+- name: PostgreSQL restore | Verify the restored cluster
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/homelab-postgresql-recovery, check-live, "{{ app_config.app.port }}"]
+  register: _postgresql_restore_live
+  until: _postgresql_restore_live.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
