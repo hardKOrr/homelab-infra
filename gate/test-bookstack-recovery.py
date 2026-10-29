@@ -68,29 +68,23 @@ case "$action" in
 esac
 """
 
+# Plays the shared PBS client script: `extract --point P --pre-restore-point Q NAME:DIR...`.
+# gate/test-pbs-client.py proves the script itself.
 PBS = """#!/bin/bash
 set -eu
-if [[ "$1" == "snapshot" && "$2" == "files" ]]; then
-  [[ "$3" == "$BOOKSTACK_TEST_PRE_RESTORE_POINT" ]] || exit 94
-  [[ "${BOOKSTACK_TEST_MISSING_PREPOINT:-0}" != 1 ]] || exit 95
-  exit 0
-fi
-if [[ "$1" == "restore" ]]; then
-  if [[ "${BOOKSTACK_BACKEND:-docker}" == "kubernetes" ]]; then
-    [[ " $* " == *" --ignore-ownership "* && " $* " == *" --ignore-acls "* && " $* " == *" --ignore-xattrs "* ]] || exit 96
-  else
-    [[ " $* " != *" --ignore-ownership "* && " $* " != *" --ignore-acls "* && " $* " != *" --ignore-xattrs "* ]] || exit 97
-  fi
-  destination="$4"
-  mkdir -p "$destination"
-  case "$3" in
+[[ "$1" == extract && "$2" == --point && "$4" == --pre-restore-point ]] || exit 93
+[[ "$5" == "$BOOKSTACK_TEST_PRE_RESTORE_POINT" ]] || exit 94
+[[ "${BOOKSTACK_TEST_MISSING_PREPOINT:-0}" != 1 ]] || exit 3
+for spec in "${@:6}"; do
+  destination=${spec#*:}
+  [[ -d "$destination" ]] || exit 64
+  case "${spec%%:*}" in
     database.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_DB/." "$destination/" ;;
     storage.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_STORAGE/." "$destination/" ;;
     *) exit 92 ;;
   esac
-  exit 0
-fi
-exit 93
+done
+echo extracted
 """
 
 
@@ -216,7 +210,7 @@ def check(case):
         bin_dir = root / "bin"
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
-        write_executable(bin_dir / "proxmox-backup-client", PBS)
+        write_executable(bin_dir / "pbs-client.sh", PBS)
 
         project = root / "project"
         project.mkdir()
@@ -250,9 +244,8 @@ def check(case):
             "BOOKSTACK_DB_PASSWORD": "test-only",
             "BOOKSTACK_DB_CLIENT_IMAGE": "mysql-client:test",
             "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
-            "PBS_REPOSITORY": "test:store",
-            "PBS_FINGERPRINT": "test",
-            "PBS_PASSWORD": "test-only",
+            "PBS_CLIENT_SCRIPT": str(bin_dir / "pbs-client.sh"),
+            "PBS_CLIENT_CONFIG": str(root / "pbs-client.env"),
             "PBS_BACKUP_ID": "bookstack",
             "PBS_RETENTION_DAYS": "14",
         }

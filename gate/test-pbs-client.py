@@ -107,32 +107,33 @@ else:
     sys.exit(9)
 '''
 
-# Runs the container script on this machine. /tmp inside the script becomes the test's
-# tmp directory, and the apt install block (which needs root) is checked, then dropped.
-FAKE_DOCKER = r'''#!/usr/bin/env python3
+# Both fakes run the shared script's client stage on this machine: /tmp inside it becomes
+# the test's tmp directory, and the Docker stage's apt install block (which needs root) is
+# checked, then dropped.
+FAKE_RUNTIME = r'''#!/usr/bin/env python3
 import json, os, re, subprocess, sys
 root = os.environ["PBS_TEST_ROOT"]
+runtime = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
-open(os.path.join(root, "docker.log"), "a").write(json.dumps(args) + "\n")
-tmpfs = [args[i + 1] for i, a in enumerate(args) if a == "--tmpfs"]
-assert any(t.startswith("/tmp:") and "size=" in t for t in tmpfs), f"no bounded /tmp tmpfs: {tmpfs}"
-script = args[args.index("-ceu") + 1]
-install = re.search(r"\{\n(.*?)\n\} >&2\n", script, re.S)
-assert install and 'proxmox-backup-client=$PBS_CLIENT_VERSION' in install.group(1), "no pinned install"
-script = script.replace(install.group(0), "")
-script = re.sub(r"(?<![\w/.])/tmp(?=[/\s])", os.path.join(root, "tmp"), script)
-sys.exit(subprocess.run(["/bin/sh", "-ceu", script, "pbs-client"]).returncode)
-'''
-
-FAKE_UNSHARE = r'''#!/usr/bin/env python3
-import json, os, re, subprocess, sys
-root = os.environ["PBS_TEST_ROOT"]
-args = sys.argv[1:]
-open(os.path.join(root, "unshare.log"), "a").write(json.dumps(args) + "\n")
-assert args[:5] == ["--mount", "--propagation", "private", "--", "/bin/sh"], args
-script = args[args.index("-ceu") + 1]
-script = re.sub(r"(?<![\w/.])/tmp(?=[/\s])", os.path.join(root, "tmp"), script)
-sys.exit(subprocess.run(["/bin/sh", "-ceu", script, "pbs-client"]).returncode)
+open(os.path.join(root, runtime + ".log"), "a").write(json.dumps(args) + "\n")
+if runtime == "docker":
+    tmpfs = [args[i + 1] for i, a in enumerate(args) if a == "--tmpfs"]
+    assert any(t.startswith("/tmp:") and "size=" in t for t in tmpfs), f"no bounded /tmp tmpfs: {tmpfs}"
+else:
+    assert args[:5] == ["--mount", "--propagation", "private", "--", "/bin/bash"], args
+shell = args.index("/bin/bash")
+script, request = args[shell + 1], args[shell + 2:]
+if runtime == "docker":
+    assert f"--volume={script}:{script}:ro" in args, "the script is not mounted into the container"
+body = open(script).read()
+if runtime == "docker":
+    install = re.search(r"^\{\n(.*?)\n\} >&2\n", body, re.S | re.M)
+    assert install and 'proxmox-backup-client=$PBS_CLIENT_VERSION' in install.group(1), "no pinned install"
+    body = body.replace(install.group(0), ":\n")
+body = re.sub(r"(?<![\w/.])/tmp(?=[/\s])", os.path.join(root, "tmp"), body)
+stage = os.path.join(root, runtime + "-stage.sh")
+open(stage, "w").write(body)
+sys.exit(subprocess.run(["/bin/bash", stage] + request).returncode)
 '''
 
 FAKE_MOUNT = r'''#!/bin/sh
@@ -156,13 +157,15 @@ def build_tree(root):
     (root / "ansible/vars").mkdir(parents=True)
     for source in (repo / "ansible/tasks/backup").glob("pbs-client*.yml"):
         shutil.copy(source, tasks / "backup" / source.name)
+    (tasks / "backup/scripts").mkdir()
+    shutil.copy(repo / "ansible/tasks/backup/scripts/pbs-client.sh", tasks / "backup/scripts")
     shutil.copy(repo / "ansible/tasks/fail-with-scrubbed-output.yml", tasks)
     shutil.copy(repo / "ansible/vars/pbs-client.yml", root / "ansible/vars")
     (tasks / "backup/resolve-pbs-target.yml").write_text(STUB_TARGET)
     bin_dir = root / "bin"
     bin_dir.mkdir()
-    for name, body in [("proxmox-backup-client", FAKE_CLIENT), ("docker", FAKE_DOCKER),
-                       ("unshare", FAKE_UNSHARE), ("mount", FAKE_MOUNT)]:
+    for name, body in [("proxmox-backup-client", FAKE_CLIENT), ("docker", FAKE_RUNTIME),
+                       ("unshare", FAKE_RUNTIME), ("mount", FAKE_MOUNT)]:
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     for directory in ["tmp", "data/app", "data/cache", "stage/data", "stage/cache"]:

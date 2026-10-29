@@ -142,35 +142,17 @@
     - app_config.backup.enabled | default(false) | bool
     - not (bookstack_pbs_available | default(false) | bool)
 
-- name: BookStack | Install PBS recovery client
-  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
-  block:
-    - name: BookStack | Create apt keyrings directory
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: "0755"
-
-    - name: BookStack | Install PBS repository signing key
-      ansible.builtin.get_url:
-        url: "{{ app_config.backup.client.key_url }}"
-        dest: /etc/apt/keyrings/proxmox-release.gpg
-        mode: "0644"
-
-    - name: BookStack | Configure PBS client repository
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg]
-          {{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }}
-          {{ app_config.backup.client.component }}
-        filename: homelab-infra-pbs-client
-        state: present
-        update_cache: true
-
-    - name: BookStack | Install PBS client
-      ansible.builtin.apt:
-        name: proxmox-backup-client
-        state: present
+- name: BookStack | Install the shared PBS client and this instance's settings
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_config_state: >-
+      {{ 'present' if bookstack_pbs_available | default(false) | bool
+         and app_config.backup.enabled | default(false) | bool else 'absent' }}
+    k8s_pbs_available: "{{ bookstack_pbs_available | default(false) }}"
+    k8s_pbs_repository: "{{ bookstack_pbs_repository | default('') }}"
+    k8s_pbs_fingerprint: "{{ bookstack_pbs_fingerprint | default('') }}"
+    k8s_pbs_password: "{{ bookstack_pbs_password | default('') }}"
 
 - name: BookStack | Resolve the server-matched database client
   ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml

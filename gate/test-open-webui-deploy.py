@@ -36,23 +36,29 @@ def open_webui_release_image_and_docker_bootstrap():
     assert docker["ansible.builtin.include_role"]["name"] == "docker"
 
 
-def open_webui_recovery_maps_root_only_package_settings_into_the_client():
+def open_webui_recovery_uploads_through_the_shared_client():
     script = (ROOT / "ansible/roles/open-webui/files/open-webui-recovery").read_text(
         encoding="utf-8"
     )
     config = (
         ROOT / "ansible/roles/open-webui/templates/open-webui-recovery.env.j2"
     ).read_text(encoding="utf-8")
+    tasks = yaml.safe_load(
+        (ROOT / "ansible/roles/open-webui/tasks/main.yml").read_text(encoding="utf-8")
+    )
 
-    assert "OPEN_WEBUI_PBS_KEY_URL=" in config
-    assert "OPEN_WEBUI_PBS_APT_REPO=" in config
-    assert '--env "PBS_KEY_URL=$OPEN_WEBUI_PBS_KEY_URL"' in script
-    assert '--env "PBS_APT_REPO=$OPEN_WEBUI_PBS_APT_REPO"' in script
-    assert "--env PBS_KEY_URL " not in script
-    assert "--env PBS_APT_REPO " not in script
+    # PBS credentials live only in the shared client's root-only settings.
+    assert "PBS_CLIENT_CONFIG=" in config and "PBS_PASSWORD" not in config
+    assert '"$PBS_CLIENT_SCRIPT" backup --id "$OPEN_WEBUI_BACKUP_ID" --no-prune data.pxar:' in script
+    assert "PRAGMA integrity_check" in script
+    install = task_named(tasks, "Open WebUI | Install the shared PBS client and this instance's settings")
+    assert install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-script.yml")
+    assert install["vars"]["pbs_client_runtime"] == "docker"
+    render = task_named(tasks, "Open WebUI | Render root-only recovery configuration")
+    assert tasks.index(install) < tasks.index(render)
 
 
 if __name__ == "__main__":
     open_webui_release_image_and_docker_bootstrap()
-    open_webui_recovery_maps_root_only_package_settings_into_the_client()
+    open_webui_recovery_uploads_through_the_shared_client()
     print("ok Open WebUI deployment bootstrap and native recovery wiring")

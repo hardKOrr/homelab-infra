@@ -755,6 +755,28 @@
             state: absent
           when: hostvars['localhost']._rm_app_name == 'plane'
 
+        # Open WebUI's backup timer and root-only configuration live outside /opt/<instance>
+        # in the same way.
+        - name: Remove Open WebUI recovery schedule
+          ansible.builtin.cron:
+            name: "homelab-infra Open WebUI backup {{ instance }}"
+            cron_file: "homelab-infra-open-webui-{{ instance }}"
+            state: absent
+          when: hostvars['localhost']._rm_app_name == 'open-webui'
+
+        - name: Remove Open WebUI recovery configuration
+          ansible.builtin.file:
+            path: "/etc/homelab-infra/open-webui/{{ instance }}.env"
+            state: absent
+          when: hostvars['localhost']._rm_app_name == 'open-webui'
+
+        # The shared PBS client's root-only settings (tasks/backup/pbs-client-script.yml)
+        # hold the PBS credentials for this instance's recovery script; they go with it.
+        - name: Remove the instance's PBS client settings
+          ansible.builtin.file:
+            path: "/etc/homelab-infra/pbs-client/{{ instance }}.env"
+            state: absent
+
         - name: Delete the project directory
           ansible.builtin.file:
             path: "{{ _rm_project_dir }}"

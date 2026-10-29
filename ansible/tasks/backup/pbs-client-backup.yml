@@ -13,6 +13,8 @@
 #   pbs_client_backup_id      optional; default `backup.backup_id`, else `instance`
 #   pbs_client_keep_last      optional, default 2 and never less
 #   pbs_client_keep_daily     optional, default `backup.retention_days` (14); '' omits it
+#   pbs_client_prune          optional, default true; false keeps every point, for an
+#                             application whose points PBS's own retention prunes
 #   pbs_client_stop_services  optional services stopped for the upload and started after:
 #                             Compose services in pbs_client_compose_project (docker), or
 #                             systemd units, restarted only when they were running (native)
@@ -27,7 +29,8 @@
 # chooses and passes as --backup-time, so the new point is known without parsing client
 # output. Pruning keeps at least the two newest points, and the run proves the point that
 # was newest before it still exists afterwards. A same-day pre-restore safety backup
-# therefore never prunes away the point the operator is about to restore.
+# therefore never prunes away the point the operator is about to restore. The rules live
+# in scripts/pbs-client.sh, which an application's guest-side cron backup also runs.
 
 - name: PBS backup | Resolve the recovery identity
   ansible.builtin.set_fact:
@@ -39,6 +42,7 @@
     _pbs_backup_archives: "{{ pbs_client_archives | default([]) }}"
     _pbs_backup_services: "{{ pbs_client_stop_services | default([]) }}"
     _pbs_backup_mounts: "{{ pbs_client_backup_mounts | default([]) }}"
+    _pbs_backup_prune: "{{ pbs_client_prune | default(true) | bool }}"
     pbs_client_recovery_point: ""
 
 - name: PBS backup | Validate the backup request
@@ -149,45 +153,15 @@
       vars:
         pbs_client_context: "PBS backup of host/{{ _pbs_backup_id }}"
         pbs_client_changes: true
-        pbs_client_mounts: >-
-          {{ (_pbs_backup_archives + _pbs_backup_mounts) | map('combine', {'mode': 'ro'}) | list }}
-        pbs_client_env:
-          PBS_BACKUP_ID: "{{ _pbs_backup_id }}"
-          PBS_KEEP_LAST: "{{ _pbs_backup_keep_last }}"
-          PBS_KEEP_DAILY: "{{ _pbs_backup_keep_daily }}"
-        pbs_client_script: |
-          group="host/$PBS_BACKUP_ID"
-          point_of() { echo "$group/$(date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ)"; }
-          require_archives() {
-            files=$(proxmox-backup-client snapshot files "$1" --output-format json)
-            for archive in {{ _pbs_backup_archives | map(attribute='name') | map('quote') | join(' ') }}; do
-              case "$files" in
-                *"\"$archive."*) ;;
-                *) echo "recovery point $1 lacks $archive" >&2; return 3 ;;
-              esac
-            done
-          }
-          previous=$(proxmox-backup-client snapshot list "$group" --output-format json \
-            | grep -oE '"backup-time" *: *[0-9]+' | grep -oE '[0-9]+$' | sort -n | tail -n 1)
-          now=$(date +%s)
-          if [ -n "$previous" ] && [ "$now" -le "$previous" ]; then now=$((previous + 1)); fi
-          point=$(point_of "$now")
-          proxmox-backup-client backup \
-            {{ _pbs_backup_archives | map(attribute='name') | zip(_pbs_backup_archives | map(attribute='path')) | map('join', ':') | map('quote') | join(' ') }} \
-            {{ pbs_client_backup_args | default([]) | map('quote') | join(' ') }} \
-            --backup-id "$PBS_BACKUP_ID" --backup-time "$now" >&2
-          require_archives "$point"
-          if [ -n "$PBS_KEEP_DAILY" ]; then
-            proxmox-backup-client prune "$group" --keep-last "$PBS_KEEP_LAST" --keep-daily "$PBS_KEEP_DAILY" >&2
-          else
-            proxmox-backup-client prune "$group" --keep-last "$PBS_KEEP_LAST" >&2
-          fi
-          require_archives "$point"
-          if [ -n "$previous" ]; then
-            proxmox-backup-client snapshot files "$(point_of "$previous")" >/dev/null \
-              || { echo "pruning removed the previous point $(point_of "$previous")" >&2; exit 4; }
-          fi
-          echo "$point"
+        pbs_client_args: >-
+          {{ (_pbs_backup_mounts | map(attribute='path') | zip(_pbs_backup_mounts | map(attribute='target'))
+              | map('join', ':') | map('regex_replace', '^', '--mount=') | list)
+             + ['backup', '--id', _pbs_backup_id, '--keep-last', _pbs_backup_keep_last | string]
+             + (['--keep-daily', _pbs_backup_keep_daily | string] if _pbs_backup_keep_daily | string | length > 0 else [])
+             + ([] if _pbs_backup_prune else ['--no-prune'])
+             + (_pbs_backup_archives | map(attribute='name') | zip(_pbs_backup_archives | map(attribute='path'))
+                | map('join', ':') | list)
+             + (['--'] + pbs_client_backup_args if pbs_client_backup_args | default([]) | length > 0 else []) }}
 
     - name: PBS backup | Record the verified recovery point
       ansible.builtin.set_fact:

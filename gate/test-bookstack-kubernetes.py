@@ -4,8 +4,6 @@
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import subprocess
-import tempfile
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
@@ -44,9 +42,6 @@ def fixture():
         "bookstack_pbs_password": "fixture-pbs-password",
         "k8s_pbs_repository": "token@pbs.example.test:store",
         "k8s_pbs_fingerprint": "00:11:22:33",
-        "_bookstack_recovery_script": (
-            ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
-        ).read_text(encoding="utf-8"),
         "app_config": {
             "app": {
                 "image": "lscr.io/linuxserver/bookstack:version-v26.05.3",
@@ -274,147 +269,11 @@ exit 93
 """
 
 
-def write_executable(path, content):
-    path.write_text(content, encoding="utf-8")
-    path.chmod(0o700)
-
-
-def kubernetes_recovery_environment(root, case="success"):
-    bin_dir = root / "bin"
-    bin_dir.mkdir()
-    write_executable(bin_dir / "curl", FAKE_CURL)
-    write_executable(bin_dir / "proxmox-backup-client", FAKE_PBS)
-    database_client = root / "database-client.sh"
-    write_executable(database_client, FAKE_DATABASE_CLIENT)
-
-    data = root / "pvc" / "config"
-    data.mkdir(parents=True)
-    data.chmod(0o750)
-    (data / "canary.txt").write_text("original canary\n", encoding="utf-8")
-    (data / ".original-hidden").write_text("original hidden\n", encoding="utf-8")
-    database = root / "database-state.sql"
-    database.write_text("ORIGINAL-DATABASE\n", encoding="utf-8")
-    snapshot_database = root / "snapshot-database"
-    snapshot_database.mkdir()
-    (snapshot_database / "database.sql").write_text("SNAPSHOT-DATABASE\n", encoding="utf-8")
-    snapshot_storage = root / "snapshot-storage"
-    snapshot_storage.mkdir()
-    (snapshot_storage / "restored.txt").write_text("restored canary\n", encoding="utf-8")
-    (snapshot_storage / ".restored-hidden").write_text("restored hidden\n", encoding="utf-8")
-
-    token = root / "service-account-token"
-    token.write_text("test-token\n", encoding="utf-8")
-    ca = root / "service-account-ca"
-    ca.write_text("test-ca\n", encoding="utf-8")
-    now_point = recent_recovery_point()
-    environment = os.environ | {
-        "BOOKSTACK_BACKEND": "kubernetes",
-        "BOOKSTACK_INSTANCE": "bookstack",
-        "BOOKSTACK_SERVICE": "bookstack",
-        "BOOKSTACK_NAMESPACE": "app-bookstack",
-        "BOOKSTACK_DATA_PATH": str(data),
-        "BOOKSTACK_DB_PROVIDER": "mariadb",
-        "BOOKSTACK_DB_HOST": "db.example.test",
-        "BOOKSTACK_DB_PORT": "3306",
-        "BOOKSTACK_DB_NAME": "bookstack",
-        "BOOKSTACK_DB_USER": "bookstack",
-        "BOOKSTACK_DB_PASSWORD": "fixture-db-password",
-        "DATABASE_CLIENT_SCRIPT": str(database_client),
-        "PBS_REPOSITORY": "fixture@pbs.example.test:store",
-        "PBS_FINGERPRINT": "fixture-fingerprint",
-        "PBS_PASSWORD": "fixture-pbs-password",
-        "PBS_BACKUP_ID": "bookstack",
-        "PBS_RETENTION_DAYS": "14",
-        "KUBERNETES_SERVICE_HOST": "10.96.0.1",
-        "KUBERNETES_SERVICE_PORT_HTTPS": "443",
-        "BOOKSTACK_K8S_TOKEN_FILE": str(token),
-        "BOOKSTACK_K8S_CA_FILE": str(ca),
-        "BOOKSTACK_TEST_CASE": case,
-        "BOOKSTACK_TEST_DB_STATE": str(database),
-        "BOOKSTACK_TEST_DATABASE_CLIENT_LOG": str(root / "database-client.log"),
-        "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
-        "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
-        "BOOKSTACK_TEST_PRE_RESTORE_POINT": now_point,
-        "BOOKSTACK_TEST_KUBE_API_LOG": str(root / "kube-api.log"),
-        "BOOKSTACK_TEST_PBS_LOG": str(root / "pbs.log"),
-        "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
-    }
-    return environment, data, database, root / "kube-api.log", root / "pbs.log", now_point
-
-
-def check_kubernetes_backup():
-    with tempfile.TemporaryDirectory(prefix="bookstack-k8s-backup-test-") as temporary:
-        root = Path(temporary)
-        environment, _, _, api_log, pbs_log, _ = kubernetes_recovery_environment(root)
-        result = subprocess.run(
-            [str(ROOT / "ansible/roles/bookstack/files/bookstack-recovery"), "--backup"],
-            env=environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        api = api_log.read_text(encoding="utf-8")
-        pbs = pbs_log.read_text(encoding="utf-8")
-        assert '"replicas":0' in api and '"replicas":1' in api, api
-        assert "--data-urlencode labelSelector=" in api and "/deployments/bookstack" in api, api
-        assert "database.pxar:" in pbs and "storage.pxar:" in pbs
-        assert "--backup-id bookstack" in pbs and "--keep-last 3" in pbs
-        assert "BookStack backup complete" in result.stdout
-
-
-def check_kubernetes_restore(case):
-    with tempfile.TemporaryDirectory(prefix="bookstack-k8s-restore-test-") as temporary:
-        root = Path(temporary)
-        environment, data, database, api_log, _, safety_point = kubernetes_recovery_environment(root, case)
-        original_data_stat = data.stat()
-        result = subprocess.run(
-            [str(ROOT / "ansible/roles/bookstack/files/bookstack-recovery"),
-             "--restore", "--snapshot", "host/bookstack/2026-10-27T07:30:00Z",
-             "--pre-restore-point", safety_point],
-            env=environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        api = api_log.read_text(encoding="utf-8") if api_log.exists() else ""
-        if case == "success":
-            assert result.returncode == 0, result.stdout + result.stderr
-            assert (data / "restored.txt").read_text(encoding="utf-8") == "restored canary\n"
-            assert (data / ".restored-hidden").read_text(encoding="utf-8") == "restored hidden\n"
-            assert not (data / "canary.txt").exists()
-            assert not (data / ".original-hidden").exists()
-            assert database.read_text(encoding="utf-8") == "SNAPSHOT-DATABASE\n"
-            assert api.count('"replicas":0') == 1 and '"replicas":1' in api, api
-        else:
-            assert result.returncode != 0, result.stdout + result.stderr
-            assert "BookStack rollback restored the previous data and database." in result.stderr
-            assert (data / "canary.txt").read_text(encoding="utf-8") == "original canary\n"
-            assert (data / ".original-hidden").read_text(encoding="utf-8") == "original hidden\n"
-            assert not (data / "restored.txt").exists()
-            assert not (data / ".restored-hidden").exists()
-            assert database.read_text(encoding="utf-8") == "ORIGINAL-DATABASE\n"
-            assert api.count('"replicas":0') == 2 and '"replicas":1' in api, api
-        final_data_stat = data.stat()
-        assert final_data_stat.st_ino == original_data_stat.st_ino
-        assert final_data_stat.st_uid == original_data_stat.st_uid
-        assert final_data_stat.st_gid == original_data_stat.st_gid
-        assert final_data_stat.st_mode == original_data_stat.st_mode
-        assert not list(data.glob(".pre-restore.*"))
-
-
-def check_kubernetes_recovery():
-    check_kubernetes_backup()
-    check_kubernetes_restore("success")
-    check_kubernetes_restore("import-failure")
-
-
 def main():
     check_defaults_and_dispatch()
     check_workload_manifest()
     check_backup_and_restore_jobs()
-    check_kubernetes_recovery()
-    print("BookStack Kubernetes: Docker default, hosting dispatch, owned workload, manifests and recovery rollback passed")
+    print("BookStack Kubernetes: Docker default, hosting dispatch, owned workload, manifests and recovery Jobs passed")
 
 
 if __name__ == "__main__":

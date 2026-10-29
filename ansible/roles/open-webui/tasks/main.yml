@@ -81,7 +81,8 @@
   changed_when: false
 
 # The scheduled timer and Backup App invoke one root-only helper so manual and recurring
-# points use the same quiesce, SQLite check and native PBS data.pxar member. An isolated
+# points use the same quiesce, SQLite check and data.pxar member, uploaded by the shared
+# PBS client script. An isolated
 # recovery target gets no active timer until its restore has completed.
 - name: Open WebUI | Resolve PBS for the recurring recovery timer
   ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
@@ -104,12 +105,7 @@
       - app_config.backup.application_consistent | default(false) | bool
       - (app_config.backup.schedule | string).split() | length == 5
       - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
-      - app_config.backup.client.image | length > 0
-      - app_config.backup.client.key_url | length > 0
-      - app_config.backup.client.repository | length > 0
-    fail_msg: >-
-      Open WebUI backup.schedule must be a five-field cron expression and its PBS client
-      image, signing key URL and repository must be configured.
+    fail_msg: Open WebUI backup.schedule must be a five-field cron expression.
   when:
     - app_config.backup.enabled | default(false) | bool
     - not (recovery_isolated | default(false) | bool)
@@ -124,7 +120,14 @@
     - not (recovery_isolated | default(false) | bool)
     - not (k8s_pbs_available | default(false) | bool)
 
-- name: Open WebUI | Install the shared recovery helper
+- name: Open WebUI | Install the shared PBS client and this instance's settings
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_config_state: "{{ 'present' if _open_webui_backup_timer_enabled | bool else 'absent' }}"
+  when: not (recovery_isolated | default(false) | bool)
+
+- name: Open WebUI | Install the recovery helper
   ansible.builtin.copy:
     src: open-webui-recovery
     dest: "{{ open_webui_recovery_script }}"

@@ -211,11 +211,10 @@
       - app_config.backup.application_consistent | default(false) | bool
       - (app_config.backup.schedule | string).split() | length == 5
       - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
-      - app_config.backup.client.image | length > 0
       - app_config.backup.redis_client_image | length > 0
     fail_msg: >-
-      Plane backup.schedule must be a five-field cron expression and all native recovery
-      client images must be configured.
+      Plane backup.schedule must be a five-field cron expression and its Redis client image
+      must be configured.
   when:
     - app_config.backup.enabled | default(false) | bool
     - not (recovery_isolated | default(false) | bool)
@@ -240,6 +239,13 @@
 - name: Plane | Install the shared database client
   ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
   when: _plane_backup_timer_enabled | default(false) | bool
+
+- name: Plane | Install the shared PBS client and this instance's settings
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
+  vars:
+    pbs_client_runtime: docker
+    pbs_client_config_state: "{{ 'present' if _plane_backup_timer_enabled | bool else 'absent' }}"
+  when: not (recovery_isolated | default(false) | bool)
 
 - name: Plane | Install the shared recurring/manual recovery helper
   ansible.builtin.copy:

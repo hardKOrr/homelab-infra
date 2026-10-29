@@ -49,10 +49,4 @@ plane_defaults:
     schedule: "0 3 * * *"
     datastore: ""
     backup_id: ""
-    client:
-      image: "buildpack-deps:bookworm-curl"
-      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
-      repository: "http://download.proxmox.com/debian/pbs-client"
-      suite: bookworm
-      component: main
     redis_client_image: "redis:7-alpine"
