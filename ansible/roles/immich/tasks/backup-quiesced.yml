@@ -1,0 +1,9 @@
+---
+# Runs inside the shared PBS backup while Immich is stopped, before the upload.
+
+- name: Immich backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _immich_backup_scratch.path }}/immich.dump"

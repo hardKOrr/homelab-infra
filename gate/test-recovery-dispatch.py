@@ -192,37 +192,16 @@ def main():
         target_play = next(play for play in plays if play.get("name") == play_name)
         assert target_play.get("gather_facts") is True, play_name
 
-    # Role includes resolve from the calling maintenance playbook directory. Keep the
-    # Immich backup and restore roles pointed at the shared PBS resolver from that root.
-    maintenance_dir = repo / "ansible/playbooks/maintenance"
-    pbs_resolver = repo / "ansible/tasks/backup/resolve-pbs-target.yml"
-    for task_file in ["backup.yml", "restore.yml"]:
-        tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks" / task_file).read_text())
-        resolver_task = next(task for task in tasks
-                             if task.get("name", "").endswith("| Resolve the PBS client target"))
-        resolved = (maintenance_dir / resolver_task["ansible.builtin.include_tasks"]).resolve()
-        assert resolved == pbs_resolver.resolve(), (task_file, resolved)
-
     backup_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/backup.yml").read_text())
     archive_block = next(item for item in backup_tasks
                          if item.get("name") == "Immich backup | Archive the database and media to PBS")
-    dump = next(item for item in archive_block["block"]
-                if item.get("name") == "Immich backup | Dump the named PostgreSQL database")
-    assert dump["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
-    for task_name in ["Immich backup | Push the database and durable media archives"]:
-        task = next(item for item in archive_block["block"] if item.get("name") == task_name)
-        assert task.get("environment"), task_name
-        assert task.get("no_log") is True, task_name
-        assert task.get("changed_when") is True, task_name
-        assert not {"environment", "no_log", "changed_when"} & set(
-            task["ansible.builtin.command"]), task_name
-
-    pbs_push = next(item for item in archive_block["block"]
-                    if item.get("name") == "Immich backup | Push the database and durable media archives")
-    pbs_script = pbs_push["ansible.builtin.command"]["argv"][-1]
-    assert "proxmox-backup-client backup database.pxar:/backup media.pxar:/media" in pbs_script
-    assert '--backup-id "$BACKUP_ID"' in pbs_script
-    assert "BACKUP_ID" in pbs_push["environment"]
+    upload = archive_block["block"][0]
+    assert upload["ansible.builtin.include_tasks"] == "../../../tasks/backup/pbs-client-backup.yml"
+    assert upload["vars"]["pbs_client_stop_services"] == ["immich-server", "immich-machine-learning"]
+    assert [a["name"] for a in upload["vars"]["pbs_client_archives"]] == ["database.pxar", "media.pxar"]
+    hook = yaml.safe_load((repo / "ansible/roles/immich/tasks/backup-quiesced.yml").read_text())
+    assert hook[0]["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
+    assert hook[0]["vars"]["database_dump_file"] == "{{ _immich_backup_scratch.path }}/immich.dump"
 
     restore_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/restore.yml").read_text())
     restore_contract = next(task for task in restore_tasks
@@ -248,17 +227,20 @@ def main():
     assert restore_mount_guard["when"] == "restore_overwrite | bool"
     assert "_immich_restore_media_mountpoint.stdout | trim == _immich_restore_media_path" in (
         restore_mount_guard["ansible.builtin.assert"]["that"])
-    restore_block = next(task["block"] for task in restore_tasks
-                         if task.get("name") == "Immich restore | Replace the application-consistent artifact")
-    fetch_index = next(i for i, task in enumerate(restore_block)
-                       if task.get("name") == "Immich restore | Fetch the database and durable media archives")
-    fetch_argv = restore_block[fetch_index]["ansible.builtin.command"]["argv"]
-    assert ("--tmpfs", "/tmp") in list(zip(fetch_argv, fetch_argv[1:]))
-    assert ("--tmpfs", "/root/.cache") in list(zip(fetch_argv, fetch_argv[1:]))
-    fetch_script = fetch_argv[-1]
-    assert fetch_script.count("proxmox-backup-client restore --allow-existing-dirs true") == 2
-    assert '"$PBS_SNAPSHOT" database.pxar /restore/database' in fetch_script
-    assert '"$PBS_SNAPSHOT" media.pxar /restore/media' in fetch_script
+    selected = next(task["block"] for task in restore_tasks
+                    if task.get("name") == "Immich restore | Restore the selected point")
+    names = [task.get("name") for task in selected]
+    fetch = selected[names.index("Immich restore | Fetch the database and durable media archives")]
+    assert fetch["ansible.builtin.include_tasks"] == "../../../tasks/backup/pbs-client-restore.yml"
+    assert fetch["vars"]["pbs_client_restore_args"] == ["--allow-existing-dirs", "true"]
+    assert [a["name"] for a in fetch["vars"]["pbs_client_archives"]] == ["database.pxar", "media.pxar"]
+    replace_index = names.index("Immich restore | Replace the application-consistent artifact")
+    assert names.index("Immich restore | Fetch the database and durable media archives") < names.index(
+        "Immich restore | Refuse an archive without a database dump") < replace_index, (
+        "both archives must be fetched and the dump checked before Immich stops")
+    restore_block = selected[replace_index]["block"]
+    assert restore_block[0]["name"] == "Immich restore | Stop Immich services"
+    fetch_index = 0
     database_private_index = next(i for i, task in enumerate(restore_block)
                                   if task.get("name") == "Immich restore | Keep the database dump private from the media owner")
     scratch_traverse_index = next(i for i, task in enumerate(restore_block)
