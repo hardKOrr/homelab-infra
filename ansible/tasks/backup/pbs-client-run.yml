@@ -1,23 +1,13 @@
----
-# Run one PBS client script on the current host, with the client's scratch on a bounded
-# tmpfs. pbs-client-backup.yml and pbs-client-restore.yml build the scripts; a role calls
-# those two files, not this one.
+# Run one request of the shared PBS client script on the current host.
+# pbs-client-backup.yml and pbs-client-restore.yml build the requests; a role calls those
+# two files, not this one.
 #
 # Inputs:
-#   pbs_client_runtime   docker | native
-#                          docker  a short-lived container with the pinned client, on a
-#                                  Docker host; each path in pbs_client_mounts is mounted
-#                                  at the same path inside it
-#                          native  the client installed by pbs-client-install.yml
-#   pbs_client_script    shell run by `sh -ceu`; it calls proxmox-backup-client, writes
-#                        what the caller parses to stdout and everything else to stderr
-#   pbs_client_mounts    [{path, mode: ro|rw, target}] host paths the script reads or
-#                        writes, each seen at `target` (default its own path). A target
-#                        under another mount's path places that directory inside it, so
-#                        one archive can hold several host directories
-#   pbs_client_env       optional mapping of extra non-secret environment variables
+#   pbs_client_runtime   docker | native (see scripts/pbs-client.sh)
+#   pbs_client_args      the script's arguments: optional --mount pairs, then a command
+#                        (backup, list, verify, extract) and its arguments
 #   pbs_client_context   label for a failure message
-#   pbs_client_changes   true when the script changes PBS or the host
+#   pbs_client_changes   true when the request changes PBS or the host
 #   pbs_client_source    optional overrides of vars/pbs-client.yml; default the
 #                        application's `backup.client`
 #   k8s_pbs_*            from resolve-pbs-target.yml
@@ -25,15 +15,9 @@
 # Sets:
 #   pbs_client_output    the script's stdout
 #
-# The client creates unnamed temporary files in /tmp and keeps its cache under $HOME.
-# A Docker overlay, NFS and some LXC root filesystems refuse those files with
-# `Operation not supported (os error 95)`. Both runtimes therefore put /tmp on a tmpfs
-# of `tmpfs_size` and point $HOME, XDG_CACHE_HOME and XDG_RUNTIME_DIR into it. Docker
-# mounts that tmpfs for the container's life. Natively the tmpfs is mounted in a private
-# mount namespace, so it disappears with the client process even when the run fails, and
-# the host's own /tmp is never touched. The same reason keeps every path in
-# pbs_client_mounts out of /tmp. A mount with its own target is a bind mount in that same
-# private namespace natively, and a container mount under Docker; neither reaches the host.
+# scripts/pbs-client.sh holds the tmpfs, pinned install and recovery-point rules, so an
+# application's own guest-side recovery script (pbs-client-script.yml) runs exactly the
+# same client path.
 
 - name: PBS client | Load the client pins
   ansible.builtin.include_vars:
@@ -43,92 +27,37 @@
   ansible.builtin.set_fact:
     _pbs_client_run: >-
       {{ pbs_client_defaults | combine(pbs_client_source | default(app_config.backup.client | default({}), true), recursive=True) }}
-    _pbs_client_run_mounts: >-
-      [{% for mount in pbs_client_mounts | default([]) %}{{ mount
-      | combine({'target': mount.target | default(mount.path, true)}) | to_json }}{{ '' if loop.last else ',' }}{% endfor %}]
 
 - name: PBS client | Validate the run request
   ansible.builtin.assert:
     that:
       - pbs_client_runtime | default('') in ['docker', 'native']
-      - pbs_client_script | default('') | length > 0
+      - pbs_client_args | default([]) | length > 0
       - _pbs_client_run.suite in _pbs_client_run.suites
       - k8s_pbs_available | default(false) | bool
-      - ((_pbs_client_run_mounts | map(attribute='path') | list) + (_pbs_client_run_mounts | map(attribute='target') | list)) | select('match', '^/(tmp)?$|^/tmp/') | list | length == 0
-      - ((_pbs_client_run_mounts | map(attribute='path') | list) + (_pbs_client_run_mounts | map(attribute='target') | list)) | reject('match', '^/') | list | length == 0
-      - _pbs_client_run_mounts | map(attribute='mode') | difference(['ro', 'rw']) | length == 0
     fail_msg: >-
       {{ pbs_client_context | default('PBS client') }}: the run needs runtime docker or
-      native, a script, a pinned client suite, a resolved PBS target, and absolute paths
-      outside /tmp (the client's tmpfs replaces /tmp).
+      native, a request, a pinned client suite and a resolved PBS target.
 
+# Ansible sends the script for this one run; pbs-client-script.yml installs it only on a
+# guest whose own recovery script needs it.
 - name: PBS client | Run the client
-  ansible.builtin.command:
-    # The script's $VARIABLES belong to the shell that runs it, not to this module.
-    expand_argument_vars: false
-    argv: >-
-      {{ (_pbs_client_run_docker_argv if pbs_client_runtime == 'docker' else _pbs_client_run_native_argv)
-         + [_pbs_client_run_prelude ~ pbs_client_script, 'pbs-client'] }}
+  ansible.builtin.script:
+    cmd: "scripts/pbs-client.sh {{ pbs_client_args | map('string') | map('quote') | join(' ') }}"
+    executable: /bin/bash
   vars:
     _pbs_client_run_pin: "{{ _pbs_client_run.suites[_pbs_client_run.suite] }}"
-    _pbs_client_run_paths: "{{ _pbs_client_run_mounts | map(attribute='path') | list }}"
-    _pbs_client_run_targets: "{{ _pbs_client_run_mounts | map(attribute='target') | list }}"
-    _pbs_client_run_docker_argv: >-
-      {{ ['docker', 'run', '--rm', '--network', 'host',
-          '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777,size=' ~ _pbs_client_run.tmpfs_size]
-         + (_pbs_client_run_paths
-            | zip(_pbs_client_run_targets, _pbs_client_run_mounts | map(attribute='mode'))
-            | map('join', ':') | map('regex_replace', '^', '--volume=') | list)
-         + (_pbs_client_run_env.keys() | map('regex_replace', '^', '--env=') | list)
-         + [_pbs_client_run.image, '/bin/sh', '-ceu'] }}
-    _pbs_client_run_native_argv:
-      - unshare
-      - --mount
-      - --propagation
-      - private
-      - --
-      - /bin/sh
-      - -ceu
-    _pbs_client_run_env: >-
-      {{ {'PBS_REPOSITORY': k8s_pbs_repository,
-          'PBS_FINGERPRINT': k8s_pbs_fingerprint,
-          'PBS_PASSWORD': k8s_pbs_password,
-          'PBS_CLIENT_TMPFS_SIZE': _pbs_client_run.tmpfs_size,
-          'PBS_CLIENT_VERSION': _pbs_client_run_pin.version,
-          'PBS_CLIENT_KEY_URL': _pbs_client_run_pin.key_url,
-          'PBS_CLIENT_APT_SOURCE': _pbs_client_run.repository ~ ' ' ~ _pbs_client_run.suite
-                                   ~ ' ' ~ _pbs_client_run.component}
-         | combine(pbs_client_env | default({})) }}
-    _pbs_client_run_prelude: |
-      {% if pbs_client_runtime == 'native' %}
-      command -v proxmox-backup-client >/dev/null || {
-        echo "proxmox-backup-client is not installed here; deploy the application with its current role, which installs the pinned client" >&2
-        exit 5
-      }
-      mount -t tmpfs -o "rw,nosuid,nodev,mode=1777,size=$PBS_CLIENT_TMPFS_SIZE" pbs-client-tmp /tmp
-      {% for mount in _pbs_client_run_mounts if mount.target != mount.path %}
-      mount --bind {{ mount.path | quote }} {{ mount.target | quote }}
-      {% if mount.mode == 'ro' %}
-      mount -o remount,bind,ro {{ mount.target | quote }}
-      {% endif %}
-      {% endfor %}
-      {% endif %}
-      export HOME=/tmp/.pbs-client XDG_CACHE_HOME=/tmp/.pbs-client/cache XDG_RUNTIME_DIR=/tmp/.pbs-client/run
-      mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
-      {% if pbs_client_runtime == 'docker' %}
-      {
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ca-certificates
-        install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL "$PBS_CLIENT_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_CLIENT_APT_SOURCE" \
-          > /etc/apt/sources.list.d/proxmox-backup-client.list
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends "proxmox-backup-client=$PBS_CLIENT_VERSION"
-      } >&2
-      {% endif %}
-  environment: "{{ _pbs_client_run_env }}"
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    PBS_CLIENT_RUNTIME: "{{ pbs_client_runtime }}"
+    PBS_CLIENT_TMPFS_SIZE: "{{ _pbs_client_run.tmpfs_size }}"
+    PBS_CLIENT_IMAGE: "{{ _pbs_client_run.image }}"
+    PBS_CLIENT_VERSION: "{{ _pbs_client_run_pin.version }}"
+    PBS_CLIENT_KEY_URL: "{{ _pbs_client_run_pin.key_url }}"
+    PBS_CLIENT_APT_SOURCE: >-
+      {{ _pbs_client_run.repository }} {{ _pbs_client_run.suite }} {{ _pbs_client_run.component }}
   register: _pbs_client_run_result
   failed_when: false
   changed_when: pbs_client_changes | default(false) | bool

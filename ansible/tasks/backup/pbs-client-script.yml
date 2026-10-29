@@ -1,0 +1,103 @@
+---
+# Install scripts/pbs-client.sh, the one guest-side PBS client path, on the current host,
+# for an application recovery script that runs on the guest without Ansible (a cron
+# backup, a restore helper). pbs-client-run.yml sends the same script for each Ansible
+# run instead. With its instance's root-only client settings the recovery script runs:
+#
+#   PBS_CLIENT_CONFIG=<pbs_client_config> <pbs_client_script> backup --id ID NAME:PATH...
+#
+# Inputs:
+#   pbs_client_config_state  optional present | absent: write or remove the settings of
+#                            `instance` (PBS target and credentials, runtime, pins)
+#   pbs_client_runtime       docker | native, with present
+#   pbs_client_source        optional overrides of vars/pbs-client.yml; default the
+#                            application's `backup.client`
+#   k8s_pbs_*                with present, from resolve-pbs-target.yml
+#
+# Sets:
+#   pbs_client_script        the script's path on the current host
+#   pbs_client_config        the settings file's path for `instance`
+
+- name: PBS client script | Record the paths
+  ansible.builtin.set_fact:
+    pbs_client_script: /usr/local/lib/homelab-infra/pbs-client.sh
+    pbs_client_config: "/etc/homelab-infra/pbs-client/{{ instance }}.env"
+
+- name: PBS client script | Create the script directory
+  ansible.builtin.file:
+    path: "{{ pbs_client_script | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: PBS client script | Install the shared script
+  ansible.builtin.copy:
+    src: scripts/pbs-client.sh
+    dest: "{{ pbs_client_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: PBS client script | Write the instance's client settings
+  when: pbs_client_config_state | default('') == 'present'
+  block:
+    - name: PBS client script | Load the client pins
+      ansible.builtin.include_vars:
+        file: ../../vars/pbs-client.yml
+
+    - name: PBS client script | Resolve the client source
+      ansible.builtin.set_fact:
+        _pbs_client_script_source: >-
+          {{ pbs_client_defaults | combine(pbs_client_source | default(app_config.backup.client | default({}), true), recursive=True) }}
+
+    - name: PBS client script | Require a runtime, a pinned suite and PBS
+      ansible.builtin.assert:
+        that:
+          - pbs_client_runtime | default('') in ['docker', 'native']
+          - _pbs_client_script_source.suite in _pbs_client_script_source.suites
+          - k8s_pbs_available | default(false) | bool
+        fail_msg: >-
+          The client settings for {{ instance }} need runtime docker or native, a pinned
+          client suite and a resolved PBS target.
+
+    - name: PBS client script | Create the settings directory
+      ansible.builtin.file:
+        path: "{{ pbs_client_config | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: PBS client script | Write the root-only settings
+      ansible.builtin.copy:
+        dest: "{{ pbs_client_config }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by homelab-infra for {{ instance }}; read by {{ pbs_client_script }}.
+          {% for name, value in _pbs_client_script_settings.items() %}
+          {{ name }}={{ value | string | quote }}
+          {% endfor %}
+      vars:
+        _pbs_client_script_pin: "{{ _pbs_client_script_source.suites[_pbs_client_script_source.suite] }}"
+        _pbs_client_script_settings:
+          PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+          PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+          PBS_PASSWORD: "{{ k8s_pbs_password }}"
+          PBS_CLIENT_RUNTIME: "{{ pbs_client_runtime }}"
+          PBS_CLIENT_TMPFS_SIZE: "{{ _pbs_client_script_source.tmpfs_size }}"
+          PBS_CLIENT_IMAGE: "{{ _pbs_client_script_source.image }}"
+          PBS_CLIENT_VERSION: "{{ _pbs_client_script_pin.version }}"
+          PBS_CLIENT_KEY_URL: "{{ _pbs_client_script_pin.key_url }}"
+          PBS_CLIENT_APT_SOURCE: >-
+            {{ _pbs_client_script_source.repository }} {{ _pbs_client_script_source.suite }}
+            {{ _pbs_client_script_source.component }}
+      no_log: true
+
+- name: PBS client script | Remove the instance's client settings
+  ansible.builtin.file:
+    path: "{{ pbs_client_config }}"
+    state: absent
+  when: pbs_client_config_state | default('') == 'absent'

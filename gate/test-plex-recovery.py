@@ -88,7 +88,8 @@ def main():
             fake_bin = Path(directory) / "bin"
             fake_bin.mkdir()
             (fake_bin / "docker").write_text(
-                "#!/bin/sh\nprintf '%s\\n' \"$PBS_SNAPSHOT\" >> \"$0.log\"\n")
+                "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n"
+                "  [ \"$1\" = --point ] && printf '%s\\n' \"$2\" >> \"$0.log\"\n  shift\ndone\n")
             (fake_bin / "docker").chmod(0o755)
             env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
                                 "ANSIBLE_ROLES_PATH": str(repo / "ansible/roles"),

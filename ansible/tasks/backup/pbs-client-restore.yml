@@ -106,42 +106,15 @@
       {{ 'extract' if _pbs_restore_overwrite else ('verify' if _pbs_restore_snapshot | length > 0 else 'list') }}
     pbs_client_context: "PBS restore {{ _pbs_restore_mode }} of {{ _pbs_restore_snapshot or 'host/' ~ _pbs_restore_backup_id }}"
     pbs_client_changes: "{{ _pbs_restore_overwrite }}"
-    pbs_client_mounts: >-
-      {{ _pbs_restore_archives | map('combine', {'mode': 'rw'}) | list if _pbs_restore_overwrite else [] }}
-    pbs_client_env:
-      PBS_RESTORE_MODE: "{{ _pbs_restore_mode }}"
-      PBS_BACKUP_ID: "{{ _pbs_restore_backup_id }}"
-      PBS_SNAPSHOT: "{{ _pbs_restore_snapshot }}"
-      PBS_PRE_RESTORE_POINT: "{{ _pbs_restore_pre_point }}"
-    pbs_client_script: |
-      require_archives() {
-        files=$(proxmox-backup-client snapshot files "$1" --output-format json)
-        for archive in {{ _pbs_restore_archives | map(attribute='name') | map('quote') | join(' ') }}; do
-          case "$files" in
-            *"\"$archive."*) ;;
-            *) echo "recovery point $1 lacks $archive" >&2; return 3 ;;
-          esac
-        done
-      }
-      if [ "$PBS_RESTORE_MODE" = list ]; then
-        proxmox-backup-client snapshot list "host/$PBS_BACKUP_ID" --output-format text
-        exit 0
-      fi
-      require_archives "$PBS_SNAPSHOT"
-      if [ -n "$PBS_PRE_RESTORE_POINT" ]; then require_archives "$PBS_PRE_RESTORE_POINT"; fi
-      if [ "$PBS_RESTORE_MODE" = verify ]; then
-        proxmox-backup-client restore "$PBS_SNAPSHOT" index.json "$HOME/index.json" >&2
-        case "$files" in
-          *'"catalog.pcat1.'*) proxmox-backup-client catalog dump "$PBS_SNAPSHOT" >/dev/null ;;
-        esac
-        cat "$HOME/index.json"
-        exit 0
-      fi
-      {% for archive in (_pbs_restore_archives if _pbs_restore_overwrite else []) %}
-      proxmox-backup-client restore "$PBS_SNAPSHOT" {{ archive.name | quote }} {{ archive.path | quote }} \
-        {{ pbs_client_restore_args | default([]) | map('quote') | join(' ') }} >&2
-      {% endfor %}
-      echo extracted
+    pbs_client_args: >-
+      {{ ['list', '--id', _pbs_restore_backup_id] if _pbs_restore_mode == 'list'
+         else [_pbs_restore_mode, '--point', _pbs_restore_snapshot]
+              + (['--pre-restore-point', _pbs_restore_pre_point] if _pbs_restore_pre_point | length > 0 else [])
+              + (_pbs_restore_archives | map(attribute='name') | list if _pbs_restore_mode == 'verify'
+                 else _pbs_restore_archives | map(attribute='name') | zip(_pbs_restore_archives | map(attribute='path'))
+                      | map('join', ':') | list)
+              + (['--'] + pbs_client_restore_args
+                 if _pbs_restore_mode == 'extract' and pbs_client_restore_args | default([]) | length > 0 else []) }}
 
 - name: PBS restore | Show the recovery points
   ansible.builtin.debug:
