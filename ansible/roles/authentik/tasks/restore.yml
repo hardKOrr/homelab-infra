@@ -1,6 +1,9 @@
 ---
-# Restore the complete Authentik data tree into one existing instance. The archive is
-# staged beside the target so replacement and rollback stay on the same filesystem.
+# Restore the complete Authentik data tree into one existing instance through the shared
+# swap. The point holds PostgreSQL's data directory, Redis and Authentik's own files; each
+# is its own path because each has its own owner. PostgreSQL and Redis keep the owner their
+# container gave the live directory, so a configured image with another uid still works.
+# Backups run the native PBS client, so the restore does too.
 - name: Authentik restore | Resolve source and target identities
   ansible.builtin.set_fact:
     _authentik_restore_data_path: "{{ app_config.app.data_path | default('') }}"
@@ -12,10 +15,6 @@
          or restore_target | default(instance, true), true) }}
     _authentik_restore_snapshot: "{{ restore_snapshot | default('') }}"
     _authentik_restore_destination: "{{ restore_destination | default('existing', true) }}"
-    _application_restore_complete: false
-    _authentik_restore_old_data_moved: false
-    _authentik_restore_replacement_installed: false
-    _authentik_restore_rollback_complete: false
 
 - name: Authentik restore | Assert the recovery contract
   ansible.builtin.assert:
@@ -64,243 +63,24 @@
       host/{{ _authentik_restore_target_backup_id }}/.
   when: restore_overwrite | bool
 
-# Runs on every restore, before the stop below: a point from another group, an
-# unreachable PBS or a point without data.pxar fails while Authentik still serves.
-- name: Authentik restore | List or verify the recovery point before changing Authentik
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Authentik restore | Preview or replace the data tree
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: native
-    pbs_client_backup_id: "{{ _authentik_restore_source_backup_id }}"
-    pbs_client_pre_restore_backup_id: "{{ _authentik_restore_target_backup_id }}"
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Authentik restore | Check the target project and data paths
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ _authentik_restore_project_dir }}"
-    - "{{ _authentik_restore_data_path }}"
-  register: _authentik_restore_paths
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Refuse an unsafe or missing target path
-  ansible.builtin.assert:
-    that:
-      - _authentik_restore_paths.results | map(attribute='stat.isdir') | list | unique == [true]
-      - _authentik_restore_paths.results | map(attribute='stat.islnk') | select('equalto', true) | list | length == 0
-    fail_msg: >-
-      Authentik overwrite restore requires real project and data directories for the
-      existing target; deploy it before restoring.
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Inspect running Compose services for diagnostics
-  ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ _authentik_restore_project_dir }}"
-      - ps
-      - --services
-      - --status
-      - running
-  register: _authentik_restore_running
-  failed_when: false
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Report service status without gating recovery
-  ansible.builtin.debug:
-    msg: >-
-      Current running services: {{ _authentik_restore_running.stdout_lines | join(', ')
-      if _authentik_restore_running.rc == 0 else 'unavailable' }}. The verified source
-      archive and independent target safety point permit overwrite restore.
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Create private staging beside the target data
-  ansible.builtin.tempfile:
-    state: directory
-    path: "{{ _authentik_restore_data_path | dirname }}"
-    prefix: .authentik-restore-
-  register: _authentik_restore_stage
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Create private rollback space beside the target data
-  ansible.builtin.tempfile:
-    state: directory
-    path: "{{ _authentik_restore_data_path | dirname }}"
-    prefix: .authentik-pre-restore-
-  register: _authentik_restore_previous
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Prepare the staging data directory
-  ansible.builtin.file:
-    path: "{{ _authentik_restore_stage.path }}/data"
-    state: directory
-    mode: "0700"
-  when: restore_overwrite | bool
-
-- name: Authentik restore | Replace and verify the data directory
-  when: restore_overwrite | bool
-  block:
-    - name: Authentik restore | Stop only this instance's Compose project
-      community.docker.docker_compose_v2:
-        project_src: "{{ _authentik_restore_project_dir }}"
-        state: stopped
-
-    - name: Authentik restore | Extract the selected PBS archive
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: native
-        pbs_client_backup_id: "{{ _authentik_restore_source_backup_id }}"
-        pbs_client_pre_restore_backup_id: "{{ _authentik_restore_target_backup_id }}"
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _authentik_restore_stage.path }}/data"
-
-    - name: Authentik restore | Check required staged paths
-      ansible.builtin.stat:
-        path: "{{ _authentik_restore_stage.path }}/data/{{ item }}"
-      loop:
-        - database
-        - redis
-        - media
-        - certs
-        - custom-templates
-      register: _authentik_restore_staged_paths
-      changed_when: false
-
-    - name: Authentik restore | Check the staged PostgreSQL marker
-      ansible.builtin.stat:
-        path: "{{ _authentik_restore_stage.path }}/data/database/PG_VERSION"
-      register: _authentik_restore_staged_database
-      changed_when: false
-
-    - name: Authentik restore | Require a complete staged instance
-      ansible.builtin.assert:
-        that:
-          - _authentik_restore_staged_paths.results | map(attribute='stat.isdir') | list | unique == [true]
-          - _authentik_restore_staged_paths.results | map(attribute='stat.islnk') | select('equalto', true) | list | length == 0
-          - _authentik_restore_staged_database.stat.exists
-          - _authentik_restore_staged_database.stat.isreg
-          - not (_authentik_restore_staged_database.stat.islnk | default(false))
-        fail_msg: >-
-          The selected Authentik archive is missing required PostgreSQL or application
-          data; the current instance has not been replaced.
-
-    - name: Authentik restore | Move the original data aside on the same filesystem
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _authentik_restore_data_path }}"
-          - "{{ _authentik_restore_previous.path }}/data"
-      register: _authentik_restore_move_original
-      changed_when: _authentik_restore_move_original.rc == 0
-
-    - name: Authentik restore | Record the original data move
-      ansible.builtin.set_fact:
-        _authentik_restore_old_data_moved: true
-
-    - name: Authentik restore | Move the staged data into place
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _authentik_restore_stage.path }}/data"
-          - "{{ _authentik_restore_data_path }}"
-      register: _authentik_restore_install
-      changed_when: _authentik_restore_install.rc == 0
-
-    - name: Authentik restore | Record the replacement installation
-      ansible.builtin.set_fact:
-        _authentik_restore_replacement_installed: true
-
-    - name: Authentik restore | Start only this instance's Compose project
-      community.docker.docker_compose_v2:
-        project_src: "{{ _authentik_restore_project_dir }}"
-        state: present
-
-    - name: Authentik restore | Wait for the restored instance to become ready
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
-        status_code: [200, 204]
-      register: _authentik_restore_health
-      until: _authentik_restore_health.status | default(0) in [200, 204]
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Authentik restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Authentik restore | Stop this project before rollback
-      community.docker.docker_compose_v2:
-        project_src: "{{ _authentik_restore_project_dir }}"
-        state: stopped
-      failed_when: false
-
-    - name: Authentik restore | Remove the failed replacement data
-      ansible.builtin.file:
-        path: "{{ _authentik_restore_data_path }}"
-        state: absent
-      when: _authentik_restore_replacement_installed | bool
-
-    - name: Authentik restore | Put the original data back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _authentik_restore_previous.path }}/data"
-          - "{{ _authentik_restore_data_path }}"
-      register: _authentik_restore_rollback
-      changed_when: _authentik_restore_rollback.rc == 0
-      failed_when: false
-      when: _authentik_restore_old_data_moved | bool
-
-    - name: Authentik restore | Mark rollback complete
-      ansible.builtin.set_fact:
-        _authentik_restore_rollback_complete: >-
-          {{ not (_authentik_restore_old_data_moved | bool)
-             or (_authentik_restore_rollback.rc | default(1) | int == 0) }}
-
-    - name: Authentik restore | Restart the project after rollback
-      community.docker.docker_compose_v2:
-        project_src: "{{ _authentik_restore_project_dir }}"
-        state: present
-      when: _authentik_restore_rollback_complete | bool
-
-    - name: Authentik restore | Verify readiness after rollback
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
-        status_code: [200, 204]
-      register: _authentik_restore_rollback_health
-      until: _authentik_restore_rollback_health.status | default(0) in [200, 204]
-      retries: 60
-      delay: 5
-      changed_when: false
-      when: _authentik_restore_rollback_complete | bool
-
-    - name: Authentik restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Authentik restore failed. Original data rollback
-          {{ 'completed and the project is ready' if _authentik_restore_rollback_complete | bool
-             else 'could not be confirmed; inspect the retained directory beside '
-                  ~ _authentik_restore_data_path }}.
-  always:
-    - name: Authentik restore | Remove rollback data after success or rollback
-      ansible.builtin.file:
-        path: "{{ _authentik_restore_previous.path }}"
-        state: absent
-      when:
-        - _authentik_restore_previous.path is defined
-        - _application_restore_complete | bool or _authentik_restore_rollback_complete | bool or not (_authentik_restore_old_data_moved | bool)
-
-    - name: Authentik restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _authentik_restore_stage.path }}"
-        state: absent
-      when: _authentik_restore_stage.path is defined
+    recovery_swap_runtime: docker
+    recovery_swap_pbs_runtime: native
+    recovery_swap_backup_id: "{{ _authentik_restore_source_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _authentik_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    # Staging sits in the project directory, so a kept failure stays out of the next backup.
+    recovery_swap_staging_parent: "{{ _authentik_restore_project_dir }}"
+    recovery_swap_paths:
+      - {path: "{{ _authentik_restore_data_path }}/database", source: data/database, owner: live, group: live, mode: "0700"}
+      - {path: "{{ _authentik_restore_data_path }}/redis", source: data/redis, owner: live, group: live, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/media", source: data/media, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/certs", source: data/certs, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/custom-templates", source: data/custom-templates, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+    recovery_swap_stop_services: [postgresql, redis, server, worker]
+    recovery_swap_compose_project: "{{ _authentik_restore_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
+    recovery_swap_health_status: [200, 204]

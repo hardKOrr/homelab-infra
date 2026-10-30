@@ -21,15 +21,17 @@
 #   staging after success or a completed rollback, and keeps them otherwise.
 #
 # Inputs:
-#   recovery_swap_runtime        docker | native: the PBS client runtime and service kind
+#   recovery_swap_runtime        docker | native: the service kind, and the PBS client
+#                                runtime unless recovery_swap_pbs_runtime is set
 #   recovery_swap_archives       archive names, e.g. [data.pxar]; each is extracted into
 #                                <staging>/<name without extension>
 #   recovery_swap_paths          the live directories to replace, each:
 #     path     absolute directory the application reads
 #     source   directory inside staging to install there; default the first archive's
 #              directory (`data` for data.pxar); may go deeper, such as `data/config`
-#     owner, group  numeric id or local name; every restored file gets it. The archive's
-#              ownership is never applied
+#     owner, group  numeric id, local name, or `live` for the live directory's current
+#              owner (a database container that chowns its own directory on first start);
+#              every restored file gets it. The archive's ownership is never applied
 #     mode     mode of path itself, default 0750 (a mount keeps its own mode unless one is
 #              given); files inside keep the archive's modes
 #     mount    true when path is an exact mount point (media on NFS): its contents are
@@ -44,12 +46,16 @@
 #                                (a code or list, default 200) once the restored
 #                                application serves; recovery_swap_health_retries (default
 #                                60) and recovery_swap_health_delay (default 5) pace it, and
-#                                recovery_swap_health_follow_redirects (default safe) is
-#                                passed to the uri module
+#                                recovery_swap_health_follow_redirects (default safe) and
+#                                recovery_swap_health_headers (default none) are passed to
+#                                the uri module
 #
 # Optional inputs:
 #   recovery_swap_staging_parent  where staging is created; default the first non-mount
 #                                path's parent (a rename, not a copy), else /var/tmp
+#   recovery_swap_pbs_runtime    docker | native: the PBS client runtime when it differs
+#                                from recovery_swap_runtime (a Compose app whose backup
+#                                runs the native client); default recovery_swap_runtime
 #   recovery_swap_ignore_permissions  extract without the archive's file modes too, for a
 #                                target that cannot hold them (nested Docker in an
 #                                unprivileged LXC)
@@ -82,12 +88,13 @@
     _swap_services: "{{ recovery_swap_stop_services | default([]) }}"
     _swap_owner_names: >-
       {{ (recovery_swap_paths | default([]) | map(attribute='owner', default='') | map('string') | list)
-         | reject('match', '^[0-9]*$') | unique }}
+         | reject('match', '^([0-9]*|live)$') | unique }}
     _swap_group_names: >-
       {{ (recovery_swap_paths | default([]) | map(attribute='group', default='') | map('string') | list)
-         | reject('match', '^[0-9]*$') | unique }}
+         | reject('match', '^([0-9]*|live)$') | unique }}
     _swap_paths: []
     _swap_database: "{{ recovery_swap_database | default({}) }}"
+    _swap_pbs_runtime: "{{ recovery_swap_pbs_runtime | default(recovery_swap_runtime | default('')) }}"
     _swap_database_replaced: false
     _swap_database_rollback_failed: false
     _swap_stopped: false
@@ -99,6 +106,7 @@
   ansible.builtin.assert:
     that:
       - recovery_swap_runtime | default('') in ['docker', 'native']
+      - _swap_pbs_runtime in ['docker', 'native']
       - _swap_archives | length > 0
       - _swap_archives | select('match', '^[A-Za-z0-9][A-Za-z0-9_.-]*\.pxar$') | list | length == _swap_archives | length
       - recovery_swap_paths | default([]) | length > 0
@@ -123,7 +131,7 @@
 - name: Restore swap | List or verify the recovery point while the application serves
   ansible.builtin.include_tasks: ../backup/pbs-client-restore.yml
   vars:
-    pbs_client_runtime: "{{ recovery_swap_runtime }}"
+    pbs_client_runtime: "{{ _swap_pbs_runtime }}"
     pbs_client_archives: "{{ _swap_archives | map('community.general.dict_kv', 'name') | list }}"
     pbs_client_overwrite: false
     pbs_client_backup_id: "{{ recovery_swap_backup_id | default('') }}"
@@ -146,6 +154,27 @@
       register: _swap_gids
       changed_when: false
 
+    - name: Restore swap | Read the owner of each path that keeps its live owner
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      loop: "{{ recovery_swap_paths }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: _swap_live_owners
+      when: "'live' in [item.owner | string, item.group | string]"
+
+    - name: Restore swap | Require a live directory to read its owner from
+      ansible.builtin.assert:
+        that:
+          - item.stat.isdir | default(false)
+          - not (item.stat.islnk | default(false))
+        fail_msg: >-
+          {{ item.item.path }} keeps its live owner, so it must be an existing real
+          directory. Nothing was changed.
+      loop: "{{ _swap_live_owners.results | selectattr('stat', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
     - name: Restore swap | Resolve each live path
       ansible.builtin.set_fact:
         _swap_paths: >-
@@ -153,9 +182,11 @@
                'path': item.path,
                'source': item.source | default(_swap_archives | first | regex_replace('\.pxar$', '')),
                'owner': (item.owner | string if item.owner | string is match('^[0-9]+$')
+                         else _swap_live.stat.uid | string if item.owner | string == 'live'
                          else _swap_uid_of[item.owner | string])
                         ~ ':' ~
                         (item.group | string if item.group | string is match('^[0-9]+$')
+                         else _swap_live.stat.gid | string if item.group | string == 'live'
                          else _swap_gid_of[item.group | string]),
                'mode': item.mode | default('' if item.mount | default(false) | bool else '0750') | string,
                'mount': item.mount | default(false) | bool,
@@ -164,7 +195,9 @@
       loop: "{{ recovery_swap_paths }}"
       loop_control:
         label: "{{ item.path }}"
+        index_var: _swap_index
       vars:
+        _swap_live: "{{ _swap_live_owners.results[_swap_index] }}"
         _swap_uid_of: >-
           {{ dict(_swap_uids.results | default([]) | map(attribute='item')
                   | zip(_swap_uids.results | default([]) | map(attribute='stdout') | map('trim'))) }}
@@ -250,7 +283,7 @@
     - name: Restore swap | Extract the selected point into staging
       ansible.builtin.include_tasks: ../backup/pbs-client-restore.yml
       vars:
-        pbs_client_runtime: "{{ recovery_swap_runtime }}"
+        pbs_client_runtime: "{{ _swap_pbs_runtime }}"
         pbs_client_backup_id: "{{ recovery_swap_backup_id | default('') }}"
         pbs_client_pre_restore_backup_id: "{{ recovery_swap_pre_restore_backup_id | default('') }}"
         pbs_client_archives: >-
@@ -435,6 +468,7 @@
           ansible.builtin.uri:
             url: "{{ recovery_swap_health_url }}"
             follow_redirects: "{{ recovery_swap_health_follow_redirects | default('safe') }}"
+            headers: "{{ recovery_swap_health_headers | default({}) }}"
             status_code: "{{ recovery_swap_health_status | default(200) }}"
           register: _swap_health
           until: _swap_health.status | default(0) in ([recovery_swap_health_status | default(200)] | flatten | map('int'))

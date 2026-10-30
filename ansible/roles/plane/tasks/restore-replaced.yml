@@ -1,0 +1,71 @@
+---
+# restore-swap.yml replaced hook. The named Redis backend lives on its own guest, so the
+# swap cannot replace it: stop it (it saves its live dataset), keep that RDB on the
+# controller for a rollback, install the point's RDB and start it. Then give the target the
+# source's keys, which the restored database and object storage were written with.
+- name: Plane restore | Register the target Redis backend
+  ansible.builtin.add_host:
+    name: plane_redis_restore_target
+    groups: plane_redis_restore
+    ansible_host: "{{ _plane_restore_redis_backend.host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+  changed_when: false
+
+- name: Plane restore | Fetch the point's Redis RDB to private controller staging
+  ansible.builtin.fetch:
+    src: "{{ recovery_swap_stage }}/redis/dump.rdb"
+    dest: "{{ _plane_restore_controller.path }}/restored.rdb"
+    flat: true
+  no_log: true
+
+- name: Plane restore | Record that the Redis dataset is being replaced
+  ansible.builtin.set_fact:
+    _plane_restore_redis_replaced: true
+
+- name: Plane restore | Stop the target Redis service
+  ansible.builtin.systemd_service:
+    name: "{{ _plane_restore_redis_service_name }}"
+    state: stopped
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Look for the live Redis RDB
+  ansible.builtin.stat:
+    path: "{{ _plane_restore_redis_data_path }}/dump.rdb"
+  delegate_to: plane_redis_restore_target
+  register: _plane_restore_live_rdb
+
+- name: Plane restore | Keep the live Redis RDB for a rollback
+  ansible.builtin.fetch:
+    src: "{{ _plane_restore_redis_data_path }}/dump.rdb"
+    dest: "{{ _plane_restore_controller.path }}/live.rdb"
+    flat: true
+  delegate_to: plane_redis_restore_target
+  when: _plane_restore_live_rdb.stat.exists
+  no_log: true
+
+- name: Plane restore | Install the point's Redis RDB
+  ansible.builtin.copy:
+    src: "{{ _plane_restore_controller.path }}/restored.rdb"
+    dest: "{{ _plane_restore_redis_data_path }}/dump.rdb"
+    owner: redis
+    group: redis
+    mode: "0640"
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Start the target Redis service
+  ansible.builtin.systemd_service:
+    name: "{{ _plane_restore_redis_service_name }}"
+    state: started
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Verify authenticated target Redis readiness
+  ansible.builtin.include_tasks: restore-redis-ready.yml
+
+- name: Plane restore | Record that the target keys are being replaced
+  ansible.builtin.set_fact:
+    _plane_restore_keys_replaced: true
+
+- name: Plane restore | Give the target the source's keys
+  ansible.builtin.include_tasks: restore-keys.yml
+  vars:
+    _plane_restore_keys: "{{ restore_source_plane_secrets }}"

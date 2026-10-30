@@ -40,7 +40,11 @@
         name: homelabinfra_infra
       failed_when: false
     - ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.wordpress_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.wordpress_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+      no_log: true
   tasks:
     - name: Resolve the source backup group
       ansible.builtin.set_fact:
@@ -49,6 +53,16 @@
              or (app_config.backup.backup_id | default('', true)
                  if (source_instance | default(instance)) == instance
                  else (source_instance | default(instance))) }}
+
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        wordpress_fqdn: >-
+          {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
 
     - name: Resolve the existing services stack host
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
@@ -63,35 +77,26 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Run the WordPress restore plan
-      ansible.builtin.command:
-        argv:
-          - /usr/local/sbin/homelab-infra-wordpress-recovery
-          - --plan
-          - --snapshot
-          - "{{ snapshot | default('') }}"
-      environment:
-        WORDPRESS_INSTANCE: "{{ instance }}"
-        WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
-      register: wordpress_restore_plan_result
-      changed_when: false
-      when: not (overwrite | default(false) | bool)
+    - name: Plan or perform the WordPress restore
+      ansible.builtin.include_role:
+        name: wordpress
+        tasks_from: restore
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+        wordpress_restore_backup_id: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
+        wordpress_fqdn: "{{ hostvars['localhost'].wordpress_fqdn }}"
+        restore_overwrite: "{{ overwrite | default(false) | bool }}"
+        restore_snapshot: "{{ snapshot | default('') }}"
+        restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
+        restore_destination: existing
 
-    - name: Run the destructive WordPress restore
-      ansible.builtin.command:
-        argv:
-          - /usr/local/sbin/homelab-infra-wordpress-recovery
-          - --restore
-          - --snapshot
-          - "{{ snapshot }}"
-          - --pre-restore-point
-          - "{{ pre_restore_point }}"
-      environment:
-        WORDPRESS_INSTANCE: "{{ instance }}"
-        WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
-      register: wordpress_restore_result
-      changed_when: true
-      when: overwrite | default(false) | bool
+    - name: Record the completed WordPress plan or restore
+      ansible.builtin.set_fact:
+        wordpress_restore_complete: >-
+          {{ _application_restore_complete | default(false) | bool
+             or not (overwrite | default(false) | bool) }}
 
 - name: "WordPress Restore | Notify"
   hosts: localhost
@@ -109,18 +114,10 @@
         notify_message: "WordPress {{ instance }} was restored from its application-consistent PBS snapshot."
       when:
         - overwrite | default(false) | bool
-        - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
-    - name: Fail if WordPress restore plan did not complete
-      ansible.builtin.assert:
-        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_plan_result.rc | default(1) == 0
-        fail_msg: >-
-          WordPress restore plan failed; inspect its snapshot listing before retrying.
-          No restore was applied.
-      when: not (overwrite | default(false) | bool)
+        - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool
     - name: Fail if WordPress restore did not complete
       ansible.builtin.assert:
-        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
+        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool
         fail_msg: >-
-          WordPress restore failed; inspect the helper output for rollback status before
+          WordPress restore did not complete; inspect the run for its rollback status before
           retrying. No success notification was sent.
-      when: overwrite | default(false) | bool

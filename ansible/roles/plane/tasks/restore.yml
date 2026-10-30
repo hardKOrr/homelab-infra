@@ -1,12 +1,18 @@
 ---
-# Restore Plane's application-consistent PostgreSQL, Redis, server/worker and MinIO state.
-#
-# Plan mode only lists PBS snapshots. Overwrite mode validates every member before stopping
-# the target, then replaces the target's named database, Redis backend and owned paths. A
-# failure leaves Plane stopped for inspection and retry; the source and selected artifact
-# are never deleted.
+# Restore Plane's application-consistent PostgreSQL, Redis, server/worker and MinIO state
+# through the shared swap. The point is extracted and checked while Plane still runs. The
+# replaced hook loads the Redis RDB into the named Redis backend and gives the target the
+# source's keys; a failure after the stop puts the original paths, database, Redis dataset
+# and keys back and starts Plane. The guest's backup timer takes the same lock.
 
 - name: Plane restore | Resolve target PostgreSQL and Redis backends and credentials
+  vars:
+    _plane_restore_secret_fields:
+      - secret_key
+      - live_server_secret_key
+      - rabbitmq_password
+      - object_storage_access_key
+      - object_storage_secret_key
   ansible.builtin.set_fact:
     _plane_restore_database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(
@@ -31,6 +37,9 @@
     _plane_restore_redis_service_name: "{{ app_config.app.redis.service_name | default('redis-server', true) }}"
     _plane_restore_backup_id: >-
       {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _plane_restore_target_secrets: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {})
+         | dict2items | selectattr('key', 'in', _plane_restore_secret_fields) | items2dict }}
   no_log: true
 
 - name: Plane restore | Assert the application-consistent recovery contract
@@ -77,36 +86,15 @@
       - restore_source_redis.instance | default('') | length > 0
       - restore_source_redis.host | default('') | length > 0
       - restore_source_redis.port | default(0) | int > 0
+      - >-
+        not (restore_overwrite | bool)
+        or _plane_restore_target_secrets | dict2items | selectattr('value') | list | length == 5
       - homelabinfra_infra.backups is defined
     fail_msg: >-
       Plane restore needs target-owned PostgreSQL and Redis credentials, the source Plane
-      keys, non-root target paths, named source dependencies, and a PBS snapshot when
-      overwrite=true. Missing recovery material is not a healthy restore.
+      keys, the target's own keys for a rollback, non-root target paths, named source
+      dependencies, and a PBS snapshot when overwrite=true. Missing recovery material is not a healthy restore.
   no_log: true
-
-- name: Plane restore | Inspect exact target-owned persistent paths before overwrite
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ _plane_restore_data_path }}"
-    - "{{ _plane_restore_object_storage_path }}"
-  register: _plane_restore_target_paths
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Plane restore | Refuse missing, non-directory or symlink target paths
-  ansible.builtin.assert:
-    that:
-      - item.stat.exists
-      - item.stat.isdir
-      - not item.stat.islnk
-    fail_msg: >-
-      Plane restore target path {{ item.item }} is not an existing owned directory; refusing
-      to empty or replace it. Provision the exact target and retry.
-  loop: "{{ _plane_restore_target_paths.results | default([]) }}"
-  loop_control:
-    label: "{{ item.item }}"
-  when: restore_overwrite | bool
 
 - name: Plane restore | Require separate PostgreSQL and Redis targets for a new destination
   ansible.builtin.assert:
@@ -129,13 +117,84 @@
   when: restore_destination == 'new'
   no_log: true
 
-- name: Plane restore | List or verify source points without changing anything
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-  vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _plane_restore_backup_id }}"
-    pbs_client_archives: [{name: database.pxar}, {name: redis.pxar}, {name: data.pxar}, {name: object-storage.pxar}]
-  when: not (restore_overwrite | bool)
+# Redis's RDB travels through the controller only as private transfer material; the live
+# dataset's copy there is what a rollback loads back. Both are removed afterwards.
+- name: Plane restore | Allocate controller Redis transfer space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: plane-restore-redis-
+  delegate_to: localhost
+  become: false
+  register: _plane_restore_controller
+  when: restore_overwrite | bool
+
+- name: Plane restore | Acquire the target recovery lock
+  ansible.builtin.command:
+    argv: [mkdir, -m, "0700", --, "/run/lock/homelab-infra-plane-{{ restore_target }}.lock"]
+  register: _plane_restore_lock
+  changed_when: _plane_restore_lock.rc == 0
+  when: restore_overwrite | bool
+
+- name: Plane restore | Preview or replace under the lock
+  block:
+    - name: Plane restore | Preview or replace the paths, database and Redis dataset
+      ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+      vars:
+        recovery_swap_runtime: docker
+        recovery_swap_backup_id: "{{ _plane_restore_backup_id }}"
+        recovery_swap_archives: [database.pxar, redis.pxar, data.pxar, object-storage.pxar]
+        # Staging sits in the project directory, outside both backed-up paths.
+        recovery_swap_staging_parent: "{{ plane_project_dir }}"
+        recovery_swap_paths:
+          - {path: "{{ _plane_restore_data_path }}/api", source: data/api, owner: root, group: root, mode: "0750", allow_empty: true}
+          - {path: "{{ _plane_restore_data_path }}/worker", source: data/worker, owner: root, group: root, mode: "0750", allow_empty: true}
+          - {path: "{{ _plane_restore_data_path }}/beat", source: data/beat, owner: root, group: root, mode: "0750", allow_empty: true}
+          - {path: "{{ _plane_restore_data_path }}/migrator", source: data/migrator, owner: root, group: root, mode: "0750", allow_empty: true}
+          - {path: "{{ _plane_restore_data_path }}/proxy", source: data/proxy, owner: root, group: root, mode: "0750", allow_empty: true}
+          # RabbitMQ's entrypoint gives its directory to the image's own user.
+          - {path: "{{ _plane_restore_data_path }}/rabbitmq", source: data/rabbitmq, owner: live, group: live, mode: "0750"}
+          - {path: "{{ _plane_restore_object_storage_path }}", source: object-storage, owner: root, group: root, mode: "0750"}
+        recovery_swap_database:
+          config: "{{ app_config.app.database }}"
+          dump: database/plane.dump
+        recovery_swap_stop_services:
+          - plane-web
+          - plane-space
+          - plane-admin
+          - plane-live
+          - plane-api
+          - plane-worker
+          - plane-beat-worker
+          - plane-migrator
+          - plane-mq
+          - plane-minio
+          - plane-minio-init
+          - plane-proxy
+        recovery_swap_compose_project: "{{ plane_project_dir }}"
+        recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+        recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+        recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
+        recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/"
+        recovery_swap_health_headers:
+          Host: "{{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
+        # Keep the readiness request local; an isolated target is not wired yet.
+        recovery_swap_health_follow_redirects: none
+        recovery_swap_health_status: [200, 301, 302, 303, 307, 308]
+        recovery_swap_health_retries: 90
+  always:
+    - name: Plane restore | Release the target recovery lock
+      ansible.builtin.file:
+        path: "/run/lock/homelab-infra-plane-{{ restore_target }}.lock"
+        state: absent
+      when: _plane_restore_lock is changed
+
+    - name: Plane restore | Remove private controller Redis transfer data
+      ansible.builtin.file:
+        path: "{{ _plane_restore_controller.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: _plane_restore_controller.path is defined
 
 - name: Plane restore | Report the read-only plan
   ansible.builtin.debug:
@@ -148,357 +207,3 @@
         object-storage.pxar ({{ _plane_restore_object_storage_path }}).
       - "Re-run with recovery_point=<snapshot-id> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
-
-# Scratch stays outside /tmp, where the shared client puts its own tmpfs.
-- name: Plane restore | Allocate private scratch space
-  ansible.builtin.tempfile:
-    state: directory
-    path: /var/tmp
-    prefix: plane-restore-
-  register: _plane_restore_scratch
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Plane restore | Allocate controller Redis transfer space
-  ansible.builtin.tempfile:
-    state: file
-    prefix: plane-restore-redis-
-  delegate_to: localhost
-  become: false
-  register: _plane_restore_controller_rdb
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Plane restore | Fetch and validate every recovery member
-  when: restore_overwrite | bool
-  block:
-    - name: Plane restore | Acquire the target recovery lock
-      ansible.builtin.command:
-        argv:
-          - mkdir
-          - -m
-          - "0700"
-          - --
-          - "/run/lock/homelab-infra-plane-{{ restore_target }}.lock"
-      changed_when: true
-
-    - name: Plane restore | Record ownership of the recovery lock
-      ansible.builtin.set_fact:
-        _plane_restore_lock_acquired: true
-
-    - name: Plane restore | Create a staging directory per archive
-      ansible.builtin.file:
-        path: "{{ _plane_restore_scratch.path }}/{{ item }}"
-        state: directory
-        mode: "0700"
-      loop: [database, redis, data, object-storage]
-
-    - name: Plane restore | Extract the selected PBS snapshot
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _plane_restore_backup_id }}"
-        pbs_client_archives:
-          - {name: database.pxar, path: "{{ _plane_restore_scratch.path }}/database"}
-          - {name: redis.pxar, path: "{{ _plane_restore_scratch.path }}/redis"}
-          - {name: data.pxar, path: "{{ _plane_restore_scratch.path }}/data"}
-          - {name: object-storage.pxar, path: "{{ _plane_restore_scratch.path }}/object-storage"}
-
-    - name: Plane restore | Inspect the extracted dumps
-      ansible.builtin.stat:
-        path: "{{ _plane_restore_scratch.path }}/{{ item }}"
-      loop: [database/plane.dump, database/plane-release.txt, redis/dump.rdb]
-      register: _plane_restore_members
-
-    - name: Plane restore | Require every dump in the point
-      ansible.builtin.assert:
-        that: item.stat.size | default(0) > 0
-        fail_msg: "The selected Plane point has no {{ item.item }}; nothing was changed."
-      loop: "{{ _plane_restore_members.results }}"
-      loop_control:
-        label: "{{ item.item }}"
-
-    - name: Plane restore | Read the selected artifact's release identity
-      ansible.builtin.command:
-        argv:
-          - cat
-          - "{{ _plane_restore_scratch.path }}/database/plane-release.txt"
-      register: _plane_restore_artifact_release
-      changed_when: false
-      no_log: true
-
-    - name: Plane restore | Refuse an incompatible Plane release before mutation
-      ansible.builtin.assert:
-        that:
-          - _plane_restore_artifact_release.stdout | trim == app_config.app.release
-        fail_msg: >-
-          The selected Plane point was captured by a different declared release. Rebuild an
-          isolated target with the matching Plane release before attempting this restore.
-      no_log: true
-
-    - name: Plane restore | Verify database and Redis artifact integrity before mutation
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --volume
-          - "{{ _plane_restore_scratch.path }}:/restore:ro"
-          - "{{ app_config.backup.redis_client_image }}"
-          - /bin/sh
-          - -ceu
-          - >-
-            redis-check-rdb /restore/redis/dump.rdb
-      changed_when: false
-      no_log: true
-
-    - name: Plane restore | Verify the PostgreSQL dump is readable before mutation
-      ansible.builtin.include_tasks: ../../../tasks/database/verify-dump.yml
-      vars:
-        database_app_instance: "{{ restore_target }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_restore_file: "{{ _plane_restore_scratch.path }}/database/plane.dump"
-
-    - name: Plane restore | Stop the complete target Compose recovery unit
-      community.docker.docker_compose_v2:
-        project_src: "{{ plane_project_dir }}"
-        state: stopped
-
-    - name: Plane restore | Empty the target server/worker state path
-      ansible.builtin.command:
-        argv:
-          - find
-          - "{{ _plane_restore_data_path }}"
-          - -mindepth
-          - "1"
-          - -maxdepth
-          - "1"
-          - -exec
-          - rm
-          - -rf
-          - --
-          - "{}"
-          - +
-      changed_when: true
-      no_log: true
-
-    - name: Plane restore | Empty the target object-storage path
-      ansible.builtin.command:
-        argv:
-          - find
-          - "{{ _plane_restore_object_storage_path }}"
-          - -mindepth
-          - "1"
-          - -maxdepth
-          - "1"
-          - -exec
-          - rm
-          - -rf
-          - --
-          - "{}"
-          - +
-      changed_when: true
-      no_log: true
-
-    - name: Plane restore | Restore server/worker state
-      ansible.builtin.command:
-        argv:
-          - cp
-          - -a
-          - "{{ _plane_restore_scratch.path }}/data/."
-          - "{{ _plane_restore_data_path }}/"
-      changed_when: true
-      no_log: true
-
-    - name: Plane restore | Restore local MinIO object storage
-      ansible.builtin.command:
-        argv:
-          - cp
-          - -a
-          - "{{ _plane_restore_scratch.path }}/object-storage/."
-          - "{{ _plane_restore_object_storage_path }}/"
-      changed_when: true
-      no_log: true
-
-    - name: Plane restore | Restore the named PostgreSQL database
-      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-      vars:
-        database_app_instance: "{{ restore_target }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_restore_file: "{{ _plane_restore_scratch.path }}/database/plane.dump"
-
-    # Redis's RDB format is native to the named Redis service. The RDB is fetched to the
-    # controller only as private transfer material, then installed while the backend is
-    # stopped; it is removed in the always block and never appears in recovery evidence.
-    - name: Plane restore | Register the target Redis backend for the RDB transfer
-      ansible.builtin.add_host:
-        name: plane_redis_restore_target
-        groups: plane_redis_restore
-        ansible_host: "{{ _plane_restore_redis_backend.host }}"
-        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
-      changed_when: false
-
-    - name: Plane restore | Fetch the validated Redis RDB to private controller staging
-      ansible.builtin.fetch:
-        src: "{{ _plane_restore_scratch.path }}/redis/dump.rdb"
-        dest: "{{ _plane_restore_controller_rdb.path }}"
-        flat: true
-      no_log: true
-
-    - name: Plane restore | Stop the target Redis service
-      ansible.builtin.systemd:
-        name: "{{ _plane_restore_redis_service_name }}"
-        state: stopped
-      delegate_to: plane_redis_restore_target
-
-    - name: Plane restore | Install the selected Redis RDB
-      ansible.builtin.copy:
-        src: "{{ _plane_restore_controller_rdb.path }}"
-        dest: "{{ _plane_restore_redis_data_path }}/dump.rdb"
-        owner: redis
-        group: redis
-        mode: "0640"
-      delegate_to: plane_redis_restore_target
-
-    - name: Plane restore | Start the target Redis service
-      ansible.builtin.systemd:
-        name: "{{ _plane_restore_redis_service_name }}"
-        state: started
-      delegate_to: plane_redis_restore_target
-
-    - name: Plane restore | Verify authenticated target Redis readiness
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --env
-          - REDIS_HOST
-          - --env
-          - REDIS_PORT
-          - --env
-          - REDISCLI_AUTH
-          - "{{ app_config.backup.redis_client_image }}"
-          - /bin/sh
-          - -ceu
-          - test "$(redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" ping)" = PONG
-      environment:
-        REDIS_HOST: "{{ _plane_restore_redis_backend.host }}"
-        REDIS_PORT: "{{ _plane_restore_redis_backend.port }}"
-        REDISCLI_AUTH: "{{ _plane_restore_redis_password }}"
-      changed_when: false
-      no_log: true
-
-    - name: Plane restore | Store source Plane keys on the target
-      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-      vars:
-        vault_item_name: "homelab-infra/apps/{{ restore_target }}"
-        vault_item_merge: true
-        vault_item_fields:
-          secret_key: "{{ restore_source_plane_secrets.secret_key }}"
-          live_server_secret_key: "{{ restore_source_plane_secrets.live_server_secret_key }}"
-          rabbitmq_password: "{{ restore_source_plane_secrets.rabbitmq_password }}"
-          object_storage_access_key: "{{ restore_source_plane_secrets.object_storage_access_key }}"
-          object_storage_secret_key: "{{ restore_source_plane_secrets.object_storage_secret_key }}"
-        vault_item_secret_fields:
-          - secret_key
-          - live_server_secret_key
-          - rabbitmq_password
-          - object_storage_access_key
-          - object_storage_secret_key
-      no_log: true
-
-    - name: Plane restore | Render the target environment with restored keys
-      ansible.builtin.template:
-        src: plane.env.j2
-        dest: "/opt/{{ restore_target }}/plane.env"
-        owner: root
-        group: root
-        mode: "0600"
-      vars:
-        instance: "{{ restore_target }}"
-        plane_project_dir: "/opt/{{ restore_target }}"
-        plane_env_file: "/opt/{{ restore_target }}/plane.env"
-        plane_fqdn: "{{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
-        _plane_env_database_backend: "{{ _plane_restore_database_backend }}"
-        _plane_env_database_user: "{{ _plane_restore_database_user }}"
-        _plane_env_database_password: "{{ _plane_restore_database_password }}"
-        _plane_env_database_name: "{{ _plane_restore_database_name }}"
-        _plane_redis_backend: "{{ _plane_restore_redis_backend }}"
-        _plane_redis_password: "{{ _plane_restore_redis_password }}"
-        _plane_secret_key: "{{ restore_source_plane_secrets.secret_key }}"
-        _plane_live_server_secret_key: "{{ restore_source_plane_secrets.live_server_secret_key }}"
-        _plane_rabbitmq_password: "{{ restore_source_plane_secrets.rabbitmq_password }}"
-        _plane_object_storage_access_key: "{{ restore_source_plane_secrets.object_storage_access_key }}"
-        _plane_object_storage_secret_key: "{{ restore_source_plane_secrets.object_storage_secret_key }}"
-      no_log: true
-
-    - name: Plane restore | Start the complete target Compose recovery unit
-      community.docker.docker_compose_v2:
-        project_src: "{{ plane_project_dir }}"
-        state: present
-
-    - name: Plane restore | Wait for the restored Plane health endpoint
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/"
-        headers:
-          Host: >-
-            {{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
-        # Keep the readiness request local; the isolated target is not wired yet.
-        follow_redirects: none
-        status_code: [200, 301, 302, 303, 307, 308]
-      register: _plane_restore_health
-      until: _plane_restore_health.status | default(0) in [200, 301, 302, 303, 307, 308]
-      retries: 90
-      delay: 5
-      changed_when: false
-
-    - name: Plane restore | Mark the complete application restore
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Plane restore | Stop the target Plane recovery unit after failure
-      community.docker.docker_compose_v2:
-        project_src: "{{ plane_project_dir }}"
-        state: stopped
-      failed_when: false
-      when: _plane_restore_lock_acquired | default(false) | bool
-
-    - name: Plane restore | Leave the target Redis service available for inspection
-      ansible.builtin.systemd:
-        name: "{{ _plane_restore_redis_service_name }}"
-        state: started
-      delegate_to: plane_redis_restore_target
-      failed_when: false
-      when:
-        - _plane_restore_lock_acquired | default(false) | bool
-        - "'plane_redis_restore_target' in hostvars"
-
-    - name: Plane restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Plane restore {{ restore_snapshot }} did not complete. The target Plane unit is
-          intentionally left stopped because its database, Redis or persistent paths may be
-          partially replaced. Inspect the target and retry from the retained recovery point.
-  always:
-    - name: Plane restore | Release the target recovery lock
-      ansible.builtin.file:
-        path: "/run/lock/homelab-infra-plane-{{ restore_target }}.lock"
-        state: absent
-      when: _plane_restore_lock_acquired | default(false) | bool
-
-    - name: Plane restore | Remove private target scratch data
-      ansible.builtin.file:
-        path: "{{ _plane_restore_scratch.path }}"
-        state: absent
-      when: _plane_restore_scratch.path is defined
-
-    - name: Plane restore | Remove private controller Redis transfer data
-      ansible.builtin.file:
-        path: "{{ _plane_restore_controller_rdb.path }}"
-        state: absent
-      delegate_to: localhost
-      become: false
-      when: _plane_restore_controller_rdb.path is defined

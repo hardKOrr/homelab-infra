@@ -1,0 +1,64 @@
+---
+# Restore WordPress's named database and wp-content from one PBS point (database.pxar,
+# content.pxar), possibly another instance's, through the shared swap. Run by
+# playbooks/maintenance/wordpress-restore.yml on the Docker host. WordPress core and
+# wp-config.php come from the target's pinned image and environment, never the point, so
+# a point from another instance is safe. A plan lists or previews the point and changes
+# nothing; an overwrite needs a distinct pre-restore point of the target, taken within the
+# last hour, and a failure after the stop puts the original wp-content and database back
+# and starts WordPress.
+#
+# Inputs besides the restore request: wordpress_restore_backup_id (the point's group) and
+# wordpress_fqdn (the target's published name).
+
+- name: WordPress restore | Resolve the target
+  ansible.builtin.set_fact:
+    _wordpress_restore_target_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+
+- name: WordPress restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - wordpress_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - _wordpress_restore_target_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - >-
+        restore_snapshot | default('') | length == 0
+        or restore_snapshot.startswith('host/' ~ wordpress_restore_backup_id ~ '/')
+      - not (restore_overwrite | bool) or restore_snapshot | default('') | length > 0
+      - wordpress_fqdn | default('') | length > 0
+      - not (restore_overwrite | bool) or app_config.app.admin_password | default('') | length > 0
+    fail_msg: >-
+      WordPress restore needs a snapshot from host/{{ wordpress_restore_backup_id }}/ when
+      overwrite=true, the target's published name and its administrator credential.
+  no_log: true
+
+- name: WordPress restore | Require a fresh, distinct pre-restore point
+  ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: "{{ _wordpress_restore_target_backup_id }}"
+  when: restore_overwrite | bool
+
+- name: WordPress restore | Preview or replace wp-content and the database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_backup_id: "{{ wordpress_restore_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _wordpress_restore_target_backup_id }}"
+    recovery_swap_archives: [database.pxar, content.pxar]
+    # wp-content's parent is the served document root; stage beside it instead.
+    recovery_swap_staging_parent: "{{ wordpress_project_dir }}"
+    recovery_swap_paths:
+      # The pinned Apache image serves PHP as www-data (uid/gid 33).
+      - path: "{{ wordpress_content_path }}"
+        source: content
+        owner: 33
+        group: 33
+        mode: "0755"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/database.sql
+    recovery_swap_stop_services: [wordpress]
+    recovery_swap_compose_project: "{{ wordpress_project_dir }}"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/wp-login.php"
+    recovery_swap_health_follow_redirects: none
+    recovery_swap_health_status: [200, 301, 302, 303, 307, 308]

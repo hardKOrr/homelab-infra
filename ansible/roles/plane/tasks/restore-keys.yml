@@ -1,0 +1,47 @@
+---
+# Record _plane_restore_keys (the five Plane keys) against the target and render the
+# environment Plane starts with. The replaced hook passes the source's keys, the rollback
+# hook the target's own.
+- name: Plane restore | Store the Plane keys on the target
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+    vault_item_merge: true
+    vault_item_fields:
+      secret_key: "{{ _plane_restore_keys.secret_key }}"
+      live_server_secret_key: "{{ _plane_restore_keys.live_server_secret_key }}"
+      rabbitmq_password: "{{ _plane_restore_keys.rabbitmq_password }}"
+      object_storage_access_key: "{{ _plane_restore_keys.object_storage_access_key }}"
+      object_storage_secret_key: "{{ _plane_restore_keys.object_storage_secret_key }}"
+    vault_item_secret_fields:
+      - secret_key
+      - live_server_secret_key
+      - rabbitmq_password
+      - object_storage_access_key
+      - object_storage_secret_key
+  no_log: true
+
+- name: Plane restore | Render the target environment with the keys
+  ansible.builtin.template:
+    src: plane.env.j2
+    dest: "/opt/{{ restore_target }}/plane.env"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    instance: "{{ restore_target }}"
+    plane_project_dir: "/opt/{{ restore_target }}"
+    plane_env_file: "/opt/{{ restore_target }}/plane.env"
+    plane_fqdn: "{{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
+    _plane_env_database_backend: "{{ _plane_restore_database_backend }}"
+    _plane_env_database_user: "{{ _plane_restore_database_user }}"
+    _plane_env_database_password: "{{ _plane_restore_database_password }}"
+    _plane_env_database_name: "{{ _plane_restore_database_name }}"
+    _plane_redis_backend: "{{ _plane_restore_redis_backend }}"
+    _plane_redis_password: "{{ _plane_restore_redis_password }}"
+    _plane_secret_key: "{{ _plane_restore_keys.secret_key }}"
+    _plane_live_server_secret_key: "{{ _plane_restore_keys.live_server_secret_key }}"
+    _plane_rabbitmq_password: "{{ _plane_restore_keys.rabbitmq_password }}"
+    _plane_object_storage_access_key: "{{ _plane_restore_keys.object_storage_access_key }}"
+    _plane_object_storage_secret_key: "{{ _plane_restore_keys.object_storage_secret_key }}"
+  no_log: true

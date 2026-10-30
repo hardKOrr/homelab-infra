@@ -16,14 +16,23 @@ repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 
+def swap_includes(tasks, parents=()):
+    """Yield each include of the shared swap with the blocks around it, outermost first."""
+    for task in tasks or []:
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("tasks/recovery/restore-swap.yml"):
+            yield [*parents, task]
+        for section in ("block", "rescue", "always"):
+            yield from swap_includes(task.get(section), (*parents, task))
+
+
 def swap_inputs(role, task_file="restore.yml"):
     """Return the vars of the role's single include of the shared restore swap."""
     tasks = yaml.safe_load((repo / "ansible/roles" / role / "tasks" / task_file).read_text())
-    includes = [task for task in tasks
-                if str(task.get("ansible.builtin.include_tasks", "")).endswith(
-                    "tasks/recovery/restore-swap.yml")]
+    includes = list(swap_includes(tasks))
     assert len(includes) == 1, f"{role}/{task_file} must include restore-swap.yml once"
-    assert "when" not in includes[0], f"{role}: the swap runs on every restore, preview included"
+    assert all("when" not in task for task in includes[0]), \
+        f"{role}: the swap runs on every restore, preview included"
+    includes[0] = includes[0][-1]
     variables = includes[0]["vars"]
     for hook in ("staged", "stopped", "replaced", "verified", "rollback"):
         path = variables.get(f"recovery_swap_{hook}_hook")

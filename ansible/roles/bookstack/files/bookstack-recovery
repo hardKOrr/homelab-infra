@@ -1,5 +1,6 @@
 #!/bin/bash
-# Application-consistent BookStack recovery helper.
+# Application-consistent BookStack backup helper, run by the recovery timer and the Backup
+# playbook. The role's tasks/restore.yml restores through the shared swap.
 #
 # This file deliberately contains no credentials. The role writes one root-only env file
 # from the canonical Vaultwarden item, and the shared PBS client script
@@ -7,7 +8,6 @@
 # database dump and /config archive are uploaded as two archives in ONE PBS snapshot, so a
 # restore cannot accidentally pair page media with a different database point in time.
 set -Eeuo pipefail
-readonly PRE_RESTORE_MAX_AGE_SECONDS=3600
 
 CONFIG=${BOOKSTACK_RECOVERY_CONFIG:-/etc/homelab-infra/bookstack/${BOOKSTACK_INSTANCE:-bookstack}.env}
 if [[ ! -r "$CONFIG" ]]; then
@@ -33,16 +33,10 @@ done
 compose=(docker compose --project-directory "$BOOKSTACK_PROJECT_DIR" -f "$BOOKSTACK_PROJECT_DIR/docker-compose.yml")
 work=$(mktemp -d /var/tmp/homelab-bookstack.XXXXXX)
 stopped=0
-restart_on_failure=0
-restore_active=0
-original_data_saved=0
-original_data_path=
-keep_work=0
 
 stop_bookstack() {
   "${compose[@]}" stop "$BOOKSTACK_SERVICE" >/dev/null
   stopped=1
-  restart_on_failure=1
 }
 
 start_bookstack() {
@@ -50,15 +44,14 @@ start_bookstack() {
   stopped=0
 }
 
-# Dump or load the named database with the shared client (tasks/database/scripts/
+# Dump the named database with the shared client (tasks/database/scripts/
 # database-client.sh) in the server-matched image, as the application's own login.
 database_client() {
-  local action=$1 file=$2 mount_path=/work
-  [[ "$action" == dump ]] || mount_path=/work:ro
+  local action=$1 file=$2
   DB_ENGINE="$BOOKSTACK_DB_PROVIDER" DB_HOST="$BOOKSTACK_DB_HOST" DB_PORT="$BOOKSTACK_DB_PORT" \
     DB_NAME="$BOOKSTACK_DB_NAME" DB_USER="$BOOKSTACK_DB_USER" DB_PASSWORD="$BOOKSTACK_DB_PASSWORD" \
     docker run --rm --network host \
-    -v "$(dirname -- "$file"):$mount_path" \
+    -v "$(dirname -- "$file"):/work" \
     -v "$DATABASE_CLIENT_SCRIPT:/usr/local/bin/database-client.sh:ro" \
     -e DB_ENGINE -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
     --entrypoint /bin/sh "$BOOKSTACK_DB_CLIENT_IMAGE" \
@@ -71,51 +64,11 @@ pbs_client() {
 
 finish() {
   local rc=$?
-  local rollback_ok=1
   trap - EXIT
-
-  if [[ "$restore_active" == 1 && "$rc" != 0 ]]; then
-    restart_on_failure=0
-    echo "BookStack restore failed; putting the previous data and database back." >&2
-    if ! stop_bookstack >/dev/null 2>&1; then
-      echo "Could not stop BookStack for rollback; the rollback copy is preserved." >&2
-      rollback_ok=0
-    else
-      if [[ "$original_data_saved" == 1 ]]; then
-        if rm -rf -- "$BOOKSTACK_DATA_PATH" && mv -T -- "$original_data_path" "$BOOKSTACK_DATA_PATH"; then
-          original_data_saved=0
-          original_data_path=
-        else
-          echo "Could not restore the original BookStack data contents from $original_data_path." >&2
-          rollback_ok=0
-        fi
-      fi
-      if ! database_client restore "$work/original/database.sql"; then
-        echo "Could not restore the original BookStack database; its dump is preserved in $work." >&2
-        rollback_ok=0
-      fi
-    fi
-
-    if [[ "$rollback_ok" == 1 ]]; then
-      if start_bookstack >/dev/null; then
-        restore_active=0
-        echo "BookStack rollback restored the previous data and database." >&2
-      else
-        echo "BookStack data and database were restored, but the service could not be started." >&2
-        rollback_ok=0
-      fi
-    fi
-    if [[ "$rollback_ok" != 1 ]]; then
-      keep_work=1
-      echo "BookStack remains stopped; preserved rollback files in $work and original data at ${original_data_path:-<restored>}. Inspect before starting it." >&2
-    fi
-  elif [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+  if [[ "$stopped" == 1 ]]; then
     start_bookstack >/dev/null 2>&1 || true
   fi
-
-  if [[ "$keep_work" != 1 ]]; then
-    rm -rf -- "$work" || true
-  fi
+  rm -rf -- "$work" || true
   exit "$rc"
 }
 trap finish EXIT
@@ -134,110 +87,7 @@ backup() {
   start_bookstack
 }
 
-plan() {
-  # A plan never stops BookStack and never writes the application data path. With a
-  # snapshot it runs the same client path a restore uses.
-  pbs_client list --id "$PBS_BACKUP_ID"
-  if [[ -n "${SNAPSHOT:-}" ]]; then
-    case "$SNAPSHOT" in
-      host/$PBS_BACKUP_ID/*) ;;
-      *) echo "snapshot is not in the BookStack backup group host/$PBS_BACKUP_ID" >&2; exit 1 ;;
-    esac
-    pbs_client verify --point "$SNAPSHOT" database.pxar storage.pxar >/dev/null
-    echo "$SNAPSHOT holds database.pxar and storage.pxar; nothing was changed."
-  else
-    echo "No snapshot selected; nothing was changed."
-  fi
-}
-
-validate_pre_restore_point_age() {
-  local timestamp snapshot_epoch now_epoch
-  timestamp=${PRE_RESTORE_POINT##*/}
-  [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
-    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
-    return 1
-  }
-  if ! snapshot_epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
-    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
-    return 1
-  fi
-  now_epoch=$(date -u +%s)
-  if (( snapshot_epoch > now_epoch )); then
-    echo "pre-restore point timestamp is in the future" >&2
-    return 1
-  fi
-  if (( now_epoch - snapshot_epoch > PRE_RESTORE_MAX_AGE_SECONDS )); then
-    echo "pre-restore point must be no more than one hour old" >&2
-    return 1
-  fi
-}
-
-restore() {
-  local original_data_owner original_data_mode
-  [[ "${SNAPSHOT:-}" == host/$PBS_BACKUP_ID/* ]] || {
-    echo "restore requires a snapshot from host/$PBS_BACKUP_ID" >&2
-    exit 1
-  }
-  [[ "${PRE_RESTORE_POINT:-}" == host/$PBS_BACKUP_ID/* && "$PRE_RESTORE_POINT" != "$SNAPSHOT" ]] || {
-    echo "restore requires a distinct pre-restore point from host/$PBS_BACKUP_ID" >&2
-    exit 1
-  }
-  validate_pre_restore_point_age
-  [[ -d "$BOOKSTACK_DATA_PATH" && ! -L "$BOOKSTACK_DATA_PATH" ]] || {
-    echo "BookStack data path must be an existing directory before restore: $BOOKSTACK_DATA_PATH" >&2
-    exit 1
-  }
-  original_data_owner=$(stat -c '%u:%g' "$BOOKSTACK_DATA_PATH")
-  original_data_mode=$(stat -c '%a' "$BOOKSTACK_DATA_PATH")
-  mkdir "$work/database" "$work/storage"
-  pbs_client extract --point "$SNAPSHOT" --pre-restore-point "$PRE_RESTORE_POINT" \
-    database.pxar:"$work/database" storage.pxar:"$work/storage"
-
-  # Rollback state is captured before either copy is changed. The database dump lives
-  # in the private work directory and is removed only after success or rollback.
-  stop_bookstack
-  mkdir -p "$work/original"
-  database_client dump "$work/original/database.sql"
-  restore_active=1
-  original_data_path=$(mktemp -d -- "${BOOKSTACK_DATA_PATH}.pre-restore.XXXXXX")
-  rmdir -- "$original_data_path"
-  mv -T -- "$BOOKSTACK_DATA_PATH" "$original_data_path"
-  original_data_saved=1
-  mkdir "$BOOKSTACK_DATA_PATH"
-  cp -a "$work/storage/." "$BOOKSTACK_DATA_PATH/"
-  chown "$original_data_owner" "$BOOKSTACK_DATA_PATH"
-  chmod "$original_data_mode" "$BOOKSTACK_DATA_PATH"
-
-  # The application role has ALL only on this named database. Clear its existing tables
-  # through that grant instead of requesting backend-admin credentials or touching any
-  # other database on the shared MariaDB/MySQL guest.
-  database_client restore "$work/database/database.sql"
-  echo "BookStack database and /config data restored from $SNAPSHOT"
-  start_bookstack
-  restart_on_failure=0
-  restore_active=0
-  if ! rm -rf -- "$original_data_path"; then
-    echo "BookStack restore succeeded; prior data remains at $original_data_path." >&2
-  else
-    original_data_saved=0
-  fi
-  original_data_path=
-}
-
 case "${1:-}" in
   --backup) backup ;;
-  --plan)
-    [[ "${2:-}" == --snapshot ]] && SNAPSHOT="${3:-}" || SNAPSHOT=""
-    plan
-    ;;
-  --restore)
-    [[ "${2:-}" == --snapshot && -n "${3:-}" && "${4:-}" == --pre-restore-point && -n "${5:-}" ]] || {
-      echo "restore requires --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2
-      exit 2
-    }
-    SNAPSHOT="$3"
-    PRE_RESTORE_POINT="$5"
-    restore
-    ;;
-  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2; exit 2 ;;
+  *) echo "usage: $0 --backup" >&2; exit 2 ;;
 esac

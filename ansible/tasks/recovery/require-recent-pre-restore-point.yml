@@ -1,0 +1,31 @@
+---
+# Require restore_pre_restore_point to be a point of this target's own backup group, other
+# than restore_snapshot, taken no more than recovery_pre_restore_max_age seconds ago (default
+# one hour). A role whose restore replaces live state calls it before the shared swap.
+#
+# Inputs:
+#   recovery_pre_restore_backup_id  the target's backup group id
+#   recovery_pre_restore_max_age    optional, seconds
+
+- name: Recovery | Read the pre-restore point's age
+  ansible.builtin.set_fact:
+    _recovery_pre_restore_age: >-
+      {{ ((now(utc=true) - (restore_pre_restore_point.split('/')[-1]
+            | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).total_seconds() | int)
+         if restore_pre_restore_point | default('') is match(_recovery_pre_restore_pattern)
+         else -1 }}
+  vars:
+    _recovery_pre_restore_pattern: >-
+      ^host/{{ recovery_pre_restore_backup_id | regex_escape }}/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$
+
+- name: Recovery | Require a recent, distinct pre-restore point
+  ansible.builtin.assert:
+    that:
+      - _recovery_pre_restore_age | int >= 0
+      - _recovery_pre_restore_age | int <= recovery_pre_restore_max_age | default(3600) | int
+      - restore_pre_restore_point != restore_snapshot | default('')
+    fail_msg: >-
+      Replacing {{ instance }} needs a distinct pre_restore_point from
+      host/{{ recovery_pre_restore_backup_id }}/ taken no more than
+      {{ (recovery_pre_restore_max_age | default(3600) | int / 60) | int }} minutes ago. Back
+      up this exact target and pass that point. Nothing was changed.

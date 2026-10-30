@@ -113,19 +113,13 @@ PRIMITIVES = {
     ),
 }
 
-# Rows only leave. Every set but restore-swap is empty: every role uses that shared code.
+# Rows only leave, and every role now uses the shared code: no file may hold a primitive.
 ALLOWLIST = {
     "pbs-client-invocation": set(),
     "pbs-client-install": set(),
     "database-dump": set(),
     "k8s-recovery-job": set(),
-    "restore-swap": {
-        "ansible/roles/authentik/tasks/restore.yml",
-        "ansible/roles/bookstack/files/bookstack-recovery",
-        "ansible/roles/open-webui/tasks/restore.yml",
-        "ansible/roles/plane/tasks/restore.yml",
-        "ansible/roles/wordpress/files/wordpress-recovery",
-    },
+    "restore-swap": set(),
     "restore-ownership": set(),
 }
 

@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Exercise BookStack restore and its rollback with isolated command shims."""
+"""Check BookStack's restore wiring and exercise its backup helper with command shims.
+
+gate/test-restore-swap.py proves the swap and its database rollback;
+gate/test-pre-restore-point-age.py proves the one-hour pre-restore point rule.
+"""
 
 import os
 import re
 import shlex
 import subprocess
 import tempfile
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 
+from restore_swap_inputs import swap_inputs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
-SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
 REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
@@ -56,35 +60,17 @@ done
 [[ "$DB_ENGINE" == mariadb && "$DB_NAME" == bookstack && "$DB_USER" == bookstack ]] || exit 93
 action=${args[2]} file="$work/${args[3]#/work/}"
 printf '%s\\n' "$action" >> "$BOOKSTACK_TEST_CLIENT_LOG"
-case "$action" in
-  dump) cp "$BOOKSTACK_TEST_DB_STATE" "$file" ;;
-  restore)
-    if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" ]] && grep -q SNAPSHOT-DATABASE "$file"; then
-      printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
-      exit 17
-    fi
-    cp "$file" "$BOOKSTACK_TEST_DB_STATE" ;;
-  *) exit 94 ;;
-esac
+[[ "$action" == dump ]] || exit 94
+printf 'DATABASE\\n' > "$file"
 """
 
-# Plays the shared PBS client script: `extract --point P --pre-restore-point Q NAME:DIR...`.
+# Plays the shared PBS client script: `backup --id ID --keep-last N --keep-daily D NAME:PATH...`.
 # gate/test-pbs-client.py proves the script itself.
 PBS = """#!/bin/bash
 set -eu
-[[ "$1" == extract && "$2" == --point && "$4" == --pre-restore-point ]] || exit 93
-[[ "$5" == "$BOOKSTACK_TEST_PRE_RESTORE_POINT" ]] || exit 94
-[[ "${BOOKSTACK_TEST_MISSING_PREPOINT:-0}" != 1 ]] || exit 3
-for spec in "${@:6}"; do
-  destination=${spec#*:}
-  [[ -d "$destination" ]] || exit 64
-  case "${spec%%:*}" in
-    database.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_DB/." "$destination/" ;;
-    storage.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_STORAGE/." "$destination/" ;;
-    *) exit 92 ;;
-  esac
-done
-echo extracted
+[[ "$1" == backup && "$2" == --id && "$3" == bookstack ]] || exit 93
+printf '%s\\n' "${@:8}" >> "$BOOKSTACK_TEST_CLIENT_LOG"
+[[ "$BOOKSTACK_TEST_CASE" != upload-failure ]] || exit 8
 """
 
 
@@ -166,69 +152,58 @@ def check_backup_scheduler_contract():
     assert names.index(service["name"]) < names.index(schedule["name"])
 
 
-def check_pre_restore_point_contract():
-    run = next(task for task in tasks_recursive(BOOKSTACK_RESTORE)
-               if task.get("name") == "Run the destructive BookStack restore")
-    argv = run["ansible.builtin.command"]["argv"]
-    assert "--pre-restore-point" in argv
-    assert "{{ pre_restore_point }}" in argv
+def check_restore_contract():
+    swap = swap_inputs("bookstack")
+    assert swap["recovery_swap_archives"] == ["database.pxar", "storage.pxar"]
+    assert swap["recovery_swap_paths"] == [{
+        "path": "{{ _bookstack_restore_data_path }}", "source": "storage",
+        "owner": "{{ app_config.app.puid }}", "group": "{{ app_config.app.pgid }}", "mode": "0750"}]
+    deployed = next(task for task in BOOKSTACK_ROLE
+                    if task.get("name") == "BookStack | Create project and durable data directories")
+    assert {"path": "{{ app_config.app.data_path }}", "owner": "{{ app_config.app.puid }}",
+            "group": "{{ app_config.app.pgid }}", "mode": "0750"} in deployed["loop"], \
+        "the restore gives /config the owner Deploy gives it"
+    assert swap["recovery_swap_database"] == {
+        "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
+    assert swap["recovery_swap_backup_id"] == swap["recovery_swap_pre_restore_backup_id"] \
+        == "{{ _bookstack_restore_backup_id }}"
+    assert swap["recovery_swap_stop_services"] == ["bookstack"]
+    assert swap["recovery_swap_health_url"].endswith("/login")
+    restore = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/restore.yml").read_text())
+    age = next(task for task in restore if "require-recent-pre-restore-point" in
+               str(task.get("ansible.builtin.include_tasks", "")))
+    assert age["when"] == "restore_overwrite | bool"
+    assert restore.index(age) < restore.index(next(task for task in restore if "restore-swap" in
+                                                   str(task.get("ansible.builtin.include_tasks", ""))))
+
     validate = next(task for task in BOOKSTACK_RESTORE[0]["pre_tasks"]
                     if task.get("ansible.builtin.assert"))
     requirements = validate["ansible.builtin.assert"]["that"]
     assert any("pre_restore_point" in item and "length > 0" in item for item in requirements)
     assert any("pre_restore_point != snapshot" in item for item in requirements)
-    group_check = next(task for task in tasks_recursive(BOOKSTACK_RESTORE)
-                       if task.get("name") == "Validate the BookStack safety snapshot belongs to this recovery group")
-    assert "app_config.backup.backup_id" in str(group_check["ansible.builtin.assert"]["that"])
 
-
-def check_restore_result_contract():
     tasks = list(tasks_recursive(BOOKSTACK_RESTORE))
-    plan = next(task for task in tasks if task.get("name") == "Run the BookStack restore plan")
-    restore = next(task for task in tasks if task.get("name") == "Run the destructive BookStack restore")
+    run = next(task for task in tasks if task.get("name") == "Plan or perform the BookStack restore")
+    assert run["ansible.builtin.include_role"] == {"name": "bookstack", "tasks_from": "restore"}
+    for name in ("app_config", "homelabinfra_infra", "homelabinfra_vault"):
+        assert run["vars"][name] == "{{ hostvars['localhost'].%s }}" % name, name
+    assert run["vars"]["restore_pre_restore_point"] == "{{ pre_restore_point | default('') }}"
     check = next(task for task in tasks if task.get("name") == "Fail if BookStack restore did not complete")
-    assert plan["register"] == "bookstack_restore_plan_result"
-    assert restore["register"] == "bookstack_restore_result"
-    assertion = str(check["ansible.builtin.assert"]["that"])
-    assert "bookstack_restore_plan_result.rc" in assertion
-    assert "bookstack_restore_result.rc" in assertion
+    assert "bookstack_restore_complete" in str(check["ansible.builtin.assert"]["that"])
+    assert "homelab-infra-bookstack-recovery" not in str(BOOKSTACK_RESTORE), "the guest helper only backs up"
 
 
-def check(case):
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    pre_restore_time = now
-    if case == "stale-prepoint":
-        pre_restore_time -= timedelta(hours=2)
-    elif case == "future-prepoint":
-        pre_restore_time += timedelta(minutes=5)
-    pre_restore_point = f"host/bookstack/{pre_restore_time.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-    if case == "invalid-time-prepoint":
-        pre_restore_point = "host/bookstack/not-a-timestamp"
-
+def check_backup(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
         bin_dir = root / "bin"
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
         write_executable(bin_dir / "pbs-client.sh", PBS)
-
         project = root / "project"
         project.mkdir()
         data = root / "app-data"
         data.mkdir()
-        data.chmod(0o750)
-        (data / "original.txt").write_text("original attachment state\n")
-        original_inode = data.stat().st_ino
-        database = root / "database-state.sql"
-        database.write_text("ORIGINAL-DATABASE\n")
-
-        snapshot_database = root / "snapshot-database"
-        snapshot_database.mkdir()
-        (snapshot_database / "database.sql").write_text("SNAPSHOT-DATABASE\n")
-        snapshot_storage = root / "snapshot-storage"
-        snapshot_storage.mkdir()
-        (snapshot_storage / "restored.txt").write_text("restored attachment state\n")
-
         compose_log = root / "compose.log"
         client_log = root / "client.log"
         config = root / "bookstack.env"
@@ -255,74 +230,28 @@ def check(case):
             "BOOKSTACK_TEST_CASE": case,
             "BOOKSTACK_TEST_COMPOSE_LOG": str(compose_log),
             "BOOKSTACK_TEST_CLIENT_LOG": str(client_log),
-            "BOOKSTACK_TEST_DB_STATE": str(database),
-            "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
-            "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
-            "BOOKSTACK_TEST_PRE_RESTORE_POINT": pre_restore_point,
-            "BOOKSTACK_TEST_MISSING_PREPOINT": "1" if case == "missing-prepoint" else "0",
             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         }
-        result = subprocess.run(
-            [str(RECOVERY), "--restore", "--snapshot", SNAPSHOT,
-             "--pre-restore-point", pre_restore_point],
-            env=environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        compose_actions = compose_log.read_text().splitlines() if compose_log.exists() else []
-        client_commands = client_log.read_text().splitlines() if client_log.exists() else []
-        if case == "success":
-            assert result.returncode == 0, result.stdout + result.stderr
-            assert (data / "restored.txt").read_text() == "restored attachment state\n"
-            assert not (data / "original.txt").exists()
-            assert data.stat().st_ino != original_inode, "successful restore must replace the old tree"
-            assert data.stat().st_mode & 0o777 == 0o750
-            assert database.read_text() == "SNAPSHOT-DATABASE\n"
-            assert compose_actions == ["stop", "start"], compose_actions
-            assert client_commands == ["dump", "restore"], client_commands
-        elif case == "import-failure":
-            assert result.returncode != 0, result.stdout + result.stderr
-            assert "BookStack rollback restored the previous data and database." in result.stderr, (
-                result.stdout + result.stderr
-            )
-            assert (data / "original.txt").read_text() == "original attachment state\n"
-            assert not (data / "restored.txt").exists()
-            assert data.stat().st_ino == original_inode, "rollback must rename the original tree back"
-            assert data.stat().st_mode & 0o777 == 0o750
-            assert database.read_text() == "ORIGINAL-DATABASE\n"
-            assert compose_actions == ["stop", "stop", "start"], compose_actions
-            assert client_commands == ["dump", "restore", "restore"], client_commands
-        else:
-            assert result.returncode != 0, result.stdout + result.stderr
-            assert "restore failed" not in result.stderr.lower()
-            if case == "stale-prepoint":
-                assert "must be no more than one hour old" in result.stderr
-            elif case == "future-prepoint":
-                assert "timestamp is in the future" in result.stderr
-            elif case == "invalid-time-prepoint":
-                assert "must use a valid PBS UTC timestamp" in result.stderr
-            assert (data / "original.txt").read_text() == "original attachment state\n"
-            assert data.stat().st_ino == original_inode
-            assert database.read_text() == "ORIGINAL-DATABASE\n"
-            assert compose_actions == [], compose_actions
-            assert client_commands == [], client_commands
-        assert not list(root.glob("app-data.pre-restore.*")), "completed restore must remove its rollback tree"
+        result = subprocess.run([str(RECOVERY), "--backup"], env=environment, text=True,
+                                capture_output=True, check=False)
+        assert (result.returncode == 0) == (case == "success"), result.stdout + result.stderr
+        assert compose_log.read_text().splitlines() == ["stop", "start"], "BookStack runs again"
+        lines = client_log.read_text().splitlines()
+        assert lines[0] == "dump" and lines[1].startswith("database.pxar:/var/tmp/homelab-bookstack.")
+        assert lines[2] == f"storage.pxar:{data}"
+        assert not Path(lines[1].split(":", 1)[1]).parent.exists(), "the work directory is removed"
+        for mode in ("--restore", "--plan"):
+            assert subprocess.run([str(RECOVERY), mode], env=environment, capture_output=True).returncode == 2
 
 
 def main():
     check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()
-    check_pre_restore_point_contract()
-    check_restore_result_contract()
-    check("success")
-    check("import-failure")
-    check("missing-prepoint")
-    check("stale-prepoint")
-    check("future-prepoint")
-    check("invalid-time-prepoint")
-    print("BookStack: recent restore points, plan separation, and restore rollback passed")
+    check_restore_contract()
+    check_backup("success")
+    check_backup("upload-failure")
+    print("BookStack: restore through the shared swap, backup helper and its restart passed")
 
 
 if __name__ == "__main__":

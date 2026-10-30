@@ -69,6 +69,9 @@ templates.
 - `test-immich-restore.py`: Immich's restore swap inputs for its media mount and its database and dump.
 - `test-forgejo-recovery.py`: Forgejo's quiesced data archive, and its restore swap inputs with the database dump and the staged hook refusing a point without `app.ini`.
 - `test-mautic-recovery.py`: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a point without `local.php` or media, and the replaced hook pointing the restored `local.php` at the target in a real play, with the same PHP escaping as Deploy.
+- `test-authentik-recovery.py`: Authentik's quiesced one-archive backup and its restart, and its restore swap inputs: the native PBS client, one path per owner (PostgreSQL and Redis keep their live owner), and the staged hook refusing a point without a PostgreSQL cluster.
+- `test-open-webui-restore.py`: Open WebUI's restore swap inputs under the lock its backup timer takes, the staged `webui.db` check, and the replaced and rollback hooks moving the application key in Vaultwarden and the environment file.
+- `test-plane-restore.py`: Plane's restore swap inputs (every data bind mount, the whole project stopped, the routed health check) under its lock, the staged release and RDB checks, and the Redis RDB swapped on the backend guest and put back on rollback with the target's own keys.
 - `test-odoo-restore.py`: Odoo's restore swap inputs for its data_dir, database and dump.
 - `test-n8n-restore.py`: n8n's Docker restore swap inputs, the replaced hook giving the target the source encryption key in Vaultwarden and `n8n.env`, and rollback giving it back its own.
 - `test-jellyfin-recovery.py`: Jellyfin's PBS backup, the pre-restore point requirement, and the restore swap inputs with the single intact `jellyfin.db` staged hook and the configured-server, source-account and library checks.
@@ -93,25 +96,27 @@ templates.
 - `test-karakeep-recovery.py`: one-archive backup of both persistent volumes, and the
   two restore swap paths from that archive with the owner Deploy also applies.
 - `test-bookstack-recovery.py`: BookStack validates its default admin address, ensures
-  its backup scheduler, selects the matching MariaDB client command, Remove clears only
-  its validated, unshared database and login, and Restore separates read-only plan
-  results from overwrite results, quotes table identifiers and disables foreign-key
-  checks only while dropping that database's tables, requires a readable safety snapshot
-  no more than one hour old, rejects future and malformed snapshot times, and returns the
-  original data and database after an import failure.
+  its backup scheduler, and Remove clears only its validated, unshared database and login.
+  Restore runs the role's restore swap (the /config owner Deploy gives it, the database
+  and dump) after the recent pre-restore point check, and the guest helper only backs up,
+  starting BookStack again even when the upload fails.
+- `test-pre-restore-point-age.py`: the shared one-hour pre-restore point check passes a
+  recent point of the target's group and refuses a stale, future, malformed, foreign or
+  selected-again point.
 - `test-bookstack-kubernetes.py`: BookStack keeps Docker as its default, dispatches the
   Kubernetes method to an owned namespace, and renders a default-class PVC, restricted
   recovery access, application-consistent backup CronJob and rollback-capable restore Job.
-- `test-wordpress-recovery.py`: WordPress Remove guards its unshared named database and
-  login, Restore checks a recent readable safety point and the login endpoint, and a failed
-  replacement restores the original `wp-content` tree and database. It also checks that
+- `test-wordpress-recovery.py`: WordPress Restore runs the role's restore swap for
+  `wp-content` and the database from the point's own group, after the recent pre-restore
+  point check; the replaced hook points the site URLs at the target and updates or creates
+  its administrator. The guest helper and its env file only back up. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
 - `test-k8s-recovery-jobs.py`: the shared Kubernetes backup CronJob and restore Job keep the PBS client on tmpfs, read the rotated PBS fingerprint, keep the previous point through a same-day backup, preview through the client read-only, and load the database before replacing volumes; each Kubernetes app's archives, database step and stop list render through them.
-- `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files (those allowlists are empty). A restore moving state into place or assigning ownership appears only in the shared restore swap; its allowlists of older role copies only shrink. README and full-line comment mentions do not count.
-- `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. With a database, the dump and the database's ownership are checked before the stop, the live database dumped after it, the archived dump loaded before the replaced hook, and the live dump loaded back on rollback; a failed database rollback keeps the services stopped. `restore_swap_inputs.py` reads a role's inputs for its own test.
+- `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop, role-owned Kubernetes recovery Jobs, and a restore moving state into place or assigning ownership appear only in their shared files; every allowlist is empty. README and full-line comment mentions do not count.
+- `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. With a database, the dump and the database's ownership are checked before the stop, the live database dumped after it, the archived dump loaded before the replaced hook, and the live dump loaded back on rollback; a failed database rollback keeps the services stopped. A Compose app may run the native PBS client, and an owner of `live` keeps the live directory's owner. `restore_swap_inputs.py` reads a role's inputs (inside a block too) for its own test.
 - `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
 - `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
 

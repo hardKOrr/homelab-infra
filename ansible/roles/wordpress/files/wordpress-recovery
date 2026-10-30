@@ -1,16 +1,15 @@
 #!/bin/bash
-# Application-consistent WordPress recovery helper.
+# Application-consistent WordPress backup helper, run by the recovery timer and the Backup
+# playbook. The role's tasks/restore.yml restores through the shared swap.
 #
 # This file deliberately contains no credentials. The role writes one root-only env file
 # from the canonical Vaultwarden item, and the shared PBS client script
 # (tasks/backup/scripts/pbs-client.sh) reads the instance's root-only client settings. One
 # PBS snapshot contains the named SQL dump and
 # wp-content (uploads, themes and operator-installed plugins), so a restore cannot pair
-# media with a different database point in time. WordPress core and wp-config.php come
-# from the target's pinned image and target environment rather than the source archive;
-# this is what makes a source-instance restore safe.
+# media with a different database point in time. WordPress core and wp-config.php stay out
+# of the point: a restore takes them from the target's pinned image and environment.
 set -Eeuo pipefail
-readonly PRE_RESTORE_MAX_AGE_SECONDS=3600
 
 CONFIG=${WORDPRESS_RECOVERY_CONFIG:-/etc/homelab-infra/wordpress/${WORDPRESS_INSTANCE:-wordpress}.env}
 if [[ ! -r "$CONFIG" ]]; then
@@ -22,89 +21,34 @@ set -a
 . "$CONFIG"
 set +a
 
-for required in WORDPRESS_PROJECT_DIR WORDPRESS_SERVICE WORDPRESS_DATA_PATH \
-  WORDPRESS_CONTENT_PATH WORDPRESS_FQDN WORDPRESS_PORT WORDPRESS_CLI_IMAGE \
-  WORDPRESS_ADMIN_USER WORDPRESS_ADMIN_EMAIL WORDPRESS_ADMIN_NAME WORDPRESS_ADMIN_PASSWORD \
+for required in WORDPRESS_PROJECT_DIR WORDPRESS_SERVICE WORDPRESS_CONTENT_PATH \
   WORDPRESS_DB_HOST WORDPRESS_DB_PORT WORDPRESS_DB_NAME WORDPRESS_DB_USER \
   WORDPRESS_DB_PASSWORD WORDPRESS_DB_PROVIDER WORDPRESS_DB_CLIENT_IMAGE DATABASE_CLIENT_SCRIPT \
   PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG PBS_BACKUP_ID PBS_RETENTION_DAYS; do
   [[ -n "${!required:-}" ]] || { echo "WordPress recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
-for backup_id in "$PBS_BACKUP_ID" "${WORDPRESS_RESTORE_BACKUP_ID:-$PBS_BACKUP_ID}"; do
-  [[ "$backup_id" =~ ^[A-Za-z0-9_.-]+$ ]] || {
-    echo "WordPress recovery backup id is unsafe" >&2
-    exit 1
-  }
-done
+[[ "$PBS_BACKUP_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "WordPress recovery backup id is unsafe" >&2
+  exit 1
+}
 
-restore_backup_id="${WORDPRESS_RESTORE_BACKUP_ID:-$PBS_BACKUP_ID}"
 compose=(docker compose --project-directory "$WORDPRESS_PROJECT_DIR" -f "$WORDPRESS_PROJECT_DIR/docker-compose.yml")
 work=$(mktemp -d /var/tmp/homelab-wordpress.XXXXXX)
 stopped=0
-restart_on_failure=0
-restore_active=0
-original_content_saved=0
-original_content_path=
-database_restore_started=0
-keep_work=0
 
 finish() {
   local rc=$?
-  local rollback_ok=1
   trap - EXIT
-
-  if [[ "$restore_active" == 1 && "$rc" != 0 ]]; then
-    restart_on_failure=0
-    echo "WordPress restore failed; putting the previous content and database back." >&2
-    if ! "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null 2>&1; then
-      echo "Could not stop WordPress for rollback; rollback files are preserved." >&2
-      rollback_ok=0
-    else
-      stopped=1
-      if [[ "$database_restore_started" == 1 ]] &&
-        ! replace_database_from_dump "$work/original/database.sql"; then
-        echo "Could not restore the original WordPress database; its dump is preserved in $work." >&2
-        rollback_ok=0
-      fi
-      if [[ "$original_content_saved" == 1 ]]; then
-        if rm -rf -- "$WORDPRESS_CONTENT_PATH" &&
-          mv -T -- "$original_content_path" "$WORDPRESS_CONTENT_PATH"; then
-          original_content_saved=0
-          original_content_path=
-        else
-          echo "Could not restore the original WordPress content directory at $original_content_path." >&2
-          rollback_ok=0
-        fi
-      fi
-    fi
-
-    if [[ "$rollback_ok" == 1 ]]; then
-      if "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null; then
-        stopped=0
-        restore_active=0
-        echo "WordPress rollback restored the previous content and database." >&2
-      else
-        echo "WordPress content and database were restored, but the service could not be started." >&2
-        rollback_ok=0
-      fi
-    fi
-    if [[ "$rollback_ok" != 1 ]]; then
-      keep_work=1
-      echo "WordPress rollback is incomplete; preserved rollback files in $work and original content at ${original_content_path:-<restored>}. Inspect the service and files before starting it." >&2
-    fi
-  elif [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+  if [[ "$stopped" == 1 ]]; then
     "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null 2>&1 || true
   fi
-
-  if [[ "$keep_work" != 1 ]]; then
-    rm -rf -- "$work"
-  fi
+  rm -rf -- "$work"
   exit "$rc"
 }
 trap finish EXIT
 
-# Dump or load the named database with the shared client (tasks/database/scripts/
+# Dump the named database with the shared client (tasks/database/scripts/
 # database-client.sh) in the server-matched image, as the application's own login.
 database_client() {
   local action=$1 file=$2
@@ -118,50 +62,8 @@ database_client() {
     /usr/local/bin/database-client.sh "$action" "/work/$(basename -- "$file")"
 }
 
-wp_cli() {
-  "${compose[@]}" run --rm --no-deps wordpress-cli "$@" --allow-root
-}
-
 pbs_client() {
   "$PBS_CLIENT_SCRIPT" "$@"
-}
-
-wait_for_login() {
-  local attempt url="http://127.0.0.1:$WORDPRESS_PORT/wp-login.php"
-  for ((attempt=1; attempt<=60; attempt++)); do
-    if python3 - "$url" >/dev/null 2>&1 <<'PY'
-import sys
-from urllib.error import HTTPError
-from urllib.request import HTTPRedirectHandler, build_opener
-
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, request, response, code, message, headers, new_url):
-        return None
-
-try:
-    with build_opener(NoRedirect).open(sys.argv[1], timeout=5) as response:
-        status = response.status
-except HTTPError as response:
-    status = response.code
-try:
-    sys.exit(0 if 200 <= status < 400 else 1)
-except Exception:
-    sys.exit(1)
-PY
-    then
-      echo "WordPress login endpoint is healthy after restore."
-      return 0
-    fi
-    if (( attempt < 60 )); then
-      sleep 5
-    fi
-  done
-  echo "WordPress login endpoint did not become healthy after restore." >&2
-  return 1
-}
-
-replace_database_from_dump() {
-  database_client restore "$1"
 }
 
 backup() {
@@ -173,7 +75,6 @@ backup() {
   # available to every other application on it; only this application's writes pause.
   "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
   stopped=1
-  restart_on_failure=1
   mkdir -p "$work/database"
   database_client dump "$work/database/database.sql"
   echo "dumped WordPress database $WORDPRESS_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
@@ -185,125 +86,7 @@ backup() {
   stopped=0
 }
 
-plan() {
-  # A plan never stops WordPress and never writes the application data path. With a
-  # snapshot it runs the same client path a restore uses.
-  pbs_client list --id "$restore_backup_id"
-  if [[ -n "${SNAPSHOT:-}" ]]; then
-    case "$SNAPSHOT" in
-      host/$restore_backup_id/*) ;;
-      *) echo "snapshot is not in the WordPress backup group host/$restore_backup_id" >&2; exit 1 ;;
-    esac
-    pbs_client verify --point "$SNAPSHOT" database.pxar content.pxar >/dev/null
-    echo "$SNAPSHOT holds database.pxar and content.pxar; nothing was changed."
-  else
-    echo "No snapshot selected; nothing was changed."
-  fi
-}
-
-restore() {
-  [[ "${SNAPSHOT:-}" == host/$restore_backup_id/* ]] || {
-    echo "restore requires a snapshot from host/$restore_backup_id" >&2
-    exit 1
-  }
-  [[ "${PRE_RESTORE_POINT:-}" == host/$PBS_BACKUP_ID/* && "$PRE_RESTORE_POINT" != "$SNAPSHOT" ]] || {
-    echo "restore requires a distinct pre-restore point from the target WordPress backup group host/$PBS_BACKUP_ID" >&2
-    exit 1
-  }
-  local timestamp snapshot_epoch now_epoch
-  timestamp=${PRE_RESTORE_POINT##*/}
-  [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
-    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
-    exit 1
-  }
-  if ! snapshot_epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
-    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
-    exit 1
-  fi
-  now_epoch=$(date -u +%s)
-  if (( snapshot_epoch > now_epoch )); then
-    echo "pre-restore point timestamp is in the future" >&2
-    exit 1
-  fi
-  if (( now_epoch - snapshot_epoch > PRE_RESTORE_MAX_AGE_SECONDS )); then
-    echo "pre-restore point must be no more than one hour old" >&2
-    exit 1
-  fi
-  [[ -d "$WORDPRESS_CONTENT_PATH" && ! -L "$WORDPRESS_CONTENT_PATH" ]] || {
-    echo "WordPress content path must be an existing directory before restore: $WORDPRESS_CONTENT_PATH" >&2
-    exit 1
-  }
-  local content_owner content_mode
-  content_owner=$(stat -c '%u:%g' "$WORDPRESS_CONTENT_PATH")
-  content_mode=$(stat -c '%a' "$WORDPRESS_CONTENT_PATH")
-  mkdir "$work/database" "$work/content"
-  pbs_client extract --point "$SNAPSHOT" --pre-restore-point "$PRE_RESTORE_POINT" \
-    database.pxar:"$work/database" content.pxar:"$work/content"
-
-  # Capture the target database before either live copy changes. Move wp-content beside
-  # itself so the rename stays on the same filesystem and can restore its inode on error.
-  restart_on_failure=1
-  stopped=1
-  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
-  mkdir -p "$work/original"
-  database_client dump "$work/original/database.sql"
-  restore_active=1
-  original_content_path=$(mktemp -d "${WORDPRESS_CONTENT_PATH}.pre-restore.XXXXXX")
-  rmdir -- "$original_content_path"
-  mv -T -- "$WORDPRESS_CONTENT_PATH" "$original_content_path"
-  original_content_saved=1
-  cp -a "$work/content" "$WORDPRESS_CONTENT_PATH"
-  chown "$content_owner" "$WORDPRESS_CONTENT_PATH"
-  chmod "$content_mode" "$WORDPRESS_CONTENT_PATH"
-
-  # The target's Compose env points wp-config.php at the target backend credentials.
-  # Repair site URLs and administrator access after a cross-instance database restore;
-  # these are target identity, not source-instance state.
-  database_restore_started=1
-  # The application role has ALL only on this named database. It never mutates another
-  # database on the shared MariaDB guest.
-  replace_database_from_dump "$work/database/database.sql"
-  target_url="https://$WORDPRESS_FQDN"
-  wp_cli option update home "$target_url" --skip-plugins --skip-themes >/dev/null
-  wp_cli option update siteurl "$target_url" --skip-plugins --skip-themes >/dev/null
-  if wp_cli user get "$WORDPRESS_ADMIN_USER" --field=ID --skip-plugins --skip-themes >/dev/null 2>&1; then
-    wp_cli user update "$WORDPRESS_ADMIN_USER" \
-      --user_pass="$WORDPRESS_ADMIN_PASSWORD" \
-      --user_email="$WORDPRESS_ADMIN_EMAIL" --display_name="$WORDPRESS_ADMIN_NAME" \
-      --skip-plugins --skip-themes >/dev/null
-  else
-    wp_cli user create "$WORDPRESS_ADMIN_USER" "$WORDPRESS_ADMIN_EMAIL" \
-      --role=administrator --user_pass="$WORDPRESS_ADMIN_PASSWORD" \
-      --display_name="$WORDPRESS_ADMIN_NAME" --skip-plugins --skip-themes >/dev/null
-  fi
-  echo "WordPress database and wp-content restored from $SNAPSHOT"
-  "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
-  wait_for_login
-  stopped=0
-  restart_on_failure=0
-  restore_active=0
-  if ! rm -rf -- "$original_content_path"; then
-    echo "WordPress restore succeeded; previous content remains at $original_content_path." >&2
-  else
-    original_content_path=
-    original_content_saved=0
-  fi
-}
-
 case "${1:-}" in
   --backup) backup ;;
-  --plan)
-    [[ "${2:-}" == --snapshot ]] && SNAPSHOT="${3:-}" || SNAPSHOT=""
-    plan
-    ;;
-  --restore)
-    [[ "${2:-}" == --snapshot && -n "${3:-}" && "${4:-}" == --pre-restore-point && -n "${5:-}" ]] || {
-      echo "restore requires --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2
-      exit 2
-    }
-    SNAPSHOT="$3"
-    PRE_RESTORE_POINT="$5"
-    restore
-    ;;
-  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2; exit 2 ;;
+  *) echo "usage: $0 --backup" >&2; exit 2 ;;
 esac
