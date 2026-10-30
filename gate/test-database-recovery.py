@@ -84,7 +84,10 @@ def check_postgresql():
         result, calls = run_client("postgresql", "restore", dump, work)
         assert result.returncode == 0, result.stderr
         listing = (work / "log.list").read_text()
-        assert "EXTENSION" not in listing, "provision.yml owns extensions, not the restore"
+        # The login's own extensions go with DROP OWNED, so the restore recreates them;
+        # only their owner may comment on them.
+        assert "EXTENSION - vector" in listing
+        assert "COMMENT - EXTENSION" not in listing
         assert "TABLE public items" in listing
         script = (work / "log.sql").read_text()
         assert script.startswith("DROP OWNED BY CURRENT_USER;\n")
