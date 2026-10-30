@@ -295,6 +295,11 @@ def check_install():
     assert "FORGEJO__security__INSTALL_LOCK=true" in env and "SECRET_KEY" not in env
     seed = tasks["Forgejo | Seed a new install's secret key"]
     assert seed["when"] == "not _forgejo_app_ini.stat.exists", "an existing app.ini keeps its key"
+    assert "notify" not in seed, "the key lands before the first start"
+    [restart] = yaml.safe_load((repo / "ansible/roles/forgejo/handlers/main.yml").read_text())
+    assert restart["when"] == "not (_forgejo_start.changed | default(false))", \
+        "never restart a container Start service just created (a new install's schema creation)"
+    assert tasks["Forgejo | Start service"]["register"] == "_forgejo_start"
     create = tasks["Forgejo | Create the administrator"]
     listing = ("ID   Username   Email                     IsActive IsAdmin 2FA\n"
                "1    {name}   someone@example.invalid  true     true    false\n")

@@ -72,7 +72,6 @@
     mode: "0640"
   when: not _forgejo_app_ini.stat.exists
   no_log: true
-  notify: Restart Forgejo
 
 - name: Forgejo | Render environment file
   ansible.builtin.template:
@@ -102,6 +101,7 @@
     project_src: "{{ forgejo_project_dir }}"
     state: present
     remove_orphans: true
+  register: _forgejo_start
 
 - name: Forgejo | Apply pending restart
   ansible.builtin.meta: flush_handlers
