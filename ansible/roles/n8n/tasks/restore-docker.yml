@@ -1,10 +1,8 @@
 ---
-# Restore n8n's application-consistent PostgreSQL database and .n8n data tree.
-#
-# Plan mode lists or verifies the point. Overwrite mode validates both pxar members before stopping
-# n8n, then replaces the target's named database and data path. The source artifact and the
-# shared PostgreSQL guest remain available after a failure; the target service is left down
-# for inspection and retry.
+# Restore n8n's application-consistent PostgreSQL database and .n8n data tree through the
+# shared swap. The restored database needs the source's encryption key, so the replaced
+# hook gives it to the target; a failure after the stop puts the original data, database
+# and key back and starts n8n.
 
 - name: n8n restore | Resolve target database, backend, credential and key
   ansible.builtin.set_fact:
@@ -20,8 +18,9 @@
          | default(app_config.app.database_password | default(''), true) }}
     _n8n_restore_database_name: "{{ app_config.app.database.name | default('') }}"
     _n8n_restore_data_path: "{{ app_config.app.data_path | default('') }}"
-    _n8n_restore_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _n8n_restore_target_encryption_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).encryption_key
+         | default(app_config.app.encryption_key | default(''), true) }}
     _n8n_restore_source_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(
            (restore_source_database | default({})).get('instance', ''), {}) }}
@@ -40,12 +39,14 @@
       - _n8n_restore_database_user | length > 0
       - _n8n_restore_database_password | length > 0
       - restore_source_encryption_key | default('') | length > 0
+      - _n8n_restore_target_encryption_key | length > 0
       - _n8n_restore_data_path is match('^/[^/].*')
       - _n8n_restore_data_path != '/'
       - homelabinfra_infra.backups is defined
     fail_msg: >-
       n8n restore needs a target, named PostgreSQL backend, target database credential,
-      source encryption key, non-root data path, and a snapshot when overwrite=true.
+      source and target encryption keys, non-root data path, and a snapshot when
+      overwrite=true.
   no_log: true
 
 - name: n8n restore | Require a separate target database for a new destination
@@ -68,13 +69,25 @@
   when: restore_destination == 'new'
   no_log: true
 
-- name: n8n restore | List or verify the recovery point without changing n8n
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: n8n restore | Preview or replace the data directory and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _n8n_restore_backup_id }}"
-    pbs_client_archives: [{name: database.pxar}, {name: data.pxar}]
-  when: not (restore_overwrite | bool)
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, data.pxar]
+    recovery_swap_paths:
+      - path: "{{ _n8n_restore_data_path }}"
+        source: data
+        owner: 1000
+        group: 1000
+        mode: "0750"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/n8n.dump
+    recovery_swap_stop_services: [n8n]
+    recovery_swap_compose_project: "{{ n8n_project_dir }}"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/healthz"
 
 - name: n8n restore | Explain the read-only plan
   ansible.builtin.debug:
@@ -85,153 +98,3 @@
         {{ _n8n_restore_database_name }}) and data.pxar ({{ _n8n_restore_data_path }}).
       - "Re-run with recovery_point=<snapshot> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
-
-# Staging is outside /tmp, which the client's tmpfs replaces.
-- name: n8n restore | Allocate private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    path: /var/tmp
-    prefix: n8n-restore-
-  register: _n8n_restore_scratch
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: n8n restore | Restore the selected point
-  when: restore_overwrite | bool
-  block:
-    - name: n8n restore | Create the extraction directories
-      ansible.builtin.file:
-        path: "{{ _n8n_restore_scratch.path }}/{{ item }}"
-        state: directory
-        mode: "0700"
-      loop: [database, data]
-
-    - name: n8n restore | Fetch the paired artifact
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _n8n_restore_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: database.pxar
-            path: "{{ _n8n_restore_scratch.path }}/database"
-          - name: data.pxar
-            path: "{{ _n8n_restore_scratch.path }}/data"
-
-    - name: n8n restore | Check the archived database dump
-      ansible.builtin.stat:
-        path: "{{ _n8n_restore_scratch.path }}/database/n8n.dump"
-      register: _n8n_restore_dump
-      changed_when: false
-
-    - name: n8n restore | Refuse an archive without a database dump
-      ansible.builtin.assert:
-        that: _n8n_restore_dump.stat.size | default(0) | int > 0
-        fail_msg: The selected n8n point holds no database dump; n8n keeps running unchanged.
-
-    - name: n8n restore | Replace the target database and data
-      block:
-        - name: n8n restore | Stop only the target n8n service
-          community.docker.docker_compose_v2:
-            project_src: "/opt/{{ restore_target }}"
-            state: stopped
-            services: [n8n]
-
-        - name: n8n restore | Remove the target data directory
-          ansible.builtin.file:
-            path: "{{ _n8n_restore_data_path }}"
-            state: absent
-
-        - name: n8n restore | Recreate the target data directory
-          ansible.builtin.file:
-            path: "{{ _n8n_restore_data_path }}"
-            state: directory
-            owner: "1000"
-            group: "1000"
-            mode: "0750"
-
-        - name: n8n restore | Restore the data tree
-          ansible.builtin.command:
-            argv:
-              - cp
-              - -a
-              - "{{ _n8n_restore_scratch.path }}/data/."
-              - "{{ _n8n_restore_data_path }}/"
-          changed_when: true
-          no_log: true
-
-        - name: n8n restore | Restore the named PostgreSQL database
-          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-          vars:
-            database_app_instance: "{{ restore_target }}"
-            database_app_config: "{{ app_config.app.database }}"
-            database_restore_file: "{{ _n8n_restore_scratch.path }}/database/n8n.dump"
-
-        # A new target was provisioned with its own generated key. The restored database's
-        # encrypted credentials require the source key, so carry it into the target's
-        # canonical Vaultwarden item before rendering the environment used to start n8n.
-        - name: n8n restore | Record the source encryption key against the target
-          ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-          vars:
-            vault_item_name: "homelab-infra/apps/{{ restore_target }}"
-            vault_item_merge: true
-            vault_item_fields:
-              encryption_key: "{{ restore_source_encryption_key }}"
-            vault_item_secret_fields: [encryption_key]
-          no_log: true
-
-        - name: n8n restore | Render the target environment with the restored key
-          ansible.builtin.template:
-            src: n8n.env.j2
-            dest: "/opt/{{ restore_target }}/n8n.env"
-            owner: root
-            group: root
-            mode: "0600"
-          vars:
-            instance: "{{ restore_target }}"
-            n8n_project_dir: "/opt/{{ restore_target }}"
-            n8n_env_file: "/opt/{{ restore_target }}/n8n.env"
-            n8n_fqdn: >-
-              {{ app_config.routing.subdomain | default(restore_target, true) }}
-              .{{ homelabinfra_infra.domain }}
-            _n8n_encryption_key: "{{ restore_source_encryption_key }}"
-          no_log: true
-
-        - name: n8n restore | Start only the target n8n service
-          community.docker.docker_compose_v2:
-            project_src: "/opt/{{ restore_target }}"
-            state: present
-            services: [n8n]
-
-        - name: n8n restore | Wait for the restored health endpoint
-          ansible.builtin.uri:
-            url: "http://localhost:{{ app_config.app.port }}/healthz"
-            status_code: 200
-          register: _n8n_restore_health
-          until: _n8n_restore_health.status | default(0) == 200
-          retries: 60
-          delay: 5
-          changed_when: false
-
-        - name: n8n restore | Mark the paired recovery complete
-          ansible.builtin.set_fact:
-            _application_restore_complete: true
-      rescue:
-        - name: n8n restore | Leave the target n8n service stopped after failure
-          ansible.builtin.command:
-            argv: [docker, compose, --project-directory, "/opt/{{ restore_target }}", stop, n8n]
-          changed_when: false
-          failed_when: false
-
-        - name: n8n restore | Report the failed restore
-          ansible.builtin.fail:
-            msg: >-
-              n8n restore {{ restore_snapshot }} did not complete. The target service is
-              intentionally left stopped because its database or data may be partially
-              replaced. Inspect the target and retry from the retained recovery point.
-  always:
-    - name: n8n restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _n8n_restore_scratch.path }}"
-        state: absent
-      when: _n8n_restore_scratch.path is defined

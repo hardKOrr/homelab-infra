@@ -8,15 +8,16 @@
 #   1. preview the point while the application still serves
 #   2. check every live path; refuse one that is missing, a link, not the declared mount,
 #      or still holds an earlier run's rollback copy
-#   3. extract every archive into private staging, still serving, and run the staged hook
-#      (validate the staged data); a failure here changes nothing on the live paths
-#   4. stop the services and run the stopped hook
+#   3. extract every archive into private staging, still serving, check the database dump
+#      and run the staged hook (validate the staged data); a failure here changes nothing
+#      on the live paths
+#   4. stop the services, dump the live database and run the stopped hook
 #   5. per path: move the live state aside, install the staged state, give every file the
 #      declared numeric owner and the path its mode (scripts/restore-swap.sh)
-#   6. run the replaced hook (database restore, config edits), start the services, wait for
-#      the health URL and run the verified hook; the restore is then complete
+#   6. restore the database, run the replaced hook (config edits), start the services, wait
+#      for the health URL and run the verified hook; the restore is then complete
 #   On a failure in 4-6 it stops the services, removes the replacement, moves the original
-#   back, runs the rollback hook and starts the original. It removes the rollback copies and
+#   back, loads the live database dump, runs the rollback hook and starts the original. It removes the rollback copies and
 #   staging after success or a completed rollback, and keeps them otherwise.
 #
 # Inputs:
@@ -54,14 +55,22 @@
 #                                unprivileged LXC)
 #   recovery_swap_backup_id, recovery_swap_pre_restore_backup_id  passed to
 #                                pbs-client-restore.yml as its group ids
+#   recovery_swap_database       the application's named database, restored with its paths:
+#     config   the app's `app.database` mapping (ansible/tasks/database/)
+#     dump     the archived dump inside staging, such as database/immich.dump; it must not
+#              lie inside a path's source
+#     Step 3 refuses a missing, empty or unloadable dump and closes its directory to a
+#     mount's owner; step 4 dumps the live database beside it; step 6 loads it before the
+#     replaced hook. A failure once that load started loads the live dump back before the
+#     rollback hook.
 #
 # Hooks, each an optional task file (`{{ role_path }}/tasks/restore-<step>.yml`). They see
 # recovery_swap_stage, the staging directory:
 #   recovery_swap_staged_hook    validate staged data; the application still serves
-#   recovery_swap_stopped_hook   after the stop, before the swap (keep a rollback dump)
-#   recovery_swap_replaced_hook  after the swap, before the start (database restore)
+#   recovery_swap_stopped_hook   after the stop, before the swap
+#   recovery_swap_replaced_hook  after the swap and database, before the start (config edits)
 #   recovery_swap_verified_hook  after the start and health URL (app-level checks)
-#   recovery_swap_rollback_hook  after the original paths are back (database rollback)
+#   recovery_swap_rollback_hook  after the original paths and database are back
 #
 # Sets _application_restore_complete when the restored application serves.
 
@@ -77,6 +86,9 @@
       {{ (recovery_swap_paths | default([]) | map(attribute='group', default='') | map('string') | list)
          | reject('match', '^[0-9]*$') | unique }}
     _swap_paths: []
+    _swap_database: "{{ recovery_swap_database | default({}) }}"
+    _swap_database_replaced: false
+    _swap_database_rollback_failed: false
     _swap_stopped: false
     _swap_rollback_complete: false
     _swap_rollback_hook_failed: false
@@ -94,10 +106,16 @@
       - recovery_swap_paths | selectattr('group', 'undefined') | list | length == 0
       - _swap_services | length > 0
       - recovery_swap_runtime == 'native' or recovery_swap_compose_project | default('') | length > 0
+      - >-
+        _swap_database | length == 0
+        or (_swap_database.config | default('') is mapping
+            and _swap_database.dump | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*(/[A-Za-z0-9][A-Za-z0-9_.-]*)+$')
+            and _swap_database.dump.split('/') | first in _swap_archives | map('regex_replace', '\.pxar$', '') | list)
     fail_msg: >-
       The restore swap needs runtime docker or native, .pxar archives, absolute live paths
-      with an owner and group, and the services to stop (with their Compose project for
-      docker). Nothing was changed.
+      with an owner and group, the services to stop (with their Compose project for
+      docker), and a database's config and dump inside one archive when it restores one.
+      Nothing was changed.
 
 # Runs on every restore, before anything stops: a point from another group, no PBS, or a
 # point without the archives fails while the application still serves.
@@ -179,12 +197,13 @@
           - >-
             _swap_paths | map(attribute='source') | map('regex_replace', '$', '/')
             | select('match', '^' ~ (item.source | regex_escape) ~ '/') | list | length == 1
+          - not (_swap_database.dump | default('')).startswith(item.source ~ '/')
         fail_msg: >-
           Restore path {{ item.path }} must be a normalized absolute directory at least two
           levels deep, distinct from and not inside another restored path, with staging
           outside it; its source {{ item.source }} must lie in one of the archives
-          ({{ _swap_stems | join(', ') }}) and neither hold nor sit inside another path's
-          source. Nothing was changed.
+          ({{ _swap_stems | join(', ') }}), neither hold nor sit inside another path's
+          source, and not hold the database dump. Nothing was changed.
       loop: "{{ _swap_paths }}"
       loop_control:
         label: "{{ item.path }}"
@@ -199,6 +218,9 @@
     - name: Restore swap | Publish the staging directory to hooks
       ansible.builtin.set_fact:
         recovery_swap_stage: "{{ _swap_stage_dir.path }}"
+        _swap_rollback_dump: >-
+          {{ ((_swap_stage_dir.path ~ '/' ~ _swap_database.dump) | dirname) ~ '/rollback-'
+             ~ (_swap_database.dump | basename) if _swap_database | length > 0 else '' }}
 
     - name: Restore swap | Copy the swap script
       ansible.builtin.copy:
@@ -282,6 +304,37 @@
       loop_control:
         label: "{{ item.item.source }}"
 
+    - name: Restore swap | Check the staged database dump
+      when: _swap_database | length > 0
+      block:
+        # A mount's owner may traverse staging; the dump and its rollback dump stay private.
+        - name: Restore swap | Keep the database dump private
+          ansible.builtin.file:
+            path: "{{ (recovery_swap_stage ~ '/' ~ _swap_database.dump) | dirname }}"
+            state: directory
+            mode: "0700"
+
+        - name: Restore swap | Look for the database dump
+          ansible.builtin.stat:
+            path: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
+          register: _swap_dump
+
+        - name: Restore swap | Refuse a point without a database dump
+          ansible.builtin.assert:
+            that:
+              - _swap_dump.stat.isreg | default(false)
+              - _swap_dump.stat.size | default(0) | int > 0
+            fail_msg: >-
+              The selected recovery point holds no non-empty {{ _swap_database.dump }}; the
+              application still serves unchanged.
+
+        - name: Restore swap | Check the database dump loads
+          ansible.builtin.include_tasks: ../database/verify-dump.yml
+          vars:
+            database_app_instance: "{{ instance }}"
+            database_app_config: "{{ _swap_database.config }}"
+            database_restore_file: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
+
     - name: Restore swap | Validate the staged data
       ansible.builtin.include_tasks: "{{ recovery_swap_staged_hook }}"
       when: recovery_swap_staged_hook | default('') | length > 0
@@ -304,6 +357,14 @@
             name: "{{ item }}"
             state: stopped
           loop: "{{ _swap_services if recovery_swap_runtime == 'native' else [] }}"
+
+        - name: Restore swap | Dump the live database for rollback
+          ansible.builtin.include_tasks: ../database/dump.yml
+          vars:
+            database_app_instance: "{{ instance }}"
+            database_app_config: "{{ _swap_database.config }}"
+            database_dump_file: "{{ _swap_rollback_dump }}"
+          when: _swap_database | length > 0
 
         - name: Restore swap | Run the stopped hook
           ansible.builtin.include_tasks: "{{ recovery_swap_stopped_hook }}"
@@ -331,6 +392,19 @@
           loop_control:
             label: "{{ item.path }}"
           changed_when: true
+
+        - name: Restore swap | Record the database replacement
+          ansible.builtin.set_fact:
+            _swap_database_replaced: true
+          when: _swap_database | length > 0
+
+        - name: Restore swap | Restore the named database
+          ansible.builtin.include_tasks: ../database/restore.yml
+          vars:
+            database_app_instance: "{{ instance }}"
+            database_app_config: "{{ _swap_database.config }}"
+            database_restore_file: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
+          when: _swap_database | length > 0
 
         - name: Restore swap | Run the replaced hook
           ansible.builtin.include_tasks: "{{ recovery_swap_replaced_hook }}"
@@ -403,6 +477,20 @@
           changed_when: _swap_rollback.stdout | default('') == 'rolled-back'
           failed_when: false
 
+        - name: Restore swap | Put the original database back
+          when: _swap_database_replaced | bool
+          block:
+            - name: Restore swap | Load the live database's dump
+              ansible.builtin.include_tasks: ../database/restore.yml
+              vars:
+                database_app_instance: "{{ instance }}"
+                database_app_config: "{{ _swap_database.config }}"
+                database_restore_file: "{{ _swap_rollback_dump }}"
+          rescue:
+            - name: Restore swap | Record the failed database rollback
+              ansible.builtin.set_fact:
+                _swap_database_rollback_failed: true
+
         - name: Restore swap | Run the rollback hook
           when: recovery_swap_rollback_hook | default('') | length > 0
           block:
@@ -417,6 +505,7 @@
           ansible.builtin.set_fact:
             _swap_rollback_complete: >-
               {{ _swap_rollback.results | map(attribute='rc') | select('ne', 0) | list | length == 0
+                 and not (_swap_database_rollback_failed | bool)
                  and not (_swap_rollback_hook_failed | default(false) | bool) }}
 
         - name: Restore swap | Start the original Compose services
@@ -450,7 +539,9 @@
                  if _swap_rollback_complete | bool else
                  'Rollback did not complete, so the services stay stopped. The original state is kept at '
                  ~ (_swap_paths | map(attribute='path') | join(', ')) ~ ' (each rollback copy beside or inside it,'
-                 ~ ' named .restore-previous) and the restored data in ' ~ recovery_swap_stage ~ '.' }}
+                 ~ ' named .restore-previous) and the restored data in ' ~ recovery_swap_stage
+                 ~ (', with the live database dump at ' ~ _swap_rollback_dump
+                    if _swap_database_replaced | bool else '') ~ '.' }}
   always:
     - name: Restore swap | Remove the rollback copies
       ansible.builtin.command:

@@ -1,0 +1,7 @@
+{#- One local.php value as a PHP single-quoted string, for a lineinfile `line:` that reads it
+    through lookup('template', ...) with template_vars {'value': ...}. `%` becomes `%%` (the
+    file is loaded as Symfony container parameters), then `\` and `'` are escaped for PHP.
+    The escaping lives in a template file because Ansible doubles every backslash inside
+    a Jinja string literal in task arguments, so the same filters there never match a
+    backslash and turn `'` into `\\'`. -#}
+'{{ value | string | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}'

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Exercise Mautic's paired MariaDB/PBS archive and post-move rollback."""
+"""Check Mautic's paired MariaDB/PBS archive, its restore-swap inputs and hooks.
 
-import copy
-import os
-import subprocess
+gate/test-restore-swap.py proves the swap, the database dump, load and rollback; the
+replaced hook here points the restored local.php at the target's database and URL.
+"""
+
 import tempfile
 from pathlib import Path
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import run_hook, swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
-ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_text())
 catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore.yml").read_text())
+replaced_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-replaced.yml").read_text())
 deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
 compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
@@ -28,187 +28,73 @@ def tasks_recursive(tasks):
             yield from tasks_recursive(task.get(key, []))
 
 
-def fixture_tasks(tasks, root, case):
-    """Run production filesystem and rollback tasks with fake PBS, SQL and Compose."""
-    tasks = copy.deepcopy(tasks)
-    for task in tasks:
-        task.pop("no_log", None)
-        if task.get("name") == "Mautic restore | Load the target domain declaration":
-            task["ansible.builtin.include_vars"]["file"] = str(root / "no-lab-config.yml")
-        if task.get("name") == "Mautic restore | Converge the target database connection and URL":
-            # The production play runs as root on the Docker host. Keep the mode check,
-            # but let this local fixture write as the unprivileged gate user.
-            task["ansible.builtin.lineinfile"].pop("owner", None)
-            task["ansible.builtin.lineinfile"].pop("group", None)
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        include = task.get("ansible.builtin.include_tasks", "")
-        if "/tasks/database/" in include:
-            task["ansible.builtin.include_tasks"] = str(
-                repo / "gate/fixtures/database" / Path(include).name)
-        if "community.docker.docker_compose_v2" in task:
-            compose = task.pop("community.docker.docker_compose_v2")
-            task["ansible.builtin.command"] = {
-                "argv": [str(root / "bin/service"), compose["state"], *compose["services"]]
-            }
-            task["changed_when"] = True
-        if "ansible.builtin.uri" in task:
-            task.pop("ansible.builtin.uri")
-            for key in ["register", "until", "retries", "delay"]:
-                task.pop(key, None)
-            task["ansible.builtin.command"] = {"argv": [str(root / "bin/health")]}
-            task["changed_when"] = False
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root, case)
-    return tasks
+def check_restore_swap():
+    swap = swap_inputs("mautic")
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_paths"] == [{
+        "path": "{{ _mautic_restore_data_path }}", "source": "data/mautic",
+        "owner": "www-data", "group": "www-data", "mode": "0750"}]
+    assert swap["recovery_swap_database"] == {
+        "config": "{{ app_config.app.database }}", "dump": "data/database/mautic.sql"}
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _mautic_restore_target_backup_id }}"
+    assert swap["recovery_swap_stop_services"] == ["mautic_web", "mautic_cron", "mautic_worker"]
+    assert swap["recovery_swap_compose_project"] == "{{ mautic_project_dir }}"
+    assert swap["recovery_swap_health_status"] == [200, 302]
 
-
-def make_stubs(root):
-    (root / "bin").mkdir()
-    scripts = {
-        "proxmox-backup-client": r'''#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-args=sys.argv[1:]
-case=os.environ['MAUTIC_TEST_CASE']
-if args[0]=='restore':
-    assert case in ['success','database-failure-after-move']
-    archive=Path(args[3])
-    assert archive.is_dir() and archive.name=='archive', archive
-    (archive/'database').mkdir(parents=True)
-    (archive/'database'/'mautic.sql').write_text('CREATE TABLE recovered;\n-- recovered database\n')
-    data=archive/'mautic'
-    (data/'config').mkdir(parents=True)
-    (data/'media'/'files').mkdir(parents=True)
-    (data/'media'/'images').mkdir(parents=True)
-    (data/'config'/'local.php').write_text("<?php\nreturn [\n  'db_host' => 'old-db',\n  'db_port' => '3306',\n  'db_name' => 'mautic',\n  'db_user' => 'mautic',\n  'db_password' => 'old-password',\n  'site_url' => 'https://old.example.invalid',\n  'default_timezone' => 'Pacific/Honolulu',\n);\n")
-    (data/'media'/'files'/'recovered-contact.txt').write_text('recovered contact asset\n')
-    raise SystemExit(0)
-raise SystemExit(0)
-''',
-        "service": r'''#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sorted(sys.argv[2:])==['mautic_cron','mautic_web','mautic_worker'],sys.argv
-with Path(os.environ['MAUTIC_TEST_ROOT'],'services').open('a') as log:
-    log.write(sys.argv[1]+'\n')
-''',
-        "health": "#!/bin/sh\nexit 0\n",
-        "database-fixture": r'''#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-action,dump,instance,name=sys.argv[1:]
-assert name=='mautic', sys.argv
-case=os.environ['MAUTIC_TEST_CASE']
-root=Path(os.environ['MAUTIC_TEST_ROOT'])
-dump=Path(dump)
-if action=='dump':
-    assert dump.name=='database-before.sql', dump
-    dump.write_text('CREATE TABLE original;\n-- original database\n')
-elif dump.name=='database-before.sql':
-    (root/'db-state').write_text('original database\n')
-else:
-    assert dump.name=='mautic.sql' and dump.read_text().startswith('CREATE TABLE'), dump
-    (root/'db-state').write_text('partial recovered database\n'
-                                 if case=='database-failure-after-move'
-                                 else 'recovered database\n')
-    raise SystemExit(7 if case=='database-failure-after-move' else 0)
-''',
-    }
-    for name, script in scripts.items():
-        path = root / "bin" / name
-        path.write_text(script)
-        path.chmod(0o700)
-
-
-def run_restore(case):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        make_stubs(root)
+        stage = root / "stage/data/mautic"
+        variables = {"recovery_swap_stage": str(root / "stage")}
+        (stage / "media/files").mkdir(parents=True)
+        (stage / "config").mkdir()
+        assert run_hook("mautic", "staged", variables).returncode != 0, "no local.php"
+        (stage / "config/local.php").write_text("<?php\n")
+        assert run_hook("mautic", "staged", variables).returncode != 0, "no media/images"
+        (stage / "media/images").mkdir()
+        result = run_hook("mautic", "staged", variables)
+        assert result.returncode == 0, result.stdout + result.stderr
+
         data = root / "data"
         (data / "config").mkdir(parents=True)
-        (data / "media" / "files").mkdir(parents=True)
-        (data / "media" / "images").mkdir(parents=True)
-        (data / "config" / "local.php").write_text(
-            "<?php\nreturn [\n  'default_timezone' => 'UTC',\n);\n"
-        )
-        (data / "media" / "files" / "original.txt").write_text("original media\n")
-        (root / "db-state").write_text("original database\n")
-        variables = {
-            "instance": "mautic",
+        (data / "config/local.php").write_text(
+            "<?php\n$parameters = array(\n  'db_host' => 'source-db',\n"
+            "  'default_timezone' => 'Pacific/Honolulu',\n);\n")
+
+        template = repo / "ansible/roles/mautic/templates/php-string.j2"
+
+        def stub(tasks):
+            # The play runs as root on the Docker host; the fixture writes as the gate user
+            # and reads no lab config.
+            for task in tasks:
+                task.pop("no_log", None)
+                if "ansible.builtin.include_vars" in task:
+                    task["ansible.builtin.include_vars"]["file"] = str(root / "no-lab-config.yml")
+                line = task.get("ansible.builtin.lineinfile", {})
+                for key in ("owner", "group"):
+                    line.pop(key, None)
+                if line:
+                    line["line"] = line["line"].replace("'php-string.j2'", repr(str(template)))
+            return tasks
+
+        result = run_hook("mautic", "replaced", {
             "restore_target": "mautic",
-            "restore_destination": "existing",
-            "restore_snapshot": "host/mautic/2026-10-14T00:00:00Z",
-            "restore_pre_restore_point": "host/mautic/2026-10-14T01:00:00Z",
-            "restore_backup_id": "mautic",
-            "restore_target_backup_id": "mautic",
-            "restore_overwrite": True,
-            "mautic_project_dir": str(root / "project"),
-            "homelabinfra_infra": {
-                "domain": "example.invalid",
-                "backups": {},
-                "databases": {
-                    "mariadb-mautic": {
-                        "provider": "mariadb", "host": "db.example.invalid", "port": 3306
-                    }
-                },
-            },
-            "homelabinfra_vault": {
-                "apps": {"mautic": {"database_user": "mautic", "database_password": "test-secret"}}
-            },
-            "restore_source_database": {
-                "provider": "mariadb", "instance": "mariadb-mautic", "name": "mautic",
-                "host": "db.example.invalid", "port": 3306,
-            },
-            "app_config": {
-                "app": {
-                    "database": {"provider": "mariadb", "instance": "mariadb-mautic",
-                                 "name": "mautic", "role": "mautic"},
-                    "database_host": "db.example.invalid", "database_port": 3306,
-                    "database_user": "mautic", "database_password": "test-secret",
-                    "data_path": str(data), "port": 8080,
-                },
-                "routing": {"subdomain": "mautic"},
-                "backup": {
-                    "enabled": True, "application_consistent": True,
-                },
-            },
-        }
-        playbook = root / "run.yml"
-        playbook.write_text(yaml.safe_dump([{
-            "hosts": "localhost", "gather_facts": False, "vars": variables,
-            "tasks": fixture_tasks(restore_source, root, case),
-        }]))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "MAUTIC_TEST_CASE": case, "MAUTIC_TEST_ROOT": str(root),
-        }
-        result = subprocess.run(
-            [str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
-            env=env, text=True, capture_output=True, check=False,
-        )
-        success = case == "success"
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        if success:
-            assert (data / "config" / "local.php").read_text().find(
-                "default_timezone' => 'Pacific/Honolulu'"
-            ) >= 0
-            assert (data / "media" / "files" / "recovered-contact.txt").read_text() == (
-                "recovered contact asset\n"
-            )
-            assert (root / "db-state").read_text() == "recovered database\n"
-        else:
-            assert (data / "config" / "local.php").read_text().find(
-                "default_timezone' => 'UTC'"
-            ) >= 0
-            assert (data / "media" / "files" / "original.txt").read_text() == "original media\n"
-            assert not (data / "media" / "files" / "recovered-contact.txt").exists()
-            assert (root / "db-state").read_text() == "original database\n"
-        assert "test-secret" not in result.stdout + result.stderr
-        assert not list(data.parent.glob(".mautic-mautic-restore-*")), result.stdout + result.stderr
-        states = (root / "services").read_text().splitlines()
-        assert states[0] == "stopped" and states[-1] == ("present" if success else "stopped"), states
+            "homelabinfra_infra": {"domain": "example.invalid"},
+            "app_config": {"routing": {"subdomain": "crm"}},
+            "_mautic_restore_data_path": str(data),
+            "_mautic_restore_database_backend": {"host": "db.example.invalid", "port": 3306},
+            "_mautic_restore_database_name": "mautic",
+            "_mautic_restore_database_user": "mautic",
+            "_mautic_restore_database_password": "it's 50% a\\b",
+        }, stub)
+        assert result.returncode == 0, result.stdout + result.stderr
+        config = (data / "config/local.php").read_text()
+        for line in ["'db_host' => 'db.example.invalid',", "'db_port' => '3306',",
+                     "'db_password' => 'it\\'s 50%% a\\\\b',",
+                     "'site_url' => 'https://crm.example.invalid',",
+                     "'default_timezone' => 'Pacific/Honolulu',"]:
+            assert line in config, (line, config)
+        assert "source-db" not in config and config.rstrip().endswith(");")
+        assert (data / "config/local.php").stat().st_mode & 0o777 == 0o640
 
 
 def static_contract():
@@ -268,27 +154,20 @@ def static_contract():
     assert "mautic_media_files_dir" in str(backup_source)
     assert "mautic_media_images_dir" in str(backup_source)
 
-    restore_tasks = list(tasks_recursive(restore_source))
-    restore_config = next(task for task in restore_tasks
-                          if task.get("name") == "Mautic restore | Converge the target database connection and URL")
+    [restore_config] = [task for task in replaced_source if "ansible.builtin.lineinfile" in task]
+    deploy_config = next(task for task in deploy_source
+                         if task.get("name") == "Mautic | Converge platform-owned configuration fields")
+    assert restore_config["ansible.builtin.lineinfile"]["line"] == \
+        deploy_config["ansible.builtin.lineinfile"]["line"], "Deploy and restore write local.php alike"
     assert restore_config["ansible.builtin.lineinfile"]["owner"] == "www-data"
     assert restore_config["ansible.builtin.lineinfile"]["group"] == "www-data"
     assert restore_config["ansible.builtin.lineinfile"]["mode"] == "0640"
-    move = next(task for task in restore_tasks
-                if task.get("name") == "Mautic restore | Move the original data directory aside")
-    put_back = next(task for task in restore_tasks
-                    if task.get("name") == "Mautic restore | Put the original file tree back")
-    assert move["ansible.builtin.command"]["argv"][0] == "mv"
-    assert put_back["ansible.builtin.command"]["argv"][0] == "mv"
-    assert "_mautic_restore_database_mutated" in str(restore_source)
-    assert "database-before.sql" in str(restore_source)
 
 
 def main():
     static_contract()
-    run_restore("success")
-    run_restore("database-failure-after-move")
-    print("Mautic: one-archive recovery and post-move database/file rollback passed")
+    check_restore_swap()
+    print("Mautic: one-archive recovery, restore swap inputs and hooks passed")
 
 
 if __name__ == "__main__":

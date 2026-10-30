@@ -1,0 +1,29 @@
+---
+# restore-swap.yml rollback hook: the original data and database are back, so once the
+# replaced hook gave the target the source key, the target gets its own key back in
+# Vaultwarden (a new target's differs from the source's) and in n8n's environment.
+- name: n8n restore | Give the target its own key back
+  when: _n8n_restore_key_replaced | default(false) | bool
+  block:
+    - name: n8n restore | Put the target's own encryption key back
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          encryption_key: "{{ _n8n_restore_target_encryption_key }}"
+        vault_item_secret_fields: [encryption_key]
+      when: restore_destination | default('existing') == 'new'
+      no_log: true
+
+    - name: n8n restore | Render the target environment with its own key
+      ansible.builtin.template:
+        src: n8n.env.j2
+        dest: "{{ n8n_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      vars:
+        n8n_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+        _n8n_encryption_key: "{{ _n8n_restore_target_encryption_key }}"
+      no_log: true

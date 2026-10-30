@@ -1,10 +1,7 @@
 ---
-# Restore Odoo's application-consistent PostgreSQL database and filestore snapshot.
-#
-# Plan mode only lists snapshots. Overwrite mode validates both pxar members before stopping
-# Odoo, then replaces the target's named database and data_dir/filestore tree. A failure
-# leaves only this Odoo service stopped; the shared PostgreSQL guest and source artifact
-# remain available for inspection and retry.
+# Restore Odoo's application-consistent PostgreSQL database and filestore snapshot through
+# the shared swap. Both archives are fetched and the dump checked while Odoo still runs; a
+# failure after the stop puts the original data_dir and database back and starts Odoo.
 
 - name: Odoo restore | Resolve target database, backend and credential
   ansible.builtin.set_fact:
@@ -20,8 +17,6 @@
          | default(app_config.app.database_password | default(''), true) }}
     _odoo_restore_database_name: "{{ app_config.app.database.name | default('') }}"
     _odoo_restore_filestore_path: "{{ app_config.app.filestore_path | default('') }}"
-    _odoo_restore_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
     _odoo_restore_source_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(
            (restore_source_database | default({})).get('instance', ''), {}) }}
@@ -67,13 +62,23 @@
   when: restore_destination == 'new'
   no_log: true
 
-- name: Odoo restore | List or verify the recovery point without changing Odoo
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Odoo restore | Preview or replace the data_dir and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _odoo_restore_backup_id }}"
-    pbs_client_archives: [{name: database.pxar}, {name: filestore.pxar}]
-  when: not (restore_overwrite | bool)
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, filestore.pxar]
+    recovery_swap_paths:
+      - path: "{{ _odoo_restore_filestore_path }}"
+        source: filestore
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+        mode: "0750"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/odoo.dump
+    recovery_swap_stop_services: [odoo]
+    recovery_swap_compose_project: "{{ odoo_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/web/health"
 
 - name: Odoo restore | Explain the read-only plan
   ansible.builtin.debug:
@@ -85,129 +90,3 @@
         ({{ _odoo_restore_filestore_path }}).
       - "Re-run with recovery_point=<snapshot> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
-
-# Staging is outside /tmp, which the client's tmpfs replaces.
-- name: Odoo restore | Allocate private staging space
-  ansible.builtin.tempfile:
-    state: directory
-    path: /var/tmp
-    prefix: odoo-restore-
-  register: _odoo_restore_scratch
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Odoo restore | Restore the selected point
-  when: restore_overwrite | bool
-  block:
-    - name: Odoo restore | Create the extraction directories
-      ansible.builtin.file:
-        path: "{{ _odoo_restore_scratch.path }}/{{ item }}"
-        state: directory
-        mode: "0700"
-      loop: [database, filestore]
-
-    - name: Odoo restore | Fetch the paired artifact
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _odoo_restore_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: database.pxar
-            path: "{{ _odoo_restore_scratch.path }}/database"
-          - name: filestore.pxar
-            path: "{{ _odoo_restore_scratch.path }}/filestore"
-
-    - name: Odoo restore | Check the archived database dump
-      ansible.builtin.stat:
-        path: "{{ _odoo_restore_scratch.path }}/database/odoo.dump"
-      register: _odoo_restore_dump
-      changed_when: false
-
-    - name: Odoo restore | Refuse an archive without a database dump
-      ansible.builtin.assert:
-        that: _odoo_restore_dump.stat.size | default(0) | int > 0
-        fail_msg: The selected Odoo point holds no database dump; Odoo keeps running unchanged.
-
-    - name: Odoo restore | Replace the target database and filestore
-      block:
-        - name: Odoo restore | Stop only the target Odoo service
-          community.docker.docker_compose_v2:
-            project_src: "{{ odoo_project_dir }}"
-            state: stopped
-            services: [odoo]
-
-        - name: Odoo restore | Remove the target data_dir
-          ansible.builtin.file:
-            path: "{{ _odoo_restore_filestore_path }}"
-            state: absent
-
-        - name: Odoo restore | Recreate the target data_dir
-          ansible.builtin.file:
-            path: "{{ _odoo_restore_filestore_path }}"
-            state: directory
-            owner: "{{ app_config.app.puid }}"
-            group: "{{ app_config.app.pgid }}"
-            mode: "0750"
-
-        - name: Odoo restore | Restore the filestore tree
-          ansible.builtin.command:
-            argv:
-              - cp
-              - -a
-              - "{{ _odoo_restore_scratch.path }}/filestore/."
-              - "{{ _odoo_restore_filestore_path }}/"
-          changed_when: true
-          no_log: true
-
-        - name: Odoo restore | Restore the named PostgreSQL database
-          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-          vars:
-            database_app_instance: "{{ restore_target }}"
-            database_app_config: "{{ app_config.app.database }}"
-            database_restore_file: "{{ _odoo_restore_scratch.path }}/database/odoo.dump"
-
-        - name: Odoo restore | Start only the target Odoo service
-          community.docker.docker_compose_v2:
-            project_src: "{{ odoo_project_dir }}"
-            state: present
-            services: [odoo]
-
-        - name: Odoo restore | Wait for the restored Odoo health endpoint
-          ansible.builtin.uri:
-            url: "http://localhost:{{ app_config.app.port }}/web/health"
-            status_code: 200
-          register: _odoo_restore_health
-          until: _odoo_restore_health.status | default(0) == 200
-          retries: 60
-          delay: 5
-          changed_when: false
-
-        - name: Odoo restore | Mark the paired recovery complete
-          ansible.builtin.set_fact:
-            _application_restore_complete: true
-      rescue:
-        - name: Odoo restore | Leave the target Odoo service stopped after failure
-          ansible.builtin.command:
-            argv:
-              - docker
-              - compose
-              - --project-directory
-              - "{{ odoo_project_dir }}"
-              - stop
-              - odoo
-          changed_when: false
-          failed_when: false
-
-        - name: Odoo restore | Report the failed restore
-          ansible.builtin.fail:
-            msg: >-
-              Odoo restore {{ restore_snapshot }} did not complete. The target service is
-              intentionally left stopped because its database or filestore may be partially
-              replaced. Inspect the target and retry from the retained recovery point.
-  always:
-    - name: Odoo restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _odoo_restore_scratch.path }}"
-        state: absent
-      when: _odoo_restore_scratch.path is defined

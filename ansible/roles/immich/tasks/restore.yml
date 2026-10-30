@@ -2,7 +2,7 @@
 # Restore Immich's application-consistent database and durable media artifact through the
 # shared swap. Both archives are fetched and the dump checked while Immich still runs; the
 # media mount is swapped as its declared owner and the named database replaced while it is
-# stopped. On a failure the original media and the pre-restore database dump go back.
+# stopped. On a failure the swap puts the original media and database back.
 - name: Immich restore | Require one declared durable media mount
   ansible.builtin.assert:
     that:
@@ -58,12 +58,11 @@
         owner: "{{ app_config.media_storage.owner.uid | int }}"
         group: "{{ app_config.media_storage.owner.gid | int }}"
         mount: true
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/immich.dump
     recovery_swap_stop_services: [immich-server, immich-machine-learning]
     recovery_swap_compose_project: "{{ immich_project_dir }}"
-    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    recovery_swap_stopped_hook: "{{ role_path }}/tasks/restore-stopped.yml"
-    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
-    recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/server/ping"
 
 - name: Immich restore | Report the read-only plan

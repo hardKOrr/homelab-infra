@@ -1,7 +1,7 @@
 ---
-# Restore Forgejo's PostgreSQL database and full local data tree from one data.pxar.
-# Keep the old directory beside its live path and dump the old database before replacing
-# anything. On any later failure both originals are restored and Forgejo stays stopped.
+# Restore Forgejo's PostgreSQL database and full local data tree from one data.pxar
+# through the shared swap. On any failure after the stop the swap puts the original data
+# directory and database back and starts Forgejo.
 
 - name: Forgejo restore | Resolve target database and persistent data
   ansible.builtin.set_fact:
@@ -20,16 +20,9 @@
       {{ app_config.app.data_path
          | replace('/opt/' ~ instance ~ '/', '/opt/' ~ restore_target ~ '/')
          | replace('{{ instance }}', restore_target) }}
-    _forgejo_restore_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
     _forgejo_restore_source_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(
            (restore_source_database | default({})).get('instance', ''), {}) }}
-    _application_restore_complete: false
-    _forgejo_restore_service_stopped: false
-    _forgejo_restore_data_moved: false
-    _forgejo_restore_database_mutated: false
-    _forgejo_restore_rollback_complete: false
   no_log: true
 
 - name: Forgejo restore | Assert the recovery contract
@@ -70,254 +63,21 @@
       from the source. Never let an isolated instance overwrite the source database.
   when: restore_destination == 'new'
 
-- name: Forgejo restore | Require the selected point to belong to its backup group
-  ansible.builtin.assert:
-    that:
-      - restore_snapshot.startswith('host/' ~ _forgejo_restore_backup_id ~ '/')
-      - restore_snapshot | length > ('host/' ~ _forgejo_restore_backup_id ~ '/') | length
-    fail_msg: >-
-      The selected Forgejo snapshot must belong to host/{{ _forgejo_restore_backup_id }}/;
-      refusing to replace the instance with another application's archive.
-  when: restore_snapshot | default('') | length > 0
-
-- name: Forgejo restore | List or verify the recovery point without changing Forgejo
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Forgejo restore | Preview or replace the data directory and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _forgejo_restore_backup_id }}"
-    pbs_client_archives: [{name: data.pxar}]
-  when: not (restore_overwrite | bool)
-
-- name: Forgejo restore | Inspect the existing target data directory
-  ansible.builtin.stat:
-    path: "{{ _forgejo_restore_data_path }}"
-  register: _forgejo_restore_target_data
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Forgejo restore | Require an owned target directory
-  ansible.builtin.assert:
-    that:
-      - _forgejo_restore_target_data.stat.exists
-      - _forgejo_restore_target_data.stat.isdir
-      - not _forgejo_restore_target_data.stat.islnk
-    fail_msg: >-
-      Forgejo target path {{ _forgejo_restore_data_path }} is not an existing directory;
-      deploy the exact target and retry rather than replacing an unowned or missing path.
-  when: restore_overwrite | bool
-
-- name: Forgejo restore | Allocate same-filesystem staging and rollback space
-  ansible.builtin.tempfile:
-    state: directory
-    path: "{{ _forgejo_restore_data_path | dirname }}"
-    prefix: ".{{ restore_target }}-forgejo-restore-"
-  register: _forgejo_restore_scratch
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Forgejo restore | Check the staging directory's filesystem
-  ansible.builtin.stat:
-    path: "{{ _forgejo_restore_scratch.path }}"
-  register: _forgejo_restore_scratch_stat
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Forgejo restore | Require same-filesystem rename support
-  ansible.builtin.assert:
-    that: _forgejo_restore_scratch_stat.stat.dev == _forgejo_restore_target_data.stat.dev
-    fail_msg: >-
-      Forgejo staging must share a filesystem with its data directory so the original can
-      be moved aside and put back atomically. No restore changes were made.
-  when: restore_overwrite | bool
-
-- name: Forgejo restore | Extract and validate the paired archive
-  when: restore_overwrite | bool
-  block:
-    - name: Forgejo restore | Create the extraction directory
-      ansible.builtin.file:
-        path: "{{ _forgejo_restore_scratch.path }}/archive"
-        state: directory
-        mode: "0700"
-
-    - name: Forgejo restore | Extract the selected PBS archive
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _forgejo_restore_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _forgejo_restore_scratch.path }}/archive"
-
-    - name: Forgejo restore | Check the archived dump and configuration
-      ansible.builtin.stat:
-        path: "{{ _forgejo_restore_scratch.path }}/archive/{{ item }}"
-      loop:
-        - database/forgejo.dump
-        - forgejo/gitea/conf/app.ini
-      register: _forgejo_restore_archived
-      changed_when: false
-
-    - name: Forgejo restore | Refuse an incomplete archive
-      ansible.builtin.assert:
-        that:
-          - item.stat.isreg | default(false)
-          - item.stat.size | default(0) | int > 0
-        fail_msg: >-
-          The selected Forgejo archive lacks a non-empty {{ item.item }}; the original
-          database and data stay untouched.
-      loop: "{{ _forgejo_restore_archived.results }}"
-      loop_control:
-        label: "{{ item.item }}"
-
-    - name: Forgejo restore | Validate the PostgreSQL dump before mutation
-      ansible.builtin.include_tasks: ../../../tasks/database/verify-dump.yml
-      vars:
-        database_app_instance: "{{ restore_target }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_restore_file: "{{ _forgejo_restore_scratch.path }}/archive/database/forgejo.dump"
-
-    - name: Forgejo restore | Stop only the Forgejo service
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ restore_target }}"
-        state: stopped
-        services: [forgejo]
-
-    - name: Forgejo restore | Mark the target service stopped
-      ansible.builtin.set_fact:
-        _forgejo_restore_service_stopped: true
-
-    - name: Forgejo restore | Preserve the current database before replacement
-      ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
-      vars:
-        database_app_instance: "{{ restore_target }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_dump_file: "{{ _forgejo_restore_scratch.path }}/database-before.dump"
-
-    - name: Forgejo restore | Move the current data directory aside
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _forgejo_restore_data_path }}"
-          - "{{ _forgejo_restore_scratch.path }}/original-data"
-      register: _forgejo_restore_data_move
-      changed_when: true
-
-    - name: Forgejo restore | Record the original data move
-      ansible.builtin.set_fact:
-        _forgejo_restore_data_moved: true
-
-    - name: Forgejo restore | Install the archived data directory
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _forgejo_restore_scratch.path }}/archive/forgejo"
-          - "{{ _forgejo_restore_data_path }}"
-      changed_when: true
-
-    - name: Forgejo restore | Mark the database replacement started
-      ansible.builtin.set_fact:
-        _forgejo_restore_database_mutated: true
-
-    - name: Forgejo restore | Replace the named PostgreSQL database
-      ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-      vars:
-        database_app_instance: "{{ restore_target }}"
-        database_app_config: "{{ app_config.app.database }}"
-        database_restore_file: "{{ _forgejo_restore_scratch.path }}/archive/database/forgejo.dump"
-
-    - name: Forgejo restore | Start the restored Forgejo service
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ restore_target }}"
-        state: present
-        services: [forgejo]
-
-    - name: Forgejo restore | Wait for the restored Forgejo health endpoint
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/healthz"
-        status_code: 200
-      register: _forgejo_restore_health
-      until: _forgejo_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
-
-    - name: Forgejo restore | Mark the paired recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Forgejo restore | Stop the target service after failure
-      community.docker.docker_compose_v2:
-        project_src: "/opt/{{ restore_target }}"
-        state: stopped
-        services: [forgejo]
-      register: _forgejo_restore_stop_after_failure
-      failed_when: false
-      when: _forgejo_restore_service_stopped | default(false) | bool
-
-    - name: Forgejo restore | Remove a partial replacement data directory
-      ansible.builtin.file:
-        path: "{{ _forgejo_restore_data_path }}"
-        state: absent
-      register: _forgejo_restore_partial_data_removed
-      failed_when: false
-      when: _forgejo_restore_data_moved | bool
-
-    - name: Forgejo restore | Put the original data directory back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _forgejo_restore_scratch.path }}/original-data"
-          - "{{ _forgejo_restore_data_path }}"
-      register: _forgejo_restore_data_rollback
-      failed_when: false
-      changed_when: true
-      when: _forgejo_restore_data_moved | bool
-
-    - name: Forgejo restore | Put the original PostgreSQL database back
-      when: _forgejo_restore_database_mutated | bool
-      block:
-        - name: Forgejo restore | Restore the original PostgreSQL database
-          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-          vars:
-            database_app_instance: "{{ restore_target }}"
-            database_app_config: "{{ app_config.app.database }}"
-            database_restore_file: "{{ _forgejo_restore_scratch.path }}/database-before.dump"
-
-        - name: Forgejo restore | Record the database rollback
-          ansible.builtin.set_fact:
-            _forgejo_restore_database_rolled_back: true
-      rescue:
-        - name: Forgejo restore | Continue reporting after the scrubbed rollback failure
-          ansible.builtin.set_fact:
-            _forgejo_restore_database_rollback_reported: true
-
-    - name: Forgejo restore | Determine whether automatic rollback completed
-      ansible.builtin.set_fact:
-        _forgejo_restore_rollback_complete: >-
-          {{ (not (_forgejo_restore_data_moved | bool)
-              or ((_forgejo_restore_partial_data_removed.failed | default(false) | bool) == false
-                  and (_forgejo_restore_data_rollback.rc | default(1) | int) == 0))
-             and (not (_forgejo_restore_database_mutated | bool)
-                  or _forgejo_restore_database_rolled_back | default(false) | bool) }}
-
-    - name: Forgejo restore | Report the failed restore and rollback result
-      ansible.builtin.fail:
-        msg: >-
-          Forgejo restore failed. {{ 'The original database and data directory were put
-          back; Forgejo remains stopped.' if _forgejo_restore_rollback_complete | bool
-          else 'Automatic rollback is incomplete. The original data and database dump
-          and any state that could not be put back remain under ' ~ _forgejo_restore_scratch.path ~
-          ' for recovery.' }}
-  always:
-    - name: Forgejo restore | Remove private staging and rollback data
-      ansible.builtin.file:
-        path: "{{ _forgejo_restore_scratch.path }}"
-        state: absent
-      when:
-        - _forgejo_restore_scratch.path is defined
-        - >-
-          (_application_restore_complete | bool)
-          or (_forgejo_restore_rollback_complete | bool)
-          or (not (_forgejo_restore_data_moved | bool)
-              and not (_forgejo_restore_database_mutated | bool))
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ _forgejo_restore_data_path }}"
+        source: data/forgejo
+        owner: 1000
+        group: 1000
+        mode: "0750"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: data/database/forgejo.dump
+    recovery_swap_stop_services: [forgejo]
+    recovery_swap_compose_project: "{{ forgejo_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/healthz"

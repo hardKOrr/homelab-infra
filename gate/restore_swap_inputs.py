@@ -5,11 +5,15 @@ staging, stop, move aside, ownership, start, rollback). An application test chec
 its role supplies: paths, owner, mode, services, health URL and hooks.
 """
 
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
 
 repo = Path(__file__).resolve().parents[1]
+ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 
 def swap_inputs(role, task_file="restore.yml"):
@@ -27,3 +31,17 @@ def swap_inputs(role, task_file="restore.yml"):
             assert path.startswith("{{ role_path }}/tasks/"), path
             assert (repo / "ansible/roles" / role / path.removeprefix("{{ role_path }}/")).exists(), path
     return variables
+
+
+def run_hook(role, hook, variables, stub=None):
+    """Run the role's restore-<hook>.yml on localhost; stub(tasks) may replace boundaries."""
+    tasks = yaml.safe_load((repo / "ansible/roles" / role / "tasks" / f"restore-{hook}.yml").read_text())
+    if stub:
+        tasks = stub(tasks)
+    with tempfile.TemporaryDirectory() as directory:
+        playbook = Path(directory) / "hook.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]))
+        return subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                              env=os.environ | {"ANSIBLE_NOCOLOR": "1"}, text=True,
+                              capture_output=True, check=False)

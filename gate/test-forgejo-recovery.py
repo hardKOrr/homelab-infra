@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Exercise Forgejo's paired PBS archive and transactional restore rollback."""
+"""Exercise Forgejo's paired PBS archive and check its restore-swap inputs and hook.
+
+gate/test-restore-swap.py proves the swap, the database dump, load and rollback.
+"""
 
 import copy
-import http.server
 import os
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 import yaml
@@ -14,26 +15,16 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import run_hook, swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 defaults_source = yaml.safe_load((repo / "ansible/vars/app-defaults/forgejo.yml").read_text())
 catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
-restore_tasks_source = (repo / "ansible/roles/forgejo/tasks/restore.yml").read_text()
-restore_source = yaml.safe_load(restore_tasks_source)
 hook_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup-quiesced.yml").read_text())
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
 forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/main.yml").read_text()
-
-
-class Health(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(self.server.response_status)
-        self.end_headers()
-
-    def log_message(self, *_args):
-        pass
 
 
 def fixture_tasks(tasks, root):
@@ -83,10 +74,7 @@ def environment(root, case):
     }
 
 
-def run_play(root, tasks, variables, case, server=None):
-    if server is not None:
-        server.response_status = 503 if case == "health-failure" else 200
-        variables["app_config"]["app"]["port"] = server.server_port
+def run_play(root, tasks, variables, case):
     playbook = root / "run.yml"
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost",
@@ -126,20 +114,7 @@ if args[0]=='backup':
 if args[:2]==['snapshot','list']:
     print('host/forgejo/2026-10-13T00:00:00Z')
     raise SystemExit(0)
-assert args[:3]==['restore','host/forgejo/2026-10-13T00:00:00Z','data.pxar'], args
-if case=='archive-extraction-failure':
-    raise SystemExit(7)
-archive=Path(args[3])
-assert archive.is_dir() and archive.parent.parent==root, archive
-(archive/'database').mkdir()
-(archive/'database/forgejo.dump').write_text('recovered database\n')
-data=archive/'forgejo'
-(data/'gitea/conf').mkdir(parents=True)
-(data/'gitea/conf/app.ini').write_text('recovered configuration secret\n')
-(data/'forgejo-repositories/canary.git').mkdir(parents=True)
-(data/'forgejo-repositories/canary.git/HEAD').write_text('recovered commit\n')
-if case=='incomplete-archive':
-    (data/'gitea/conf/app.ini').unlink()
+raise SystemExit(9)
 ''',
         "database-fixture": r'''#!/usr/bin/env python3
 import os,sys
@@ -153,17 +128,6 @@ dump=Path(dump)
 if action=='dump':
     assert dump.parent.is_dir(), dump
     dump.write_text('new recovery database\n' if dump.name=='forgejo.dump' else state.read_text())
-elif action=='verify-dump':
-    assert dump.read_text(), dump
-elif dump.name=='forgejo.dump':
-    if case in ['db-failure-after-move', 'rollback-database-failure']:
-        state.write_text('partial recovered database\n')
-        raise SystemExit(7)
-    state.write_text('recovered database\n')
-elif dump.name=='database-before.dump':
-    if case=='rollback-database-failure':
-        raise SystemExit(8)
-    state.write_text(dump.read_text())
 else:
     raise SystemExit(10)
 ''',
@@ -182,7 +146,6 @@ def static_contract():
     assert not any(line.strip().startswith("user:") for line in compose_template.splitlines())
     assert "http://localhost:3000/api/healthz" in compose_template
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
-    assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
     assert "client" not in defaults["backup"], "the shared client owns its pins"
     [upload] = included(backup_source, "pbs-client-backup.yml")
     assert upload["vars"]["pbs_client_runtime"] == "docker"
@@ -191,9 +154,6 @@ def static_contract():
     assert upload["vars"]["pbs_client_backup_args"] == ["--all-file-systems", "true"]
     assert upload["vars"]["pbs_client_backup_mounts"] == [{
         "path": "{{ _forgejo_backup_data_path }}", "target": "{{ _forgejo_backup_root }}/forgejo"}]
-    preview, extract = included(restore_source, "pbs-client-restore.yml")
-    assert preview["when"] == "not (restore_overwrite | bool)"
-    assert extract["vars"]["pbs_client_restore_args"] == ["--allow-existing-dirs", "true"]
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
@@ -239,14 +199,14 @@ def static_contract():
     }, endpoint
 
 
-def app_variables(root, server=None):
+def app_variables(root):
     data_path = root / "data"
     app = {
         "database": {"provider": "postgresql", "instance": "postgresql-forgejo",
                      "name": "forgejo", "role": "forgejo"},
         "database_user": "forgejo",
         "data_path": str(data_path),
-        "port": server.server_port if server else 3000,
+        "port": 3000,
     }
     return {
         "instance": "forgejo",
@@ -303,53 +263,29 @@ def check_hook():
         assert dump.read_text() == 'new recovery database\n'
 
 
-def check_restore(case, server):
+def check_restore_swap():
+    swap = swap_inputs("forgejo")
+    assert swap["recovery_swap_runtime"] == "docker"
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_paths"] == [{
+        "path": "{{ _forgejo_restore_data_path }}", "source": "data/forgejo",
+        "owner": 1000, "group": 1000, "mode": "0750"}]
+    assert swap["recovery_swap_database"] == {
+        "config": "{{ app_config.app.database }}", "dump": "data/database/forgejo.dump"}
+    assert swap["recovery_swap_stop_services"] == ["forgejo"]
+    assert swap["recovery_swap_compose_project"] == "{{ forgejo_project_dir }}"
+    assert swap["recovery_swap_health_url"] == "http://localhost:{{ app_config.app.port }}/api/healthz"
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        make_stubs(root)
-        data = root / "data"
-        (data / "gitea/conf").mkdir(parents=True)
-        (data / "gitea/conf/app.ini").write_text('original config secret\n')
-        (data / "forgejo-repositories").mkdir()
-        (data / "forgejo-repositories/original.git").write_text('original repository\n')
-        (root / "db-state").write_text('original database\n')
-        variables = app_variables(root, server)
-        if case == "plan":
-            variables["restore_overwrite"] = False
-            variables["restore_snapshot"] = ""
-        if case == "foreign-group":
-            variables["restore_overwrite"] = False
-            variables["restore_snapshot"] = "host/other/2026-10-13T00:00:00Z"
-        result = run_play(root, restore_source, variables, case, server)
-        success = case in ["plan", "success"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-
-        if case == "success":
-            assert not (data / "forgejo-repositories/original.git").exists()
-            assert (data / "forgejo-repositories/canary.git/HEAD").read_text() == 'recovered commit\n'
-            assert (data / "gitea/conf/app.ini").read_text() == 'recovered configuration secret\n'
-            assert (root / "db-state").read_text() == 'recovered database\n'
-            assert not list(root.glob(".forgejo-forgejo-restore-*"))
-        elif case in ["db-failure-after-move", "health-failure"]:
-            assert (data / "gitea/conf/app.ini").read_text() == 'original config secret\n'
-            assert (data / "forgejo-repositories/original.git").read_text() == 'original repository\n'
-            assert not (data / "forgejo-repositories/canary.git").exists()
-            assert (root / "db-state").read_text() == 'original database\n'
-            assert not list(root.glob(".forgejo-forgejo-restore-*"))
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped" and states[-1] == "stopped", states
-        elif case == "rollback-database-failure":
-            assert (data / "gitea/conf/app.ini").read_text() == 'original config secret\n'
-            assert (data / "forgejo-repositories/original.git").read_text() == 'original repository\n'
-            retained = list(root.glob(".forgejo-forgejo-restore-*/database-before.dump"))
-            assert len(retained) == 1
-            assert retained[0].read_text() == 'original database\n'
-            assert (root / "db-state").read_text() == 'partial recovered database\n'
-        else:
-            assert (data / "gitea/conf/app.ini").read_text() == 'original config secret\n'
-            assert (data / "forgejo-repositories/original.git").read_text() == 'original repository\n'
-            assert (root / "db-state").read_text() == 'original database\n'
-            assert not (root / "services").exists(), "plan or rejected point stopped Forgejo"
+        stage = Path(directory)
+        config = stage / "data/forgejo/gitea/conf/app.ini"
+        config.parent.mkdir(parents=True)
+        variables = {"recovery_swap_stage": str(stage)}
+        assert run_hook("forgejo", "staged", variables).returncode != 0, "no app.ini"
+        config.write_text("")
+        assert run_hook("forgejo", "staged", variables).returncode != 0, "empty app.ini"
+        config.write_text("[server]\n")
+        result = run_hook("forgejo", "staged", variables)
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def main():
@@ -357,18 +293,7 @@ def main():
     check_hook()
     check_backup("backup-success")
     check_backup("backup-upload-failure")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        for case in ["plan", "foreign-group", "success", "archive-extraction-failure",
-                     "incomplete-archive", "db-failure-after-move", "health-failure",
-                     "rollback-database-failure"]:
-            check_restore(case, server)
-    finally:
-        server.shutdown()
-        thread.join()
-        server.server_close()
+    check_restore_swap()
     print("Forgejo recovery checks passed")
 
 

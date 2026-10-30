@@ -66,7 +66,11 @@ templates.
 - `test-deemix-restore.py`: ARL continuity, backup inputs and Deemix's restore swap inputs.
 - `test-emby-restore.py`: Emby's restore swap inputs and the hook requiring the restored server to be Emby, accept the source account and hold a media library.
 - `test-actual-budget-restore.py`: Actual Budget's restore swap inputs and the hook reapplying the server password.
-- `test-immich-restore.py`: Immich's restore swap inputs for its media mount, the staged hook refusing a point without a database dump and closing the dump to the media owner, and the pre-restore database dump loaded back on rollback only after the archived dump started loading.
+- `test-immich-restore.py`: Immich's restore swap inputs for its media mount and its database and dump.
+- `test-forgejo-recovery.py`: Forgejo's quiesced data archive, and its restore swap inputs with the database dump and the staged hook refusing a point without `app.ini`.
+- `test-mautic-recovery.py`: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a point without `local.php` or media, and the replaced hook pointing the restored `local.php` at the target in a real play, with the same PHP escaping as Deploy.
+- `test-odoo-restore.py`: Odoo's restore swap inputs for its data_dir, database and dump.
+- `test-n8n-restore.py`: n8n's Docker restore swap inputs, the replaced hook giving the target the source encryption key in Vaultwarden and `n8n.env`, and rollback giving it back its own.
 - `test-jellyfin-recovery.py`: Jellyfin's PBS backup, the pre-restore point requirement, and the restore swap inputs with the single intact `jellyfin.db` staged hook and the configured-server, source-account and library checks.
 - `test-vaultwarden-recovery.py`: Vaultwarden's native recovery contract, additional-instance isolation, Remove with an absent database backend, and the restore swap inputs with the `db.sqlite3` staged hook and the web vault check.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
@@ -85,7 +89,7 @@ templates.
 - `test-plex-restore.py`: Plex's restore swap inputs, the staged hook refusing a point without Preferences.xml or the library databases, and the restored token checked against Plex before it is published.
 - `test-tautulli-restore.py`: the Plex connectivity check and Tautulli's restore swap inputs.
 - `test-qbittorrent-restore.py`: qBittorrent's restore swap inputs, and its staged-state and canonical-credential hooks run against fixtures.
-- `test-observability-recovery.py`: both-service quiescence, complete data archive, read-only preview, point/group guards and rollback after replacement failures.
+- `test-observability-recovery.py`: both-service quiescence, the complete data archive, and the restore swap inputs: Prometheus and Grafana trees with their own uids, the staged Grafana database hook and the Grafana health hook.
 - `test-karakeep-recovery.py`: one-archive backup of both persistent volumes, and the
   two restore swap paths from that archive with the owner Deploy also applies.
 - `test-bookstack-recovery.py`: BookStack validates its default admin address, ensures
@@ -107,7 +111,7 @@ templates.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
 - `test-k8s-recovery-jobs.py`: the shared Kubernetes backup CronJob and restore Job keep the PBS client on tmpfs, read the rotated PBS fingerprint, keep the previous point through a same-day backup, preview through the client read-only, and load the database before replacing volumes; each Kubernetes app's archives, database step and stop list render through them.
 - `test-shared-standards.py`: PBS client calls and installs, database dump/restore/drop and role-owned Kubernetes recovery Jobs appear only in their shared files (those allowlists are empty). A restore moving state into place or assigning ownership appears only in the shared restore swap; its allowlists of older role copies only shrink. README and full-line comment mentions do not count.
-- `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. `restore_swap_inputs.py` reads a role's inputs for its own test.
+- `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. With a database, the dump is verified before the stop, the live database dumped after it, the archived dump loaded before the replaced hook, and the live dump loaded back on rollback; a failed database rollback keeps the services stopped. `restore_swap_inputs.py` reads a role's inputs for its own test.
 - `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
 - `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
 
