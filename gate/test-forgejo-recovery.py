@@ -289,12 +289,12 @@ def check_restore_swap():
 
 
 def check_install():
-    """Deploy finishes Forgejo's install: lock, one seeded secret key, one administrator."""
+    """Deploy finishes Forgejo's install: lock, a new install's secret key, one administrator."""
     tasks = {task.get("name"): task for task in yaml.safe_load(forgejo_tasks_source)}
     env = (repo / "ansible/roles/forgejo/templates/forgejo.env.j2").read_text()
     assert "FORGEJO__security__INSTALL_LOCK=true" in env and "SECRET_KEY" not in env
-    seed = tasks["Forgejo | Seed a secret key"]
-    assert seed["when"] == "_forgejo_secret_key.stdout | trim | length == 0", "never replace a key"
+    seed = tasks["Forgejo | Seed a new install's secret key"]
+    assert seed["when"] == "not _forgejo_app_ini.stat.exists", "an existing app.ini keeps its key"
     create = tasks["Forgejo | Create the administrator"]
     listing = ("ID   Username   Email                     IsActive IsAdmin 2FA\n"
                "1    {name}   someone@example.invalid  true     true    false\n")

@@ -43,8 +43,9 @@
 
 # INSTALL_LOCK (forgejo.env) skips the web installer. Forgejo then generates and saves its
 # internal tokens itself, but an empty SECRET_KEY falls back to a fixed public default, so
-# Deploy seeds one into app.ini once. An existing key is never replaced: it encrypts
-# stored secrets, and a restore brings the archived app.ini with its own key.
+# a new install gets a key in app.ini before Forgejo first starts. An existing app.ini,
+# including a restored one, keeps whatever key it has, even an empty one: the key
+# encrypts stored secrets, and replacing it would make them unreadable.
 - name: Forgejo | Create the configuration directory
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item }}"
@@ -54,15 +55,12 @@
     mode: "0755"
   loop: [gitea, gitea/conf]
 
-- name: Forgejo | Read the configured secret key
-  ansible.builtin.command:
-    argv: [sed, -n, 's/^SECRET_KEY[[:space:]]*=[[:space:]]*//p', "{{ forgejo_app_ini }}"]
-  register: _forgejo_secret_key
-  changed_when: false
-  failed_when: false
-  no_log: true
+- name: Forgejo | Look for an existing configuration
+  ansible.builtin.stat:
+    path: "{{ forgejo_app_ini }}"
+  register: _forgejo_app_ini
 
-- name: Forgejo | Seed a secret key
+- name: Forgejo | Seed a new install's secret key
   community.general.ini_file:
     path: "{{ forgejo_app_ini }}"
     section: security
@@ -72,7 +70,7 @@
     owner: "1000"
     group: "1000"
     mode: "0640"
-  when: _forgejo_secret_key.stdout | trim | length == 0
+  when: not _forgejo_app_ini.stat.exists
   no_log: true
   notify: Restart Forgejo
 
