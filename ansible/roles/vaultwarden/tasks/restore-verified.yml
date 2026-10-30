@@ -1,0 +1,12 @@
+---
+# restore-swap.yml verified hook: the restored instance must serve the web vault.
+- name: Vaultwarden restore | Verify the restored web vault
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+    return_content: true
+  register: _vw_restore_web_vault
+  failed_when: >-
+    _vw_restore_web_vault.status | default(0) != 200
+    or 'Vaultwarden Web' not in (_vw_restore_web_vault.content | default(''))
+  changed_when: false

@@ -1,31 +1,22 @@
 ---
 # Redis exports the data set as an RDB and the ACL file as one application recovery point.
-# Keep the previous data directory beside the live path until the restored service accepts
-# the target's Vaultwarden password and its ACL file has been saved again.
+# The shared swap keeps the previous data directory beside the live path until the restored
+# service accepts the target's Vaultwarden password and its ACL file has been saved again.
 - name: Redis restore | Resolve paths, credentials and recovery identities
   ansible.builtin.set_fact:
     _redis_restore_data_path: "{{ app_config.app.data_path | default('') }}"
     _redis_restore_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
     _redis_restore_service_name: "{{ app_config.app.service_name | default('redis-server') }}"
     _redis_restore_source_instance: "{{ restore_source_instance | default(instance, true) }}"
-    _redis_restore_source_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true)
-         or restore_source_instance | default(instance, true), true) }}
     _redis_restore_target_backup_id: >-
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
-    _redis_restore_snapshot: "{{ restore_snapshot | default('') }}"
-    _redis_restore_target_instance: "{{ restore_target | default(instance, true) }}"
     _redis_restore_source_password: >-
       {{ (homelabinfra_vault.apps | default({})).get(
            restore_source_instance | default(instance, true), {}).get('password', '') }}
     _redis_restore_target_password: >-
       {{ (homelabinfra_vault.apps | default({})).get(
            restore_target | default(instance, true), {}).get('password', '') }}
-    _application_restore_complete: false
-    _redis_restore_previous_moved: false
-    _redis_restore_new_installed: false
-    _redis_restore_service_stopped: false
   no_log: true
 
 - name: Redis restore | Assert the recovery contract and safe paths
@@ -34,13 +25,10 @@
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
       - _redis_restore_data_path is match('^/[^/].*')
-      - _redis_restore_data_path != '/'
       - _redis_restore_acl_path | dirname == _redis_restore_data_path
-      - _redis_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-      - _redis_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - _redis_restore_source_instance is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - restore_overwrite is defined
-      - (_redis_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - homelabinfra_infra.backups is defined
     fail_msg: >-
       Redis restore needs its application-consistent contract, safe source and target
@@ -57,23 +45,13 @@
   when: restore_overwrite | bool
   no_log: true
 
-- name: Redis restore | Require the selected point to belong to its source group
-  ansible.builtin.assert:
-    that:
-      - _redis_restore_snapshot.startswith('host/' ~ _redis_restore_source_backup_id ~ '/')
-      - _redis_restore_snapshot | length > ('host/' ~ _redis_restore_source_backup_id ~ '/') | length
-    fail_msg: >-
-      The selected Redis recovery point must belong to
-      host/{{ _redis_restore_source_backup_id }}/.
-  when: _redis_restore_snapshot | length > 0
-
 - name: Redis restore | Require an independent existing-target point
   ansible.builtin.assert:
     that:
       - restore_pre_restore_point is defined
       - restore_pre_restore_point.startswith('host/' ~ _redis_restore_target_backup_id ~ '/')
       - restore_pre_restore_point | length > ('host/' ~ _redis_restore_target_backup_id ~ '/') | length
-      - restore_pre_restore_point != _redis_restore_snapshot
+      - restore_pre_restore_point != restore_snapshot
     fail_msg: >-
       Existing-target Redis restore needs a distinct pre_restore_point from
       host/{{ _redis_restore_target_backup_id }}/.
@@ -81,365 +59,32 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-- name: Redis restore | List or verify the recovery point without changing Redis
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-  vars:
-    pbs_client_runtime: native
-    pbs_client_backup_id: "{{ _redis_restore_source_backup_id }}"
-    pbs_client_pre_restore_backup_id: "{{ _redis_restore_target_backup_id }}"
-    pbs_client_archives: [{name: data.pxar}]
-  when: not (restore_overwrite | bool)
-
-- name: Redis restore | Replace and verify native state
+- name: Redis restore | Require the service to be active
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ _redis_restore_service_name }}"]
+  register: _redis_restore_service_state
+  failed_when: false
+  changed_when: false
   when: restore_overwrite | bool
-  block:
-    - name: Redis restore | Check the live data directory
-      ansible.builtin.stat:
-        path: "{{ _redis_restore_data_path }}"
-      register: _redis_restore_live_data
-      changed_when: false
 
-    - name: Redis restore | Require a real live data directory
-      ansible.builtin.assert:
-        that:
-          - _redis_restore_live_data.stat.exists
-          - _redis_restore_live_data.stat.isdir
-          - not _redis_restore_live_data.stat.islnk
-        fail_msg: >-
-          Redis restore target {{ _redis_restore_data_path }} is missing, linked or not a
-          directory; refusing to replace it.
+- name: Redis restore | Refuse an inactive target
+  ansible.builtin.assert:
+    that: _redis_restore_service_state.stdout | trim == 'active'
+    fail_msg: Start Redis before replacing its application data.
+  when: restore_overwrite | bool
 
-    - name: Redis restore | Require the service to be active
-      ansible.builtin.command:
-        argv: [systemctl, is-active, "{{ _redis_restore_service_name }}"]
-      register: _redis_restore_service_state
-      failed_when: false
-      changed_when: false
-
-    - name: Redis restore | Refuse an inactive target
-      ansible.builtin.assert:
-        that: _redis_restore_service_state.stdout | trim == 'active'
-        fail_msg: Start Redis before replacing its application data.
-
-    - name: Redis restore | Create private staging and rollback directories
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ _redis_restore_data_path | dirname }}"
-        prefix: "{{ item }}"
-      loop:
-        - .redis-restore-stage-
-        - .redis-pre-restore-
-      register: _redis_restore_dirs
-
-    - name: Redis restore | Create the extracted data target
-      ansible.builtin.file:
-        path: "{{ _redis_restore_dirs.results[0].path }}/restored"
-        state: directory
-        mode: "0700"
-
-    - name: Redis restore | Extract the selected archive to staging
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: native
-        pbs_client_backup_id: "{{ _redis_restore_source_backup_id }}"
-        pbs_client_pre_restore_backup_id: "{{ _redis_restore_target_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _redis_restore_dirs.results[0].path }}/restored"
-
-    - name: Redis restore | Validate staged native files
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop:
-        - "{{ _redis_restore_dirs.results[0].path }}/restored/dump.rdb"
-        - "{{ _redis_restore_dirs.results[0].path }}/restored/users.acl"
-      register: _redis_restore_staged_paths
-      changed_when: false
-      no_log: true
-
-    - name: Redis restore | Require a complete staged export
-      ansible.builtin.assert:
-        that:
-          - item.stat.exists
-          - item.stat.isreg
-          - not item.stat.islnk
-          - item.stat.size | int > 0
-        fail_msg: >-
-          The selected Redis recovery point is missing its RDB or ACL file; the live
-          instance has not been replaced.
-      loop: "{{ _redis_restore_staged_paths.results }}"
-      loop_control:
-        label: "{{ item.item | basename }}"
-      no_log: true
-
-    - name: Redis restore | Validate the staged RDB
-      ansible.builtin.command:
-        argv: [redis-check-rdb, "{{ _redis_restore_dirs.results[0].path }}/restored/dump.rdb"]
-      changed_when: false
-      no_log: true
-
-    - name: Redis restore | Replace the data directory transactionally
-      block:
-        - name: Redis restore | Stop Redis before replacing data
-          ansible.builtin.systemd_service:
-            name: "{{ _redis_restore_service_name }}"
-            state: stopped
-
-        - name: Redis restore | Record the stopped service
-          ansible.builtin.set_fact:
-            _redis_restore_service_stopped: true
-
-        - name: Redis restore | Move the original data aside on the same filesystem
-          ansible.builtin.command:
-            argv:
-              - mv
-              - "{{ _redis_restore_data_path }}"
-              - "{{ _redis_restore_dirs.results[1].path }}/state"
-          register: _redis_restore_move_original
-          changed_when: _redis_restore_move_original.rc == 0
-
-        - name: Redis restore | Record the original data move
-          ansible.builtin.set_fact:
-            _redis_restore_previous_moved: true
-
-        - name: Redis restore | Move the staged data into place
-          ansible.builtin.command:
-            argv:
-              - mv
-              - "{{ _redis_restore_dirs.results[0].path }}/restored"
-              - "{{ _redis_restore_data_path }}"
-          register: _redis_restore_install
-          changed_when: _redis_restore_install.rc == 0
-
-        - name: Redis restore | Record the new data installation
-          ansible.builtin.set_fact:
-            _redis_restore_new_installed: true
-
-        - name: Redis restore | Set Redis ownership on restored files
-          ansible.builtin.file:
-            path: "{{ _redis_restore_data_path }}"
-            owner: redis
-            group: redis
-            recurse: true
-
-        - name: Redis restore | Protect the data directory
-          ansible.builtin.file:
-            path: "{{ _redis_restore_data_path }}"
-            state: directory
-            owner: redis
-            group: redis
-            mode: "0750"
-
-        - name: Redis restore | Protect the restored ACL file
-          ansible.builtin.file:
-            path: "{{ _redis_restore_acl_path }}"
-            owner: redis
-            group: redis
-            mode: "0600"
-
-        - name: Redis restore | Protect the restored RDB file
-          ansible.builtin.file:
-            path: "{{ _redis_restore_data_path }}/dump.rdb"
-            owner: redis
-            group: redis
-            mode: "0640"
-
-        - name: Redis restore | Start Redis with the recovered state
-          ansible.builtin.systemd_service:
-            name: "{{ _redis_restore_service_name }}"
-            state: started
-
-        - name: Redis restore | Verify the target password after loading the ACL file
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - ping
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_target_password }}"
-          register: _redis_restore_target_auth
-          failed_when: false
-          until: _redis_restore_target_auth.rc == 0
-          retries: 30
-          delay: 2
-          changed_when: false
-          no_log: true
-
-        - name: Redis restore | Verify the source password when the target password differs
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - ping
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_source_password }}"
-          register: _redis_restore_source_auth
-          failed_when: false
-          until: _redis_restore_source_auth.rc == 0
-          retries: 30
-          delay: 2
-          changed_when: false
-          no_log: true
-          when: _redis_restore_target_auth.rc != 0
-
-        - name: Redis restore | Require an authenticated Redis server
-          ansible.builtin.assert:
-            that: >-
-              _redis_restore_target_auth.rc == 0
-              or (_redis_restore_source_auth.rc | default(1)) == 0
-            fail_msg: The restored Redis service does not accept its stored source or target password.
-          no_log: true
-
-        - name: Redis restore | Select a working login for ACL reconciliation
-          ansible.builtin.set_fact:
-            _redis_restore_auth_password: >-
-              {{ _redis_restore_target_password
-                 if _redis_restore_target_auth.rc == 0
-                 else _redis_restore_source_password }}
-          no_log: true
-
-        - name: Redis restore | Align the default user with the target Vaultwarden password
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - -x
-              - ACL
-              - SETUSER
-              - default
-              - resetpass
-            stdin: ">{{ _redis_restore_target_password }}"
-            stdin_add_newline: false
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_auth_password }}"
-          register: _redis_restore_default_user
-          changed_when: false
-          no_log: true
-
-        - name: Redis restore | Persist the reconciled ACL file
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - ACL
-              - SAVE
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_target_password }}"
-          register: _redis_restore_acl_save
-          changed_when: false
-          no_log: true
-
-        - name: Redis restore | Restore the ACL file ownership and mode
-          ansible.builtin.file:
-            path: "{{ _redis_restore_acl_path }}"
-            state: file
-            owner: redis
-            group: redis
-            mode: "0600"
-
-        - name: Redis restore | Verify the final target login
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - ping
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_target_password }}"
-          register: _redis_restore_final_auth
-          changed_when: false
-          no_log: true
-
-        - name: Redis restore | Mark recovery complete
-          ansible.builtin.set_fact:
-            _application_restore_complete: true
-
-        - name: Redis restore | Remove the original data after verification
-          ansible.builtin.file:
-            path: "{{ _redis_restore_dirs.results[1].path }}/state"
-            state: absent
-
-      rescue:
-        - name: Redis restore | Stop Redis before rollback
-          ansible.builtin.systemd_service:
-            name: "{{ _redis_restore_service_name }}"
-            state: stopped
-          when: _redis_restore_service_stopped | bool
-
-        - name: Redis restore | Remove the failed replacement
-          ansible.builtin.file:
-            path: "{{ _redis_restore_data_path }}"
-            state: absent
-          when: _redis_restore_new_installed | bool
-
-        - name: Redis restore | Put the original data back
-          ansible.builtin.command:
-            argv:
-              - mv
-              - "{{ _redis_restore_dirs.results[1].path }}/state"
-              - "{{ _redis_restore_data_path }}"
-          register: _redis_restore_rollback_move
-          changed_when: _redis_restore_rollback_move.rc == 0
-          when: _redis_restore_previous_moved | bool
-
-        - name: Redis restore | Restart the original Redis service
-          ansible.builtin.systemd_service:
-            name: "{{ _redis_restore_service_name }}"
-            state: started
-          when: _redis_restore_service_stopped | bool
-
-        - name: Redis restore | Verify the original target password after rollback
-          ansible.builtin.command:
-            argv:
-              - redis-cli
-              - --no-auth-warning
-              - -h
-              - 127.0.0.1
-              - -p
-              - "{{ app_config.app.port | int }}"
-              - ping
-          environment:
-            REDISCLI_AUTH: "{{ _redis_restore_target_password }}"
-          register: _redis_restore_rollback_auth
-          until: _redis_restore_rollback_auth.rc == 0
-          retries: 30
-          delay: 2
-          changed_when: false
-          no_log: true
-          when: _redis_restore_service_stopped | bool
-
-        - name: Redis restore | Report failure after preserving the original state
-          ansible.builtin.fail:
-            msg: >-
-              Redis restore failed at {{ ansible_failed_task.name | default('an unknown task') }}.
-              The original data directory was restored and the service accepted its stored
-              target password.
-
-  always:
-    - name: Redis restore | Remove temporary recovery data
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ _redis_restore_dirs.results | default([]) }}"
-      when: _redis_restore_dirs is defined
-
+- name: Redis restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: native
+    recovery_swap_pre_restore_backup_id: "{{ _redis_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ _redis_restore_data_path }}"
+        owner: redis
+        group: redis
+        mode: "0750"
+    recovery_swap_stop_services: ["{{ _redis_restore_service_name }}"]
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

@@ -52,11 +52,11 @@ templates.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
-- `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
+- `test-plex-recovery.py`: Plex native capability/dispatch, non-mutating restore preview, the source-group check and both server-token guards.
 - `test-plex-hardware-transcoding.py`: Plex hardware decoding/encoding preferences follow the declared `/dev/dri` device and converge on repeat runs.
 - `test-ntfy-recovery.py`: native auth/cache archives and the two paths, owner and auth-database checks Ntfy gives the restore swap.
-- `test-influxdb-recovery.py`: native data archive, restore credential checks and transactional rollback after replacement failures.
-- `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, restore rollback and scoped guest removal.
+- `test-influxdb-recovery.py`: native data archive, restore credential checks, and the restore swap inputs with the Bolt and engine staged hook, the operator-token check, and a new target's Vaultwarden credentials written on success and put back on rollback.
+- `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, the restore swap inputs with the RDB and ACL staged hook, Deploy's file modes and the target-password ACL reconciliation, and scoped guest removal.
 - `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, the live-cluster check, and the data directory, owner and mode PostgreSQL gives the restore swap.
 - `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, destination guards, and the restore swap inputs with the `kuma.db` and initialized-server hooks.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview, the restore swap inputs and API key continuity: the staged hook refuses a point without the database or key, the replaced hook adopts the archived key in Compose, and the rollback hook puts the original Compose back.
@@ -66,6 +66,9 @@ templates.
 - `test-deemix-restore.py`: ARL continuity, backup inputs and Deemix's restore swap inputs.
 - `test-emby-restore.py`: Emby's restore swap inputs and the hook requiring the restored server to be Emby, accept the source account and hold a media library.
 - `test-actual-budget-restore.py`: Actual Budget's restore swap inputs and the hook reapplying the server password.
+- `test-immich-restore.py`: Immich's restore swap inputs for its media mount, the staged hook refusing a point without a database dump and closing the dump to the media owner, and the pre-restore database dump loaded back on rollback only after the archived dump started loading.
+- `test-jellyfin-recovery.py`: Jellyfin's PBS backup, the pre-restore point requirement, and the restore swap inputs with the single intact `jellyfin.db` staged hook and the configured-server, source-account and library checks.
+- `test-vaultwarden-recovery.py`: Vaultwarden's native recovery contract, additional-instance isolation, Remove with an absent database backend, and the restore swap inputs with the `db.sqlite3` staged hook and the web vault check.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-proxmox-ha.py`: opt-in HA resource creation, idempotence, owned-resource removal, shared-storage refusal and Remove ordering.
@@ -79,12 +82,12 @@ templates.
 - `test-start-owned-guest.py`: exact owned stack guest start, readiness, repeat and refusal cases.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
-- `test-plex-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-plex-restore.py`: Plex's restore swap inputs, the staged hook refusing a point without Preferences.xml or the library databases, and the restored token checked against Plex before it is published.
 - `test-tautulli-restore.py`: the Plex connectivity check and Tautulli's restore swap inputs.
 - `test-qbittorrent-restore.py`: qBittorrent's restore swap inputs, and its staged-state and canonical-credential hooks run against fixtures.
 - `test-observability-recovery.py`: both-service quiescence, complete data archive, read-only preview, point/group guards and rollback after replacement failures.
-- `test-karakeep-recovery.py`: one-archive backup of both persistent volumes and restore
-  rollback after either original directory moves.
+- `test-karakeep-recovery.py`: one-archive backup of both persistent volumes, and the
+  two restore swap paths from that archive with the owner Deploy also applies.
 - `test-bookstack-recovery.py`: BookStack validates its default admin address, ensures
   its backup scheduler, selects the matching MariaDB client command, Remove clears only
   its validated, unshared database and login, and Restore separates read-only plan

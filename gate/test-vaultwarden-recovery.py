@@ -13,7 +13,7 @@ import threading
 
 import yaml
 
-from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -369,224 +369,76 @@ def check_backup_role():
     assert backup_play["tasks"][-1]["name"] == "Fail if application backup degraded"
 
 
-def check_restore_transaction():
-    tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/restore.yml")
-    all_tasks = list(tasks_recursive(tasks))
-    assert "Vaultwarden restore | Validate the selected source group" in [task.get("name") for task in all_tasks]
-    assert "Vaultwarden restore | Validate the independent pre-restore group" in [task.get("name") for task in all_tasks]
-    preview = task_named(all_tasks, "Vaultwarden restore | List or verify the recovery point before changing the vault")
-    assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert preview["vars"]["pbs_client_archives"] == [{"name": "data.pxar"}]
-    assert preview["vars"]["pbs_client_overwrite"] is False and "when" not in preview
-
-    replace = task_named(all_tasks, "Vaultwarden restore | Replace and verify the data directory")
-    block = replace["block"]
-    names = [task.get("name") for task in block]
-    extract_i = names.index("Vaultwarden restore | Extract the selected PBS archive")
-    db_i = names.index("Vaultwarden restore | Check the staged SQLite database")
-    move_i = names.index("Vaultwarden restore | Move the original data aside on the same filesystem")
-    install_i = names.index("Vaultwarden restore | Move the staged data into place")
-    health_i = names.index("Vaultwarden restore | Wait for the restored API")
-    assert extract_i < db_i < move_i < install_i < health_i
-    extract = block[extract_i]
-    assert extract["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert extract["vars"]["pbs_client_archives"] == [
-        {"name": "data.pxar", "path": "{{ _vw_restore_stage.path }}/data"}
-    ]
-
-    rescue_names = [task.get("name") for task in replace["rescue"]]
-    assert rescue_names.index("Vaultwarden restore | Remove the failed replacement data") < rescue_names.index(
-        "Vaultwarden restore | Put the original data back")
-    restart = task_named(replace["rescue"], "Vaultwarden restore | Restart the service after a successful rollback")
-    assert restart["ansible.builtin.systemd_service"]["state"] == "started"
-    assert "_vw_restore_rollback_complete" in str(restart["when"])
-    assert rescue_names.index(restart["name"]) < rescue_names.index("Vaultwarden restore | Report the failed restore")
-    assert rescue_names[-1] == "Vaultwarden restore | Report the failed restore"
-    cleanup = task_named(replace["always"], "Vaultwarden restore | Remove rollback data after success or rollback")
-    assert "_vw_restore_old_data_moved" in str(cleanup["when"])
-    stage_cleanup = task_named(replace["always"], "Vaultwarden restore | Remove private staging data")
-    assert "_vw_restore_stage.path" in stage_cleanup["ansible.builtin.file"]["path"]
-
-
-def fixture_tasks(tasks, root):
-    """Stub PBS and systemd boundaries while running the production restore operations."""
-    tasks = copy.deepcopy(tasks)
-    for task in tasks:
-        stub_pbs_client(task, root / "bin/proxmox-backup-client")
-        if "ansible.builtin.systemd_service" in task:
-            service = task.pop("ansible.builtin.systemd_service")
-            task["ansible.builtin.command"] = {
-                "argv": [str(root / "bin/service"), service["state"], service["name"]]
-            }
-            task["changed_when"] = True
-        if "ansible.builtin.uri" in task:
-            task["ansible.builtin.uri"]["url"] = task["ansible.builtin.uri"]["url"].replace(
-                "localhost", "127.0.0.1")
-            task["retries"] = 1
-            task["delay"] = 0
-        for key in ["block", "rescue", "always"]:
-            if key in task:
-                task[key] = fixture_tasks(task[key], root)
-    return tasks
-
-
-class VaultwardenHealth(http.server.BaseHTTPRequestHandler):
+class VaultwardenWeb(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/alive":
-            self.send_response(self.server.response_status)
-            self.end_headers()
-            return
-        if self.path == "/":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Vaultwarden Web")
-            return
-        self.send_response(404)
+        assert self.path == "/"
+        self.send_response(200)
         self.end_headers()
+        self.wfile.write(self.server.page)
 
     def log_message(self, *_args):
         pass
 
 
-def check_restore_runtime(case, server):
-    with tempfile.TemporaryDirectory(prefix="homelab-vaultwarden-restore.") as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        data = root / "data"
-        has_original = case != "no-original-health-failure"
-        if has_original:
-            data.mkdir(mode=0o750)
-            (data / "db.sqlite3").write_bytes(b"original database\n")
-            (data / "config.json").write_text('{"signups_allowed":false}\n', encoding="utf-8")
-        before_inode = data.stat().st_ino if has_original else None
-        before = ({
-            path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mode)
-            for path in data.iterdir() if path.is_file()
-        } if has_original else {})
-        scripts = {
-            "proxmox-backup-client": """#!/usr/bin/env python3
-import json, os, sys
-args = sys.argv[1:]
-case = os.environ['VAULTWARDEN_TEST_CASE']
-if args[:2] == ['snapshot', 'list']:
-    print('host/vaultwarden-family/2026-10-14T00:00:00Z')
-elif args[:2] == ['snapshot', 'files']:
-    print(json.dumps([{'filename': 'data.pxar'}]))
-elif args and args[0] == 'restore':
-    if case == 'extract-failure':
-        raise SystemExit(7)
-    target = args[3]
-    os.makedirs(target, exist_ok=True)
-    with open(os.path.join(target, 'db.sqlite3'), 'wb') as archive:
-        archive.write(b'restored database\\n')
-    with open(os.path.join(target, 'config.json'), 'w', encoding='utf-8') as archive:
-        archive.write('{"signups_allowed":false}\\n')
-else:
-    raise SystemExit('unexpected PBS client command')
-""",
-            "service": """#!/usr/bin/env python3
-import os, sys
-from pathlib import Path
-with Path(os.environ['VAULTWARDEN_TEST_ROOT'], 'services').open('a') as log:
-    log.write(sys.argv[1] + '\\n')
-""",
-            "chown": """#!/usr/bin/env python3
-import os, subprocess, sys
-if os.environ['VAULTWARDEN_TEST_CASE'] == 'ownership-failure':
-    raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
-""",
-        }
-        for name, script in scripts.items():
-            path = root / "bin" / name
-            path.write_text(script, encoding="utf-8")
-            path.chmod(0o700)
+def run_hook(hook, stage, port):
+    tasks = read_yaml(ROOT / f"ansible/roles/vaultwarden/tasks/restore-{hook}.yml")
+    with tempfile.TemporaryDirectory() as directory:
+        playbook = Path(directory) / "hook.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"recovery_swap_stage": str(stage), "app_config": {"app": {"port": port}}},
+            "tasks": tasks,
+        }]), encoding="utf-8")
+        env = os.environ | {"ANSIBLE_NOCOLOR": "1"}
+        return subprocess.run([str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "-c", "local", str(playbook)],
+                              env=env, text=True, capture_output=True, check=False)
 
-        snapshot = ("host/foreign/2026-10-09T00:00:00Z" if case == "foreign-group"
-                    else "host/vaultwarden-family/2026-10-09T00:00:00Z")
-        server.response_status = 503 if "health-failure" in case else 200
-        play = {
-            "hosts": "localhost",
-            "gather_facts": False,
-            "vars": {
-                "instance": "vaultwarden-family",
-                "app_config": {
-                    "app": {"data_path": str(data), "service_name": "vaultwarden-family",
-                            "port": server.server_port},
-                    "backup": {"enabled": True, "application_consistent": True,
-                               "backup_id": "", "datastore": "", "retention_days": 14},
-                },
-                "homelabinfra_infra": {"backups": {}},
-                "vaultwarden_user": str(os.getuid()),
-                "restore_overwrite": case != "plan",
-                "restore_destination": "existing",
-                "restore_snapshot": "" if case == "plan" else snapshot,
-                "restore_backup_id": "vaultwarden-family",
-                "restore_target_backup_id": "vaultwarden-family",
-                "restore_pre_restore_point": "host/vaultwarden-family/2026-10-14T00:00:00Z",
-            },
-            "tasks": fixture_tasks(read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/restore.yml"), root),
-        }
-        playbook = root / "restore.yml"
-        playbook.write_text(yaml.safe_dump([play]), encoding="utf-8")
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default",
-            "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "VAULTWARDEN_TEST_CASE": case,
-            "VAULTWARDEN_TEST_ROOT": str(root),
-        }
-        result = subprocess.run(
-            [str(ANSIBLE_PLAYBOOK), "-i", "localhost,", "-c", "local", str(playbook)],
-            env=env, text=True, capture_output=True, check=False,
-        )
-        succeeds = case in ["plan", "success"]
-        assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
-        after = ({
-            path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mode)
-            for path in data.iterdir() if path.is_file()
-        } if data.exists() else {})
-        if case == "success":
-            assert data.exists()
-            assert (data / "db.sqlite3").read_bytes() == b"restored database\n"
-            assert before != after
-            assert not (root / "services").read_text().endswith("stopped\n")
-        elif case == "no-original-health-failure":
-            assert not data.exists(), "rollback must not leave the failed replacement behind"
-        else:
-            assert data.exists()
-            assert data.stat().st_ino == before_inode, "rollback must move the original directory back"
-            assert after == before, "a failed or read-only restore must preserve the original data"
-        assert not list(root.glob(".vaultwarden-pre-restore-*")), result.stdout + result.stderr
-        assert not list(root.glob(".vaultwarden-restore-*")), result.stdout + result.stderr
-        if case in ["plan", "foreign-group"]:
-            assert not (root / "services").exists(), "read-only/rejected restore stopped the service"
-        else:
-            assert (root / "services").exists(), f"{case} did not record a service transition: {result.stdout}{result.stderr}"
-            states = (root / "services").read_text(encoding="utf-8").splitlines()
-            assert states[0] == "stopped"
-            assert states[-1] == "started", "a completed rollback must restart the original service state"
-        if case == "foreign-group":
-            assert "must belong to" in result.stdout
+
+def check_restore_swap():
+    """Vaultwarden supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
+    swap = swap_inputs("vaultwarden")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.data_path }}", "owner": "{{ vaultwarden_user }}",
+                    "group": "{{ vaultwarden_user }}", "mode": "0750"}
+    assert swap["recovery_swap_runtime"] == "native"
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _vw_restore_target_backup_id }}"
+    assert swap["recovery_swap_stop_services"] == [
+        "{{ app_config.app.service_name | default(vaultwarden_service_name) }}"]
+    assert swap["recovery_swap_health_url"].endswith("/alive")
+    tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/restore.yml")
+    assert "Vaultwarden restore | Validate the independent pre-restore group" in [t.get("name") for t in tasks]
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), VaultwardenWeb)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            (stage / "data").mkdir()
+            assert run_hook("staged", stage, server.server_port).returncode != 0, "no db.sqlite3"
+            (stage / "data/db.sqlite3").mkdir()
+            assert run_hook("staged", stage, server.server_port).returncode != 0, "db.sqlite3 not a file"
+            (stage / "data/db.sqlite3").rmdir()
+            (stage / "data/db.sqlite3").write_bytes(b"restored database\n")
+            result = run_hook("staged", stage, server.server_port)
+            assert result.returncode == 0, result.stdout + result.stderr
+            for page, ok in [(b"Not the vault", False), (b"<title>Vaultwarden Web</title>", True)]:
+                server.page = page
+                result = run_hook("verified", stage, server.server_port)
+                assert (result.returncode == 0) == ok, result.stdout + result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def main():
     check_contract_and_dispatch()
     check_remove_absent_database_backend_cleanup()
     check_backup_role()
-    check_restore_transaction()
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), VaultwardenHealth)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        for case in ["plan", "foreign-group", "extract-failure", "ownership-failure",
-                     "health-failure", "no-original-health-failure", "success"]:
-            check_restore_runtime(case, server)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-    print("Vaultwarden recovery and Remove: contract, isolation, absent-backend cleanup, and rollback passed")
+    check_restore_swap()
+    print("Vaultwarden recovery and Remove: contract, isolation, absent-backend cleanup, swap inputs and restore hooks passed")
 
 
 if __name__ == "__main__":

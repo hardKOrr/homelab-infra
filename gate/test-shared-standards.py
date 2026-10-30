@@ -113,7 +113,7 @@ PRIMITIVES = {
     ),
 }
 
-# Rows only leave. The first four sets are empty: every role uses that shared code.
+# Rows only leave. Every set but restore-swap is empty: every role uses that shared code.
 ALLOWLIST = {
     "pbs-client-invocation": set(),
     "pbs-client-install": set(),
@@ -123,30 +123,15 @@ ALLOWLIST = {
         "ansible/roles/authentik/tasks/restore.yml",
         "ansible/roles/bookstack/files/bookstack-recovery",
         "ansible/roles/forgejo/tasks/restore.yml",
-        "ansible/roles/immich/tasks/restore.yml",
-        "ansible/roles/influxdb/tasks/restore.yml",
-        "ansible/roles/jellyfin/tasks/restore.yml",
-        "ansible/roles/karakeep/tasks/restore.yml",
         "ansible/roles/mautic/tasks/restore.yml",
         "ansible/roles/n8n/tasks/restore-docker.yml",
         "ansible/roles/observability/tasks/restore.yml",
         "ansible/roles/odoo/tasks/restore.yml",
         "ansible/roles/open-webui/tasks/restore.yml",
         "ansible/roles/plane/tasks/restore.yml",
-        "ansible/roles/plex/tasks/restore.yml",
-        "ansible/roles/redis/tasks/restore.yml",
-        "ansible/roles/vaultwarden/tasks/restore.yml",
         "ansible/roles/wordpress/files/wordpress-recovery",
     },
-    "restore-ownership": {
-        "ansible/roles/immich/tasks/restore.yml",
-        "ansible/roles/influxdb/tasks/restore.yml",
-        "ansible/roles/jellyfin/tasks/restore.yml",
-        "ansible/roles/karakeep/tasks/restore.yml",
-        "ansible/roles/plex/tasks/restore.yml",
-        "ansible/roles/redis/tasks/restore.yml",
-        "ansible/roles/vaultwarden/tasks/restore.yml",
-    },
+    "restore-ownership": set(),
 }
 
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)

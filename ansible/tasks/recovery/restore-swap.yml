@@ -29,7 +29,8 @@
 #              directory (`data` for data.pxar); may go deeper, such as `data/config`
 #     owner, group  numeric id or local name; every restored file gets it. The archive's
 #              ownership is never applied
-#     mode     mode of path itself, default 0750; files inside keep the archive's modes
+#     mode     mode of path itself, default 0750 (a mount keeps its own mode unless one is
+#              given); files inside keep the archive's modes
 #     mount    true when path is an exact mount point (media on NFS): its contents are
 #              swapped and every step inside it runs as owner. source must be one archive's
 #              directory
@@ -137,7 +138,7 @@
                         ~ ':' ~
                         (item.group | string if item.group | string is match('^[0-9]+$')
                          else _swap_gid_of[item.group | string]),
-               'mode': item.mode | default('0750') | string,
+               'mode': item.mode | default('' if item.mount | default(false) | bool else '0750') | string,
                'mount': item.mount | default(false) | bool,
                'allow_empty': item.allow_empty | default(false) | bool
              }] }}
@@ -169,7 +170,7 @@
           - item.source is match('^[A-Za-z0-9][A-Za-z0-9_.-]*(/[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
           - item.source.split('/') | first in _swap_stems
           - not item.mount or '/' not in item.source
-          - item.mode is match('^0?[0-7]{3,4}$')
+          - item.mode is match('^0?[0-7]{3,4}$') or (item.mount and item.mode == '')
           - _swap_paths | map(attribute='path') | select('equalto', item.path) | list | length == 1
           - >-
             _swap_paths | map(attribute='path') | reject('equalto', item.path)
@@ -323,7 +324,8 @@
             argv: >-
               {{ [recovery_swap_stage ~ '/restore-swap.sh', 'install', item.path,
                   '--source', recovery_swap_stage ~ '/' ~ item.source,
-                  '--owner', item.owner, '--mode', item.mode]
+                  '--owner', item.owner]
+                 + (['--mode', item.mode] if item.mode else [])
                  + (['--mount'] if item.mount else []) }}
           loop: "{{ _swap_paths }}"
           loop_control:

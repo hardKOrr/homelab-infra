@@ -1,0 +1,38 @@
+---
+# restore-swap.yml verified hook: the restored server token must work against Plex before
+# it is published for media consumers.
+- name: Plex restore | Read the restored server identity and token
+  ansible.builtin.slurp:
+    src: "{{ plex_state_path }}/Preferences.xml"
+  register: _plex_restored_preferences
+  no_log: true
+
+- name: Plex restore | Resolve the restored server token
+  ansible.builtin.set_fact:
+    _plex_restored_token: >-
+      {{ (_plex_restored_preferences.content | b64decode
+          | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
+  no_log: true
+
+- name: Plex restore | Require the restored server token
+  ansible.builtin.assert:
+    that: _plex_restored_token | length > 0
+    fail_msg: "Restored Preferences.xml lacks PlexOnlineToken; authenticated recovery cannot continue."
+
+- name: Plex restore | Verify the restored token through Plex
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/library/sections"
+    headers:
+      X-Plex-Token: "{{ _plex_restored_token }}"
+    status_code: 200
+  no_log: true
+  changed_when: false
+
+- name: Plex restore | Publish the restored token for media consumers
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      token: "{{ _plex_restored_token }}"
+    vault_item_secret_fields: [token]
+  no_log: true

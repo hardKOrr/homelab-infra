@@ -63,8 +63,12 @@ postgresql() {
     return
   fi
   test -s "$file"
+  # DROP OWNED below also drops extensions the application created as its own login (Immich
+  # creates unaccent, pg_trgm and uuid-ossp), so the dump's CREATE EXTENSION IF NOT EXISTS
+  # entries stay: they skip the extensions provision.yml created and recreate the login's
+  # own. Only an extension's owner may comment on it, so those entries go.
   pg_restore --list "$file" \
-    | grep -v -E '^[0-9]+; [0-9]+ [0-9]+ (EXTENSION|COMMENT - EXTENSION) ' > "$work/list"
+    | grep -v -E '^[0-9]+; [0-9]+ [0-9]+ COMMENT - EXTENSION ' > "$work/list"
   # Render first, then load: a pipe would let psql commit a truncated script.
   {
     echo 'DROP OWNED BY CURRENT_USER;'

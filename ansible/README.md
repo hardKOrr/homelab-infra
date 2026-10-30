@@ -272,10 +272,11 @@ rotates the file and restarts Deemix.
 Plex native recovery captures its stopped service's server identity, library databases,
 Metadata and Media as one PBS `data.pxar` in `host/<instance>`. Cache, Codecs, Crash
 Reports and Logs are excluded; external media mounts and transcode are outside the
-recovery unit. Restore requires `overwrite=true`, stages on the config volume, accepts
-only snapshots in the selected `host/<backup id>` group, preserves declared media paths, and
-publishes the restored server token to `homelab-infra/media/<instance>` after an
-authenticated API check.
+recovery unit. Restore requires `overwrite=true`, accepts only snapshots in the selected
+`host/<backup id>` group, refuses a state path that overlaps declared media or transcode,
+swaps the state directory through the shared restore swap, and publishes the restored
+server token to `homelab-infra/media/<instance>` after an authenticated API check. A
+failure puts the original state back and starts it.
 
 Prowlarr, Sonarr, Radarr and Lidarr share Servarr native recovery. Backup stops only the
 selected instance and captures its config directory (including `<app>.db`, `config.xml`
@@ -402,7 +403,7 @@ today's copies only shrinks.
 | PBS client on the guest, for a recovery script that runs without Ansible (cron) | `tasks/backup/pbs-client-script.yml`, installing `scripts/pbs-client.sh` and the instance's root-only client settings | `pbs_client_runtime`, `pbs_client_config_state` (`present` or `absent`); the script then runs `backup`, `list`, `verify` or `extract` with `PBS_CLIENT_CONFIG` set |
 | Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, `stop` and `restart` Deployments, optional `after_restore_tasks` hook |
 | Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_source` (`registered` or `namespace-mysql`), the instance and its config |
-| Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions and privileges stay `provision.yml` inputs |
+| Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions that need a superuser and privileges stay `provision.yml` inputs; a restore recreates the extensions the application's login created |
 | Whole MariaDB/MySQL backend guest export and restore | `tasks/database/install-server-recovery.yml`, installing `scripts/server-recovery.py` | the engine (`mariadb` or `mysql`) as its first argument; MariaDB's restore takes `--data-dir` and `--service` |
 
 The guest-side PBS client runs with `/tmp`, its cache and runtime files on a bounded tmpfs,
@@ -422,7 +423,8 @@ and never the archive's, and starts the application. Any failure after the stop 
 originals back and starts them. A rollback copy left by an earlier failed run refuses the
 next restore until someone puts it back or removes it. A path that is a mount point, such
 as media on root-squashed NFS, swaps its contents inside `<path>/.restore-previous`, and
-each step there runs as the owner.
+each step there runs as the owner. The mount keeps its own mode unless the role declares
+one.
 Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
 ## Local conventions

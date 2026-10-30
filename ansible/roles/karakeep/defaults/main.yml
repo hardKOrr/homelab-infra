@@ -2,3 +2,6 @@
 karakeep_project_dir: "/opt/{{ instance }}"
 karakeep_env_file: "{{ karakeep_project_dir }}/karakeep.env"
 karakeep_meilisearch_data_path: "{{ karakeep_project_dir }}/meilisearch"
+# Numeric owner of the data and Meilisearch directories; Deploy and restore both apply it.
+karakeep_data_uid: 1000
+karakeep_data_gid: 1000

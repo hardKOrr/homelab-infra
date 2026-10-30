@@ -1,0 +1,17 @@
+---
+# restore-swap.yml staged hook: the point must hold Plex's identity and library databases.
+- name: Plex restore | Check the staged identity and library databases
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/{{ item }}"
+  loop:
+    - Preferences.xml
+    - Plug-in Support/Databases
+  register: _plex_restore_checks
+
+- name: Plex restore | Refuse an incomplete archive
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "The archive lacks Plex identity or library databases; live state was preserved."
+  loop: "{{ _plex_restore_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"

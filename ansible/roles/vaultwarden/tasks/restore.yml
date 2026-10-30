@@ -1,54 +1,31 @@
 ---
-# Restore the complete data directory from one PBS point. The replacement is staged
-# beside the live path, and the original remains there until the restored vault passes
-# health checks. Any failure after the move puts the original directory back.
-- name: Vaultwarden restore | Resolve source and target identities
+# Restore the complete data directory from one PBS point through the shared swap. The
+# original stays beside the live path until the restored vault passes its health checks.
+- name: Vaultwarden restore | Resolve the target identity
   ansible.builtin.set_fact:
-    _vw_restore_data_path: "{{ app_config.app.data_path | default('') }}"
-    _vw_restore_service_name: "{{ app_config.app.service_name | default(vaultwarden_service_name) }}"
-    _vw_restore_source_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
     _vw_restore_target_backup_id: >-
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
-    _vw_restore_snapshot: "{{ restore_snapshot | default('') }}"
-    _application_restore_complete: false
-    _vw_restore_old_data_moved: false
-    _vw_restore_replacement_installed: false
-    _vw_restore_rollback_complete: false
 
 - name: Vaultwarden restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
-      - _vw_restore_data_path is match('^/[^/].*')
-      - _vw_restore_data_path != '/'
-      - _vw_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-      - _vw_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - app_config.app.data_path | default('') is match('^/[^/].*')
       - restore_overwrite is defined
-      - (_vw_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - homelabinfra_infra.backups is defined
     fail_msg: >-
-      Vaultwarden restore needs its application-consistent contract, safe source and target
-      backup ids, and a selected recovery point when overwrite=true.
-
-- name: Vaultwarden restore | Validate the selected source group
-  ansible.builtin.assert:
-    that:
-      - _vw_restore_snapshot.startswith('host/' ~ _vw_restore_source_backup_id ~ '/')
-      - _vw_restore_snapshot | length > ('host/' ~ _vw_restore_source_backup_id ~ '/') | length
-    fail_msg: >-
-      The selected Vaultwarden recovery point must belong to
-      host/{{ _vw_restore_source_backup_id }}/.
-  when: _vw_restore_snapshot | length > 0
+      Vaultwarden restore needs its application-consistent contract, an absolute data path,
+      and a selected recovery point when overwrite=true.
 
 - name: Vaultwarden restore | Validate the independent pre-restore group
   ansible.builtin.assert:
     that:
       - restore_pre_restore_point is defined
       - restore_pre_restore_point.startswith('host/' ~ _vw_restore_target_backup_id ~ '/')
-      - restore_pre_restore_point != _vw_restore_snapshot
+      - restore_pre_restore_point != restore_snapshot
       - restore_pre_restore_point | length > ('host/' ~ _vw_restore_target_backup_id ~ '/') | length
     fail_msg: >-
       Existing-target Vaultwarden restore needs an independent pre-restore point in
@@ -57,215 +34,19 @@
     - restore_destination | default('existing') == 'existing'
     - restore_overwrite | bool
 
-# Runs on every restore, before the stop below: a point from another group, an
-# unreachable PBS or a point without data.pxar fails while the vault still serves.
-- name: Vaultwarden restore | List or verify the recovery point before changing the vault
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Vaultwarden restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: native
-    pbs_client_backup_id: "{{ _vw_restore_source_backup_id }}"
-    pbs_client_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
-    pbs_client_archives: [{name: data.pxar}]
-    pbs_client_overwrite: false
-
-- name: Vaultwarden restore | Check the target data directory
-  ansible.builtin.stat:
-    path: "{{ _vw_restore_data_path }}"
-  register: _vw_restore_target_data
-  changed_when: false
-  when: restore_overwrite | bool
-
-- name: Vaultwarden restore | Refuse an unsafe target data path
-  ansible.builtin.assert:
-    that:
-      - not _vw_restore_target_data.stat.exists or _vw_restore_target_data.stat.isdir
-      - not (_vw_restore_target_data.stat.islnk | default(false))
-    fail_msg: >-
-      Vaultwarden restore target {{ _vw_restore_data_path }} is not a real directory.
-  when: restore_overwrite | bool
-
-- name: Vaultwarden restore | Create private staging and rollback directories
-  ansible.builtin.tempfile:
-    state: directory
-    path: "{{ _vw_restore_data_path | dirname }}"
-    prefix: .vaultwarden-restore-
-  register: _vw_restore_stage
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Vaultwarden restore | Prepare the staging data directory
-  ansible.builtin.file:
-    path: "{{ _vw_restore_stage.path }}/data"
-    state: directory
-    mode: "0700"
-  when: restore_overwrite | bool
-
-- name: Vaultwarden restore | Replace and verify the data directory
-  when: restore_overwrite | bool
-  block:
-    - name: Vaultwarden restore | Stop only this instance
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_restore_service_name }}"
-        state: stopped
-
-    - name: Vaultwarden restore | Extract the selected PBS archive
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: native
-        pbs_client_backup_id: "{{ _vw_restore_source_backup_id }}"
-        pbs_client_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
-        pbs_client_archives:
-          - name: data.pxar
-            path: "{{ _vw_restore_stage.path }}/data"
-
-    - name: Vaultwarden restore | Check the staged SQLite database
-      ansible.builtin.stat:
-        path: "{{ _vw_restore_stage.path }}/data/db.sqlite3"
-      register: _vw_restore_staged_database
-      changed_when: false
-
-    - name: Vaultwarden restore | Require a complete staged vault
-      ansible.builtin.assert:
-        that:
-          - _vw_restore_staged_database.stat.exists
-          - _vw_restore_staged_database.stat.isreg
-        fail_msg: >-
-          The selected Vaultwarden archive did not restore db.sqlite3; the current data
-          directory has not been replaced.
-
-    - name: Vaultwarden restore | Create private rollback space beside the data directory
-      ansible.builtin.tempfile:
-        state: directory
-        path: "{{ _vw_restore_data_path | dirname }}"
-        prefix: .vaultwarden-pre-restore-
-      register: _vw_restore_previous
-      changed_when: true
-
-    - name: Vaultwarden restore | Move the original data aside on the same filesystem
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _vw_restore_data_path }}"
-          - "{{ _vw_restore_previous.path }}/data"
-      register: _vw_restore_move_original
-      changed_when: _vw_restore_move_original.rc == 0
-      when: _vw_restore_target_data.stat.exists
-
-    - name: Vaultwarden restore | Record the original data move
-      ansible.builtin.set_fact:
-        _vw_restore_old_data_moved: true
-      when: _vw_restore_target_data.stat.exists
-
-    - name: Vaultwarden restore | Move the staged data into place
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _vw_restore_stage.path }}/data"
-          - "{{ _vw_restore_data_path }}"
-      register: _vw_restore_install
-      changed_when: _vw_restore_install.rc == 0
-
-    - name: Vaultwarden restore | Record the replacement installation
-      ansible.builtin.set_fact:
-        _vw_restore_replacement_installed: true
-
-    - name: Vaultwarden restore | Restore system-user ownership
-      ansible.builtin.command:
-        argv:
-          - chown
-          - -R
-          - "{{ vaultwarden_user }}:{{ vaultwarden_user }}"
-          - "{{ _vw_restore_data_path }}"
-      changed_when: true
-
-    - name: Vaultwarden restore | Set the data-directory permissions
-      ansible.builtin.file:
-        path: "{{ _vw_restore_data_path }}"
-        state: directory
+    recovery_swap_runtime: native
+    recovery_swap_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
         owner: "{{ vaultwarden_user }}"
         group: "{{ vaultwarden_user }}"
         mode: "0750"
-
-    - name: Vaultwarden restore | Start only this instance
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_restore_service_name }}"
-        state: started
-
-    - name: Vaultwarden restore | Wait for the restored API
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/alive"
-        status_code: 200
-      register: _vw_restore_health
-      until: _vw_restore_health.status | default(0) == 200
-      retries: 30
-      delay: 5
-      changed_when: false
-
-    - name: Vaultwarden restore | Verify the restored web vault
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/"
-        status_code: 200
-        return_content: true
-      register: _vw_restore_web_vault
-      failed_when: >-
-        _vw_restore_web_vault.status | default(0) != 200
-        or 'Vaultwarden Web' not in (_vw_restore_web_vault.content | default(''))
-      changed_when: false
-
-    - name: Vaultwarden restore | Mark the recovery complete
-      ansible.builtin.set_fact:
-        _application_restore_complete: true
-  rescue:
-    - name: Vaultwarden restore | Stop the service after a failed replacement
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_restore_service_name }}"
-        state: stopped
-
-    - name: Vaultwarden restore | Remove the failed replacement data
-      ansible.builtin.file:
-        path: "{{ _vw_restore_data_path }}"
-        state: absent
-      when: _vw_restore_replacement_installed | bool
-
-    - name: Vaultwarden restore | Put the original data back
-      ansible.builtin.command:
-        argv:
-          - mv
-          - "{{ _vw_restore_previous.path }}/data"
-          - "{{ _vw_restore_data_path }}"
-      changed_when: true
-      when: _vw_restore_old_data_moved | bool
-
-    - name: Vaultwarden restore | Mark the rollback complete
-      ansible.builtin.set_fact:
-        _vw_restore_rollback_complete: true
-
-    - name: Vaultwarden restore | Restart the service after a successful rollback
-      ansible.builtin.systemd_service:
-        name: "{{ _vw_restore_service_name }}"
-        state: started
-      when: _vw_restore_rollback_complete | bool
-
-    - name: Vaultwarden restore | Report the failed restore
-      ansible.builtin.fail:
-        msg: >-
-          Vaultwarden restore failed. Rollback completed and the service was restarted.
-          If rollback itself failed, inspect the retained directory beside
-          {{ _vw_restore_data_path }} before retrying.
-  always:
-    - name: Vaultwarden restore | Remove rollback data after success or rollback
-      ansible.builtin.file:
-        path: "{{ _vw_restore_previous.path }}"
-        state: absent
-      when:
-        - _vw_restore_previous.path is defined
-        - >-
-          (_application_restore_complete | bool)
-          or (_vw_restore_rollback_complete | bool)
-          or not (_vw_restore_old_data_moved | bool)
-
-    - name: Vaultwarden restore | Remove private staging data
-      ansible.builtin.file:
-        path: "{{ _vw_restore_stage.path }}"
-        state: absent
-      when: _vw_restore_stage.path is defined
+    recovery_swap_stop_services: ["{{ app_config.app.service_name | default(vaultwarden_service_name) }}"]
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/alive"
+    recovery_swap_health_retries: 30
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

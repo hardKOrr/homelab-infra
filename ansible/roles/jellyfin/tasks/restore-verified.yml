@@ -1,0 +1,89 @@
+---
+# restore-swap.yml verified hook: the restored server is a configured Jellyfin, accepts the
+# source app-owned account and has a media library; the account is then recorded for this
+# instance.
+- name: Jellyfin restore | Read the restored server
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/System/Info/Public"
+    return_content: true
+    status_code: 200
+  register: _jellyfin_restore_health
+  changed_when: false
+
+- name: Jellyfin restore | Assert the server is configured and healthy
+  ansible.builtin.assert:
+    that:
+      - (_jellyfin_restore_health.json.ProductName | default('')) is search('Jellyfin')
+      - _jellyfin_restore_health.json.StartupWizardCompleted | default(false) | bool
+    fail_msg: The restored config did not return a completed Jellyfin server.
+
+- name: Jellyfin restore | Authenticate with the source app-owned account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/Users/AuthenticateByName"
+    method: POST
+    headers:
+      Authorization: >-
+        MediaBrowser Client="{{ jellyfin_client_name }}",
+        Device="{{ jellyfin_device_name }}",
+        DeviceId="{{ jellyfin_client_name }}-{{ instance }}", Version="1.0.0"
+    body_format: json
+    body:
+      Username: "{{ restore_source_jellyfin_user }}"
+      Pw: "{{ restore_source_jellyfin_password }}"
+    status_code: [200, 401]
+  register: _jellyfin_restore_auth
+  changed_when: false
+  no_log: true
+
+- name: Jellyfin restore | Assert the restored account authenticates
+  ansible.builtin.assert:
+    that:
+      - _jellyfin_restore_auth.status == 200
+      - (_jellyfin_restore_auth.json.AccessToken | default('')) | length > 0
+    fail_msg: >-
+      The restored Jellyfin database did not accept the source app-owned account.
+
+- name: Jellyfin restore | Read the restored users
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/Users"
+    headers:
+      Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+    return_content: true
+    status_code: 200
+  register: _jellyfin_restore_users
+  changed_when: false
+  no_log: true
+
+- name: Jellyfin restore | Assert the app-owned account is present
+  ansible.builtin.assert:
+    that: >-
+      restore_source_jellyfin_user in
+      (_jellyfin_restore_users.json | map(attribute='Name') | list)
+    fail_msg: >-
+      The restored Jellyfin database does not contain its app-owned account.
+
+- name: Jellyfin restore | Read the restored libraries
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/Library/VirtualFolders"
+    headers:
+      Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+    return_content: true
+    status_code: 200
+  register: _jellyfin_restore_libraries
+  changed_when: false
+  no_log: true
+
+- name: Jellyfin restore | Assert a library was restored
+  ansible.builtin.assert:
+    that: (_jellyfin_restore_libraries.json | default([]) | length) > 0
+    fail_msg: "The restored Jellyfin account has no configured media libraries."
+
+- name: Jellyfin restore | Publish the restored account for the target instance
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      username: "{{ restore_source_jellyfin_user }}"
+      password: "{{ restore_source_jellyfin_password }}"
+    vault_item_secret_fields: [password]
+  no_log: true

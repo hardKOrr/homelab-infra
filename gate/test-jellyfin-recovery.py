@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise Jellyfin's PBS backup and rollback-safe restore tasks locally."""
+"""Exercise Jellyfin's PBS backup, its restore contract and its restore-swap hooks.
+
+gate/test-restore-swap.py proves the swap and rollback themselves.
+"""
 
 import copy
 import http.server
@@ -14,11 +17,11 @@ from pathlib import Path
 import yaml
 
 from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/backup.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore.yml").read_text())
 snapshot = "host/jellyfin/2026-10-10T00:00:00Z"
 pre_restore_point = "host/jellyfin/2026-10-11T00:00:00Z"
 source_password = "fixture Jellyfin password"
@@ -35,9 +38,9 @@ class JellyfinApi(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/System/Info/Public":
-            self.respond(self.server.health_status, {
+            self.respond(200, {
                 "ProductName": "Jellyfin Server",
-                "StartupWizardCompleted": True,
+                "StartupWizardCompleted": not self.server.unconfigured,
             })
             return
         valid = self.headers.get("Authorization") == 'MediaBrowser Token="restored token"'
@@ -177,157 +180,97 @@ def check_backup_inputs_and_hook():
             assert (result.returncode == 0) == healthy, result.stdout + result.stderr
 
 
-def check_restore(case, server, db_relative="data/jellyfin.db"):
+def run_hook(hook, stage, port):
+    tasks = yaml.safe_load((repo / f"ansible/roles/jellyfin/tasks/restore-{hook}.yml").read_text())
+    for task in tasks:
+        task.pop("no_log", None)
+        if str(task.get("ansible.builtin.include_tasks", "")).endswith("upsert-item.yml"):
+            # Vaultwarden is the external boundary; the source account is what gets recorded.
+            del task["ansible.builtin.include_tasks"]
+            task["ansible.builtin.assert"] = {"that": [
+                "vault_item_name == 'homelab-infra/media/jellyfin'",
+                f"vault_item_fields == {{'username': 'admin', 'password': '{source_password}'}}"]}
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "bin").mkdir()
-        config = root / "opt/jellyfin/config"
-        (config / db_relative).parent.mkdir(parents=True)
-        (config / "original.txt").write_text("fresh deploy state\n")
-        with sqlite3.connect(config / db_relative) as db:
-            db.execute("create table original(value text)")
-        write_script(root, "proxmox-backup-client", """#!/usr/bin/env python3
-import os,sqlite3,sys
-from pathlib import Path
-args=sys.argv[1:]
-if args[:2] == ['snapshot', 'list']:
-    print('host/jellyfin/2026-10-10T00:00:00Z')
-else:
-    assert args[:3] == ['restore', 'host/jellyfin/2026-10-10T00:00:00Z', 'data.pxar'], args
-    if os.environ['JELLYFIN_TEST_CASE']=='extract-failure': raise SystemExit(7)
-    target=Path(args[3])
-    relative=Path(os.environ['JELLYFIN_TEST_DB_RELATIVE'])
-    database=target/relative
-    if os.environ['JELLYFIN_TEST_CASE']!='archive-missing-db':
-        database.parent.mkdir(parents=True,exist_ok=True)
-        if os.environ['JELLYFIN_TEST_CASE']=='integrity-failure':
-            database.write_text('not a sqlite database')
-        else:
-            with sqlite3.connect(database) as db:
-                db.execute('create table restored(value text)')
-                db.execute("insert into restored values ('canary')")
-    (target/'restored.txt').write_text('restored state\\n')
-""")
-        write_script(root, "service", """#!/usr/bin/env python3
-import os,sys
-from pathlib import Path
-assert sys.argv[2:] == ['jellyfin']
-log_path = Path(os.environ['JELLYFIN_TEST_ROOT'],'services')
-previous = log_path.read_text().splitlines() if log_path.exists() else []
-with log_path.open('a') as log:
-    log.write(sys.argv[1]+'\\n')
-if (sys.argv[1]=='present' and os.environ['JELLYFIN_TEST_CASE']=='start-failure'
-        and 'present' not in previous): raise SystemExit(7)
-""")
-        write_script(root, "cp", """#!/usr/bin/env python3
-import os,subprocess,sys
-result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE'] in ['copy-failure','rollback-failure']
-                 else result.returncode)
-""")
-        write_script(root, "mv", """#!/usr/bin/env python3
-import os,subprocess,sys
-args=sys.argv[1:]
-if os.environ['JELLYFIN_TEST_CASE']=='move-failure' and args[0].endswith('/config'): raise SystemExit(7)
-if os.environ['JELLYFIN_TEST_CASE']=='rollback-failure' and args[0].endswith('/original'): raise SystemExit(7)
-raise SystemExit(subprocess.run(['/bin/mv',*args]).returncode)
-""")
-        write_script(root, "publish", """#!/usr/bin/env python3
-import os
-raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0)
-""")
-        server.health_status = 503 if case == "health-failure" else 200
-        server.auth_failure = case == "auth-failure"
-        server.library_failure = case == "library-failure"
-        selected_snapshot = "host/foreign/2026-10-10T00:00:00Z" if case == "foreign-group" else snapshot
-        prepoint = "" if case == "missing-prepoint" else pre_restore_point
-        if case == "foreign-prepoint":
-            prepoint = "host/foreign/2026-10-11T00:00:00Z"
-        overwrite = case not in ["plan"]
-        playbook = root / "restore.yml"
+        playbook = Path(directory) / "hook.yml"
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,
-            "vars": {
-                "instance": "jellyfin", "jellyfin_project_dir": str(root / "opt/jellyfin"),
-                "jellyfin_client_name": "homelab-infra", "jellyfin_device_name": "deploy",
-                "restore_snapshot": "" if case == "plan" else selected_snapshot,
-                "restore_backup_id": "jellyfin", "restore_target_backup_id": "jellyfin",
-                "restore_pre_restore_point": prepoint, "restore_destination": "existing",
-                "restore_overwrite": overwrite,
-                "restore_source_jellyfin_user": "admin",
-                "restore_source_jellyfin_password": source_password,
-                "jellyfin_http_retries": 1, "jellyfin_http_delay": 0,
-                "homelabinfra_infra": {"backups": {}},
-                "app_config": {
-                    "app": {"config_path": str(config), "port": server.server_port,
-                            "puid": os.getuid(), "pgid": os.getgid()},
-                    "backup": {"enabled": True, "application_consistent": True},
-                },
-            },
-            "tasks": fixture_tasks(restore_source, root),
+            "vars": {"instance": "jellyfin", "recovery_swap_stage": str(stage),
+                     "jellyfin_client_name": "homelab-infra", "jellyfin_device_name": "deploy",
+                     "restore_source_jellyfin_user": "admin",
+                     "restore_source_jellyfin_password": source_password,
+                     "app_config": {"app": {"port": port}}},
+            "tasks": tasks,
         }]))
-        env = os.environ | {
-            "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-            "JELLYFIN_TEST_CASE": case, "JELLYFIN_TEST_ROOT": str(root),
-            "JELLYFIN_TEST_DB_RELATIVE": db_relative,
-        }
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
-                                env=env, text=True, capture_output=True, check=False)
-        success = case in ["plan", "success", "success-nested-db"]
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        if case in ["success", "success-nested-db"]:
-            assert not (config / "original.txt").exists()
-            assert (config / "restored.txt").read_text() == "restored state\n"
-            with sqlite3.connect(config / db_relative) as db:
-                assert db.execute("select value from restored").fetchone()[0] == "canary"
-        elif case == "rollback-failure":
-            assert not config.exists()
-        else:
-            assert (config / "original.txt").read_text() == "fresh deploy state\n"
-        staging = list(config.parent.glob(".jellyfin-restore-*"))
-        if case == "rollback-failure":
-            assert len(staging) == 1, result.stdout + result.stderr
-            assert (staging[0] / "original" / "original.txt").read_text() == "fresh deploy state\n"
-        else:
-            assert not staging, result.stdout + result.stderr
-        if case in ["plan", "foreign-group", "foreign-prepoint", "missing-prepoint"]:
-            assert not (root / "services").exists(), "plan/rejected restore stopped Jellyfin"
-        elif case == "rollback-failure":
-            assert (root / "services").read_text().splitlines() == ["stopped", "stopped"]
-        else:
-            states = (root / "services").read_text().splitlines()
-            if case in ["extract-failure", "archive-missing-db", "integrity-failure", "move-failure"]:
-                assert states == ["stopped", "present"], states
-            elif case in ["success", "success-nested-db"]:
-                assert states == ["stopped", "present"], states
-            elif case in ["copy-failure", "start-failure", "health-failure", "auth-failure",
-                          "library-failure", "publish-failure"]:
-                assert states == (["stopped", "stopped", "present"]
-                                  if case == "copy-failure" else
-                                  ["stopped", "present", "stopped", "present"]), states
-                assert "The original config was put back and Jellyfin was restarted." in result.stdout
-            else:
-                raise AssertionError(f"unhandled restore case {case}")
+        env = os.environ | {"ANSIBLE_NOCOLOR": "1"}
+        return subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                              env=env, text=True, capture_output=True, check=False)
+
+
+def check_restore_swap(server):
+    """Jellyfin supplies its paths and checks; gate/test-restore-swap.py proves the swap."""
+    swap = swap_inputs("jellyfin")
+    [path] = swap["recovery_swap_paths"]
+    assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
+                    "group": "{{ app_config.app.pgid }}", "mode": "0750"}
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_compose_project"] == "{{ jellyfin_project_dir }}"
+    assert swap["recovery_swap_health_url"].endswith("/System/Info/Public")
+
+    with tempfile.TemporaryDirectory() as directory:
+        stage = Path(directory)
+        (stage / "data").mkdir()
+        assert run_hook("staged", stage, server.server_port).returncode != 0, "no jellyfin.db"
+        database = stage / "data/data/jellyfin.db"
+        database.parent.mkdir()
+        database.write_text("not a sqlite database")
+        assert run_hook("staged", stage, server.server_port).returncode != 0, "corrupt jellyfin.db"
+        database.unlink()
+        sqlite3.connect(database).close()
+        result = run_hook("staged", stage, server.server_port)
+        assert result.returncode == 0, result.stdout + result.stderr
+        (stage / "data/jellyfin.db").write_bytes(database.read_bytes())
+        assert run_hook("staged", stage, server.server_port).returncode != 0, "two jellyfin.db"
+
+    for case in ["not-configured", "auth-failure", "library-failure", "restored"]:
+        server.unconfigured = case == "not-configured"
+        server.auth_failure = case == "auth-failure"
+        server.library_failure = case == "library-failure"
+        result = run_hook("verified", Path("/nonexistent"), server.server_port)
+        assert (result.returncode == 0) == (case == "restored"), case + result.stdout + result.stderr
+
+
+def check_contract():
+    """An existing target needs an independent pre-restore point before anything runs."""
+    contract = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore.yml").read_text())[0]
+    for point, ok in [("", False), (snapshot, False), (pre_restore_point, True)]:
+        with tempfile.TemporaryDirectory() as directory:
+            playbook = Path(directory) / "contract.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"restore_overwrite": True, "restore_snapshot": snapshot,
+                         "restore_pre_restore_point": point, "restore_destination": "existing",
+                         "restore_source_jellyfin_user": "admin",
+                         "restore_source_jellyfin_password": source_password,
+                         "homelabinfra_infra": {"backups": {}},
+                         "app_config": {"backup": {"enabled": True, "application_consistent": True}}},
+                "tasks": [contract],
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                                    text=True, capture_output=True, check=False)
+            assert (result.returncode == 0) == ok, point + result.stdout + result.stderr
 
 
 def main():
     test_defaults_and_dispatch()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), JellyfinApi)
-    server.health_status = 200
     server.auth_failure = False
     server.library_failure = False
+    server.unconfigured = False
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in [
-            "plan", "foreign-group", "foreign-prepoint", "missing-prepoint",
-            "extract-failure", "archive-missing-db", "integrity-failure", "move-failure",
-            "copy-failure", "rollback-failure", "start-failure", "health-failure", "auth-failure",
-            "library-failure", "publish-failure", "success",
-        ]:
-            check_restore(case, server)
-        check_restore("success-nested-db", server, "data/data/jellyfin.db")
+        check_restore_swap(server)
     finally:
         server.shutdown()
         server.server_close()
@@ -336,7 +279,8 @@ def main():
     check_backup(True)
     check_backup(False, "data/data/jellyfin.db")
     check_backup_inputs_and_hook()
-    print("Jellyfin: native PBS backup, read-only planning, app/group guards, API verification, and restore rollback passed")
+    check_contract()
+    print("Jellyfin: PBS backup, restore contract, swap inputs, staged database and API verification hooks passed")
 
 
 if __name__ == "__main__":

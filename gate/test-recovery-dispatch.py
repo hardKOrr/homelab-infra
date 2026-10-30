@@ -214,79 +214,10 @@ def main():
         "ansible.builtin.assert"]["that"]
     assert "app_config.media_storage.owner.gid | default(0) | int > 0" in restore_contract[
         "ansible.builtin.assert"]["that"]
-    restore_mountpoint = next(task for task in restore_tasks
-                              if task.get("name") == "Immich restore | Check the declared media path is an exact mount point")
-    assert restore_mountpoint["ansible.builtin.command"]["argv"] == [
-        "findmnt", "--noheadings", "--output", "TARGET", "--mountpoint",
-        "{{ _immich_restore_media_path }}",
-    ]
-    assert restore_mountpoint["when"] == "restore_overwrite | bool"
-    assert restore_mountpoint["no_log"] is True
-    restore_mount_guard = next(task for task in restore_tasks
-                               if task.get("name") == "Immich restore | Refuse to replace an unmounted media path")
-    assert restore_mount_guard["when"] == "restore_overwrite | bool"
-    assert "_immich_restore_media_mountpoint.stdout | trim == _immich_restore_media_path" in (
-        restore_mount_guard["ansible.builtin.assert"]["that"])
-    selected = next(task["block"] for task in restore_tasks
-                    if task.get("name") == "Immich restore | Restore the selected point")
-    names = [task.get("name") for task in selected]
-    fetch = selected[names.index("Immich restore | Fetch the database and durable media archives")]
-    assert fetch["ansible.builtin.include_tasks"] == "../../../tasks/backup/pbs-client-restore.yml"
-    assert fetch["vars"]["pbs_client_restore_args"] == ["--allow-existing-dirs", "true"]
-    assert [a["name"] for a in fetch["vars"]["pbs_client_archives"]] == ["database.pxar", "media.pxar"]
-    replace_index = names.index("Immich restore | Replace the application-consistent artifact")
-    assert names.index("Immich restore | Fetch the database and durable media archives") < names.index(
-        "Immich restore | Refuse an archive without a database dump") < replace_index, (
-        "both archives must be fetched and the dump checked before Immich stops")
-    restore_block = selected[replace_index]["block"]
-    assert restore_block[0]["name"] == "Immich restore | Stop Immich services"
-    fetch_index = 0
-    database_private_index = next(i for i, task in enumerate(restore_block)
-                                  if task.get("name") == "Immich restore | Keep the database dump private from the media owner")
-    scratch_traverse_index = next(i for i, task in enumerate(restore_block)
-                                  if task.get("name") == "Immich restore | Allow the media owner to traverse private scratch")
-    media_owner_index = next(i for i, task in enumerate(restore_block)
-                             if task.get("name") == "Immich restore | Assign extracted media to its declared owner")
-    clear_index = next(i for i, task in enumerate(restore_block)
-                       if task.get("name") == "Immich restore | Empty the durable media mount as its declared owner")
-    copy_index = next(i for i, task in enumerate(restore_block)
-                      if task.get("name") == "Immich restore | Restore durable originals and thumbnails as their declared owner")
-    assert fetch_index < database_private_index < scratch_traverse_index < media_owner_index < clear_index < copy_index, (
-        "both PBS archives must validate before staging changes or the target mount is replaced")
-    database_private = restore_block[database_private_index]
-    assert database_private["ansible.builtin.file"]["mode"] == "0700"
-    assert database_private["ansible.builtin.file"]["owner"] == "root"
-    assert database_private.get("no_log") is True
-    scratch_traverse = restore_block[scratch_traverse_index]
-    assert scratch_traverse["ansible.builtin.file"]["mode"] == "0711"
-    assert scratch_traverse.get("no_log") is True
-    media_stage = restore_block[media_owner_index]["ansible.builtin.file"]
-    assert media_stage["owner"] == "{{ app_config.media_storage.owner.uid | int }}"
-    assert media_stage["group"] == "{{ app_config.media_storage.owner.gid | int }}"
-    assert media_stage["recurse"] is True
-    assert restore_block[media_owner_index].get("no_log") is True
-    clear_media = restore_block[clear_index]
-    clear_argv = clear_media["ansible.builtin.command"]["argv"]
-    assert clear_argv == [
-        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
-        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
-        "find", ".", "-mindepth", "1", "-maxdepth", "1",
-        "-exec", "rm", "-rf", "--", "{}", "+",
-    ], clear_argv
-    assert clear_media["ansible.builtin.command"]["chdir"] == "{{ _immich_restore_media_path }}"
-    assert clear_media.get("no_log") is True
-    assert clear_media.get("changed_when") is True
-    copy_media = restore_block[copy_index]
-    copy_argv = copy_media["ansible.builtin.command"]["argv"]
-    assert copy_argv == [
-        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
-        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
-        "cp", "-a", "--no-preserve=ownership", "{{ _immich_restore_scratch.path }}/media/.",
-        ".",
-    ], copy_argv
-    assert copy_media["ansible.builtin.command"]["chdir"] == "{{ _immich_restore_media_path }}"
-    assert copy_media.get("no_log") is True
-    assert copy_media.get("changed_when") is True
+    # The media mount check, swap and rollback are the shared restore swap's; see
+    # gate/test-immich-restore.py for what Immich passes to it.
+    assert any(str(task.get("ansible.builtin.include_tasks", "")).endswith("tasks/recovery/restore-swap.yml")
+               for task in restore_tasks)
 
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.

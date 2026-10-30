@@ -1,0 +1,26 @@
+---
+# restore-swap.yml verified hook: the restored state must accept the source operator token;
+# a new target then records the source credentials it now holds.
+- name: InfluxDB restore | Verify the restored operator token
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/authorizations"
+    headers:
+      Authorization: "Token {{ _influxdb_restore_source_credentials.operator_token }}"
+    status_code: 200
+  changed_when: false
+  no_log: true
+
+- name: InfluxDB restore | Align a new target's Vaultwarden credentials with the restored state
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ _influxdb_restore_source_credentials.admin_user }}"
+      admin_password: "{{ _influxdb_restore_source_credentials.admin_password }}"
+      operator_token: "{{ _influxdb_restore_source_credentials.operator_token }}"
+      organization: "{{ _influxdb_restore_source_credentials.organization }}"
+      bucket: "{{ _influxdb_restore_source_credentials.bucket }}"
+    vault_item_secret_fields: [admin_password, operator_token]
+  when: restore_destination | default('existing') == 'new'
+  no_log: true

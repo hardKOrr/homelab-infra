@@ -1,9 +1,8 @@
 ---
-# Restore Immich's application-consistent database and durable media artifact.
-#
-# Plan mode lists or verifies the source point. Overwrite mode fetches and validates both
-# archives while Immich still runs, then stops it and replaces the media mount and named
-# database. A failure after the stop leaves services stopped for operator recovery.
+# Restore Immich's application-consistent database and durable media artifact through the
+# shared swap. Both archives are fetched and the dump checked while Immich still runs; the
+# media mount is swapped as its declared owner and the named database replaced while it is
+# stopped. On a failure the original media and the pre-restore database dump go back.
 - name: Immich restore | Require one declared durable media mount
   ansible.builtin.assert:
     that:
@@ -24,7 +23,6 @@
       {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_user
          | default(app_config.app.database.role | default(''), true) }}
     _immich_restore_media_path: "{{ (app_config.media_storage.mounts | first).path }}"
-    _immich_restore_backup_id: "{{ restore_backup_id | default(instance, true) }}"
   no_log: true
 
 - name: Immich restore | Assert the restore contract
@@ -49,219 +47,29 @@
       credential, and a snapshot when overwrite=true.
   no_log: true
 
-- name: Immich restore | List or verify the recovery point without changing Immich
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+- name: Immich restore | Preview or replace the media and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    pbs_client_runtime: docker
-    pbs_client_backup_id: "{{ _immich_restore_backup_id }}"
-    pbs_client_archives: [{name: database.pxar}, {name: media.pxar}]
-  when: not (restore_overwrite | bool)
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, media.pxar]
+    recovery_swap_paths:
+      - path: "{{ _immich_restore_media_path }}"
+        source: media
+        owner: "{{ app_config.media_storage.owner.uid | int }}"
+        group: "{{ app_config.media_storage.owner.gid | int }}"
+        mount: true
+    recovery_swap_stop_services: [immich-server, immich-machine-learning]
+    recovery_swap_compose_project: "{{ immich_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_stopped_hook: "{{ role_path }}/tasks/restore-stopped.yml"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/server/ping"
 
 - name: Immich restore | Report the read-only plan
   ansible.builtin.debug:
     msg:
       - "PLAN ONLY — nothing was changed."
-      - "The recovery points of host/{{ _immich_restore_backup_id }} were read from PBS."
       - "A real restore replaces {{ _immich_restore_media_path }} and database {{ app_config.app.database.name }}."
       - "Re-run with snapshot=<snapshot-id> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
-
-- name: Immich restore | Check the declared media path is an exact mount point
-  ansible.builtin.command:
-    argv:
-      - findmnt
-      - --noheadings
-      - --output
-      - TARGET
-      - --mountpoint
-      - "{{ _immich_restore_media_path }}"
-  register: _immich_restore_media_mountpoint
-  changed_when: false
-  no_log: true
-  when: restore_overwrite | bool
-
-- name: Immich restore | Refuse to replace an unmounted media path
-  ansible.builtin.assert:
-    that:
-      - _immich_restore_media_mountpoint.rc == 0
-      - _immich_restore_media_mountpoint.stdout | trim == _immich_restore_media_path
-    fail_msg: "Refusing to restore Immich media because its declared path is not mounted here."
-  no_log: true
-  when: restore_overwrite | bool
-
-# Staging is outside /tmp, which the client's tmpfs replaces, and traversable by the
-# media owner, who copies the media out of it.
-- name: Immich restore | Allocate private scratch space
-  ansible.builtin.tempfile:
-    state: directory
-    path: /var/tmp
-    prefix: immich-restore-
-  register: _immich_restore_scratch
-  changed_when: true
-  when: restore_overwrite | bool
-
-- name: Immich restore | Restore the selected point
-  when: restore_overwrite | bool
-  block:
-    - name: Immich restore | Create the extraction directories
-      ansible.builtin.file:
-        path: "{{ _immich_restore_scratch.path }}/{{ item }}"
-        state: directory
-        mode: "0700"
-      loop: [database, media]
-
-    - name: Immich restore | Fetch the database and durable media archives
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
-      vars:
-        pbs_client_runtime: docker
-        pbs_client_backup_id: "{{ _immich_restore_backup_id }}"
-        pbs_client_restore_args: [--allow-existing-dirs, "true"]
-        pbs_client_archives:
-          - name: database.pxar
-            path: "{{ _immich_restore_scratch.path }}/database"
-          - name: media.pxar
-            path: "{{ _immich_restore_scratch.path }}/media"
-
-    - name: Immich restore | Check the archived database dump
-      ansible.builtin.stat:
-        path: "{{ _immich_restore_scratch.path }}/database/immich.dump"
-      register: _immich_restore_dump
-      changed_when: false
-
-    - name: Immich restore | Refuse an archive without a database dump
-      ansible.builtin.assert:
-        that: _immich_restore_dump.stat.size | default(0) | int > 0
-        fail_msg: >-
-          The selected Immich point holds no database dump; Immich keeps running unchanged.
-
-    - name: Immich restore | Replace the application-consistent artifact
-      block:
-        - name: Immich restore | Stop Immich services
-          community.docker.docker_compose_v2:
-            project_src: "{{ immich_project_dir }}"
-            state: stopped
-            services:
-              - immich-server
-              - immich-machine-learning
-
-        - name: Immich restore | Keep the database dump private from the media owner
-          ansible.builtin.file:
-            path: "{{ _immich_restore_scratch.path }}/database"
-            state: directory
-            owner: root
-            group: root
-            mode: "0700"
-          no_log: true
-
-        - name: Immich restore | Allow the media owner to traverse private scratch
-          ansible.builtin.file:
-            path: "{{ _immich_restore_scratch.path }}"
-            state: directory
-            mode: "0711"
-          no_log: true
-
-        - name: Immich restore | Assign extracted media to its declared owner
-          ansible.builtin.file:
-            path: "{{ _immich_restore_scratch.path }}/media"
-            state: directory
-            owner: "{{ app_config.media_storage.owner.uid | int }}"
-            group: "{{ app_config.media_storage.owner.gid | int }}"
-            recurse: true
-          no_log: true
-
-        # Root-squashed NFS needs the declared owner; find also needs an accessible starting cwd.
-        - name: Immich restore | Empty the durable media mount as its declared owner
-          ansible.builtin.command:
-            argv:
-              - setpriv
-              - --reuid
-              - "{{ app_config.media_storage.owner.uid | int }}"
-              - --regid
-              - "{{ app_config.media_storage.owner.gid | int }}"
-              - --clear-groups
-              - find
-              - .
-              - -mindepth
-              - "1"
-              - -maxdepth
-              - "1"
-              - -exec
-              - rm
-              - -rf
-              - --
-              - "{}"
-              - +
-            # Enter the verified mount as root, then scan from its cwd as the media owner.
-            # This does not require the owner to traverse restricted ancestor directories.
-            chdir: "{{ _immich_restore_media_path }}"
-          changed_when: true
-          no_log: true
-
-        - name: Immich restore | Restore durable originals and thumbnails as their declared owner
-          ansible.builtin.command:
-            argv:
-              - setpriv
-              - --reuid
-              - "{{ app_config.media_storage.owner.uid | int }}"
-              - --regid
-              - "{{ app_config.media_storage.owner.gid | int }}"
-              - --clear-groups
-              - cp
-              - -a
-              - --no-preserve=ownership
-              - "{{ _immich_restore_scratch.path }}/media/."
-              - .
-            chdir: "{{ _immich_restore_media_path }}"
-          changed_when: true
-          no_log: true
-
-        - name: Immich restore | Restore the named PostgreSQL database
-          ansible.builtin.include_tasks: ../../../tasks/database/restore.yml
-          vars:
-            database_app_instance: "{{ instance }}"
-            database_app_config: "{{ app_config.app.database }}"
-            database_restore_file: "{{ _immich_restore_scratch.path }}/database/immich.dump"
-
-        - name: Immich restore | Start Immich services
-          community.docker.docker_compose_v2:
-            project_src: "{{ immich_project_dir }}"
-            state: present
-            services:
-              - immich-server
-              - immich-machine-learning
-
-        - name: Immich restore | Wait for the restored server
-          ansible.builtin.uri:
-            url: "http://localhost:{{ app_config.app.port }}/api/server/ping"
-            status_code: 200
-          register: _immich_restore_health
-          until: _immich_restore_health.status | default(0) == 200
-          retries: 60
-          delay: 5
-          changed_when: false
-
-        - name: Immich restore | Mark the restore complete
-          ansible.builtin.set_fact:
-            _application_restore_complete: true
-      rescue:
-        - name: Immich restore | Stop Immich after a failed restore attempt
-          community.docker.docker_compose_v2:
-            project_src: "{{ immich_project_dir }}"
-            state: stopped
-            services:
-              - immich-server
-              - immich-machine-learning
-          failed_when: false
-
-        - name: Immich restore | Leave the application stopped after a failed restore
-          ansible.builtin.fail:
-            msg: >-
-              Immich restore {{ restore_snapshot }} did not complete. Immich is intentionally
-              left stopped because its database or durable media may be partially replaced.
-              Resolve the failed restore or start the Compose project only after inspection.
-  always:
-    - name: Immich restore | Remove private scratch space
-      ansible.builtin.file:
-        path: "{{ _immich_restore_scratch.path }}"
-        state: absent
-      when: _immich_restore_scratch.path is defined

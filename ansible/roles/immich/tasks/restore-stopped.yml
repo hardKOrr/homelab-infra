@@ -1,0 +1,13 @@
+---
+# restore-swap.yml stopped hook: keep the live database as a dump in staging, so rollback
+# can put it back with the original media.
+- name: Immich restore | Mark the database as not yet replaced
+  ansible.builtin.set_fact:
+    _immich_restore_database_replaced: false
+
+- name: Immich restore | Dump the live database for rollback
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ recovery_swap_stage }}/database/rollback.dump"
