@@ -7,8 +7,10 @@ archives, an optional database step, owner and the Deployments to stop; the per-
 renders the app's own inputs through the shared pair.
 """
 
+import importlib.util
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
@@ -22,6 +24,10 @@ init_plugin_loader()
 BACKUP = ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"
 RESTORE = ROOT / "ansible/templates/kubernetes/recovery-restore.yaml.j2"
 STEP = ROOT / "ansible/tasks/database/kubernetes-recovery-step.yml"
+SCALE = ROOT / "ansible/scripts/kubernetes-recovery-scale.py"
+SCALE_SPEC = importlib.util.spec_from_file_location("kubernetes_recovery_scale", SCALE)
+SCALE_SCRIPT = importlib.util.module_from_spec(SCALE_SPEC)
+SCALE_SPEC.loader.exec_module(SCALE_SCRIPT)
 FINGERPRINT = ":".join(["AA"] * 32)
 CLIENT = {
     "image": "buildpack-deps:bookworm-curl",
@@ -149,7 +155,7 @@ def database_steps():
     return {"postgresql": postgres, "namespace-mysql": mysql, "mariadb": mariadb}
 
 
-def backup_all_documents(archives, database, instance="app", stop=None):
+def backup_all_documents(archives, database, instance="app", stop=None, stop_replicas=None):
     kr = {
         "backup_id": instance, "repository": "token@pbs:store", "datastore": "store",
         "schedule": "0 3 * * *", "timezone": "UTC", "timeout": 3600,
@@ -157,6 +163,8 @@ def backup_all_documents(archives, database, instance="app", stop=None):
         "ntfy_url": "", "ntfy_token": False, "client": CLIENT, "archives": archives,
         "database": database, "stop": stop or [],
     }
+    if stop_replicas is not None:
+        kr["stop_replicas"] = stop_replicas
     text = render(BACKUP.read_text(encoding="utf-8"), {
         "_kr": kr, "instance": instance, "k8s_namespace": f"app-{instance}",
         "k8s_pbs_fingerprint": FINGERPRINT,
@@ -167,8 +175,8 @@ def backup_all_documents(archives, database, instance="app", stop=None):
     return list(yaml.safe_load_all(text))
 
 
-def backup_documents(archives, database, instance="app", stop=None):
-    documents = backup_all_documents(archives, database, instance, stop)
+def backup_documents(archives, database, instance="app", stop=None, stop_replicas=None):
+    documents = backup_all_documents(archives, database, instance, stop, stop_replicas)
     return (next(d for d in documents if d["kind"] == "ConfigMap"),
             next(d for d in documents if d["kind"] == "CronJob"))
 
@@ -269,7 +277,7 @@ def shared_pair(steps):
 
     actual_budget_docs = backup_all_documents(
         [{"name": "data", "claim": "actual-budget-data"}], {},
-        "actual-budget", ["actual-budget"],
+        "actual-budget", ["actual-budget"], stop_replicas=1,
     )
     actual_budget = {item["kind"]: item for item in actual_budget_docs}
     assert {"ServiceAccount", "Role", "RoleBinding"} <= set(actual_budget)
@@ -287,6 +295,34 @@ def shared_pair(steps):
     assert scale_script in actual_script
     actual_env = {item["name"]: item for item in actual_pod["containers"][0]["env"]}
     assert actual_env["K8S_RECOVERY_DEPLOYMENTS"]["value"] == '["actual-budget"]'
+    assert actual_env["K8S_RECOVERY_STOP_REPLICAS"]["value"] == "1"
+    assert '"K8S_RECOVERY_STOP_REPLICAS", "1"' in actual_script
+    assert "if current == 0:" in actual_script
+    assert "current = replicas" in actual_script
+    state = {"replicas": 0}
+    patched_replicas = []
+
+    def fake_scale_api(method, namespace, deployment, scale=False, payload=None):
+        assert namespace == "app-actual-budget"
+        assert deployment == "actual-budget"
+        if method == "GET":
+            replicas = state["replicas"]
+            return {
+                "spec": {"replicas": replicas},
+                "metadata": {"generation": 1},
+                "status": {"observedGeneration": 1, "replicas": replicas,
+                           "availableReplicas": replicas},
+            }
+        assert method == "PATCH" and scale
+        state["replicas"] = payload["spec"]["replicas"]
+        patched_replicas.append(state["replicas"])
+        return {}
+
+    with patch.object(SCALE_SCRIPT, "api", side_effect=fake_scale_api):
+        SCALE_SCRIPT.stop("app-actual-budget", ["actual-budget"], 1)
+        SCALE_SCRIPT.start("app-actual-budget", ["actual-budget"], 1)
+    assert patched_replicas == [0, 1]
+    assert state["replicas"] == 1
 
     # Plan: the same client path into scratch, with the target read-only.
     pod, containers = restore_pod("plan", archives, postgres)
@@ -464,8 +500,10 @@ def app_render(app, spec, steps):
     if restore.get("after_restore_tasks"):
         assert Path(restore["after_restore_tasks"]).is_file(), app
 
-    _, cronjob = backup_documents(backup["archives"], backup.get("database") or {}, "src",
-                                  backup.get("stop"))
+    _, cronjob = backup_documents(
+        backup["archives"], backup.get("database") or {}, "src",
+        backup.get("stop"), backup.get("stop_replicas"),
+    )
     assert cronjob["metadata"]["name"] == "src-backup"
     for mode in ("plan", "restore"):
         restore_pod(mode, restore["archives"], restore.get("database") or {}, "dst")

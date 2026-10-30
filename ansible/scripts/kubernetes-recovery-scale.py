@@ -60,6 +60,16 @@ def deployment_names():
     return names
 
 
+def declared_replicas():
+    try:
+        replicas = int(os.environ.get("K8S_RECOVERY_STOP_REPLICAS", "1"))
+    except ValueError as error:
+        raise RuntimeError("K8S_RECOVERY_STOP_REPLICAS must be a positive integer") from error
+    if replicas < 1:
+        raise RuntimeError("K8S_RECOVERY_STOP_REPLICAS must be a positive integer")
+    return replicas
+
+
 def wait_for(namespace, names, replicas):
     deadline = time.monotonic() + TIMEOUT_SECONDS
     remaining = set(names)
@@ -71,9 +81,7 @@ def wait_for(namespace, names, replicas):
             observed = int(status.get("observedGeneration", 0))
             actual = int(status.get("replicas", 0))
             available = int(status.get("availableReplicas", 0))
-            if replicas == 0 and observed >= generation and actual == 0 and available == 0:
-                remaining.remove(name)
-            elif replicas == 1 and observed >= generation and available >= 1:
+            if observed >= generation and actual == replicas and available >= replicas:
                 remaining.remove(name)
         if remaining:
             time.sleep(2)
@@ -90,13 +98,18 @@ def scale(namespace, names, replicas):
     wait_for(namespace, names, replicas)
 
 
-def stop(namespace, names):
+def stop(namespace, names, replicas):
     for name in names:
         deployment = api("GET", namespace, name)
-        current = int(deployment.get("spec", {}).get("replicas", 1))
-        if current != 1:
+        desired = deployment.get("spec", {}).get("replicas")
+        current = int(1 if desired is None else desired)
+        # A hard-killed earlier backup can leave the Deployment scaled to zero, before
+        # its exit handler resumes it. Use the role's declared count to recover it.
+        if current == 0:
+            current = replicas
+        if current != replicas:
             raise RuntimeError(
-                f"Deployment {name} has {current} desired replicas; expected one before backup"
+                f"Deployment {name} has {current} desired replicas; expected {replicas} before backup"
             )
     stopped = []
     try:
@@ -107,7 +120,7 @@ def stop(namespace, names):
     except Exception:
         if stopped:
             try:
-                scale(namespace, stopped, 1)
+                scale(namespace, stopped, replicas)
             except Exception as rollback_error:
                 print(
                     f"ERROR: rollback could not restart the stopped workload: {rollback_error}",
@@ -117,8 +130,8 @@ def stop(namespace, names):
     print(f"quiesced Deployment(s): {', '.join(names)}")
 
 
-def start(namespace, names):
-    scale(namespace, names, 1)
+def start(namespace, names, replicas):
+    scale(namespace, names, replicas)
     print(f"restarted Deployment(s): {', '.join(names)}")
 
 
@@ -129,10 +142,11 @@ def main():
     if not namespace:
         raise RuntimeError("POD_NAMESPACE is missing")
     names = deployment_names()
+    replicas = declared_replicas()
     if sys.argv[1] == "stop":
-        stop(namespace, names)
+        stop(namespace, names, replicas)
     else:
-        start(namespace, names)
+        start(namespace, names, replicas)
 
 
 if __name__ == "__main__":

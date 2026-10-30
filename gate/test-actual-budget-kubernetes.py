@@ -95,6 +95,7 @@ backup = next(
 assert backup["vars"]["k8s_recovery"]["archives"] == [
     {"name": "data", "claim": "{{ instance }}-data"}
 ]
+assert backup["vars"]["k8s_recovery"]["stop_replicas"] == 1
 assert "database" not in backup["vars"]["k8s_recovery"]
 
 restore_dispatch = yaml.safe_load((ROLE / "tasks/restore.yml").read_text(encoding="utf-8"))

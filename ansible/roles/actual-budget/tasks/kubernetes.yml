@@ -31,6 +31,7 @@
           claim: "{{ instance }}-data"
       stop:
         - "{{ instance }}"
+      stop_replicas: 1
       describe: >-
         the Actual Budget /data volume, including its server account and budget files
 
