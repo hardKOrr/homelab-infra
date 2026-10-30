@@ -10,6 +10,13 @@
 # Inputs:
 #   gpu_guest_kernel_host — inventory hostname of the VM (reachable over SSH)
 
+# attach-pci-passthrough.yml restarts a running guest to assign the device, so the guest
+# may still be booting.
+- name: GPU guest kernel | Wait for the guest to accept SSH
+  ansible.builtin.wait_for_connection:
+    timeout: 600
+  delegate_to: "{{ gpu_guest_kernel_host }}"
+
 - name: GPU guest kernel | Install the standard Debian kernel
   ansible.builtin.apt:
     name: linux-image-amd64

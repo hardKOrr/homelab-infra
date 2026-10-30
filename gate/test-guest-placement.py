@@ -16,6 +16,7 @@ ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 RESOLVER = REPO / "ansible/tasks/proxmox/resolve-guest-placement.yml"
 PCI_MAPPING_PARSER = REPO / "ansible/tasks/proxmox/parse-pci-mapping-entries.yml"
 PCI_ATTACH = REPO / "ansible/tasks/proxmox/attach-pci-passthrough.yml"
+GPU_GUEST_KERNEL = REPO / "ansible/tasks/proxmox/gpu-guest-kernel.yml"
 VM_HOST_MOUNTS = REPO / "ansible/tasks/proxmox/attach-host-mounts-vm.yml"
 VM_CLONE = REPO / "ansible/tasks/proxmox/vm-clone.yml"
 BOOTSTRAP = REPO / "rundeck/bootstrap-rundeck.sh"
@@ -54,6 +55,10 @@ def verify_pci_mapping_contract():
     assert "selectattr('path', 'equalto', pci_passthrough_device.id)" in attach_check["vars"][
         "_pci_map_entries"
     ]
+    # Attaching restarts a running guest, so the kernel step that follows waits for SSH first.
+    kernel_tasks = yaml.safe_load(GPU_GUEST_KERNEL.read_text())
+    assert "ansible.builtin.wait_for_connection" in kernel_tasks[0]
+    assert kernel_tasks[0]["delegate_to"] == "{{ gpu_guest_kernel_host }}"
 
 
 def verify_virtiofs_mount_contract():
