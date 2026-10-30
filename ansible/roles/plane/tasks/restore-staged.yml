@@ -1,0 +1,44 @@
+---
+# restore-swap.yml staged hook, while Plane still serves: the point must come from the
+# declared Plane release and hold a valid Redis RDB. The swap checks the PostgreSQL dump.
+- name: Plane restore | Inspect the staged release identity and Redis RDB
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/{{ item }}"
+  loop: [database/plane-release.txt, redis/dump.rdb]
+  register: _plane_restore_members
+
+- name: Plane restore | Require the release identity and Redis RDB
+  ansible.builtin.assert:
+    that: item.stat.size | default(0) > 0
+    fail_msg: "The selected Plane point has no {{ item.item }}; nothing was changed."
+  loop: "{{ _plane_restore_members.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Plane restore | Read the selected point's release identity
+  ansible.builtin.slurp:
+    src: "{{ recovery_swap_stage }}/database/plane-release.txt"
+  register: _plane_restore_artifact_release
+
+- name: Plane restore | Refuse an incompatible Plane release
+  ansible.builtin.assert:
+    that:
+      - _plane_restore_artifact_release.content | b64decode | trim == app_config.app.release
+    fail_msg: >-
+      The selected Plane point was captured by a different declared release. Rebuild an
+      isolated target with the matching Plane release before attempting this restore.
+
+- name: Plane restore | Verify the Redis RDB
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --volume
+      - "{{ recovery_swap_stage }}/redis:/restore:ro"
+      - "{{ app_config.backup.redis_client_image }}"
+      - redis-check-rdb
+      - /restore/dump.rdb
+  changed_when: false

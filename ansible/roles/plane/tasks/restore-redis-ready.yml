@@ -1,0 +1,30 @@
+---
+# The named Redis backend answers PONG to the target's own credential.
+- name: Plane restore | Ping the target Redis backend
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - REDIS_HOST
+      - --env
+      - REDIS_PORT
+      - --env
+      - REDISCLI_AUTH
+      - "{{ app_config.backup.redis_client_image }}"
+      - /bin/sh
+      - -ceu
+      - test "$(redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" ping)" = PONG
+  environment:
+    REDIS_HOST: "{{ _plane_restore_redis_backend.host }}"
+    REDIS_PORT: "{{ _plane_restore_redis_backend.port }}"
+    REDISCLI_AUTH: "{{ _plane_restore_redis_password }}"
+  register: _plane_restore_redis_ping
+  until: _plane_restore_redis_ping.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  no_log: true

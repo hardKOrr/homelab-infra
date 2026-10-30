@@ -62,37 +62,26 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Run the BookStack restore plan
-      ansible.builtin.command:
-        argv:
-          - /usr/local/sbin/homelab-infra-bookstack-recovery
-          - --plan
-          - --snapshot
-          - "{{ snapshot | default('') }}"
-      environment:
-        BOOKSTACK_INSTANCE: "{{ instance }}"
-      register: bookstack_restore_plan_result
-      changed_when: false
-      when:
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
-        - not (overwrite | default(false) | bool)
+    - name: Plan or perform the BookStack restore
+      ansible.builtin.include_role:
+        name: bookstack
+        tasks_from: restore
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+        restore_overwrite: "{{ overwrite | default(false) | bool }}"
+        restore_snapshot: "{{ snapshot | default('') }}"
+        restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
+        restore_destination: existing
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-    - name: Run the destructive BookStack restore
-      ansible.builtin.command:
-        argv:
-          - /usr/local/sbin/homelab-infra-bookstack-recovery
-          - --restore
-          - --snapshot
-          - "{{ snapshot }}"
-          - --pre-restore-point
-          - "{{ pre_restore_point }}"
-      environment:
-        BOOKSTACK_INSTANCE: "{{ instance }}"
-      register: bookstack_restore_result
-      changed_when: true
-      when:
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
-        - overwrite | default(false) | bool
+    - name: Record the completed BookStack plan or restore
+      ansible.builtin.set_fact:
+        bookstack_restore_complete: >-
+          {{ _application_restore_complete | default(false) | bool
+             or not (overwrite | default(false) | bool) }}
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "BookStack Restore | Run on Kubernetes"
   hosts: localhost
@@ -121,19 +110,14 @@
       when: >-
         (overwrite | default(false) | bool)
         and ((app_config.hosting.method == 'docker'
-              and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
+              and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
              or (app_config.hosting.method == 'kubernetes'
                  and bookstack_restore_result.rc | default(1) == 0))
     - name: Fail if BookStack restore did not complete
       ansible.builtin.assert:
         that: >-
           (app_config.hosting.method == 'docker'
-           and overwrite | default(false) | bool
-           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
-          or
-          (app_config.hosting.method == 'docker'
-           and not (overwrite | default(false) | bool)
-           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_plan_result.rc | default(1) == 0)
+           and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'
            and bookstack_restore_result.rc | default(1) == 0)

@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold a PostgreSQL cluster, or the restored
+# Authentik would start on an empty database.
+- name: Authentik restore | Check the staged PostgreSQL marker
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/database/PG_VERSION"
+  register: _authentik_restore_staged_database
+
+- name: Authentik restore | Require a PostgreSQL cluster in the point
+  ansible.builtin.assert:
+    that:
+      - _authentik_restore_staged_database.stat.isreg | default(false)
+      - not (_authentik_restore_staged_database.stat.islnk | default(false))
+    fail_msg: >-
+      The selected Authentik point has no PostgreSQL data directory; the current instance
+      still serves unchanged.

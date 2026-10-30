@@ -1,0 +1,27 @@
+---
+# restore-swap.yml replaced hook: the restored webui.db was written under the source's
+# application key, so record that key against the target and render it into the
+# environment Open WebUI starts with.
+- name: Open WebUI restore | Record that the target key is being replaced
+  ansible.builtin.set_fact:
+    _open_webui_restore_key_replaced: true
+
+- name: Open WebUI restore | Carry the source application key into the target Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ _open_webui_restore_target }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: open-webui
+      instance: "{{ _open_webui_restore_target }}"
+      secret_key: "{{ restore_source_open_webui_secret_key }}"
+    vault_item_secret_fields: [secret_key]
+  no_log: true
+
+- name: Open WebUI restore | Render the carried application key
+  ansible.builtin.lineinfile:
+    path: "{{ open_webui_env_file }}"
+    regexp: '^WEBUI_SECRET_KEY='
+    line: "WEBUI_SECRET_KEY={{ restore_source_open_webui_secret_key }}"
+    mode: "0600"
+  no_log: true

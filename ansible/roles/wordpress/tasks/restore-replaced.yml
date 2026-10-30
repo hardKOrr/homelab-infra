@@ -1,0 +1,62 @@
+---
+# restore-swap.yml replaced hook: the restored database may come from another instance.
+# Its site URLs and administrator are target identity, so point them back at the target
+# before WordPress starts.
+- name: WordPress restore | Point the site URLs at the target
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ wordpress_project_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - wordpress-cli
+      - option
+      - update
+      - "{{ item }}"
+      - "https://{{ wordpress_fqdn }}"
+      - --skip-plugins
+      - --skip-themes
+      - --allow-root
+  loop: [home, siteurl]
+  changed_when: true
+
+- name: WordPress restore | Look for the target administrator
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ wordpress_project_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - wordpress-cli
+      - user
+      - get
+      - "{{ app_config.app.admin_user }}"
+      - --field=ID
+      - --skip-plugins
+      - --skip-themes
+      - --allow-root
+  register: _wordpress_restore_admin
+  changed_when: false
+  failed_when: false
+
+- name: WordPress restore | Give the target administrator its own credential
+  ansible.builtin.command:
+    argv: >-
+      {{ ['docker', 'compose', '--project-directory', wordpress_project_dir,
+          'run', '--rm', '--no-deps', 'wordpress-cli', 'user']
+         + (['update', app_config.app.admin_user,
+             '--user_pass=' ~ app_config.app.admin_password,
+             '--user_email=' ~ app_config.app.admin_email]
+            if _wordpress_restore_admin.rc == 0 else
+            ['create', app_config.app.admin_user, app_config.app.admin_email,
+             '--role=administrator', '--user_pass=' ~ app_config.app.admin_password])
+         + ['--display_name=' ~ app_config.app.admin_name,
+            '--skip-plugins', '--skip-themes', '--allow-root'] }}
+  changed_when: true
+  no_log: true

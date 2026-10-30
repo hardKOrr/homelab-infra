@@ -1,0 +1,24 @@
+---
+# restore-swap.yml rollback hook: the original data is back, so once the replaced hook gave
+# the target the source key, the target gets its own key back in Vaultwarden and in Open
+# WebUI's environment.
+- name: Open WebUI restore | Give the target its own key back
+  when: _open_webui_restore_key_replaced | default(false) | bool
+  block:
+    - name: Open WebUI restore | Put the target's own application key back
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _open_webui_restore_target }}"
+        vault_item_merge: true
+        vault_item_fields:
+          secret_key: "{{ _open_webui_restore_target_secret_key }}"
+        vault_item_secret_fields: [secret_key]
+      no_log: true
+
+    - name: Open WebUI restore | Render the target's own application key
+      ansible.builtin.lineinfile:
+        path: "{{ open_webui_env_file }}"
+        regexp: '^WEBUI_SECRET_KEY='
+        line: "WEBUI_SECRET_KEY={{ _open_webui_restore_target_secret_key }}"
+        mode: "0600"
+      no_log: true

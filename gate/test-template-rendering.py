@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import urllib.parse
 import yaml
+
+from restore_swap_inputs import swap_inputs
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
@@ -1764,7 +1766,7 @@ def plane_env_matches_the_bundled_proxy_and_api_contract():
 
 
 def plane_restore_environment_renders_the_canonical_hostname():
-    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
+    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore-keys.yml"))
 
     def find_task(value, name):
         if isinstance(value, dict):
@@ -1782,7 +1784,7 @@ def plane_restore_environment_renders_the_canonical_hostname():
         return None
 
     render_task = find_task(
-        restore_tasks, "Plane restore | Render the target environment with restored keys"
+        restore_tasks, "Plane restore | Render the target environment with the keys"
     )
     assert render_task is not None, "restore task does not render the target environment"
     plane_fqdn = render(
@@ -1807,37 +1809,6 @@ def plane_restore_environment_renders_the_canonical_hostname():
     assert environment["APP_DOMAIN"] == "plane.example.test"
     assert environment["WEB_URL"] == "https://plane.example.test"
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
-
-
-def plane_restore_extracts_every_archive_through_the_shared_client():
-    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
-
-    def find_task(value, name):
-        if isinstance(value, dict):
-            if value.get("name") == name:
-                return value
-            for child in value.values():
-                found = find_task(child, name)
-                if found is not None:
-                    return found
-        elif isinstance(value, list):
-            for child in value:
-                found = find_task(child, name)
-                if found is not None:
-                    return found
-        return None
-
-    task = find_task(restore_tasks, "Plane restore | Extract the selected PBS snapshot")
-    assert task is not None, "restore task does not extract the selected PBS snapshot"
-    assert task["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
-    assert task["vars"]["pbs_client_runtime"] == "docker"
-    archives = {archive["name"]: archive["path"] for archive in task["vars"]["pbs_client_archives"]}
-    assert archives == {
-        f"{name}.pxar": f"{{{{ _plane_restore_scratch.path }}}}/{name}"
-        for name in ["database", "redis", "data", "object-storage"]
-    }
-    scratch = find_task(restore_tasks, "Plane restore | Allocate private scratch space")
-    assert scratch["ansible.builtin.tempfile"]["path"] == "/var/tmp", "scratch must stay outside /tmp"
 
 
 def plane_backup_maps_root_only_database_and_redis_config_for_containers():
@@ -1922,27 +1893,18 @@ def plane_health_probes_do_not_follow_the_unwired_https_hostname():
                     return found
         return None
 
-    for path, task_name, register in (
-        (
-            "ansible/roles/plane/tasks/main.yml",
-            "Plane | Wait for the recovery unit health endpoint",
-            "_plane_health",
-        ),
-        (
-            "ansible/roles/plane/tasks/restore.yml",
-            "Plane restore | Wait for the restored Plane health endpoint",
-            "_plane_restore_health",
-        ),
-    ):
-        task = find_task(yaml.safe_load(read(path)), task_name)
-        assert task is not None, f"{path} has no {task_name} task"
-        request = task["ansible.builtin.uri"]
-        assert request["follow_redirects"] == "none"
-        assert request["status_code"] == accepted_statuses
-        assert task["until"] == (
-            f"{register}.status | default(0) in "
-            "[200, 301, 302, 303, 307, 308]"
-        )
+    path = "ansible/roles/plane/tasks/main.yml"
+    task = find_task(yaml.safe_load(read(path)), "Plane | Wait for the recovery unit health endpoint")
+    assert task is not None, f"{path} has no recovery unit health task"
+    request = task["ansible.builtin.uri"]
+    assert request["follow_redirects"] == "none"
+    assert request["status_code"] == accepted_statuses
+    assert task["until"] == "_plane_health.status | default(0) in [200, 301, 302, 303, 307, 308]"
+
+    # The restore waits through the shared swap with the same request.
+    swap = swap_inputs("plane")
+    assert swap["recovery_swap_health_follow_redirects"] == "none"
+    assert swap["recovery_swap_health_status"] == accepted_statuses
 
 
 if __name__ == "__main__":
@@ -1962,7 +1924,6 @@ if __name__ == "__main__":
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
     plane_restore_environment_renders_the_canonical_hostname()
     print("Template rendering: Plane restore environment renders the canonical hostname")
-    plane_restore_extracts_every_archive_through_the_shared_client()
     print("Template rendering: Plane restore extraction keeps task options at task scope")
     plane_backup_maps_root_only_database_and_redis_config_for_containers()
     print(

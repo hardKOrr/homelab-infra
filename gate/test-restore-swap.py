@@ -14,7 +14,8 @@ The cases prove: the preview changes nothing; a swap installs the point with the
 owner and mode and leaves no rollback copy or staging; a failure after the stop puts every
 original back byte for byte and starts it; a staged-data failure never stops the
 application; an earlier run's rollback copy refuses the restore; a mount swaps its
-contents as its owner; an incomplete rollback keeps the services stopped and the copies.
+contents as its owner; an incomplete rollback keeps the services stopped and the copies. A Compose app can run the
+native PBS client, and an owner of `live` keeps the live directory's owner.
 With a database: its dump and ownership are checked before the stop, the live database is dumped after
 it, the archived dump loads before the replaced hook, and a failure once that load started
 loads the live dump back; a failed database rollback keeps the services stopped.
@@ -43,6 +44,7 @@ FAKE_RESTORE = """
 - name: Fake PBS restore | Record the request
   ansible.builtin.shell: >-
     echo {{ {'overwrite': pbs_client_overwrite | default(restore_overwrite) | bool,
+             'runtime': pbs_client_runtime,
              'archives': pbs_client_archives, 'args': pbs_client_restore_args | default([])}
            | to_json | quote }} >> {{ test_root }}/client.log
 - name: Fake PBS restore | Extract the fixture point
@@ -244,6 +246,7 @@ def main():
         for option in ("--ignore-ownership", "--ignore-acls", "--ignore-xattrs"):
             assert args[args.index(option) + 1] == "true", option
         assert "--ignore-permissions" not in args
+        assert [r["runtime"] for r in requests] == ["docker", "docker"]
         assert leftovers(root) == [] and not list(live.glob(".gate-app-restore-*"))
         assert (root / "complete").read_text().strip() == "True"
 
@@ -260,6 +263,23 @@ def main():
             assert lines(root, "hooks.log")[-1] == "rollback", hook
             assert "The original state is back" in result.stdout, hook
             assert leftovers(root) == [] and not list(live.glob(".gate-app-restore-*")), hook
+
+        # A Compose app may run the native PBS client; its services still stop through Compose.
+        reset(root)
+        expect(run(root, [data], recovery_swap_pbs_runtime="native"), True, "native client")
+        assert [json.loads(c)["runtime"] for c in lines(root, "client.log")] == ["native", "native"]
+        assert lines(root, "services.log") == ["stop app,worker", "start app,worker"]
+
+        # `live` keeps the owner the live directory has; a missing one refuses before the stop.
+        reset(root)
+        keep_owner = dict(config, owner="live", group="live")
+        expect(run(root, [data, keep_owner]), True, "live owner")
+        assert f"-R --no-dereference {uid}:{gid} {live}/app/config" in lines(root, "chown.log")
+        assert tree(live / "app/config") == {"app.ini": "restored ini"}
+        reset(root)
+        shutil.rmtree(live / "app/config")
+        expect(run(root, [data, keep_owner]), False, "live owner of a missing path")
+        assert not lines(root, "services.log") and tree(live / "app/data")["db.sqlite"] == "live db"
 
         # Staged data rejected: the application is never stopped.
         reset(root)

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Exercise WordPress's pre-restore guard and transactional native restore."""
+"""Check WordPress's restore wiring and hook, and exercise its backup helper with shims.
+
+gate/test-restore-swap.py proves the swap and its database rollback;
+gate/test-pre-restore-point-age.py proves the one-hour pre-restore point rule.
+"""
 
 import os
 import re
 import shlex
 import subprocess
 import tempfile
-import threading
-from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import yaml
+
+from restore_swap_inputs import run_hook, swap_inputs
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,87 +27,40 @@ WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/mai
 WORDPRESS_COMPOSE = (ROOT / "ansible/roles/wordpress/templates/docker-compose.yml.j2").read_text()
 
 
+# Logs `compose <action>` for Compose calls, the wp-cli command after `wordpress-cli`, and
+# `db <action>` for the shared database client.
 DOCKER = r'''#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
 
 args=sys.argv[1:]
 root=Path(os.environ['WORDPRESS_TEST_ROOT'])
-case=os.environ['WORDPRESS_TEST_CASE']
+log=(root/'docker.log').open('a')
 if args[0]=='compose':
     if 'run' in args:
         command=args[args.index('wordpress-cli')+1:]
-        with (root/'client.log').open('a') as log:
-            log.write(' '.join(command)+'\n')
-        if case=='wp-cli-failure' and command[:3]==['option','update','siteurl']:
-            raise SystemExit(17)
-        raise SystemExit(0)
-    action=next(value for value in args if value in ['stop','start'])
-    with (root/'compose.log').open('a') as log:
-        log.write(action+'\n')
+        log.write('wp '+' '.join(command)+'\n')
+        missing=os.environ.get('WORDPRESS_TEST_CASE')=='no-admin'
+        raise SystemExit(1 if missing and command[:2]==['user','get'] else 0)
+    log.write('compose '+next(value for value in args if value in ['stop','start'])+'\n')
     raise SystemExit(0)
-
-if args[0]!='run':
-    raise SystemExit(90)
-# The shared database client: -v DIR:/work ... IMAGE database-client.sh ACTION /work/FILE.
-entrypoint=args[args.index('--entrypoint')+1]
-if entrypoint!='/bin/sh' or args[-3]!='/usr/local/bin/database-client.sh':
-    raise SystemExit(91)
+assert args[0]=='run' and args[-3]=='/usr/local/bin/database-client.sh'
 assert os.environ['DB_ENGINE']=='mariadb' and os.environ['DB_NAME']=='wordpress'
 work=next(args[i+1] for i,value in enumerate(args) if value=='-v' and args[i+1].endswith(':/work'))
-action,file=args[-2],Path(work[:-len(':/work')])/Path(args[-1]).name
-database=root/'database-state.sql'
-with (root/'database-client.log').open('a') as log:
-    log.write(action+'\n')
-if action=='dump':
-    if case=='database-dump-failure':
-        raise SystemExit(16)
-    file.write_text(database.read_text())
-    raise SystemExit(0)
-if action!='restore':
-    raise SystemExit(92)
-dump=file.read_text()
-if 'SNAPSHOT-DATABASE' in dump:
-    database.write_text('PARTIAL-DATABASE\n' if case=='database-import-failure'
-                        else 'SNAPSHOT-DATABASE\n')
-    raise SystemExit(17 if case=='database-import-failure' else 0)
-database.write_text(dump)
+log.write('db '+args[-2]+'\n')
+(Path(work[:-len(':/work')])/Path(args[-1]).name).write_text('DATABASE\n')
 '''
 
-# Plays the shared PBS client script: `extract --point P --pre-restore-point Q NAME:DIR...`.
-# gate/test-pbs-client.py proves the script itself.
+# Plays the shared PBS client script: `backup --id ID --keep-last N --keep-daily D NAME:PATH...`.
 PBS = r'''#!/usr/bin/env python3
-import os,shutil,sys
+import os,sys
 from pathlib import Path
-
 args=sys.argv[1:]
-root=Path(os.environ['WORDPRESS_TEST_ROOT'])
-if args[:2]!=['extract','--point'] or args[3]!='--pre-restore-point':
-    raise SystemExit(93)
-if args[2]!=os.environ['WORDPRESS_TEST_SNAPSHOT'] or args[4]!=os.environ['WORDPRESS_TEST_PRE_RESTORE_POINT']:
-    raise SystemExit(94)
-for spec in args[5:]:
-    name,destination=spec.split(':',1)
-    if not Path(destination).is_dir():
-        raise SystemExit(64)
-    source=root/('snapshot-database' if name=='database.pxar' else 'snapshot-content')
-    shutil.copytree(source,destination,dirs_exist_ok=True)
-print('extracted')
+assert args[:3]==['backup','--id','wordpress'], args
+with (Path(os.environ['WORDPRESS_TEST_ROOT'])/'docker.log').open('a') as log:
+    log.write('pbs '+' '.join(args[7:])+'\n')
+raise SystemExit(8 if os.environ['WORDPRESS_TEST_CASE']=='upload-failure' else 0)
 '''
-
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if os.environ.get("WORDPRESS_TEST_CASE") == "health-redirect" and self.path == "/wp-login.php":
-            self.send_response(302)
-            self.send_header("Location", "http://unresolvable.invalid/wp-login.php")
-            self.end_headers()
-            return
-        self.send_response(200 if self.path == "/wp-login.php" else 404)
-        self.end_headers()
-
-    def log_message(self, *_args):
-        pass
 
 
 def write_executable(path, content):
@@ -118,33 +74,99 @@ def check_playbook_contract():
         and "length > 0" in str(task.get("ansible.builtin.assert", {}).get("that", []))
         for task in RESTORE_PLAYBOOK[0]["pre_tasks"]
     )
-    plan_task = next(
-        task for task in RESTORE_PLAYBOOK[1]["tasks"]
-        if task.get("name") == "Run the WordPress restore plan"
-    )
-    assert plan_task["register"] == "wordpress_restore_plan_result"
-    restore_task = next(
-        task for task in RESTORE_PLAYBOOK[1]["tasks"]
-        if task.get("name") == "Run the destructive WordPress restore"
-    )
-    argv = restore_task["ansible.builtin.command"]["argv"]
-    assert "--pre-restore-point" in argv
-    assert "{{ pre_restore_point }}" in argv
-    assert restore_task["register"] == "wordpress_restore_result"
-    preview_assertion = next(
-        task for task in RESTORE_PLAYBOOK[2]["tasks"]
-        if task.get("name") == "Fail if WordPress restore plan did not complete"
-    )
-    assert preview_assertion["when"] == "not (overwrite | default(false) | bool)"
-    assert "wordpress_restore_plan_result.rc" in str(preview_assertion["ansible.builtin.assert"]["that"])
-    restore_assertion = next(
-        task for task in RESTORE_PLAYBOOK[2]["tasks"]
-        if task.get("name") == "Fail if WordPress restore did not complete"
-    )
-    assert restore_assertion["when"] == "overwrite | default(false) | bool"
-    assert "wordpress_restore_result.rc" in str(restore_assertion["ansible.builtin.assert"]["that"])
+    resolve = RESTORE_PLAYBOOK[0]
+    merge = next(task for task in resolve["pre_tasks"] if "app_config" in task.get("ansible.builtin.set_fact", {}))
+    assert "homelabinfra_vault.apps" in merge["ansible.builtin.set_fact"]["app_config"], \
+        "the restore repairs the administrator with its Vaultwarden credential"
+    names = [task.get("name") for task in resolve["tasks"]]
+    assert names.index("Resolve the estate this app belongs to") < names.index("Derive the published hostname")
+    run = next(task for task in RESTORE_PLAYBOOK[1]["tasks"]
+               if task.get("name") == "Plan or perform the WordPress restore")
+    assert run["ansible.builtin.include_role"] == {"name": "wordpress", "tasks_from": "restore"}
+    for name in ("app_config", "homelabinfra_infra", "homelabinfra_vault", "wordpress_restore_backup_id",
+                 "wordpress_fqdn"):
+        assert run["vars"][name] == "{{ hostvars['localhost'].%s }}" % name, name
+    group = next(task for task in resolve["tasks"] if task.get("name") == "Resolve the source backup group")
+    expression = group["ansible.builtin.set_fact"]["wordpress_restore_backup_id"]
+    for variables, expected in [
+        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": ""}}}, "wordpress"),
+        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": "wp-group"}}}, "wp-group"),
+        ({"instance": "wordpress", "source_instance": "blog", "app_config": {"backup": {}}}, "blog"),
+        ({"instance": "wordpress", "source_backup_id": "old", "app_config": {"backup": {}}}, "old"),
+    ]:
+        assert render_fact(expression, variables) == expected, (variables, expected)
+    check = next(task for task in RESTORE_PLAYBOOK[2]["tasks"]
+                 if task.get("name") == "Fail if WordPress restore did not complete")
+    assert "wordpress_restore_complete" in str(check["ansible.builtin.assert"]["that"])
+    assert "homelab-infra-wordpress-recovery" not in str(RESTORE_PLAYBOOK), "the guest helper only backs up"
     assert any(option["name"] == "pre_restore_point" for option in RUNDECK_RESTORE["options"])
     assert 'pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}' in str(RUNDECK_RESTORE["sequence"])
+
+    swap = swap_inputs("wordpress")
+    assert swap["recovery_swap_archives"] == ["database.pxar", "content.pxar"]
+    assert swap["recovery_swap_paths"] == [{
+        "path": "{{ wordpress_content_path }}", "source": "content", "owner": 33, "group": 33,
+        "mode": "0755"}]
+    assert swap["recovery_swap_backup_id"] == "{{ wordpress_restore_backup_id }}", \
+        "a point from another WordPress instance"
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
+    assert swap["recovery_swap_staging_parent"] == "{{ wordpress_project_dir }}"
+    assert swap["recovery_swap_database"] == {
+        "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
+    restore = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore.yml").read_text())
+    age = next(task for task in restore if "require-recent-pre-restore-point" in
+               str(task.get("ansible.builtin.include_tasks", "")))
+    assert age["when"] == "restore_overwrite | bool"
+    assert age["vars"]["recovery_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
+
+
+def render_fact(expression, variables):
+    """Render one set_fact expression in a real play and return the value."""
+    with tempfile.TemporaryDirectory() as directory:
+        playbook = Path(directory) / "render.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False, "vars": variables,
+            "tasks": [{"ansible.builtin.set_fact": {"_value": expression}},
+                      {"ansible.builtin.copy": {"content": "{{ _value }}", "dest": f"{directory}/value"}}]}]))
+        result = subprocess.run([str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"),
+                                 "-i", "localhost,", "-c", "local", str(playbook)],
+                                text=True, capture_output=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return (Path(directory) / "value").read_text().strip()
+
+
+def fake_docker(root):
+    def stub(tasks):
+        for task in tasks:
+            task.pop("no_log", None)
+            argv = task["ansible.builtin.command"]["argv"]
+            if isinstance(argv, list):
+                argv[0] = str(root / "docker")
+            else:
+                task["ansible.builtin.command"]["argv"] = argv.replace("['docker',", repr([str(root / "docker")])[:-1] + ",")
+        return tasks
+    return stub
+
+
+def check_replaced_hook():
+    for case, action in {"admin": "update", "no-admin": "create"}.items():
+        with tempfile.TemporaryDirectory(prefix="wordpress-hook-") as directory:
+            root = Path(directory)
+            write_executable(root / "docker", DOCKER)
+            os.environ.update(WORDPRESS_TEST_ROOT=str(root), WORDPRESS_TEST_CASE=case)
+            result = run_hook("wordpress", "replaced", {
+                "wordpress_project_dir": str(root), "wordpress_fqdn": "wordpress.example.invalid",
+                "app_config": {"app": {"admin_user": "admin", "admin_email": "admin@example.invalid",
+                                       "admin_name": "Fixture Admin", "admin_password": "fixture-only"}},
+            }, fake_docker(root))
+            assert result.returncode == 0, result.stdout + result.stderr
+            calls = (root / "docker.log").read_text().splitlines()
+            url = "https://wordpress.example.invalid --skip-plugins --skip-themes --allow-root"
+            assert calls[:3] == [f"wp option update home {url}", f"wp option update siteurl {url}",
+                                 "wp user get admin --field=ID --skip-plugins --skip-themes --allow-root"]
+            assert calls[3].startswith(f"wp user {action} admin"), calls
+            assert "--user_pass=fixture-only" in calls[3] and "--display_name=Fixture Admin" in calls[3]
+            assert ("--role=administrator" in calls[3]) == (action == "create")
 
 
 def check_admin_email_validation():
@@ -194,61 +216,27 @@ def check_wordpress_health_redirects():
     assert "$$status" in WORDPRESS_COMPOSE
     assert "$$http_response_header" in WORDPRESS_COMPOSE
     assert "[23][0-9]{2}" in WORDPRESS_COMPOSE
-    recovery = RECOVERY.read_text()
-    assert "class NoRedirect(HTTPRedirectHandler):" in recovery
-    assert "200 <= status < 400" in recovery
+    swap = swap_inputs("wordpress")
+    assert swap["recovery_swap_health_follow_redirects"] == "none"
+    assert swap["recovery_swap_health_status"] == accepted_statuses
+    assert swap["recovery_swap_health_url"].endswith("/wp-login.php")
 
 
-def run_restore(case):
+def check_backup(case):
     with tempfile.TemporaryDirectory(prefix="wordpress-recovery-test-") as directory:
         root = Path(directory)
         bin_dir = root / "bin"
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
         write_executable(bin_dir / "pbs-client.sh", PBS)
-        write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
-
-        project = root / "project"
-        project.mkdir()
-        data = root / "data"
-        content = data / "wp-content"
+        (root / "project").mkdir()
+        content = root / "data/wp-content"
         content.mkdir(parents=True)
-        (content / "original.txt").write_text("original media state\n")
-        original_inode = content.stat().st_ino
-        original_mode = content.stat().st_mode
-        (root / "database-state.sql").write_text("ORIGINAL-DATABASE\n")
-
-        snapshot = root / "snapshot-content"
-        snapshot.mkdir()
-        (snapshot / "restored.txt").write_text("recovered media state\n")
-        (snapshot / "uploads").mkdir()
-        (snapshot / "uploads" / "canary.png").write_bytes(b"fixture image bytes\x00\xff\n")
-        snapshot_database = root / "snapshot-database"
-        snapshot_database.mkdir()
-        (snapshot_database / "database.sql").write_text(
-            "USE `source_wordpress`;\nSNAPSHOT-DATABASE\n"
-        )
-
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        pre_restore_point = f"host/wordpress/{now.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-        # The selected point must differ from the fresh safety point.
-        snapshot_id = f"host/wordpress/{(now - timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}"
         config = root / "wordpress.env"
-        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
         values = {
-            "WORDPRESS_PROJECT_DIR": str(project),
+            "WORDPRESS_PROJECT_DIR": str(root / "project"),
             "WORDPRESS_SERVICE": "wordpress",
-            "WORDPRESS_DATA_PATH": str(data),
             "WORDPRESS_CONTENT_PATH": str(content),
-            "WORDPRESS_FQDN": "wordpress.example.invalid",
-            "WORDPRESS_PORT": str(server.server_port),
-            "WORDPRESS_CLI_IMAGE": "wordpress-cli:test",
-            "WORDPRESS_ADMIN_USER": "admin",
-            "WORDPRESS_ADMIN_EMAIL": "admin@example.invalid",
-            "WORDPRESS_ADMIN_NAME": "Fixture Admin",
-            "WORDPRESS_ADMIN_PASSWORD": "fixture-only",
             "WORDPRESS_DB_HOST": "127.0.0.1",
             "WORDPRESS_DB_PORT": "3306",
             "WORDPRESS_DB_NAME": "wordpress",
@@ -263,52 +251,24 @@ def run_restore(case):
             "PBS_RETENTION_DAYS": "14",
         }
         config.write_text("\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items()) + "\n")
+        template = (ROOT / "ansible/roles/wordpress/templates/wordpress-recovery.env.j2").read_text()
+        assert sorted(re.findall(r"(?m)^([A-Z_]+)=", template)) == sorted(values), \
+            "the guest env holds what the backup helper reads, and no administrator credential"
         environment = os.environ | {
             "WORDPRESS_RECOVERY_CONFIG": str(config),
             "WORDPRESS_TEST_CASE": case,
             "WORDPRESS_TEST_ROOT": str(root),
-            "WORDPRESS_TEST_SNAPSHOT": snapshot_id,
-            "WORDPRESS_TEST_PRE_RESTORE_POINT": pre_restore_point,
             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         }
-        try:
-            result = subprocess.run(
-                [str(RECOVERY), "--restore", "--snapshot", snapshot_id,
-                 "--pre-restore-point", pre_restore_point],
-                env=environment,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
-        compose_actions = (root / "compose.log").read_text().splitlines() if (root / "compose.log").exists() else []
-        success = case in {"success", "health-redirect"}
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert content.is_dir()
-        if success:
-            assert not (content / "original.txt").exists()
-            assert (content / "restored.txt").read_text() == "recovered media state\n"
-            assert (content / "uploads" / "canary.png").read_bytes() == b"fixture image bytes\x00\xff\n"
-            assert content.stat().st_ino != original_inode
-            assert (root / "database-state.sql").read_text() == "SNAPSHOT-DATABASE\n"
-            assert compose_actions == ["stop", "start"], compose_actions
-            database_actions = (root / "database-client.log").read_text().splitlines()
-            assert database_actions == ["dump", "restore"], database_actions
-        else:
-            assert (content / "original.txt").read_text() == "original media state\n"
-            assert not (content / "restored.txt").exists()
-            assert content.stat().st_ino == original_inode, "rollback must rename the original tree back"
-            assert content.stat().st_mode == original_mode
-            assert (root / "database-state.sql").read_text() == "ORIGINAL-DATABASE\n"
-            if case == "database-dump-failure":
-                assert compose_actions == ["stop", "start"], compose_actions
-            else:
-                assert "WordPress rollback restored the previous content and database." in result.stderr
-                assert compose_actions == ["stop", "stop", "start"], compose_actions
-        assert not list(data.glob("wp-content.pre-restore.*")), "completed restore must remove its rollback tree"
+        result = subprocess.run([str(RECOVERY), "--backup"], env=environment, text=True,
+                                capture_output=True, check=False)
+        assert (result.returncode == 0) == (case == "success"), result.stdout + result.stderr
+        calls = (root / "docker.log").read_text().splitlines()
+        assert calls[0] == "compose stop" and calls[1] == "db dump" and calls[-1] == "compose start", calls
+        assert calls[2].startswith("pbs database.pxar:/var/tmp/homelab-wordpress.")
+        assert calls[2].endswith(f" content.pxar:{content}")
+        for mode in ("--restore", "--plan"):
+            assert subprocess.run([str(RECOVERY), mode], env=environment, capture_output=True).returncode == 2
 
 
 def main():
@@ -317,12 +277,10 @@ def main():
     check_wordpress_data_directory_access()
     check_wordpress_cli_uses_data_owner()
     check_wordpress_health_redirects()
-    run_restore("success")
-    run_restore("health-redirect")
-    run_restore("database-dump-failure")
-    run_restore("database-import-failure")
-    run_restore("wp-cli-failure")
-    print("WordPress: fresh safety point, restore and content/database rollback passed")
+    check_replaced_hook()
+    check_backup("success")
+    check_backup("upload-failure")
+    print("WordPress: restore through the shared swap, target identity repair and backup helper passed")
 
 
 if __name__ == "__main__":

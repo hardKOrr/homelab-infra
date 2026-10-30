@@ -1,0 +1,51 @@
+---
+# Restore BookStack's named database and /config tree from one PBS point (database.pxar,
+# storage.pxar) through the shared swap. Run by playbooks/maintenance/bookstack-restore.yml
+# on the Docker host. A plan lists or previews the point and changes nothing; an overwrite
+# needs a distinct pre-restore point of this instance, taken within the last hour, and a
+# failure after the stop puts the original tree and database back and starts BookStack.
+
+- name: BookStack restore | Resolve the target
+  ansible.builtin.set_fact:
+    _bookstack_restore_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _bookstack_restore_data_path: "{{ app_config.app.data_path | default('') }}"
+
+- name: BookStack restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - _bookstack_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - _bookstack_restore_data_path is match('^/[^/].*')
+      - _bookstack_restore_data_path != '/'
+      - >-
+        restore_snapshot | default('') | length == 0
+        or restore_snapshot.startswith('host/' ~ _bookstack_restore_backup_id ~ '/')
+      - not (restore_overwrite | bool) or restore_snapshot | default('') | length > 0
+    fail_msg: >-
+      BookStack restore needs a non-root data path and a snapshot from
+      host/{{ _bookstack_restore_backup_id }}/ when overwrite=true.
+
+- name: BookStack restore | Require a fresh, distinct pre-restore point
+  ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: "{{ _bookstack_restore_backup_id }}"
+  when: restore_overwrite | bool
+
+- name: BookStack restore | Preview or replace the /config tree and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_backup_id: "{{ _bookstack_restore_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _bookstack_restore_backup_id }}"
+    recovery_swap_archives: [database.pxar, storage.pxar]
+    recovery_swap_paths:
+      - path: "{{ _bookstack_restore_data_path }}"
+        source: storage
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+        mode: "0750"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/database.sql
+    recovery_swap_stop_services: [bookstack]
+    recovery_swap_compose_project: "{{ bookstack_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/login"

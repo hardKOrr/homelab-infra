@@ -44,10 +44,12 @@ Remove deletes the local compose environment. If an initialized database remains
 credentials are missing from both places, deployment stops before replacing them.
 
 Restore App first verifies the selected source archive and an independent target
-safety point. Its preview mode is read-only. Overwrite restore stages the archive
-beside the target path, keeps the current data on the same filesystem, replaces the
-tree, and waits for Authentik's ready endpoint. A failure restores the original data
-and restarts this instance. The target services do not need to be healthy before an
+safety point. Its preview mode is read-only. Overwrite restore goes through the shared
+restore swap: it extracts the point into the project directory while Authentik serves,
+stops the four services, replaces `database`, `redis`, `media`, `certs` and
+`custom-templates` (PostgreSQL and Redis keep the owner their container gave the live
+directory; the rest are uid 1000), and waits for Authentik's ready endpoint. A failure
+puts the original data back and restarts this instance. The target services do not need to be healthy before an
 overwrite restore; the verified source archive and independent target safety point
 are the recovery guards. Native restore currently replaces an existing instance; it
 does not restore an estate into a new instance name.

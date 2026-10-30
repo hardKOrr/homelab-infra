@@ -204,7 +204,12 @@ def reset_logs(root):
 
 
 def check_roles_verify_before_stop():
-    """A role that stops its application before extracting must first verify the point."""
+    """A restore that stops its application before extracting must first verify the point.
+
+    Every role restore extracts through the shared restore swap, which extracts while the
+    application still serves and stops it only afterwards. A role that extracts on its own
+    and stops first must preview the point before the stop.
+    """
     def walk(tasks):
         for task in tasks or []:
             yield task
@@ -221,22 +226,30 @@ def check_roles_verify_before_stop():
     def shared_restore(task):
         return str(task.get("ansible.builtin.include_tasks", "")).endswith("pbs-client-restore.yml")
 
-    checked = 0
-    for path in sorted((repo / "ansible/roles").glob("*/tasks/*.yml")):
+    swap = repo / "ansible/tasks/recovery/restore-swap.yml"
+    checked = []
+    for path in [swap, *sorted((repo / "ansible/roles").glob("*/tasks/*.yml"))]:
         if "pbs-client-restore.yml" not in path.read_text():
             continue
         tasks = list(walk(yaml.safe_load(path.read_text())))
+        # An extract names a staging path for its archives; a preview names only archives.
         extract = next((i for i, t in enumerate(tasks) if shared_restore(t)
-                        and all("path" in a for a in t["vars"]["pbs_client_archives"])), None)
+                        and "'path'" in str(t["vars"]["pbs_client_archives"])
+                        .replace('"path"', "'path'")), None)
         stop = next((i for i, t in enumerate(tasks) if stops(t)), None)
+        if path == swap:
+            assert extract is not None and stop is not None and extract < stop, \
+                "the restore swap extracts the point before it stops the application"
+            checked.append(path)
+            continue
         if extract is None or stop is None or stop > extract:
             continue
-        checked += 1
+        checked.append(path)
         assert any(shared_restore(t) and t["vars"].get("pbs_client_overwrite") is False
                    and "when" not in t for t in tasks[:stop]), (
             f"{path.relative_to(repo)} stops its application before the shared PBS restore "
             "checks the point; run the preview (pbs_client_overwrite: false) on every restore first")
-    assert checked, "no role restore stops its application before extracting; the check found nothing"
+    assert swap in checked, "the check must reach the restore swap's extract and stop"
 
 
 def expect(result, ok, label):

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Exercise Authentik's application-consistent PBS backup and rollback restore."""
+"""Exercise Authentik's application-consistent PBS backup and check its restore-swap inputs.
+
+gate/test-restore-swap.py proves the swap itself, including `live` owners and the native
+PBS client under Compose services.
+"""
 
 import copy
 import http.server
 import os
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -13,6 +16,7 @@ from pathlib import Path
 import yaml
 
 from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import run_hook, swap_inputs
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +45,7 @@ def task_named(tasks, name):
 class Health(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.calls += 1
-        status = 503 if self.server.fail_first and self.server.calls == 1 else 204
+        status = 204
         self.send_response(status)
         self.end_headers()
 
@@ -49,7 +53,7 @@ class Health(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def fixture_tasks(tasks, root, case):
+def fixture_tasks(tasks, root):
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         task.pop("no_log", None)
@@ -59,26 +63,14 @@ def fixture_tasks(tasks, root, case):
             task["ansible.builtin.command"] = {
                 "argv": [str(root / "bin/service"), compose["state"]]
             }
-        if task.get("name") in [
-            "Authentik backup | Read the running Compose services",
-            "Authentik restore | Inspect running Compose services for diagnostics",
-        ]:
+        if task.get("name") == "Authentik backup | Read the running Compose services":
             task["ansible.builtin.command"]["argv"][0] = str(root / "bin/docker")
-        if task.get("name") == "Authentik restore | Wait for the restored instance to become ready" and case == "health-failure":
-            # Make the first readiness failure enter the production rescue block; the
-            # rollback health probe then receives the fixture server's 204 response.
-            task.pop("until", None)
-            task.pop("retries", None)
-            task.pop("delay", None)
-        if "ansible.builtin.uri" in task and not (
-            task.get("name") == "Authentik restore | Wait for the restored instance to become ready"
-            and case == "health-failure"
-        ):
+        if "ansible.builtin.uri" in task:
             task["retries"] = 1
             task["delay"] = 0
         for key in ["block", "rescue", "always"]:
             if key in task:
-                task[key] = fixture_tasks(task[key], root, case)
+                task[key] = fixture_tasks(task[key], root)
     return tasks
 
 
@@ -120,13 +112,6 @@ if args[0]=='backup':
 if args[:2]==['snapshot','list']:
     print('host/authentik/2026-10-16T00:00:00Z')
     raise SystemExit(0)
-if args[0]=='restore':
-    if case=='extract-failure':
-        print('fixture extraction failed',file=sys.stderr)
-        raise SystemExit(9)
-    destination=Path(args[3])
-    shutil.copytree(root/'source-data',destination,dirs_exist_ok=True)
-    raise SystemExit(0)
 raise SystemExit(3)
 ''',
     }
@@ -150,14 +135,13 @@ def environment(root, case):
 def run_tasks(root, tasks, variables, case, server=None):
     if server is not None:
         variables["app_config"]["app"]["port"] = server.server_port
-        server.fail_first = case == "health-failure"
         server.calls = 0
     playbook = root / "run.yml"
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost",
         "gather_facts": False,
         "vars": variables,
-        "tasks": fixture_tasks(tasks, root, case),
+        "tasks": fixture_tasks(tasks, root),
     }]), encoding="utf-8")
     return subprocess.run(
         [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(playbook)],
@@ -194,12 +178,6 @@ def base_variables(root, server):
             },
         },
         "homelabinfra_infra": {"backups": {}},
-        "restore_backup_id": "authentik",
-        "restore_target_backup_id": "authentik",
-        "restore_snapshot": "host/authentik/2026-10-16T00:00:00Z",
-        "restore_pre_restore_point": "host/authentik/2026-10-16T00:30:00Z",
-        "restore_destination": "existing",
-        "restore_overwrite": True,
     }
 
 
@@ -246,33 +224,28 @@ def check_backup_and_restore_contract():
         {"name": "data.pxar", "path": "{{ _authentik_backup_data_path }}"}
     ]
 
+    swap = swap_inputs("authentik")
+    assert swap["recovery_swap_runtime"] == "docker" and swap["recovery_swap_pbs_runtime"] == "native"
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    assert swap["recovery_swap_backup_id"] == "{{ _authentik_restore_source_backup_id }}"
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _authentik_restore_target_backup_id }}"
+    assert swap["recovery_swap_staging_parent"] == "{{ _authentik_restore_project_dir }}"
+    paths = {p["source"]: p for p in swap["recovery_swap_paths"]}
+    assert sorted(paths) == ["data/" + name for name in
+                             ["certs", "custom-templates", "database", "media", "redis"]]
+    for source, path in paths.items():
+        assert path["path"] == "{{ _authentik_restore_data_path }}/" + source.removeprefix("data/")
+    # PostgreSQL and Redis keep the owner their own container gave the live directory.
+    for source in ["data/database", "data/redis"]:
+        assert (paths[source]["owner"], paths[source]["group"]) == ("live", "live")
+    assert paths["data/database"]["mode"] == "0700" and not paths["data/database"].get("allow_empty")
+    for source in ["data/media", "data/certs", "data/custom-templates"]:
+        assert (paths[source]["owner"], paths[source]["group"]) == (1000, 1000), source
+    assert swap["recovery_swap_stop_services"] == _authentik_services()
+    assert swap["recovery_swap_health_url"].endswith("/-/health/ready/")
     restore = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
-    restore_tasks = list(tasks_recursive(restore))
-    assert "restore_pre_restore_point" in str(restore)
-    assert "data.pxar" in str(restore)
-    assert "_authentik_restore_stage" in str(restore)
-    assert "_authentik_restore_previous" in str(restore)
-    assert "_authentik_restore_old_data_moved" in str(restore)
-    assert "Put the original data back" in str(restore)
-    assert "Wait for the restored instance to become ready" in str(restore)
-    assert "state: stopped" in yaml.safe_dump(restore)
-    assert "state: present" in yaml.safe_dump(restore)
-    assert "not (restore_overwrite | bool)" in str(restore)
-    assert not any(
-        task.get("name") == "Authentik restore | Require all four target services to be running"
-        for task in restore_tasks
-    )
-    assert task_named(
-        restore_tasks, "Authentik restore | Report service status without gating recovery"
-    )
-    preview = task_named(
-        restore_tasks, "Authentik restore | List or verify the recovery point before changing Authentik"
-    )
-    assert preview["vars"]["pbs_client_overwrite"] is False and "when" not in preview
-    extract = task_named(restore_tasks, "Authentik restore | Extract the selected PBS archive")
-    assert extract["vars"]["pbs_client_archives"] == [
-        {"name": "data.pxar", "path": "{{ _authentik_restore_stage.path }}/data"}
-    ]
+    assert task_named(restore, "Authentik restore | Validate the independent pre-restore group")["when"] \
+        == "restore_overwrite | bool"
 
     remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
     remove_tasks = list(tasks_recursive(remove))
@@ -294,51 +267,21 @@ def check_backup_and_restore_contract():
     assert "groups[tag_group_name]" in selected_vm["ansible.builtin.set_fact"]["_rat_host"]
 
 
-def check_transactional_restore_fixtures():
-    restore_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
-    for case in [
-        "success",
-        "postgresql-down",
-        "health-failure",
-        "extract-failure",
-    ]:
-        with tempfile.TemporaryDirectory(prefix="authentik-recovery-") as tmp:
-            root = Path(tmp)
-            write_fixture_scripts(root)
-            make_instance_tree(root / "source-data", "restored")
-            server = http.server.HTTPServer(("127.0.0.1", 0), Health)
-            server.fail_first = False
-            server.calls = 0
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                variables = base_variables(root, server)
-                result = run_tasks(root, restore_tasks, variables, case, server)
-                current = Path(variables["app_config"]["app"]["data_path"])
-                marker = (current / "marker.txt").read_text(encoding="utf-8")
-                events_path = root / "services"
-                events = events_path.read_text(encoding="utf-8").splitlines() if events_path.exists() else []
-                if case in ["success", "postgresql-down"]:
-                    assert result.returncode == 0, result.stdout + result.stderr
-                    assert marker == "restored"
-                    assert events == ["stopped", "present"]
-                    if case == "postgresql-down":
-                        assert (root / "running-services").read_text(encoding="utf-8") == (
-                            "redis\nserver\nworker"
-                        )
-                else:
-                    assert result.returncode != 0, result.stdout + result.stderr
-                    assert marker == "original"
-                    if case == "health-failure":
-                        expected_events = ["stopped", "present", "stopped", "present"]
-                    else:
-                        expected_events = ["stopped", "stopped", "present"]
-                    assert events == expected_events
-                    assert "rollback" in result.stdout.lower() or "rollback" in result.stderr.lower()
-            finally:
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=2)
+def _authentik_services():
+    backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
+    return task_named(backup, "Authentik backup | Resolve the instance paths and recovery identity")[
+        "ansible.builtin.set_fact"]["_authentik_backup_expected_services"]
+
+
+def check_staged_hook():
+    with tempfile.TemporaryDirectory(prefix="authentik-staged-") as tmp:
+        stage = Path(tmp)
+        make_instance_tree(stage / "data", "restored")
+        variables = {"recovery_swap_stage": str(stage)}
+        result = run_hook("authentik", "staged", variables)
+        assert result.returncode == 0, result.stdout + result.stderr
+        (stage / "data/database/PG_VERSION").unlink()
+        assert run_hook("authentik", "staged", variables).returncode != 0, "a point without PostgreSQL"
 
 
 def check_backup_restarts_the_instance():
@@ -348,7 +291,6 @@ def check_backup_restarts_the_instance():
             root = Path(tmp)
             write_fixture_scripts(root)
             server = http.server.HTTPServer(("127.0.0.1", 0), Health)
-            server.fail_first = False
             server.calls = 0
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -377,8 +319,8 @@ def main():
     check_contract_and_secret_continuity()
     check_backup_and_restore_contract()
     check_backup_restarts_the_instance()
-    check_transactional_restore_fixtures()
-    print("Authentik native recovery: contract, estate-scoped target, secret continuity and transactional restore passed.")
+    check_staged_hook()
+    print("Authentik native recovery: contract, estate-scoped target, secret continuity, swap inputs and staged check passed.")
 
 
 if __name__ == "__main__":
