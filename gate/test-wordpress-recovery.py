@@ -86,6 +86,15 @@ def check_playbook_contract():
     for name in ("app_config", "homelabinfra_infra", "homelabinfra_vault", "wordpress_restore_backup_id",
                  "wordpress_fqdn"):
         assert run["vars"][name] == "{{ hostvars['localhost'].%s }}" % name, name
+    group = next(task for task in resolve["tasks"] if task.get("name") == "Resolve the source backup group")
+    expression = group["ansible.builtin.set_fact"]["wordpress_restore_backup_id"]
+    for variables, expected in [
+        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": ""}}}, "wordpress"),
+        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": "wp-group"}}}, "wp-group"),
+        ({"instance": "wordpress", "source_instance": "blog", "app_config": {"backup": {}}}, "blog"),
+        ({"instance": "wordpress", "source_backup_id": "old", "app_config": {"backup": {}}}, "old"),
+    ]:
+        assert render_fact(expression, variables) == expected, (variables, expected)
     check = next(task for task in RESTORE_PLAYBOOK[2]["tasks"]
                  if task.get("name") == "Fail if WordPress restore did not complete")
     assert "wordpress_restore_complete" in str(check["ansible.builtin.assert"]["that"])
@@ -109,6 +118,21 @@ def check_playbook_contract():
                str(task.get("ansible.builtin.include_tasks", "")))
     assert age["when"] == "restore_overwrite | bool"
     assert age["vars"]["recovery_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
+
+
+def render_fact(expression, variables):
+    """Render one set_fact expression in a real play and return the value."""
+    with tempfile.TemporaryDirectory() as directory:
+        playbook = Path(directory) / "render.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False, "vars": variables,
+            "tasks": [{"ansible.builtin.set_fact": {"_value": expression}},
+                      {"ansible.builtin.copy": {"content": "{{ _value }}", "dest": f"{directory}/value"}}]}]))
+        result = subprocess.run([str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"),
+                                 "-i", "localhost,", "-c", "local", str(playbook)],
+                                text=True, capture_output=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return (Path(directory) / "value").read_text().strip()
 
 
 def fake_docker(root):

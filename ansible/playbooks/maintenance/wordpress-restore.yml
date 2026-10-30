@@ -50,7 +50,7 @@
       ansible.builtin.set_fact:
         wordpress_restore_backup_id: >-
           {{ source_backup_id | default('', true)
-             or (app_config.backup.backup_id | default('', true)
+             or ((app_config.backup.backup_id | default('', true) or instance)
                  if (source_instance | default(instance)) == instance
                  else (source_instance | default(instance))) }}
 

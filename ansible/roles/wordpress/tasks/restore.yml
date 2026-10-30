@@ -25,11 +25,18 @@
         or restore_snapshot.startswith('host/' ~ wordpress_restore_backup_id ~ '/')
       - not (restore_overwrite | bool) or restore_snapshot | default('') | length > 0
       - wordpress_fqdn | default('') | length > 0
-      - not (restore_overwrite | bool) or app_config.app.admin_password | default('') | length > 0
     fail_msg: >-
       WordPress restore needs a snapshot from host/{{ wordpress_restore_backup_id }}/ when
-      overwrite=true, the target's published name and its administrator credential.
+      overwrite=true and the target's published name.
+
+- name: WordPress restore | Require the target administrator credential
+  ansible.builtin.assert:
+    that: app_config.app.admin_password | default('') | length > 0
+    fail_msg: >-
+      WordPress restore repairs the target administrator, so its Vaultwarden item needs
+      admin_password. Deploy the target first.
   no_log: true
+  when: restore_overwrite | bool
 
 - name: WordPress restore | Require a fresh, distinct pre-restore point
   ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
