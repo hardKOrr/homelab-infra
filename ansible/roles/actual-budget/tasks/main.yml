@@ -29,25 +29,8 @@
   register: _actual_budget_password_marker
   changed_when: false
 
-- name: Actual Budget | Generate or reuse the server password
-  ansible.builtin.set_fact:
-    _actual_budget_server_password: >-
-      {{ app_config.app.server_password
-         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-  no_log: true
-
-- name: Actual Budget | Store the application credential in Vaultwarden
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/apps/{{ instance }}"
-    vault_item_merge: true
-    vault_item_fields:
-      provider: actual-budget
-      instance: "{{ instance }}"
-      server_password: "{{ _actual_budget_server_password }}"
-      data_path: "{{ app_config.app.data_path }}"
-    vault_item_secret_fields: [server_password]
-  no_log: true
+- name: Actual Budget | Resolve and store the application credential
+  ansible.builtin.include_tasks: credentials.yml
 
 - name: Actual Budget | Render Compose project
   ansible.builtin.template:

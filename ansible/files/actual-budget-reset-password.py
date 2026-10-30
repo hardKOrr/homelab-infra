@@ -76,19 +76,32 @@ def reset_password(command, password, timeout=120):
             os.close(slave)
 
 
+def build_command(runtime, arguments):
+    if runtime == "docker" and len(arguments) == 2:
+        project_dir, service = arguments
+        return ["docker", "compose", "--project-directory", project_dir, "exec",
+                service, "node", "/app/src/scripts/reset-password.js"]
+    if runtime == "kubernetes" and len(arguments) == 3:
+        namespace, pod, container = arguments
+        return ["k3s", "kubectl", "--namespace", namespace, "exec", "--stdin", "--tty",
+                pod, "--container", container, "--", "node",
+                "/app/src/scripts/reset-password.js"]
+    raise ValueError("unsupported password reset target")
+
+
 def main():
-    if len(sys.argv) != 3:
-        print("usage: actual-budget-reset-password.py <project-directory> <service>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("usage: actual-budget-reset-password.py <docker|kubernetes> <target...>",
+              file=sys.stderr)
         return 1
     password = sys.stdin.readline().rstrip("\r\n")
     if not password or any(character in password for character in "\r\n\x00"):
         print("Actual Budget password input is invalid", file=sys.stderr)
         return 1
-    command = ["docker", "compose", "--project-directory", sys.argv[1], "exec",
-               sys.argv[2], "node", "/app/src/scripts/reset-password.js"]
     try:
+        command = build_command(sys.argv[1], sys.argv[2:])
         reset_password(command, password)
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         # Never relay utility output: it could contain the input or application state.
         print("Actual Budget native password initialization failed", file=sys.stderr)
         return 1

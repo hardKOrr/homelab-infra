@@ -1,0 +1,22 @@
+---
+# Restore Actual Budget's /data volume from one PBS point through the shared Kubernetes
+# recovery Job. The server account database and every budget file stay in one archive.
+- name: Actual Budget Kubernetes restore | Restore through the shared recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Actual Budget
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+          owner: "1001:1001"
+      stop:
+        - "{{ restore_target }}"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-password.yml"
+      describe: >-
+        the {{ restore_target }}-data volume with Actual Budget's server account and budget files
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in with the canonical
+          Actual Budget credential for {{ restore_target }}, and verify the expected
+          budgets, accounts, transactions, and preferences.

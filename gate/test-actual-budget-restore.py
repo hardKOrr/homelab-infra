@@ -20,7 +20,7 @@ role = repo / "ansible/roles/actual-budget"
 
 
 def main():
-    swap = swap_inputs("actual-budget")
+    swap = swap_inputs("actual-budget", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.data_path }}", "owner": 1001, "group": 1001, "mode": "0750"}
     assert swap["recovery_swap_stop_services"] == ["{{ app_config.app.service_name }}"]

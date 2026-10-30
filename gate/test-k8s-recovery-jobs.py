@@ -48,6 +48,8 @@ APPS = {
             "engine": "postgresql", "archives": ["data"]},
     "karakeep": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
                  "engine": None, "archives": ["data"], "stop": ["src"]},
+    "actual-budget": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
+                      "engine": None, "archives": ["data"], "stop": ["src"]},
 }
 
 
@@ -147,7 +149,7 @@ def database_steps():
     return {"postgresql": postgres, "namespace-mysql": mysql, "mariadb": mariadb}
 
 
-def backup_render(archives, database, instance="app", stop=None):
+def backup_all_documents(archives, database, instance="app", stop=None):
     kr = {
         "backup_id": instance, "repository": "token@pbs:store", "datastore": "store",
         "schedule": "0 3 * * *", "timezone": "UTC", "timeout": 3600,
@@ -166,7 +168,7 @@ def backup_render(archives, database, instance="app", stop=None):
 
 
 def backup_documents(archives, database, instance="app", stop=None):
-    documents = backup_render(archives, database, instance, stop)
+    documents = backup_all_documents(archives, database, instance, stop)
     return (next(d for d in documents if d["kind"] == "ConfigMap"),
             next(d for d in documents if d["kind"] == "CronJob"))
 
@@ -238,8 +240,8 @@ def shared_pair(steps):
     assert ordinary_pod["automountServiceAccountToken"] is False
     assert "serviceAccountName" not in ordinary_pod
 
-    quiesced = backup_render([{"name": "data", "claim": "app-storage"}], {},
-                            "app", ["app"])
+    quiesced = backup_all_documents([{"name": "data", "claim": "app-storage"}], {},
+                                    "app", ["app"])
     service_account = next(d for d in quiesced if d["kind"] == "ServiceAccount")
     role = next(d for d in quiesced if d["kind"] == "Role")
     binding = next(d for d in quiesced if d["kind"] == "RoleBinding")
@@ -264,6 +266,27 @@ def shared_pair(steps):
         encoding="utf-8").rstrip("\n")
     assert scale_script in push["args"][0]
     assert 'K8S_RECOVERY_DEPLOYMENTS' in [entry["name"] for entry in push["env"]]
+
+    actual_budget_docs = backup_all_documents(
+        [{"name": "data", "claim": "actual-budget-data"}], {},
+        "actual-budget", ["actual-budget"],
+    )
+    actual_budget = {item["kind"]: item for item in actual_budget_docs}
+    assert {"ServiceAccount", "Role", "RoleBinding"} <= set(actual_budget)
+    assert actual_budget["Role"]["rules"] == [
+        {"apiGroups": ["apps"], "resources": ["deployments"],
+         "resourceNames": ["actual-budget"], "verbs": ["get"]},
+        {"apiGroups": ["apps"], "resources": ["deployments/scale"],
+         "resourceNames": ["actual-budget"], "verbs": ["get", "patch"]},
+    ]
+    actual_pod = actual_budget["CronJob"]["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert actual_pod["serviceAccountName"] == "actual-budget-backup"
+    actual_script = actual_pod["containers"][0]["args"][0]
+    assert "kubernetes-recovery-scale.py stop" in actual_script
+    assert "kubernetes-recovery-scale.py start" in actual_script
+    assert scale_script in actual_script
+    actual_env = {item["name"]: item for item in actual_pod["containers"][0]["env"]}
+    assert actual_env["K8S_RECOVERY_DEPLOYMENTS"]["value"] == '["actual-budget"]'
 
     # Plan: the same client path into scratch, with the target read-only.
     pod, containers = restore_pod("plan", archives, postgres)
