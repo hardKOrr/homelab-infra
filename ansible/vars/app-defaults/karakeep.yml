@@ -5,7 +5,7 @@
 karakeep_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -20,6 +20,9 @@ karakeep_defaults:
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
     meilisearch_image: getmeili/meilisearch:v1.41.0
     port: 3005
+    # One default-StorageClass claim keeps the SQLite/assets directory and Meilisearch
+    # index together in the same data.pxar layout as the existing Docker recovery points.
+    storage: 10
     # SQLite database, uploaded assets and crawled archives. The role binds this path
     # into the application container as /data.
     data_path: "/opt/{{ instance }}/data"
@@ -54,3 +57,13 @@ karakeep_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

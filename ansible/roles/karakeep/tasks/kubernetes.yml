@@ -1,0 +1,46 @@
+---
+# One Deployment groups the web, browser and search containers. A single default
+# StorageClass claim keeps the prior recovery-point layout intact across hosting methods.
+
+- name: Karakeep | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Karakeep | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Karakeep | Resolve canonical application credentials
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Karakeep | Sync application credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      nextauth-secret: "{{ _karakeep_nextauth_secret }}"
+      meili-master-key: "{{ _karakeep_meili_master_key }}"
+  no_log: true
+
+- name: Karakeep | Render the Kubernetes workload
+  ansible.builtin.set_fact:
+    _karakeep_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Karakeep | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _karakeep_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Karakeep | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the SQLite database, uploaded assets and Meilisearch index in one application-
+        consistent recovery point

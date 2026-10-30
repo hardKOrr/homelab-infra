@@ -1,0 +1,21 @@
+---
+# The shared restore Job replaces the whole PVC root, which retains the original
+# data.pxar layout: data/ and meilisearch/.
+- name: Karakeep Kubernetes restore | Restore the application volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Karakeep
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+          owner: "{{ karakeep_data_uid }}:{{ karakeep_data_gid }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the SQLite database, uploaded assets and Meilisearch index in one application-
+        consistent recovery point
+      verify:
+        - >-
+          Sign in at the instance URL with the Karakeep drill owner, then verify the
+          expected bookmark, list membership and bookmarkClickAction setting.

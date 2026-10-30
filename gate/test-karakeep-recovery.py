@@ -125,7 +125,7 @@ def backup_check(case):
 def check_restore_swap():
     """Karakeep supplies both directories from its one archive; gate/test-restore-swap.py
     proves the swap, rollback and ownership."""
-    swap = swap_inputs("karakeep")
+    swap = swap_inputs("karakeep", "restore-docker.yml")
     owner = {"owner": "{{ karakeep_data_uid }}", "group": "{{ karakeep_data_gid }}", "mode": "0750"}
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [
@@ -146,6 +146,8 @@ def check_restore_swap():
 def main():
     defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/karakeep.yml").read_text())
     config = defaults["karakeep_defaults"]
+    assert config["hosting"]["method"] == "docker"
+    assert config["hosting"]["supported"] == ["docker-vm", "kubernetes"]
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert any(item["protocol"] == "TCP" and item["port"] == 80

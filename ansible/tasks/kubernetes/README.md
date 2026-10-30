@@ -64,8 +64,11 @@ CronJob that `Backup App` runs on demand), and `recovery-restore.yml` runs
 the PBS client, its tmpfs cache, the PBS trust ConfigMap, recovery-point identity and
 retention, the read-only preview, and the restore order: stage, load the database, then
 replace volumes. A role supplies `k8s_recovery` (archives, an optional database step from
-`../database/kubernetes-recovery-step.yml`, the Deployments to stop and restart, and an
-optional after-restore task file). The input contract is in each task file's header.
+`../database/kubernetes-recovery-step.yml`, and the Deployments to stop and restart during
+restore). For a filesystem archive that needs quiescing, `recovery-backup.yml` can also
+scale the listed Deployments to zero while it reads the PVCs, wait for their pods to exit,
+and restart them after success or failure. That Job receives a namespace-scoped Role limited
+to those Deployment names. The input contract is in each task file's header.
 
 ## Availability and storage
 

@@ -11,13 +11,14 @@
     instance, k8s_namespace, k8s_pbs_fingerprint
     _kr  — backup_id, repository, datastore, schedule, timezone, timeout, retention_days,
            scratch_gi, secret, ntfy_url, ntfy_token, client (backup.client: image, key_url, repository, suite, component),
-           archives[{name, claim|config_map}], database (tasks/database/
+           archives[{name, claim|config_map}], optional stop Deployment names, database (tasks/database/
            kubernetes-recovery-step.yml) or none
 
   No credential appears here or on a command line. The PBS token and database secrets are
   in the `<instance>-backup` Secret and reach the client as environment.
 #}
 {% set db = _kr.database | default({}, true) %}
+{% set stop = _kr.stop | default([], true) %}
 {#
   Held unindented and placed with `indent`: a block carrying its own spaces is correct at
   only the one depth it was written for.
@@ -28,6 +29,52 @@ app.kubernetes.io/managed-by: homelab-infra
 app.kubernetes.io/component: backup
 homelab-infra.io/pbs-fingerprint: managed
 {% endset %}
+{% if stop %}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ instance }}-backup-quiesce
+  labels:
+{{ labels | trim | indent(4, true) }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames:
+{% for deployment in stop %}
+      - {{ deployment }}
+{% endfor %}
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames:
+{% for deployment in stop %}
+      - {{ deployment }}
+{% endfor %}
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ instance }}-backup-quiesce
+  labels:
+{{ labels | trim | indent(4, true) }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ instance }}-backup
+    namespace: {{ k8s_namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ instance }}-backup-quiesce
+{% endif %}
 ---
 {#
   PBS serves a self-signed certificate. The CronJob reads the pinned fingerprint from this
@@ -79,6 +126,12 @@ spec:
         spec:
           # A fresh pod per attempt keeps every attempt's log readable.
           restartPolicy: Never
+          automountServiceAccountToken: {{ 'true' if stop else 'false' }}
+{% if stop %}
+          serviceAccountName: {{ instance }}-backup
+          # Give the exit trap time to restart the app if Kubernetes terminates the Job.
+          terminationGracePeriodSeconds: 330
+{% endif %}
 {% if db %}
           # The dump finishes before the push starts: initContainers run to completion
           # first.
@@ -146,12 +199,25 @@ spec:
                     fi
                   }
                   on_exit() {
-                    [ "$1" -eq 0 ] && return 0
-                    notify "Backup FAILED: {{ instance }}" \
-                      "The nightly application backup for {{ instance }} exited $1. It pushes to PBS datastore {{ _kr.datastore }} as host/{{ _kr.backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
-                    return 0
+                    status=$1
+                    trap - EXIT INT TERM
+{% if stop %}
+                    if [ "${K8S_RECOVERY_STOPPED:-false}" = true ]; then
+                      if ! python3 /tmp/kubernetes-recovery-scale.py start; then
+                        echo "ERROR: could not restart the quiesced application Deployment(s)"
+                        [ "$status" -ne 0 ] || status=1
+                      fi
+                    fi
+{% endif %}
+                    if [ "$status" -ne 0 ]; then
+                      notify "Backup FAILED: {{ instance }}" \
+                        "The nightly application backup for {{ instance }} exited $status. It pushes to PBS datastore {{ _kr.datastore }} as host/{{ _kr.backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
+                    fi
+                    exit "$status"
                   }
                   trap 'on_exit $?' EXIT
+                  trap 'exit 130' INT
+                  trap 'exit 143' TERM
 
                   # No official image ships the client and the lab has no registry, so it
                   # comes from Proxmox's signed repository at run time.
@@ -161,7 +227,15 @@ spec:
                   echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                     > /etc/apt/sources.list.d/pbs-client.list
                   apt-get update -qq
-                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client{% if stop %} python3{% endif %} >/dev/null
+
+{% if stop %}
+                  cat > /tmp/kubernetes-recovery-scale.py <<'PY'
+{{ lookup('ansible.builtin.file', _k8s_recovery_ansible_root ~ '/scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
+                  PY
+                  python3 /tmp/kubernetes-recovery-scale.py stop
+                  K8S_RECOVERY_STOPPED=true
+{% endif %}
 
                   # Every archive in ONE snapshot: they are one application's state at one
                   # moment, and a restore needs all of them. Pushed uncompressed so PBS
@@ -202,6 +276,14 @@ spec:
                   value: "{{ _kr.client.repository }} {{ _kr.client.suite }} {{ _kr.client.component }}"
                 - name: TMPDIR
                   value: /tmp
+{% if stop %}
+                - name: K8S_RECOVERY_DEPLOYMENTS
+                  value: {{ stop | to_json | to_json }}
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+{% endif %}
 {% if _kr.ntfy_url | length > 0 %}
                 - name: NTFY_URL
                   value: "{{ _kr.ntfy_url }}"

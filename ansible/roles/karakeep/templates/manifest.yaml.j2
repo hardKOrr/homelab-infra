@@ -1,0 +1,175 @@
+{#
+  Karakeep's web, browser and search services in one pod. The single default-StorageClass
+  PVC preserves the existing recovery archive layout: data/ and meilisearch/.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-storage
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        fsGroup: {{ karakeep_data_gid }}
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: web
+          image: {{ app_config.app.image }}
+          env:
+            - name: KARAKEEP_VERSION
+              value: "{{ app_config.app.image | regex_replace('^.*:', '') }}"
+            - name: NEXTAUTH_URL
+              value: "https://{{ karakeep_fqdn }}/"
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: nextauth-secret
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: meili-master-key
+            - name: DISABLE_SIGNUPS
+              value: "{{ app_config.app.disable_signups | bool | ternary('true', 'false') }}"
+            - name: DB_WAL_MODE
+              value: "{{ app_config.app.db_wal_mode | bool | ternary('true', 'false') }}"
+            - name: MEILI_ADDR
+              value: http://localhost:7700
+            - name: BROWSER_WEB_URL
+              value: http://localhost:9222
+            - name: DATA_DIR
+              value: /data
+          ports:
+            - name: web
+              containerPort: 3000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              subPath: data
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: web
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: web
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: web
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+        - name: chrome
+          image: {{ app_config.app.chrome_image }}
+          args:
+            - --disable-gpu
+            - --disable-dev-shm-usage
+            - --hide-scrollbars
+            - --disable-blink-features=AutomationControlled
+            - --window-size=1440,900
+          ports:
+            - name: chrome-debug
+              containerPort: 9222
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: meilisearch
+          image: {{ app_config.app.meilisearch_image }}
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: meili-master-key
+            - name: MEILI_NO_ANALYTICS
+              value: "true"
+          ports:
+            - name: meilisearch
+              containerPort: 7700
+          volumeMounts:
+            - name: data
+              mountPath: /meili_data
+              subPath: meilisearch
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: web
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ karakeep_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}
