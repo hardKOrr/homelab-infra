@@ -70,6 +70,19 @@ def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
 
 
+def recovery_ansible_root():
+    apply = task_named(tasks_of("ansible/tasks/kubernetes/recovery-backup.yml"),
+                       "k8s backup | Apply the backup CronJob")
+    root = render(apply["vars"]["_k8s_recovery_ansible_root"], {
+        "role_path": str(ROOT / "ansible/roles/karakeep"),
+    })
+    assert Path(root).resolve() == (ROOT / "ansible").resolve()
+    manifest_source = apply["vars"]["k8s_manifest"]
+    assert "_k8s_recovery_ansible_root" in manifest_source
+    assert "playbook_dir" not in manifest_source
+    return root
+
+
 def database_steps():
     """Render the step's real set_facts and return one step per database kind."""
     tasks = tasks_of(STEP.relative_to(ROOT))
@@ -145,7 +158,9 @@ def backup_render(archives, database, instance="app", stop=None):
     text = render(BACKUP.read_text(encoding="utf-8"), {
         "_kr": kr, "instance": instance, "k8s_namespace": f"app-{instance}",
         "k8s_pbs_fingerprint": FINGERPRINT,
-        "playbook_dir": str(ROOT / "ansible/playbooks/apps"),
+        "_k8s_recovery_ansible_root": recovery_ansible_root(),
+        # A deeply nested caller makes a playbook_dir-relative lookup fail.
+        "playbook_dir": str(ROOT / "unrelated/nested/maintenance/playbook"),
     })
     return list(yaml.safe_load_all(text))
 
@@ -245,6 +260,9 @@ def shared_pair(steps):
     push = pod["containers"][0]
     assert "kubernetes-recovery-scale.py stop" in push["args"][0]
     assert "kubernetes-recovery-scale.py start" in push["args"][0]
+    scale_script = (ROOT / "ansible/scripts/kubernetes-recovery-scale.py").read_text(
+        encoding="utf-8").rstrip("\n")
+    assert scale_script in push["args"][0]
     assert 'K8S_RECOVERY_DEPLOYMENTS' in [entry["name"] for entry in push["env"]]
 
     # Plan: the same client path into scratch, with the target read-only.

@@ -104,9 +104,12 @@
     - name: k8s backup | Apply the backup CronJob
       ansible.builtin.include_tasks: apply-manifest.yml
       vars:
+        # Shared recovery files live under ansible/, while the calling playbook can be
+        # anywhere in the tree. Every caller is an app role below ansible/roles/.
+        _k8s_recovery_ansible_root: "{{ role_path | dirname | dirname }}"
         k8s_manifest: >-
           {{ lookup('ansible.builtin.template',
-                    playbook_dir ~ '/../../templates/kubernetes/recovery-backup.yaml.j2') }}
+                    _k8s_recovery_ansible_root ~ '/templates/kubernetes/recovery-backup.yaml.j2') }}
 
     - name: k8s backup | State the backup contract
       ansible.builtin.debug:

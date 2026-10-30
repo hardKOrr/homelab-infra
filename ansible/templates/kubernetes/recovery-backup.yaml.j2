@@ -231,7 +231,7 @@ spec:
 
 {% if stop %}
                   cat > /tmp/kubernetes-recovery-scale.py <<'PY'
-{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
+{{ lookup('ansible.builtin.file', _k8s_recovery_ansible_root ~ '/scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
                   PY
                   python3 /tmp/kubernetes-recovery-scale.py stop
                   K8S_RECOVERY_STOPPED=true
