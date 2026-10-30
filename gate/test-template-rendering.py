@@ -1091,7 +1091,9 @@ def mautic_rendering():
         tasks, "Mautic | Converge platform-owned configuration fields"
     )
     fields_expr = converge["vars"]["_mautic_local_php_fields"]
-    line_expr = converge["ansible.builtin.lineinfile"]["line"]
+    # The role finds templates/php-string.j2 by name; this fixture has no role path.
+    line_expr = converge["ansible.builtin.lineinfile"]["line"].replace(
+        "'php-string.j2'", repr(str(ROOT / "ansible/roles/mautic/templates/php-string.j2")))
     app_config = {
         "app": {
             "database_host": "h",

@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold Grafana's database.
+- name: Observability restore | Check the staged Grafana database
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/grafana/grafana.db"
+  register: _observability_restore_staged_grafana_db
+  changed_when: false
+
+- name: Observability restore | Refuse a point without Grafana's database
+  ansible.builtin.assert:
+    that:
+      - _observability_restore_staged_grafana_db.stat.isreg | default(false)
+      - _observability_restore_staged_grafana_db.stat.size | default(0) | int > 0
+    fail_msg: >-
+      The selected point holds no non-empty grafana/grafana.db; Observability keeps
+      running unchanged.

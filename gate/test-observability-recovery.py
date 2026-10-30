@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise Observability backup, preview, restore and rollback with local shims."""
+"""Exercise Observability backup with local shims; check its restore-swap inputs and hooks.
+
+gate/test-restore-swap.py proves the swap's preview, staging, ownership and rollback.
+"""
 
 import copy
 import http.server
@@ -12,13 +15,11 @@ from pathlib import Path
 import yaml
 
 from pbs_client_stub import stub_pbs_client
+from restore_swap_inputs import run_hook, swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 backup_source = yaml.safe_load((repo / "ansible/roles/observability/tasks/backup.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore.yml").read_text())
-source_snapshot = "host/observability/2026-10-15T22:00:00Z"
-pre_restore_point = "host/observability/2026-10-16T01:00:00Z"
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -173,48 +174,45 @@ def backup_check(case, server):
         assert (root / "data/grafana/grafana.db").read_text() == "original grafana database\n"
 
 
-def restore_check(case, server):
-    with tempfile.TemporaryDirectory(prefix="observability-restore-test-") as directory:
-        root = Path(directory)
-        make_stubs(root)
-        data = make_data(root)
-        server.response_status = 503 if case == "health-failure" else 200
-        selected = ("host/foreign/2026-10-15T22:00:00Z" if case == "foreign-group"
-                    else source_snapshot)
-        variables = base_variables(root, server) | {
-            "restore_snapshot": selected,
-            "restore_pre_restore_point": pre_restore_point,
-            "restore_overwrite": case not in ["plan", "selected-plan"],
-            "restore_destination": "existing",
-        }
-        if case == "missing-pre-restore-point":
-            variables["restore_pre_restore_point"] = ""
-        if case == "plan":
-            variables["restore_snapshot"] = ""
-        result = run_tasks(root, restore_source, variables, case)
-        success = case == "plan" or case == "selected-plan" or case == "success"
-        assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert data.exists()
-        if case == "success":
-            assert (data / "grafana/grafana.db").read_text() == "restored grafana database\n"
-            assert (data / "prometheus/marker").read_text() == "restored prometheus data\n"
-        else:
-            assert (data / "grafana/grafana.db").read_text() == "original grafana database\n"
-            assert (data / "prometheus/marker").read_text() == "original prometheus data\n"
-        assert not list(root.glob(".observability-pre-restore-*")), result.stdout + result.stderr
-        assert not list(root.glob("observability-observability-restore-*"))
-        if case in ["plan", "selected-plan", "foreign-group", "missing-pre-restore-point",
-                    "extract-failure", "incomplete-archive"]:
-            assert not (root / "services").exists(), "plan or rejected restore stopped services"
-        else:
-            assert (root / "services").exists(), f"{case}: restore never reached its service boundary\n{result.stdout}{result.stderr}"
-            states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped"
-            assert states[-1] == ("present" if success else "stopped"), states
-        if case == "foreign-group":
-            assert "must belong to host/observability/" in result.stdout
-        if case == "missing-pre-restore-point":
-            assert "requires a separate pre_restore_point" in result.stdout
+def check_restore_swap(server):
+    swap = swap_inputs("observability")
+    assert swap["recovery_swap_archives"] == ["data.pxar"]
+    # Each tree keeps the uid its container runs as; data_path itself stays as Deploy made it.
+    assert swap["recovery_swap_paths"] == [
+        {"path": "{{ app_config.app.data_path }}/prometheus", "source": "data/prometheus",
+         "owner": 65534, "group": 0, "mode": "0750"},
+        {"path": "{{ app_config.app.data_path }}/grafana", "source": "data/grafana",
+         "owner": 472, "group": 0, "mode": "0750"}]
+    assert swap["recovery_swap_staging_parent"] == "{{ app_config.app.data_path | dirname }}"
+    assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _observability_restore_target_backup_id }}"
+    assert swap["recovery_swap_stop_services"] == ["prometheus", "grafana"]
+    assert swap["recovery_swap_health_url"].endswith("{{ app_config.app.prometheus_port }}/-/ready")
+    tasks = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore.yml").read_text())
+    assert "Observability restore | Require an independent pre-restore point for an existing target" in [
+        task.get("name") for task in tasks]
+
+    with tempfile.TemporaryDirectory() as directory:
+        stage = Path(directory)
+        database = stage / "data/grafana/grafana.db"
+        database.parent.mkdir(parents=True)
+        variables = {"recovery_swap_stage": str(stage)}
+        assert run_hook("observability", "staged", variables).returncode != 0, "no grafana.db"
+        database.write_text("")
+        assert run_hook("observability", "staged", variables).returncode != 0, "empty grafana.db"
+        database.write_text("restored grafana database\n")
+        result = run_hook("observability", "staged", variables)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def stub(tasks):
+        for task in tasks:
+            task.update(retries=1, delay=0)
+        return tasks
+
+    for status, ok in [(503, False), (200, True)]:
+        server.response_status = status
+        result = run_hook("observability", "verified",
+                          {"app_config": {"app": {"port": server.server_port}}}, stub)
+        assert (result.returncode == 0) == ok, result.stdout + result.stderr
 
 
 def check_contract():
@@ -228,25 +226,10 @@ def check_contract():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["extra"])
-    staging = next(task for task in all_tasks(restore_source) if task.get("name") ==
-                   "Observability restore | Create a private staging directory")
-    assert staging["ansible.builtin.tempfile"]["path"] == "{{ app_config.app.data_path | dirname }}"
     assert "client" not in defaults["backup"], "the shared client owns its pins"
     upload = next(task for task in all_tasks(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
     assert upload["vars"]["pbs_client_stop_services"] == ["prometheus", "grafana"]
-    restored_path = next(task for task in all_tasks(restore_source) if task.get("name") ==
-                         "Observability restore | Recreate the data directory")
-    assert restored_path["ansible.builtin.file"]["owner"] == "root"
-    assert restored_path["ansible.builtin.file"]["group"] == "root"
-    assert restored_path["ansible.builtin.file"]["mode"] == "0755"
-    names = [task.get("name") for task in all_tasks(restore_source)]
-    assert names.index("Observability restore | Refuse an incomplete archive") < names.index(
-        "Observability restore | Stop only Prometheus and Grafana"), "check the point before stopping"
-    assert '{{ _observability_restore_tmp.path }}/data/.' in next(
-        task for task in all_tasks(restore_source)
-        if task.get("name") == "Observability restore | Copy the archived application state into place"
-    )["ansible.builtin.command"]["argv"]
 
 
 def main():
@@ -257,16 +240,12 @@ def main():
     try:
         for case in ["backup-success", "backup-failure"]:
             backup_check(case, server)
-        for case in ["plan", "selected-plan", "foreign-group", "missing-pre-restore-point",
-                     "extract-failure", "incomplete-archive",
-                     "move-failure", "copy-failure", "start-failure", "health-failure",
-                     "success"]:
-            restore_check(case, server)
+        check_restore_swap(server)
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Observability: native backup, read-only plan, exact group guards, restore and post-move rollback passed")
+    print("Observability: native backup, restore swap inputs and hooks passed")
 
 
 if __name__ == "__main__":

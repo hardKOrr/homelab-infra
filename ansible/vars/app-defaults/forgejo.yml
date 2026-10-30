@@ -16,6 +16,10 @@ forgejo_defaults:
     image: codeberg.org/forgejo/forgejo:16
     port: 3000
     ssh_port: 2222
+    # Forgejo reserves `admin`; Deploy creates this administrator with the generated
+    # password in homelab-infra/apps/<instance>.
+    admin_user: homelab
+    admin_email: homelab@example.invalid
     data_path: "/opt/{{ instance }}/data"
     database:
       provider: postgresql

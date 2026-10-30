@@ -6,6 +6,8 @@ from pathlib import Path
 from jinja2 import Environment, StrictUndefined
 import yaml
 
+from restore_swap_inputs import swap_inputs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "ansible/roles/n8n/templates"
@@ -128,8 +130,8 @@ assert key_tasks == [
     "n8n restore | Record the source encryption key for the target",
     "n8n restore | Sync the restored key and target environment",
 ]
-docker_restore = read("ansible/roles/n8n/tasks/restore-docker.yml")
-assert "community.docker.docker_compose_v2" in docker_restore
+# Docker hosting restores through the shared swap with Compose (gate/test-n8n-restore.py).
+assert swap_inputs("n8n", "restore-docker.yml")["recovery_swap_runtime"] == "docker"
 assert "docker-compose.yml.j2" in read("ansible/roles/n8n/tasks/main.yml")
 
 print("n8n keeps Docker as default and renders its Kubernetes workload and paired PBS restore")

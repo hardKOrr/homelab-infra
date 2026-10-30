@@ -1,0 +1,20 @@
+---
+# restore-swap.yml staged hook: the point must hold Mautic's configuration and media trees.
+- name: Mautic restore | Check the staged configuration and media
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/mautic/{{ item }}"
+  loop: [config/local.php, media/files, media/images]
+  register: _mautic_restore_staged
+  changed_when: false
+
+- name: Mautic restore | Refuse an incomplete point
+  ansible.builtin.assert:
+    that: >-
+      (item.item == 'config/local.php' and item.stat.isreg | default(false)
+       and item.stat.size | default(0) | int > 0)
+      or (item.item.startswith('media/') and item.stat.isdir | default(false))
+    fail_msg: >-
+      The selected Mautic point lacks {{ item.item }}; Mautic keeps running unchanged.
+  loop: "{{ _mautic_restore_staged.results }}"
+  loop_control:
+    label: "{{ item.item }}"

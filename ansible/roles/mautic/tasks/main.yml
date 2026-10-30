@@ -156,13 +156,11 @@
 #      `%` as the start of a `%parameter.name%` reference — an unescaped one (which
 #      `mailer_dsn`'s own urlencoding introduces below even when nothing else would)
 #      can make the container fail to compile with a missing-parameter error.
-#   2. `replace('\\', '\\\\') | replace("'", "\\'")` — PHP single-quoted string
-#      escaping, so an unescaped `'` or `\` in a database or mail credential cannot
-#      terminate the PHP string early and corrupt this file.
-# `line:` is a block scalar, deliberately, not a quoted string: a double-quoted YAML
-# string applies its OWN backslash escaping before Jinja ever sees the content, which
-# collapses the `replace(...)` chain below into something Jinja can't even parse. A
-# block scalar carries every backslash and quote through to Jinja untouched.
+#   2. PHP single-quoted string escaping, so an unescaped `'` or `\` in a database or
+#      mail credential cannot terminate the PHP string early and corrupt this file.
+# templates/php-string.j2 applies both, the same filters templates/local.php.j2 seeds
+# with; restore-replaced.yml converges through it too. They live in a template file
+# because Ansible doubles backslashes inside Jinja string literals in task arguments.
 - name: Mautic | Converge platform-owned configuration fields
   ansible.builtin.lineinfile:
     path: "{{ mautic_config_file }}"
@@ -172,7 +170,7 @@
     mode: "0640"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
     line: >-
-      '{{ item.key }}' => '{{ item.value | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+      '{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},
     # Without this, a key absent from a mail-disabled deploy's local.php (or from a
     # pre-install one) is inserted at end-of-file by lineinfile's own default — AFTER
     # the closing `);` of the PHP array, which is not valid PHP. Every new key this

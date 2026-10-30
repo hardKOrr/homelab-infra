@@ -5,6 +5,8 @@ restore-swap.yml and scripts/restore-swap.sh run unchanged on local directories,
 - the Compose and systemd service tasks are rewritten to record `stop`/`start` calls;
 - pbs-client-restore.yml is a fake that records the preview and copies a fixture recovery
   point into the staging paths (gate/test-pbs-client.py proves the real one);
+- the database tasks are fakes that keep the "database" in one file and log each verify,
+  dump and restore into the hook log (gate/test-database-recovery.py proves the real ones);
 - fake `setpriv`, `findmnt` and `chown` on PATH record their calls, so a mount can be a
   plain directory and the run needs no root.
 
@@ -13,6 +15,9 @@ owner and mode and leaves no rollback copy or staging; a failure after the stop 
 original back byte for byte and starts it; a staged-data failure never stops the
 application; an earlier run's rollback copy refuses the restore; a mount swaps its
 contents as its owner; an incomplete rollback keeps the services stopped and the copies.
+With a database: its dump and ownership are checked before the stop, the live database is dumped after
+it, the archived dump loads before the replaced hook, and a failure once that load started
+loads the live dump back; a failed database rollback keeps the services stopped.
 """
 
 import grp
@@ -45,6 +50,32 @@ FAKE_RESTORE = """
     argv: [cp, -a, "{{ test_root }}/point/{{ item.path | basename }}/.", "{{ item.path }}/"]
   loop: "{{ pbs_client_archives if pbs_client_overwrite | default(restore_overwrite) | bool else [] }}"
 """
+
+# Each fake logs `db-<action> <file>` and checks it got the swap's instance and config.
+FAKE_DATABASE = {
+    "verify-dump": """
+- ansible.builtin.assert:
+    that: [database_app_instance == 'gate-app', database_app_config.name == 'gate']
+- ansible.builtin.shell: echo db-verify {{ database_restore_file | basename }} >> {{ test_root }}/hooks.log
+- ansible.builtin.command: grep -qx 'archived database' {{ database_restore_file }}
+""",
+    "dump": """
+- ansible.builtin.shell: echo db-dump {{ database_dump_file | basename }} >> {{ test_root }}/hooks.log
+- ansible.builtin.copy: {src: "{{ test_root }}/database", dest: "{{ database_dump_file }}", remote_src: true}
+""",
+    "guard-app-database": """
+- ansible.builtin.shell: echo db-guard >> {{ test_root }}/hooks.log
+- ansible.builtin.fail: {msg: another application's item uses the database}
+  when: fail_guard | default(false) | bool
+""",
+    # A load replaces the contents even when it then fails, as a partial MariaDB load would.
+    "restore": """
+- ansible.builtin.shell: echo db-restore {{ database_restore_file | basename }} >> {{ test_root }}/hooks.log
+- ansible.builtin.copy: {src: "{{ database_restore_file }}", dest: "{{ test_root }}/database", remote_src: true}
+- ansible.builtin.fail: {msg: database load failed}
+  when: fail_database | default('') == database_restore_file | basename
+""",
+}
 
 FAKES = {
     # Drop the identity options and run the command as the current user.
@@ -83,6 +114,9 @@ def build(root):
     (tasks / "recovery/restore-swap.yml").write_text(yaml.safe_dump(swap, sort_keys=False))
     (tasks / "backup").mkdir()
     (tasks / "backup/pbs-client-restore.yml").write_text(FAKE_RESTORE)
+    (tasks / "database").mkdir()
+    for name, body in FAKE_DATABASE.items():
+        (tasks / f"database/{name}.yml").write_text(body)
     (root / "bin").mkdir()
     for name, body in FAKES.items():
         (root / "bin" / name).write_text(body)
@@ -108,9 +142,11 @@ def tree(base):
 
 
 def reset(root, mounts=()):
-    for name in ("client.log", "services.log", "hooks.log", "setpriv.log", "chown.log", "mounts"):
+    for name in ("client.log", "services.log", "hooks.log", "setpriv.log", "chown.log", "mounts",
+                 "dump-mode"):
         (root / name).unlink(missing_ok=True)
     (root / "mounts").write_text("".join(f"{m}\n" for m in mounts))
+    (root / "database").write_text("live database\n")
     write_tree(root / "live", {
         "app/data/db.sqlite": "live db", "app/data/sub/keep": "live sub",
         "app/config/app.ini": "live ini", "media/photo.jpg": "live photo",
@@ -119,6 +155,7 @@ def reset(root, mounts=()):
         "data/app/db.sqlite": "restored db", "data/app/new": "restored new",
         "data/config/app.ini": "restored ini",
         "media/photo.jpg": "restored photo", "media/album/two.jpg": "restored two",
+        "data/database/gate.dump": "archived database\n",
     })
 
 
@@ -298,6 +335,71 @@ def main():
         assert "Rollback did not complete" in result.stdout
         assert list(live.glob("app/.gate-app-restore-*/restore-swap.sh"))
 
+        # Database: checked while serving, dumped after the stop, loaded before the replaced hook.
+        database = {"config": {"name": "gate"}, "dump": "data/database/gate.dump"}
+        reset(root)
+        expect(run(root, [data, config], recovery_swap_database=database), True, "database swap")
+        assert lines(root, "hooks.log") == [
+            "db-verify gate.dump", "db-guard", "staged", "db-dump rollback-gate.dump", "stopped",
+            "db-restore gate.dump", "replaced", "verified"], lines(root, "hooks.log")
+        assert (root / "database").read_text() == "archived database\n"
+        assert tree(live / "app/data") == {"db.sqlite": "restored db", "new": "restored new"}
+        assert leftovers(root) == [] and not list(live.glob(".gate-app-restore-*"))
+
+        # A failure before the archived dump loads leaves the database alone.
+        reset(root)
+        expect(run(root, [data], recovery_swap_database=database, fail_hook="stopped"),
+               False, "database untouched")
+        assert "db-restore gate.dump" not in lines(root, "hooks.log")
+        assert (root / "database").read_text() == "live database\n"
+
+        # A failure once the load started (in the load or later) loads the live dump back
+        # before the rollback hook, and the original starts.
+        for case, extra in {"failed load": {"fail_database": "gate.dump"},
+                            "verified failure": {"fail_hook": "verified"}}.items():
+            reset(root)
+            before = tree(live)
+            result = run(root, [data, config], recovery_swap_database=database, **extra)
+            expect(result, False, case)
+            assert (root / "database").read_text() == "live database\n", case
+            assert lines(root, "hooks.log")[-2:] == ["db-restore rollback-gate.dump", "rollback"], case
+            assert tree(live) == before and "The original state is back" in result.stdout, case
+            assert lines(root, "services.log")[-1] == "start app,worker", case
+
+        # A failed database rollback keeps the services stopped and the live dump.
+        reset(root)
+        result = run(root, [data], recovery_swap_database=database, fail_hook="verified",
+                     fail_database="rollback-gate.dump")
+        expect(result, False, "failed database rollback")
+        assert lines(root, "services.log")[-1] == "stop app,worker"
+        assert "Rollback did not complete" in result.stdout and "rollback-gate.dump" in result.stdout
+        assert list(live.glob("app/.gate-app-restore-*/data/database/rollback-gate.dump"))
+
+        # A missing, empty or unloadable dump is refused before the stop.
+        for case, text in {"missing dump": None, "empty dump": "", "unloadable dump": "garbage\n"}.items():
+            reset(root)
+            dump = root / "point/data/database/gate.dump"
+            dump.unlink() if text is None else dump.write_text(text)
+            expect(run(root, [data], recovery_swap_database=database), False, case)
+            assert not lines(root, "services.log"), case
+            assert (root / "database").read_text() == "live database\n", case
+
+        # A database another application claims is refused before the stop.
+        reset(root)
+        expect(run(root, [data], recovery_swap_database=database, fail_guard=True),
+               False, "claimed database")
+        assert not lines(root, "services.log") and "db-dump rollback-gate.dump" not in lines(root, "hooks.log")
+        assert tree(live / "app/data")["db.sqlite"] == "live db"
+
+        # With a mount in the swap, the dump's directory is closed to the mount's owner.
+        reset(root, mounts=[media["path"]])
+        (root / "hooks/dump-mode.yml").write_text(
+            "- ansible.builtin.shell: stat -c %a {{ recovery_swap_stage }}/data/database"
+            " > {{ test_root }}/dump-mode\n")
+        expect(run(root, [data, media], archives=["media.pxar"], recovery_swap_database=database,
+                   recovery_swap_staged_hook=str(root / "hooks/dump-mode.yml")), True, "private dump")
+        assert (root / "dump-mode").read_text().strip() == "700"
+
         # Unsafe requests are refused before anything stops.
         for case, paths in {
             "relative path": [dict(data, path="app/data")],
@@ -309,8 +411,14 @@ def main():
             reset(root)
             expect(run(root, paths, archives=["media.pxar"]), False, case)
             assert not lines(root, "services.log"), case
+        for case, dump in {"dump inside a source": "data/app/gate.dump",
+                           "dump outside the archives": "other/gate.dump",
+                           "dump at an archive's top": "data"}.items():
+            reset(root)
+            expect(run(root, [data], recovery_swap_database=dict(database, dump=dump)), False, case)
+            assert not lines(root, "services.log"), case
 
-    print("restore swap: preview, swap, rollback, ownership, mount and guards passed")
+    print("restore swap: preview, swap, rollback, ownership, mount, database and guards passed")
 
 
 if __name__ == "__main__":

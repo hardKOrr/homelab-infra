@@ -1,0 +1,16 @@
+---
+# restore-swap.yml staged hook: the point must hold Forgejo's configuration.
+- name: Forgejo restore | Check the staged configuration
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/forgejo/gitea/conf/app.ini"
+  register: _forgejo_restore_staged_config
+  changed_when: false
+
+- name: Forgejo restore | Refuse a point without its configuration
+  ansible.builtin.assert:
+    that:
+      - _forgejo_restore_staged_config.stat.isreg | default(false)
+      - _forgejo_restore_staged_config.stat.size | default(0) | int > 0
+    fail_msg: >-
+      The selected Forgejo point lacks a non-empty gitea/conf/app.ini; Forgejo keeps
+      running unchanged.

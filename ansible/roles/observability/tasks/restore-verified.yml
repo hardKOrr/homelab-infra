@@ -1,0 +1,11 @@
+---
+# restore-swap.yml verified hook: Prometheus is ready; Grafana must answer too.
+- name: Observability restore | Wait for Grafana
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/health"
+    status_code: 200
+  register: _observability_restore_grafana_health
+  until: _observability_restore_grafana_health.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false

@@ -15,7 +15,14 @@
     group: "1000"
     mode: "0750"
 
-- name: Forgejo | Store database connection fields in Vaultwarden
+- name: Forgejo | Generate or reuse the administrator password
+  ansible.builtin.set_fact:
+    _forgejo_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Forgejo | Store the administrator and database connection fields in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: "homelab-infra/apps/{{ instance }}"
@@ -23,13 +30,47 @@
     vault_item_fields:
       provider: forgejo
       instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _forgejo_admin_password }}"
       database_provider: "{{ app_config.app.database.provider }}"
       database_host: "{{ app_config.app.database_host }}"
       database_port: "{{ app_config.app.database_port }}"
       database_name: "{{ app_config.app.database.name }}"
       database_user: "{{ app_config.app.database_user }}"
       database_password: "{{ app_config.app.database_password }}"
-    vault_item_secret_fields: [database_password]
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+# INSTALL_LOCK (forgejo.env) skips the web installer. Forgejo then generates and saves its
+# internal tokens itself, but an empty SECRET_KEY falls back to a fixed public default, so
+# a new install gets a key in app.ini before Forgejo first starts. An existing app.ini,
+# including a restored one, keeps whatever key it has, even an empty one: the key
+# encrypts stored secrets, and replacing it would make them unreadable.
+- name: Forgejo | Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop: [gitea, gitea/conf]
+
+- name: Forgejo | Look for an existing configuration
+  ansible.builtin.stat:
+    path: "{{ forgejo_app_ini }}"
+  register: _forgejo_app_ini
+
+- name: Forgejo | Seed a new install's secret key
+  community.general.ini_file:
+    path: "{{ forgejo_app_ini }}"
+    section: security
+    option: SECRET_KEY
+    value: "{{ lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits') }}"
+    create: true
+    owner: "1000"
+    group: "1000"
+    mode: "0640"
+  when: not _forgejo_app_ini.stat.exists
   no_log: true
 
 - name: Forgejo | Render environment file
@@ -60,6 +101,7 @@
     project_src: "{{ forgejo_project_dir }}"
     state: present
     remove_orphans: true
+  register: _forgejo_start
 
 - name: Forgejo | Apply pending restart
   ansible.builtin.meta: flush_handlers
@@ -73,3 +115,45 @@
   retries: 60
   delay: 5
   changed_when: false
+
+- name: Forgejo | List the administrators
+  ansible.builtin.command:
+    argv: [docker, exec, -u, git, "{{ instance }}-forgejo", forgejo, admin, user, list, --admin]
+  register: _forgejo_admins
+  changed_when: false
+
+- name: Forgejo | Create the administrator
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - git
+      - "{{ instance }}-forgejo"
+      - forgejo
+      - admin
+      - user
+      - create
+      - --admin
+      - --username
+      - "{{ app_config.app.admin_user }}"
+      - --email
+      - "{{ app_config.app.admin_email }}"
+      - --password
+      - "{{ _forgejo_admin_password }}"
+      - --must-change-password=false
+  changed_when: true
+  no_log: true
+  # `admin user list` prints one "ID Username Email ..." row per administrator.
+  when: >-
+    _forgejo_admins.stdout is not search('(?m)^\d+\s+' ~ (app_config.app.admin_user | regex_escape) ~ '\s')
+
+- name: Forgejo | Sign in as the administrator
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v1/user"
+    url_username: "{{ app_config.app.admin_user }}"
+    url_password: "{{ _forgejo_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  changed_when: false
+  no_log: true

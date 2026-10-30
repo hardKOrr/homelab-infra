@@ -122,11 +122,6 @@ ALLOWLIST = {
     "restore-swap": {
         "ansible/roles/authentik/tasks/restore.yml",
         "ansible/roles/bookstack/files/bookstack-recovery",
-        "ansible/roles/forgejo/tasks/restore.yml",
-        "ansible/roles/mautic/tasks/restore.yml",
-        "ansible/roles/n8n/tasks/restore-docker.yml",
-        "ansible/roles/observability/tasks/restore.yml",
-        "ansible/roles/odoo/tasks/restore.yml",
         "ansible/roles/open-webui/tasks/restore.yml",
         "ansible/roles/plane/tasks/restore.yml",
         "ansible/roles/wordpress/files/wordpress-recovery",

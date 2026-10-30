@@ -396,7 +396,7 @@ today's copies only shrinks.
 | Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
 | Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job |
 | Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
-| Restore swap: stage, stop, move aside, install with owner, start, roll back | `tasks/recovery/restore-swap.yml`, running `scripts/restore-swap.sh` | `recovery_swap_runtime`, `recovery_swap_archives`, `recovery_swap_paths` (`path`, `source`, numeric or named `owner`/`group`, `mode`, `mount`), `recovery_swap_stop_services` with `recovery_swap_compose_project`, optional `recovery_swap_health_url` and the `staged`, `stopped`, `replaced`, `verified` and `rollback` hooks |
+| Restore swap: stage, stop, move aside, install with owner, start, roll back | `tasks/recovery/restore-swap.yml`, running `scripts/restore-swap.sh` | `recovery_swap_runtime`, `recovery_swap_archives`, `recovery_swap_paths` (`path`, `source`, numeric or named `owner`/`group`, `mode`, `mount`), `recovery_swap_stop_services` with `recovery_swap_compose_project`, optional `recovery_swap_database` (`config`, `dump`), `recovery_swap_health_url` and the `staged`, `stopped`, `replaced`, `verified` and `rollback` hooks |
 | PBS target and credentials | `tasks/backup/resolve-pbs-target.yml` | optional `k8s_pbs_datastore_override` |
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
 | PBS client install, backup, verify, restore | `tasks/backup/pbs-client-install.yml`, `pbs-client-backup.yml`, `pbs-client-restore.yml`, all running `scripts/pbs-client.sh`; pins in `vars/pbs-client.yml` | `pbs_client_runtime` (`docker` or `native`), `pbs_client_archives`, optional `pbs_client_stop_services` with `pbs_client_compose_project`, `pbs_client_backup_args`, `pbs_client_backup_mounts` (more host directories inside one archive), `pbs_client_keep_last`, `pbs_client_prune`, `pbs_client_restore_args`, `pbs_client_quiesced_hook` |
@@ -424,7 +424,10 @@ originals back and starts them. A rollback copy left by an earlier failed run re
 next restore until someone puts it back or removes it. A path that is a mount point, such
 as media on root-squashed NFS, swaps its contents inside `<path>/.restore-previous`, and
 each step there runs as the owner. The mount keeps its own mode unless the role declares
-one.
+one. A role whose point holds a database dump passes `recovery_swap_database`: the swap
+verifies the dump and that no other application claims the database before the stop,
+dumps the live database after it, loads the archived
+dump once the paths are installed, and loads the live dump back on rollback.
 Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
 ## Local conventions
