@@ -15,7 +15,7 @@ owner and mode and leaves no rollback copy or staging; a failure after the stop 
 original back byte for byte and starts it; a staged-data failure never stops the
 application; an earlier run's rollback copy refuses the restore; a mount swaps its
 contents as its owner; an incomplete rollback keeps the services stopped and the copies.
-With a database: its dump is checked before the stop, the live database is dumped after
+With a database: its dump and ownership are checked before the stop, the live database is dumped after
 it, the archived dump loads before the replaced hook, and a failure once that load started
 loads the live dump back; a failed database rollback keeps the services stopped.
 """
@@ -62,6 +62,11 @@ FAKE_DATABASE = {
     "dump": """
 - ansible.builtin.shell: echo db-dump {{ database_dump_file | basename }} >> {{ test_root }}/hooks.log
 - ansible.builtin.copy: {src: "{{ test_root }}/database", dest: "{{ database_dump_file }}", remote_src: true}
+""",
+    "guard-app-database": """
+- ansible.builtin.shell: echo db-guard >> {{ test_root }}/hooks.log
+- ansible.builtin.fail: {msg: another application's item uses the database}
+  when: fail_guard | default(false) | bool
 """,
     # A load replaces the contents even when it then fails, as a partial MariaDB load would.
     "restore": """
@@ -335,7 +340,7 @@ def main():
         reset(root)
         expect(run(root, [data, config], recovery_swap_database=database), True, "database swap")
         assert lines(root, "hooks.log") == [
-            "db-verify gate.dump", "staged", "db-dump rollback-gate.dump", "stopped",
+            "db-verify gate.dump", "db-guard", "staged", "db-dump rollback-gate.dump", "stopped",
             "db-restore gate.dump", "replaced", "verified"], lines(root, "hooks.log")
         assert (root / "database").read_text() == "archived database\n"
         assert tree(live / "app/data") == {"db.sqlite": "restored db", "new": "restored new"}
@@ -378,6 +383,13 @@ def main():
             expect(run(root, [data], recovery_swap_database=database), False, case)
             assert not lines(root, "services.log"), case
             assert (root / "database").read_text() == "live database\n", case
+
+        # A database another application claims is refused before the stop.
+        reset(root)
+        expect(run(root, [data], recovery_swap_database=database, fail_guard=True),
+               False, "claimed database")
+        assert not lines(root, "services.log") and "db-dump rollback-gate.dump" not in lines(root, "hooks.log")
+        assert tree(live / "app/data")["db.sqlite"] == "live db"
 
         # With a mount in the swap, the dump's directory is closed to the mount's owner.
         reset(root, mounts=[media["path"]])

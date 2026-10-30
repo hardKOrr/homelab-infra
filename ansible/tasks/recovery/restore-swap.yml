@@ -59,7 +59,8 @@
 #     config   the app's `app.database` mapping (ansible/tasks/database/)
 #     dump     the archived dump inside staging, such as database/immich.dump; it must not
 #              lie inside a path's source
-#     Step 3 refuses a missing, empty or unloadable dump and closes its directory to a
+#     Step 3 refuses a missing, empty or unloadable dump or a database another
+#     application claims (guard-app-database.yml), and closes the dump's directory to a
 #     mount's owner; step 4 dumps the live database beside it; step 6 loads it before the
 #     replaced hook. A failure once that load started loads the live dump back before the
 #     rollback hook.
@@ -334,6 +335,13 @@
             database_app_instance: "{{ instance }}"
             database_app_config: "{{ _swap_database.config }}"
             database_restore_file: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
+
+        # The load after the stop runs this guard too; a refusal there would stop the
+        # application and fail its own rollback load, with nothing changed.
+        - name: Restore swap | Check the database belongs to this application
+          ansible.builtin.include_tasks: ../database/guard-app-database.yml
+          vars:
+            database_app_instance: "{{ instance }}"
 
     - name: Restore swap | Validate the staged data
       ansible.builtin.include_tasks: "{{ recovery_swap_staged_hook }}"

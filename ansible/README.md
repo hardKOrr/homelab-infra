@@ -425,7 +425,8 @@ next restore until someone puts it back or removes it. A path that is a mount po
 as media on root-squashed NFS, swaps its contents inside `<path>/.restore-previous`, and
 each step there runs as the owner. The mount keeps its own mode unless the role declares
 one. A role whose point holds a database dump passes `recovery_swap_database`: the swap
-verifies the dump before the stop, dumps the live database after it, loads the archived
+verifies the dump and that no other application claims the database before the stop,
+dumps the live database after it, loads the archived
 dump once the paths are installed, and loads the live dump back on rollback.
 Stage backup sources and restore targets outside `/tmp`, beside the data they replace.
 
