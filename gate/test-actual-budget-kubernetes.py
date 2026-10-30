@@ -118,5 +118,8 @@ reset_hook = yaml.safe_load(
     (ROLE / "tasks/restore-kubernetes-password.yml").read_text(encoding="utf-8")
 )[0]
 assert reset_hook["vars"]["actual_budget_reset_use_temporary_pod"] is True
+assert reset_hook["vars"]["actual_budget_reset_password"] == (
+    "{{ restore_target_config.app.server_password | default('') }}"
+)
 assert reset_hook["when"] == "restore_target_config.app.server_password | default('') | length > 0"
 print("Actual Budget keeps Docker as default and uses shared Kubernetes recovery")
