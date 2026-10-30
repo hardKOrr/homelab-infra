@@ -28,6 +28,13 @@ assert defaults["hosting"] == {
     "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}
 }
 assert defaults["app"]["storage"] > 0
+assert defaults["backup"]["client"] == {
+    "image": "buildpack-deps:bookworm-curl",
+    "key_url": "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg",
+    "repository": "http://download.proxmox.com/debian/pbs-client",
+    "suite": "bookworm",
+    "component": "main",
+}
 
 playbook = yaml.safe_load(read("ansible/playbooks/apps/karakeep.yml"))
 provision = playbook[0]
