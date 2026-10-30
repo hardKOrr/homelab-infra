@@ -15,6 +15,7 @@
 #     archives    [{name, claim} | {name, config_map}] — each becomes <name>.pxar. Names are
 #                 part of existing recovery points; keep them when changing a role.
 #     database    optional k8s_database_step from tasks/database/kubernetes-recovery-step.yml
+#     stop        optional Deployment names to quiesce while the PVC archive is read
 #     describe    one line naming what the recovery point holds, for the operator
 
 - name: k8s backup | Assert inputs
@@ -24,9 +25,14 @@
       - k8s_recovery.archives | default([]) | length > 0
       - k8s_recovery.archives | map(attribute='name') | unique | length == k8s_recovery.archives | length
       - "'database' not in (k8s_recovery.archives | map(attribute='name'))"
+      - k8s_recovery.stop | default([]) is sequence
+      - k8s_recovery.stop | default([]) is not string
+      - >-
+        (k8s_recovery.stop | default([])
+         | reject('match', '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') | list | length) == 0
     fail_msg: >-
       recovery-backup.yml needs k8s_recovery.archives, each with a unique name other than
-      `database` (the dump's archive).
+      `database` (the dump's archive), and optional DNS-label Deployment names in stop.
 
 - name: k8s backup | Resolve the lab's PBS target
   ansible.builtin.include_tasks: ../backup/resolve-pbs-target.yml
@@ -82,6 +88,7 @@
           client: "{{ app_config.backup.client }}"
           archives: "{{ k8s_recovery.archives }}"
           database: "{{ k8s_recovery.database | default({}, true) }}"
+          stop: "{{ k8s_recovery.stop | default([]) }}"
 
     # The PBS token is canonical in the Vaultwarden item `homelab-infra/backups`, copied
     # here, never generated here. A namespace Secret is deleted with the namespace.
@@ -131,3 +138,24 @@
   when: not ((app_config.backup.enabled | default(false) | bool)
              and (k8s_pbs_available | default(false) | bool))
   changed_when: "'deleted' in (_kr_backup_removed.stdout | default(''))"
+
+- name: k8s backup | Remove unused quiesce permissions
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - "rolebinding/{{ instance }}-backup-quiesce"
+      - "role/{{ instance }}-backup-quiesce"
+      - "serviceaccount/{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _kr_quiesce_removed
+  when: >-
+    (k8s_recovery.stop | default([]) | length == 0)
+    or not (app_config.backup.enabled | default(false) | bool)
+    or not (k8s_pbs_available | default(false) | bool)
+  changed_when: "'deleted' in (_kr_quiesce_removed.stdout | default(''))"

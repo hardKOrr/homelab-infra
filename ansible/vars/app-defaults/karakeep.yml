@@ -5,7 +5,7 @@
 karakeep_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -20,6 +20,9 @@ karakeep_defaults:
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
     meilisearch_image: getmeili/meilisearch:v1.41.0
     port: 3005
+    # One default-StorageClass claim keeps the SQLite/assets directory and Meilisearch
+    # index together in the same data.pxar layout as the existing Docker recovery points.
+    storage: 10
     # SQLite database, uploaded assets and crawled archives. The role binds this path
     # into the application container as /data.
     data_path: "/opt/{{ instance }}/data"

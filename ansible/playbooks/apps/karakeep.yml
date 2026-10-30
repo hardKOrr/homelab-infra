@@ -58,6 +58,23 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Open Karakeep's declared Kubernetes network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Deploy Karakeep on Kubernetes
+      ansible.builtin.include_role:
+        name: karakeep
+        tasks_from: kubernetes
+      vars:
+        karakeep_fqdn: "{{ hostvars['localhost'].karakeep_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Karakeep | Open network access"
   hosts: localhost
@@ -70,6 +87,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "Karakeep | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -86,21 +104,33 @@
   tasks:
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
-      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Deploy Karakeep
       ansible.builtin.include_role:
         name: karakeep
       vars:
         karakeep_fqdn: "{{ hostvars['localhost'].karakeep_fqdn }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "Karakeep | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _karakeep_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _karakeep_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if hostvars['localhost'].app_config.hosting.method == 'docker'
+            and groups.get('deploy_' ~ instance, []) | length > 0
+         else hostvars['localhost'] }}
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _karakeep_host.ansible_host }}"
-    wiring_upstream_port: "{{ _karakeep_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ _karakeep_host.ansible_host
+         if _karakeep_host.app_config.hosting.method == 'docker'
+         else homelabinfra_infra.kubernetes.ingress_vip }}
+    wiring_upstream_port: >-
+      {{ _karakeep_host.app_config.app.port
+         if _karakeep_host.app_config.hosting.method == 'docker' else 80 }}
     wiring_subdomain: "{{ hostvars['localhost'].karakeep_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].karakeep_fqdn }}"
     wiring_app_display: "Karakeep ({{ instance }})"
@@ -109,6 +139,9 @@
     wiring_identity_mode: "{{ _karakeep_host.app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ _karakeep_host.app_config.routing.access | default('internal') }}"
   tasks:
+    - name: Skip external wiring for an isolated restore target
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
@@ -126,8 +159,13 @@
     - name: Record Karakeep on its stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_names: ["{{ _karakeep_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_names: >-
+          {{ [groups['deploy_' ~ instance][0]]
+             if _karakeep_host.app_config.hosting.method == 'docker'
+             else (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list) }}
+        record_guest_kind: >-
+          {{ 'docker' if _karakeep_host.app_config.hosting.method == 'docker'
+             else 'kubernetes' }}
         record_guest_url: "https://{{ hostvars['localhost'].karakeep_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

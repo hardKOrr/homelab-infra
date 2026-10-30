@@ -46,6 +46,8 @@ APPS = {
                 "archives": ["storage"]},
     "n8n": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
             "engine": "postgresql", "archives": ["data"]},
+    "karakeep": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
+                 "engine": None, "archives": ["data"], "stop": ["src"]},
 }
 
 
@@ -132,19 +134,24 @@ def database_steps():
     return {"postgresql": postgres, "namespace-mysql": mysql, "mariadb": mariadb}
 
 
-def backup_documents(archives, database, instance="app"):
+def backup_render(archives, database, instance="app", stop=None):
     kr = {
         "backup_id": instance, "repository": "token@pbs:store", "datastore": "store",
         "schedule": "0 3 * * *", "timezone": "UTC", "timeout": 3600,
         "retention_days": 14, "scratch_gi": 2, "secret": f"{instance}-backup",
         "ntfy_url": "", "ntfy_token": False, "client": CLIENT, "archives": archives,
-        "database": database,
+        "database": database, "stop": stop or [],
     }
     text = render(BACKUP.read_text(encoding="utf-8"), {
         "_kr": kr, "instance": instance, "k8s_namespace": f"app-{instance}",
         "k8s_pbs_fingerprint": FINGERPRINT,
+        "playbook_dir": str(ROOT / "ansible/playbooks/apps"),
     })
-    documents = list(yaml.safe_load_all(text))
+    return list(yaml.safe_load_all(text))
+
+
+def backup_documents(archives, database, instance="app", stop=None):
+    documents = backup_render(archives, database, instance, stop)
     return (next(d for d in documents if d["kind"] == "ConfigMap"),
             next(d for d in documents if d["kind"] == "CronJob"))
 
@@ -211,7 +218,34 @@ def shared_pair(steps):
     assert volumes["volume-config"]["configMap"]["name"] == "app-config"
 
     _, cronjob = backup_documents([{"name": "config", "claim": "app-data"}], {})
-    assert "initContainers" not in cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    ordinary_pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert "initContainers" not in ordinary_pod
+    assert ordinary_pod["automountServiceAccountToken"] is False
+    assert "serviceAccountName" not in ordinary_pod
+
+    quiesced = backup_render([{"name": "data", "claim": "app-storage"}], {},
+                            "app", ["app"])
+    service_account = next(d for d in quiesced if d["kind"] == "ServiceAccount")
+    role = next(d for d in quiesced if d["kind"] == "Role")
+    binding = next(d for d in quiesced if d["kind"] == "RoleBinding")
+    cronjob = next(d for d in quiesced if d["kind"] == "CronJob")
+    pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert service_account["metadata"]["name"] == "app-backup"
+    assert role["rules"] == [
+        {"apiGroups": ["apps"], "resources": ["deployments"],
+         "resourceNames": ["app"], "verbs": ["get"]},
+        {"apiGroups": ["apps"], "resources": ["deployments/scale"],
+         "resourceNames": ["app"], "verbs": ["get", "patch"]},
+    ]
+    assert binding["subjects"] == [{"kind": "ServiceAccount", "name": "app-backup",
+                                     "namespace": "app-app"}]
+    assert pod["serviceAccountName"] == "app-backup"
+    assert pod["automountServiceAccountToken"] is True
+    assert pod["terminationGracePeriodSeconds"] == 330
+    push = pod["containers"][0]
+    assert "kubernetes-recovery-scale.py stop" in push["args"][0]
+    assert "kubernetes-recovery-scale.py start" in push["args"][0]
+    assert 'K8S_RECOVERY_DEPLOYMENTS' in [entry["name"] for entry in push["env"]]
 
     # Plan: the same client path into scratch, with the target read-only.
     pod, containers = restore_pod("plan", archives, postgres)
@@ -321,6 +355,10 @@ def app_render(app, spec, steps):
     variables = {
         "instance": "src", "restore_target": "dst", "k8s_database_step": database,
         "role_path": str(role),
+        "playbook_dir": str(ROOT / "ansible/playbooks/apps"),
+        "karakeep_fqdn": "src.example.test",
+        "karakeep_data_uid": 1000,
+        "karakeep_data_gid": 1000,
         "app_config": {"app": {
             "database": {"name": "db", "provider": "mariadb"},
             "database_host": "database.example.test", "database_port": 3306,
@@ -339,11 +377,45 @@ def app_render(app, spec, steps):
                                  "recovery-backup.yml"), variables)
     restore = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['restore']}"),
                                   "recovery-restore.yml"), variables)
+    if app == "karakeep":
+        variables["app_config"]["app"].update({
+            "image": "ghcr.io/karakeep-app/karakeep:0.33.2",
+            "chrome_image": "ghcr.io/karakeep-app/karakeep-chrome:release",
+            "meilisearch_image": "getmeili/meilisearch:v1.41.0",
+            "port": 3005,
+            "storage": 10,
+            "disable_signups": False,
+            "db_wal_mode": True,
+        })
+        manifest = render(manifest, variables)
+        documents = list(yaml.safe_load_all(manifest))
+        claim = next(d for d in documents if d["kind"] == "PersistentVolumeClaim")
+        assert claim["metadata"]["name"] == "src-storage"
+        assert "storageClassName" not in claim["spec"]
+        assert claim["spec"]["resources"]["requests"]["storage"] == "10Gi"
+        deployment = next(d for d in documents if d["kind"] == "Deployment")
+        pod = deployment["spec"]["template"]["spec"]
+        assert [container["name"] for container in pod["containers"]] == [
+            "web", "chrome", "meilisearch"
+        ]
+        mounts = {container["name"]: container.get("volumeMounts", [])
+                  for container in pod["containers"]}
+        assert {m["subPath"] for m in mounts["web"]} == {"data"}
+        assert {m["subPath"] for m in mounts["meilisearch"]} == {"meilisearch"}
+        assert "http://localhost:7700" in str(pod["containers"][0]["env"])
+        assert "http://localhost:9222" in str(pod["containers"][0]["env"])
+        service = next(d for d in documents if d["kind"] == "Service")
+        assert service["spec"]["ports"][0] == {"port": 3005, "targetPort": "web"}
+        ingress = next(d for d in documents if d["kind"] == "Ingress")
+        assert ingress["spec"]["rules"][0]["host"] == "src.example.test"
     assert [a["name"] for a in backup["archives"]] == spec["archives"], app
     assert [a["name"] for a in restore["archives"]] == spec["archives"], app
+    assert backup.get("stop", []) == spec.get("stop", []), app
     for source, target in zip(backup["archives"], restore["archives"]):
         kind = "claim" if "claim" in source else "config_map"
-        assert source[kind].replace("src", "{{ instance }}", 1) in manifest, (app, source)
+        expected_source = (source[kind] if app == "karakeep"
+                           else source[kind].replace("src", "{{ instance }}", 1))
+        assert expected_source in manifest, (app, source)
         assert target[kind] == source[kind].replace("src", "dst", 1), (app, target)
     assert bool(backup.get("database")) == bool(spec["engine"]), app
     assert bool(restore.get("database")) == bool(spec["engine"]), app
@@ -351,7 +423,8 @@ def app_render(app, spec, steps):
     if restore.get("after_restore_tasks"):
         assert Path(restore["after_restore_tasks"]).is_file(), app
 
-    _, cronjob = backup_documents(backup["archives"], backup.get("database") or {}, "src")
+    _, cronjob = backup_documents(backup["archives"], backup.get("database") or {}, "src",
+                                  backup.get("stop"))
     assert cronjob["metadata"]["name"] == "src-backup"
     for mode in ("plan", "restore"):
         restore_pod(mode, restore["archives"], restore.get("database") or {}, "dst")
