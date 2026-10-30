@@ -1,3 +1,4 @@
 ---
 forgejo_project_dir: "/opt/{{ instance }}"
 forgejo_env_file: "{{ forgejo_project_dir }}/forgejo.env"
+forgejo_app_ini: "{{ app_config.app.data_path }}/gitea/conf/app.ini"

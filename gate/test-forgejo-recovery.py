@@ -288,8 +288,35 @@ def check_restore_swap():
         assert result.returncode == 0, result.stdout + result.stderr
 
 
+def check_install():
+    """Deploy finishes Forgejo's install: lock, one seeded secret key, one administrator."""
+    tasks = {task.get("name"): task for task in yaml.safe_load(forgejo_tasks_source)}
+    env = (repo / "ansible/roles/forgejo/templates/forgejo.env.j2").read_text()
+    assert "FORGEJO__security__INSTALL_LOCK=true" in env and "SECRET_KEY" not in env
+    seed = tasks["Forgejo | Seed a secret key"]
+    assert seed["when"] == "_forgejo_secret_key.stdout | trim | length == 0", "never replace a key"
+    create = tasks["Forgejo | Create the administrator"]
+    listing = ("ID   Username   Email                     IsActive IsAdmin 2FA\n"
+               "1    {name}   someone@example.invalid  true     true    false\n")
+    with tempfile.TemporaryDirectory() as directory:
+        for name, created in [("drill", True), ("homelab", False), ("homelab2", True)]:
+            play = Path(directory) / "play.yml"
+            play.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"app_config": {"app": {"admin_user": "homelab"}},
+                         "_forgejo_admins": {"stdout": listing.format(name=name)}},
+                "tasks": [{"ansible.builtin.debug": {"msg": "create"}, "when": create["when"],
+                           "register": "_result"},
+                          {"ansible.builtin.assert": {"that": f"(_result is skipped) == {not created}"}}],
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
+                                    text=True, capture_output=True, check=False)
+            assert result.returncode == 0, (name, result.stdout + result.stderr)
+
+
 def main():
     static_contract()
+    check_install()
     check_hook()
     check_backup("backup-success")
     check_backup("backup-upload-failure")

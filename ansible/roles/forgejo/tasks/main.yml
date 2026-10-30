@@ -15,7 +15,14 @@
     group: "1000"
     mode: "0750"
 
-- name: Forgejo | Store database connection fields in Vaultwarden
+- name: Forgejo | Generate or reuse the administrator password
+  ansible.builtin.set_fact:
+    _forgejo_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Forgejo | Store the administrator and database connection fields in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: "homelab-infra/apps/{{ instance }}"
@@ -23,14 +30,51 @@
     vault_item_fields:
       provider: forgejo
       instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _forgejo_admin_password }}"
       database_provider: "{{ app_config.app.database.provider }}"
       database_host: "{{ app_config.app.database_host }}"
       database_port: "{{ app_config.app.database_port }}"
       database_name: "{{ app_config.app.database.name }}"
       database_user: "{{ app_config.app.database_user }}"
       database_password: "{{ app_config.app.database_password }}"
-    vault_item_secret_fields: [database_password]
+    vault_item_secret_fields: [admin_password, database_password]
   no_log: true
+
+# INSTALL_LOCK (forgejo.env) skips the web installer. Forgejo then generates and saves its
+# internal tokens itself, but an empty SECRET_KEY falls back to a fixed public default, so
+# Deploy seeds one into app.ini once. An existing key is never replaced: it encrypts
+# stored secrets, and a restore brings the archived app.ini with its own key.
+- name: Forgejo | Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop: [gitea, gitea/conf]
+
+- name: Forgejo | Read the configured secret key
+  ansible.builtin.command:
+    argv: [sed, -n, 's/^SECRET_KEY[[:space:]]*=[[:space:]]*//p', "{{ forgejo_app_ini }}"]
+  register: _forgejo_secret_key
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Forgejo | Seed a secret key
+  community.general.ini_file:
+    path: "{{ forgejo_app_ini }}"
+    section: security
+    option: SECRET_KEY
+    value: "{{ lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits') }}"
+    create: true
+    owner: "1000"
+    group: "1000"
+    mode: "0640"
+  when: _forgejo_secret_key.stdout | trim | length == 0
+  no_log: true
+  notify: Restart Forgejo
 
 - name: Forgejo | Render environment file
   ansible.builtin.template:
@@ -73,3 +117,45 @@
   retries: 60
   delay: 5
   changed_when: false
+
+- name: Forgejo | List the administrators
+  ansible.builtin.command:
+    argv: [docker, exec, -u, git, "{{ instance }}-forgejo", forgejo, admin, user, list, --admin]
+  register: _forgejo_admins
+  changed_when: false
+
+- name: Forgejo | Create the administrator
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - git
+      - "{{ instance }}-forgejo"
+      - forgejo
+      - admin
+      - user
+      - create
+      - --admin
+      - --username
+      - "{{ app_config.app.admin_user }}"
+      - --email
+      - "{{ app_config.app.admin_email }}"
+      - --password
+      - "{{ _forgejo_admin_password }}"
+      - --must-change-password=false
+  changed_when: true
+  no_log: true
+  # `admin user list` prints one "ID Username Email ..." row per administrator.
+  when: >-
+    _forgejo_admins.stdout is not search('(?m)^\d+\s+' ~ (app_config.app.admin_user | regex_escape) ~ '\s')
+
+- name: Forgejo | Sign in as the administrator
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v1/user"
+    url_username: "{{ app_config.app.admin_user }}"
+    url_password: "{{ _forgejo_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  changed_when: false
+  no_log: true
