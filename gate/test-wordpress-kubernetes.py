@@ -153,12 +153,14 @@ def check_workload_and_cli_jobs():
             assert "theme install" not in script
             assert ".homelab-infra-admin" in script
             assert "wp_authenticate" in script
+            assert "get_error_codes" in script
             assert "WORDPRESS_ADMIN_PASSWORD" in script
         else:
             assert 'option update home "$WORDPRESS_SITE_URL"' in script
             assert 'option update siteurl "$WORDPRESS_SITE_URL"' in script
             assert ".homelab-infra-admin" in script
             assert "wp_authenticate" in script
+            assert "get_error_codes" in script
 
 
 def check_shared_recovery_inputs():
