@@ -1,0 +1,84 @@
+---
+- name: Shared storage | Register control node for delegation
+  ansible.builtin.include_tasks: register-nodes.yml
+
+- name: Shared storage | Read cluster storage definitions
+  ansible.builtin.command:
+    argv: [pvesh, get, /storage, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _shared_storage_definitions
+  changed_when: false
+  check_mode: false
+
+- name: Shared storage | Read every cluster node
+  ansible.builtin.command:
+    argv: [pvesh, get, /nodes, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _shared_storage_nodes
+  changed_when: false
+  check_mode: false
+
+- name: Shared storage | Initialise report
+  ansible.builtin.set_fact:
+    _shared_storage_ids: []
+    _shared_storage_report: []
+
+# Do not filter by a storage's node allowlist: a restriction is exactly the gap
+# this cluster-wide check needs to expose. ZFS over iSCSI uses the type 'zfs'.
+- name: Shared storage | Select definitions marked shared
+  ansible.builtin.set_fact:
+    _shared_storage_ids: "{{ _shared_storage_ids + [item.storage] }}"
+  loop: "{{ _shared_storage_definitions.stdout | from_json | sort(attribute='storage') }}"
+  loop_control:
+    label: "{{ item.storage }}"
+  when: item.shared | default(false) | bool
+
+- name: Shared storage | Require cluster membership
+  ansible.builtin.assert:
+    that: _shared_storage_nodes.stdout | from_json | length > 0
+    fail_msg: No cluster nodes were returned; storage availability cannot be verified.
+
+- name: Shared storage | Read storage status on each node
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ item.node }}/storage", --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _shared_storage_nodes.stdout | from_json | sort(attribute='node') }}"
+  loop_control:
+    label: "{{ item.node }}"
+  register: _shared_storage_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Shared storage | Build per-node report
+  ansible.builtin.set_fact:
+    _shared_storage_report: >-
+      {{ _shared_storage_report + [{
+           'node': item.item.node,
+           'query_failed': item.rc != 0,
+           'active': _shared_storage_ids | intersect(_shared_active_ids) | sort,
+           'missing': _shared_storage_ids | difference(_shared_active_ids) | sort
+         }] }}
+  vars:
+    _shared_active_ids: >-
+      {{ ((item.stdout | from_json) if item.rc == 0 else [])
+         | selectattr('active', 'defined') | selectattr('active', 'equalto', 1)
+         | map(attribute='storage') | list }}
+  loop: "{{ _shared_storage_status.results }}"
+  loop_control:
+    label: "{{ item.item.node }}"
+
+- name: Shared storage | Report every node before checking the result
+  ansible.builtin.debug:
+    msg: |-
+      {% for entry in _shared_storage_report %}
+      {{ entry.node }}: {% for storage in _shared_storage_ids %}{{ storage }}={{ 'active' if storage in entry.active else 'missing' }}{{ ', ' if not loop.last else '' }}{% else %}no shared storages defined{% endfor %}{{ ' (status query failed)' if entry.query_failed else '' }}
+      {% endfor %}
+
+- name: Shared storage | Require every shared storage active on every node
+  ansible.builtin.assert:
+    that:
+      - _shared_storage_report | selectattr('query_failed') | list | length == 0
+      - _shared_storage_report | map(attribute='missing') | flatten | length == 0
+    fail_msg: Shared storage is missing or a node status query failed; see the per-node report above.
+    success_msg: Every shared storage is active on every cluster node.
