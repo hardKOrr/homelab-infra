@@ -51,6 +51,8 @@ spec:
             - |
               set -eu
 {% if wordpress_k8s_cli_mode == 'detect' %}
+              state_marker={{ wordpress_k8s_install_state_marker | to_json }}
+              rm -f "$state_marker"
               wp --path=/var/www/html --skip-plugins --skip-themes db check >/dev/null
               if wp --path=/var/www/html --skip-plugins --skip-themes core is-installed >/dev/null 2>&1; then
                 login="$(wp --path=/var/www/html --skip-plugins --skip-themes user get "$WORDPRESS_ADMIN_USER" --field=user_login)"
@@ -59,10 +61,14 @@ spec:
                   echo "The initialized WordPress site does not contain the configured administrator."
                   exit 1
                 fi
+                install_state=installed
                 echo WORDPRESS_INSTALL_STATE=installed
               else
+                install_state=uninstalled
                 echo WORDPRESS_INSTALL_STATE=uninstalled
               fi
+              printf '%s\n' "$install_state" > "$state_marker"
+              chmod 0600 "$state_marker"
 {% elif wordpress_k8s_cli_mode == 'initialize' %}
               if [ "{{ _wordpress_k8s_install_state }}" = uninstalled ]; then
                 if ! wp --path=/var/www/html --skip-plugins --skip-themes core is-installed >/dev/null 2>&1; then

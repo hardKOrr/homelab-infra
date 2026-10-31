@@ -136,12 +136,45 @@
       vars:
         wordpress_k8s_cli_mode: detect
 
-    - name: WordPress Kubernetes | Record whether the database already has a site
-      ansible.builtin.set_fact:
-        _wordpress_k8s_install_state: >-
-          {{ 'installed' if 'WORDPRESS_INSTALL_STATE=installed' in (k8s_job_log | default(''))
-             else 'uninstalled' if 'WORDPRESS_INSTALL_STATE=uninstalled' in (k8s_job_log | default(''))
-             else 'unknown' }}
+    - name: WordPress Kubernetes | Read the database install state recorded by the Job
+      block:
+        - name: WordPress Kubernetes | Read the install state from its content volume
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - --namespace
+              - "{{ k8s_namespace }}"
+              - exec
+              - "deployment/{{ instance }}"
+              - --
+              - cat
+              - "{{ wordpress_k8s_install_state_marker }}"
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          register: _wordpress_k8s_install_state_marker_content
+          changed_when: false
+
+        - name: WordPress Kubernetes | Record the database install state
+          ansible.builtin.set_fact:
+            _wordpress_k8s_install_state: "{{ _wordpress_k8s_install_state_marker_content.stdout | trim }}"
+      always:
+        - name: WordPress Kubernetes | Remove the temporary install state marker
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - --namespace
+              - "{{ k8s_namespace }}"
+              - exec
+              - "deployment/{{ instance }}"
+              - --
+              - rm
+              - -f
+              - "{{ wordpress_k8s_install_state_marker }}"
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          changed_when: true
 
     - name: WordPress Kubernetes | Require the recorded login for an existing site
       ansible.builtin.assert:

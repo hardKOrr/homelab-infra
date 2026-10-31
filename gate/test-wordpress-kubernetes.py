@@ -29,6 +29,7 @@ def fixture():
         "wordpress_fqdn": "wordpress.example.test",
         "wordpress_k8s_content_claim": "wordpress-content",
         "wordpress_k8s_admin_secret": "wordpress-admin",
+        "wordpress_k8s_install_state_marker": "/var/www/html/wp-content/.homelab-infra-install-state",
         "app_config": {"app": {
             "image": "wordpress:6.9.4-php8.3-apache",
             "cli_image": "wordpress:cli-2.12.0-php8.3",
@@ -140,6 +141,10 @@ def check_workload_and_cli_jobs():
         assert [ref["secretRef"]["name"] for ref in cli["envFrom"]] == expected_secrets
         if mode == "detect":
             assert "WORDPRESS_INSTALL_STATE=installed" in script
+            assert 'state_marker="/var/www/html/wp-content/.homelab-infra-install-state"' in script
+            assert 'install_state=installed' in script
+            assert 'install_state=uninstalled' in script
+            assert 'printf \'%s\\n\' "$install_state" > "$state_marker"' in script
             assert ".homelab-infra-admin" not in script
         elif mode == "initialize":
             assert "core install" in script
@@ -164,6 +169,17 @@ def check_shared_recovery_inputs():
         "tasks/kubernetes/recovery-backup.yml",
     ):
         assert shared in main_text
+    detect = next(task for task in main
+                  if task.get("name") == "WordPress Kubernetes | Detect the current database install when no marker exists")
+    detect_names = [task.get("name") for task in detect["block"]]
+    assert "WordPress Kubernetes | Run the read-only install check" in detect_names
+    assert "WordPress Kubernetes | Read the database install state recorded by the Job" in detect_names
+    state_read = next(task for task in detect["block"]
+                      if task.get("name") == "WordPress Kubernetes | Read the database install state recorded by the Job")
+    assert "WordPress Kubernetes | Remove the temporary install state marker" in [
+        task.get("name") for task in state_read["always"]
+    ]
+    assert "k8s_job_log" not in str(detect)
     backup = next(task for task in main if "recovery-backup.yml" in str(task))
     recovery = backup["vars"]["k8s_recovery"]
     assert recovery["archives"] == [{
