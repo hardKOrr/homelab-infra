@@ -1,0 +1,74 @@
+---
+# Kubelet mounts an NFS volume on whichever node schedules the pod. Probe that
+# exact read-only export on every eligible node before creating the workload, so
+# an unreachable share fails promptly instead of leaving a pod in ContainerCreating.
+- name: Verify the NFS music export from one cluster node
+  block:
+    - name: Create a temporary NFS probe directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /run
+        prefix: navidrome-nfs-
+      register: _navidrome_nfs_probe_dir
+      changed_when: false
+
+    - name: Mount the NFS music export read-only for the probe
+      ansible.builtin.command:
+        argv:
+          - timeout
+          - --kill-after=2s
+          - 20s
+          - mount
+          - -t
+          - nfs4
+          - -o
+          - ro,soft,timeo=20,retrans=1
+          - "{{ _navidrome_nfs_server_ip }}:{{ _navidrome_nfs_path }}"
+          - "{{ _navidrome_nfs_probe_dir.path }}"
+      register: _navidrome_nfs_probe_mount
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Require the temporary NFS mount to be a readable directory
+      ansible.builtin.stat:
+        path: "{{ _navidrome_nfs_probe_dir.path }}"
+      register: _navidrome_nfs_probe_stat
+      become: true
+      changed_when: false
+      when: _navidrome_nfs_probe_mount.rc == 0
+
+    - name: Assert the existing music export is reachable from this node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_probe_mount.rc == 0
+          - _navidrome_nfs_probe_stat.stat.isdir | default(false)
+          - _navidrome_nfs_probe_stat.stat.readable | default(false)
+        fail_msg: >-
+          The existing Navidrome music NFS export is not readable from every Kubernetes
+          node. Check the NFS service and the cluster-node firewall access, then redeploy.
+  always:
+    - name: Unmount the temporary NFS probe
+      ansible.builtin.command:
+        argv:
+          - umount
+          - "{{ _navidrome_nfs_probe_dir.path }}"
+      become: true
+      register: _navidrome_nfs_probe_unmount
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - _navidrome_nfs_probe_dir.path is defined
+        - _navidrome_nfs_probe_mount.rc | default(1) == 0
+
+    - name: Remove the temporary NFS probe directory
+      ansible.builtin.file:
+        path: "{{ _navidrome_nfs_probe_dir.path }}"
+        state: absent
+      become: true
+      changed_when: false
+      no_log: true
+      when: _navidrome_nfs_probe_dir.path is defined
+  delegate_to: "{{ navidrome_k8s_node.name }}"
+  become: true

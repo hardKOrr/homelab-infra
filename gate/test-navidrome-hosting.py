@@ -62,7 +62,17 @@ def main():
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
     assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
     assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
+    assert "verify-kubernetes-library.yml" in includes
     assert not any("recovery" in include and "kubernetes/" not in include for include in includes)
+
+    nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [])[:4]
+        == ["timeout", "--kill-after=2s", "20s", "mount"]
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    assert nfs_probe[0]["always"][-1].get("ansible.builtin.file", {}).get("state") == "absent"
 
     manifest = (REPO / "ansible/roles/navidrome/templates/manifest.yaml.j2").read_text()
     assert "name: {{ instance }}-data" in manifest
