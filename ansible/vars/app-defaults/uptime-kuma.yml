@@ -6,7 +6,7 @@
 uptime_kuma_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   # Uptime Kuma owns the monitor database, login account and settings for every app.
   # Its complete data directory is quiesced as one native recovery unit.
@@ -23,6 +23,8 @@ uptime_kuma_defaults:
   app:
     port: 3001
     data_path: "/opt/{{ instance }}/data"
+    # Used by the Kubernetes backend; the cluster's default StorageClass is selected.
+    storage: 5
 
     # Uptime Kuma 2.x. Neither version has a REST API for monitors — the wiring drives
     # socket.io either way — so what the 2.x pin buys is the scripted database setup.
@@ -47,6 +49,18 @@ uptime_kuma_defaults:
                                   # forward_auth would block the socket.io session the
                                   # wiring signs in with to register monitors
 
+  # Kubernetes-hosted Kuma checks the estate's app routes over HTTP and HTTPS. The
+  # Docker default keeps its existing network policy; the Kubernetes adapter opens these
+  # ports from the cluster node alias through tasks/kubernetes/open-app-access.yml.
+  firewall:
+    egress:
+      - name: monitor-http
+        protocol: TCP
+        port: 80
+      - name: monitor-https
+        protocol: TCP
+        port: 443
+
   backup:
     enabled: true
     application_consistent: true
@@ -54,3 +68,13 @@ uptime_kuma_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

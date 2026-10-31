@@ -1,0 +1,46 @@
+---
+# Runs after Caddy and DNS wiring attempts, so socket.io setup uses the same HTTPS endpoint
+# that other application Deploys will use. An unavailable route is recorded as a gap and
+# setup is retried on the next Deploy.
+- name: Uptime Kuma Kubernetes | Wait for its published route
+  ansible.builtin.uri:
+    url: "https://{{ uptime_kuma_fqdn }}/api/entry-page"
+    status_code: 200
+    return_content: true
+  register: _kuma_k8s_up
+  until: _kuma_k8s_up.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+  failed_when: false
+
+- name: Uptime Kuma Kubernetes | Set the application endpoints
+  ansible.builtin.set_fact:
+    _kuma_base: "https://{{ uptime_kuma_fqdn }}"
+    _kuma_registry_url: "https://{{ uptime_kuma_fqdn }}"
+
+- name: Uptime Kuma Kubernetes | Record whether its published route answered
+  ansible.builtin.set_fact:
+    _kuma_k8s_route_reachable: "{{ _kuma_k8s_up.status | default(0) == 200 }}"
+
+- name: Uptime Kuma Kubernetes | Record an unavailable published route
+  ansible.builtin.include_tasks: ../../../tasks/report-degradation.yml
+  vars:
+    degradation_component: "Uptime Kuma published route"
+    degradation_reason: >-
+      The Kubernetes route did not return HTTP 200 after 30 attempts, so application
+      configuration and self-monitor registration were skipped. Check that the DNS and
+      Caddy routes resolve from the Ansible controller, then rerun this Deploy.
+    degradation_fatal: false
+  when: not (_kuma_k8s_route_reachable | bool)
+
+- name: Uptime Kuma Kubernetes | Preserve registry facts while its route is unavailable
+  ansible.builtin.set_fact:
+    kuma_url: "{{ _kuma_registry_url }}"
+    kuma_admin_username: "{{ app_config.app.admin_user | default('admin') }}"
+    kuma_notification_id: ""
+  when: not (_kuma_k8s_route_reachable | bool)
+
+- name: Uptime Kuma Kubernetes | Configure the application through the shared role tasks
+  ansible.builtin.include_tasks: configure.yml
+  when: _kuma_k8s_route_reachable | bool

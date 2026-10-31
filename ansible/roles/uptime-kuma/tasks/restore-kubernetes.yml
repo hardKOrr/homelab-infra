@@ -1,0 +1,19 @@
+---
+# This preserves `data.pxar`, the same archive produced by the Docker backup path.
+- name: Uptime Kuma Kubernetes restore | Use the shared recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Uptime Kuma
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        Uptime Kuma's complete SQLite data directory, including every app monitor,
+        account and setting
+      verify:
+        - >-
+          Sign in with the existing Uptime Kuma owner and confirm the canary monitor,
+          every existing app monitor and the retained setting are present exactly once.

@@ -1,57 +1,21 @@
 ---
-# Restore the complete Uptime Kuma data directory through the shared swap. The staged point
-# must hold kuma.db, and the restored server must answer as the initialized server.
-- name: Uptime Kuma restore | Resolve the recovery identities
-  ansible.builtin.set_fact:
-    _kuma_restore_source_backup_id: >-
-      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
-    _kuma_restore_target_backup_id: >-
-      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
-         or restore_target | default(instance, true), true) }}
-    _kuma_restore_snapshot: "{{ restore_snapshot | default('') }}"
+- name: Uptime Kuma restore | Use the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Uptime Kuma restore | Assert the recovery contract
+- name: Uptime Kuma restore | Use the Docker restore swap
+  ansible.builtin.include_tasks: restore-docker.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'docker'
+
+- name: Uptime Kuma restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
-    that:
-      - app_config.backup.enabled | default(false) | bool
-      - app_config.backup.application_consistent | default(false) | bool
-      - _kuma_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-      - _kuma_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-      - restore_overwrite is defined
-      - (_kuma_restore_snapshot | length > 0) or not (restore_overwrite | bool)
-      - homelabinfra_infra.backups is defined
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
     fail_msg: >-
-      Uptime Kuma restore needs its application-consistent contract, safe source and
-      target backup ids, PBS, and a selected recovery point for overwrite=true.
-
-- name: Uptime Kuma restore | Require an independent pre-restore point
-  ansible.builtin.assert:
-    that:
-      - restore_pre_restore_point is defined
-      - restore_pre_restore_point.startswith('host/' ~ _kuma_restore_target_backup_id ~ '/')
-      - restore_pre_restore_point != _kuma_restore_snapshot
-      - restore_pre_restore_point | length > ('host/' ~ _kuma_restore_target_backup_id ~ '/') | length
-    fail_msg: >-
-      Existing-target Uptime Kuma restore needs an independent pre-restore point in
-      host/{{ _kuma_restore_target_backup_id }}/.
-  when:
-    - restore_destination | default('existing') == 'existing'
-    - restore_overwrite | bool
-
-- name: Uptime Kuma restore | Preview or replace the data directory
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: docker
-    recovery_swap_backup_id: "{{ _kuma_restore_source_backup_id }}"
-    recovery_swap_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
-    recovery_swap_archives: [data.pxar]
-    recovery_swap_paths:
-      - path: "{{ app_config.app.data_path }}"
-        owner: 0
-        group: 0
-        mode: "0750"
-    recovery_swap_stop_services: [uptime-kuma]
-    recovery_swap_compose_project: "{{ uptime_kuma_project_dir }}"
-    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
-    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
+      Uptime Kuma restore supports hosting.method docker or kubernetes; refusing to
+      mutate a target hosted by an unsupported method.

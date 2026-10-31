@@ -60,6 +60,7 @@ templates.
 - `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, the restore swap inputs with the RDB and ACL staged hook, Deploy's file modes and the target-password ACL reconciliation, and scoped guest removal.
 - `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, the live-cluster check, and the data directory, owner and mode PostgreSQL gives the restore swap.
 - `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, destination guards, and the restore swap inputs with the `kuma.db` and initialized-server hooks.
+- `test-uptime-kuma-kubernetes.py`: opt-in Kubernetes workload, route and firewall selection, shared setup tasks, and Docker/Kubernetes archive compatibility.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview, the restore swap inputs and API key continuity: the staged hook refuses a point without the database or key, the replaced hook adopts the archived key in Compose, and the rollback hook puts the original Compose back.
 - `test-sabnzbd-clients.py`: authenticated category creation, unique client wiring, convergence and selected-client removal without changing siblings.
 - `test-sabnzbd-restore.py`: SABnzbd's restore swap inputs, the staged hook refusing a point without an API key, and the authenticated queue check before the key is published.
