@@ -141,4 +141,32 @@ assert "configure.yml" in k8s_configure
 assert "host: \"{{ _kuma_registry_url }}\"" in common
 assert "kuma_url: \"{{ _kuma_registry_url }}\"" in common
 
+k8s_config_tasks = yaml.safe_load(k8s_configure)
+route_wait = task_named(k8s_config_tasks, "Uptime Kuma Kubernetes | Wait for its published route")
+assert route_wait["failed_when"] is False
+assert route_wait["retries"] == 30
+route_degradation = task_named(
+    k8s_config_tasks, "Uptime Kuma Kubernetes | Record an unavailable published route"
+)
+assert route_degradation["ansible.builtin.include_tasks"].endswith(
+    "tasks/report-degradation.yml"
+)
+assert route_degradation["vars"]["degradation_fatal"] is False
+assert "_kuma_k8s_route_reachable" in route_degradation["when"]
+configure_route = task_named(
+    k8s_config_tasks,
+    "Uptime Kuma Kubernetes | Configure the application through the shared role tasks",
+)
+assert configure_route["when"] == "_kuma_k8s_route_reachable | bool"
+registry_facts = task_named(
+    k8s_config_tasks,
+    "Uptime Kuma Kubernetes | Preserve registry facts while its route is unavailable",
+)
+assert "kuma_url" in registry_facts["ansible.builtin.set_fact"]
+assert "kuma_admin_username" in registry_facts["ansible.builtin.set_fact"]
+self_monitor = task_named(wire["tasks"], "Register uptime monitor")
+assert any("_kuma_k8s_route_reachable" in condition for condition in self_monitor["when"])
+notify = task_named(wire["tasks"], "Notify deployment complete")
+assert "published route did not answer" in notify["vars"]["notify_message"]
+
 print("Uptime Kuma: opt-in Kubernetes deploy, shared setup and cross-method recovery passed")

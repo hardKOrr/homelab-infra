@@ -281,6 +281,7 @@
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.monitoring is defined
+        - _kuma_hosting_method != 'kubernetes' or _kuma_k8s_route_reachable | default(true) | bool
 
     # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
     # shows what each host actually runs. Defaults cover every input - see the task file.
@@ -299,8 +300,11 @@
         notify_title: "Uptime Kuma deployed ({{ instance }})"
         notify_message: >-
           Monitoring is at https://{{ instance }}.{{ homelabinfra_infra.domain }},
-          signed in as {{ _kuma_deploy_host.kuma_admin_username }}
-          (password in Vaultwarden item homelab-infra/monitoring).
+          {{ 'but its published route did not answer, so setup and self-monitor registration were skipped.'
+             if _kuma_hosting_method == 'kubernetes'
+                and not (_kuma_k8s_route_reachable | default(true) | bool)
+             else ('signed in as ' ~ _kuma_deploy_host.kuma_admin_username
+                   ~ ' (password in Vaultwarden item homelab-infra/monitoring).') }}
           Apps register their monitors automatically from their next deploy onward.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
