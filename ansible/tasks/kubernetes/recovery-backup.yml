@@ -17,7 +17,8 @@
 #     database    optional k8s_database_step from tasks/database/kubernetes-recovery-step.yml
 #     stop        optional Deployment names to quiesce while the recovery point is made;
 #                 with a database step, the dump container stops them before its dump and
-#                 the push container resumes them after the volume archive
+#                 the push container resumes them after the volume archive, once it starts
+#                 (a pod that cannot start push after a successful dump leaves them at zero)
 #     stop_replicas optional positive declared replica count for a Deployment marked as
 #                   quiesced by an interrupted backup (defaults to one)
 #     database plus stop requires a database image that can install Python and a client

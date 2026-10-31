@@ -68,8 +68,13 @@ replace volumes. A role supplies `k8s_recovery` (archives, an optional database 
 stop and restart during restore, and an optional after-restore task file). When a backup
 has a database and a `stop` list, the dump init container quiesces the Deployments before
 the database dump; the push container resumes them after archiving the volumes, including
-when PBS setup or upload fails. The database image must support installing Python, and the
-client image must include Python for its restart trap. For a filesystem-only archive that
+when PBS setup or upload fails after the push container starts. There is a startup gap after
+a successful dump: if the Job pod is evicted or lost, or the push image cannot start, no
+container remains to resume the Deployments. They stay at zero with the
+`backup-quiesced` recovery marker until a later backup attempt reaches its push container
+and runs its restart trap. The dump container resumes them itself only when the dump fails.
+The database image must support installing Python, and the client image must include Python
+for its restart trap. For a filesystem-only archive that
 needs quiescing, the push container scales the listed Deployments to zero, waits for their
 replica counts to reach zero, and resumes them after success or failure. Set `stop_replicas`
 when the app's declared count differs from one; the positive value is also used to resume a
