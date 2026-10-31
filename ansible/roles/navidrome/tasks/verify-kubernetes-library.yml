@@ -4,6 +4,34 @@
 # an unreachable share fails promptly instead of leaving a pod in ContainerCreating.
 - name: Verify the NFS music export from one cluster node
   block:
+    - name: Check NFS TCP reachability from the cluster node
+      ansible.builtin.wait_for:
+        host: "{{ _navidrome_nfs_server_ip }}"
+        port: 2049
+        state: started
+        connect_timeout: 3
+        timeout: 5
+      register: _navidrome_nfs_tcp_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report NFS network reachability without private endpoints
+      ansible.builtin.debug:
+        msg: >-
+          NFS TCP/2049 is
+          {{ 'reachable' if _navidrome_nfs_tcp_probe.state | default('') == 'started'
+             else 'unreachable' }} from this Kubernetes node.
+      changed_when: false
+
+    - name: Require the NFS service to be reachable from this cluster node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_tcp_probe.state | default('') == 'started'
+        fail_msg: >-
+          Navidrome's existing music share is unreachable on NFS TCP/2049 from this
+          Kubernetes node. Check the NFS service and cluster-node firewall access.
+
     - name: Create a temporary NFS probe directory
       ansible.builtin.tempfile:
         state: directory

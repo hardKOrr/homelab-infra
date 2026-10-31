@@ -73,6 +73,17 @@ def main():
 
     nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
     assert any(
+        task.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
+        and task.get("ansible.builtin.wait_for", {}).get("port") == 2049
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("name") == "Report NFS network reachability without private endpoints"
+        and "reachable' if _navidrome_nfs_tcp_probe.state" in str(task)
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
         task.get("ansible.builtin.command", {}).get("argv", [])[:4]
         == ["timeout", "--kill-after=2s", "20s", "mount"]
         and task.get("no_log") is True
