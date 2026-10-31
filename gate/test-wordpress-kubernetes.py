@@ -160,6 +160,8 @@ def check_workload_and_cli_jobs():
             assert "wp_authenticate" in script
             assert "get_error_codes" in script
             assert "WORDPRESS_ADMIN_PASSWORD" in script
+            assert script.index('if [ "$login"') < script.index("user update")
+            assert script.index("user update") < script.index("wp_authenticate")
         else:
             assert 'option update home "$WORDPRESS_SITE_URL"' in script
             assert 'option update siteurl "$WORDPRESS_SITE_URL"' in script
