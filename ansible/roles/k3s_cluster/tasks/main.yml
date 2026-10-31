@@ -206,9 +206,7 @@
 # cluster-scoped HelmChart can schedule the plugin. This remains a no-op on every
 # existing cluster because shared storage is opt-in.
 - name: k3s | Install the NFS client required by opted-in shared storage
-  ansible.builtin.apt:
-    name: nfs-common
-    state: present
+  ansible.builtin.import_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
   when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
 
 # storage.yml and metallb.yml are NOT called here, though both are cluster-scoped and the

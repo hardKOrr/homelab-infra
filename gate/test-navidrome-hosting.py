@@ -60,10 +60,16 @@ def main():
 
     kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
+    assert "../../../tasks/kubernetes/ensure-nfs-client.yml" in includes
     assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
     assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
     assert "verify-kubernetes-library.yml" in includes
     assert not any("recovery" in include and "kubernetes/" not in include for include in includes)
+    cluster_tasks = read_yaml("ansible/roles/k3s_cluster/tasks/main.yml")
+    assert any(
+        task.get("ansible.builtin.import_tasks") == "../../../tasks/kubernetes/ensure-nfs-client.yml"
+        for task in cluster_tasks
+    )
 
     nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
     assert any(

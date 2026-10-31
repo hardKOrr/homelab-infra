@@ -13,6 +13,15 @@
       Navidrome Kubernetes requires the existing music share to be resolved before
       preparing the cluster workload.
 
+- name: Navidrome Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ navidrome_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: navidrome_k8s_node
+    label: Kubernetes node
+
 - name: Navidrome Kubernetes | Verify the music export from every cluster node
   ansible.builtin.include_tasks: verify-kubernetes-library.yml
   loop: "{{ k8s_cluster_facts.nodes }}"
