@@ -95,7 +95,9 @@ def check_playbook_contract():
         ({"instance": "wordpress", "source_backup_id": "old", "app_config": {"backup": {}}}, "old"),
     ]:
         assert render_fact(expression, variables) == expected, (variables, expected)
-    check = next(task for task in RESTORE_PLAYBOOK[2]["tasks"]
+    notify_play = next(play for play in RESTORE_PLAYBOOK
+                       if play.get("name") == "WordPress Restore | Notify")
+    check = next(task for task in notify_play["tasks"]
                  if task.get("name") == "Fail if WordPress restore did not complete")
     assert "wordpress_restore_complete" in str(check["ansible.builtin.assert"]["that"])
     assert "homelab-infra-wordpress-recovery" not in str(RESTORE_PLAYBOOK), "the guest helper only backs up"

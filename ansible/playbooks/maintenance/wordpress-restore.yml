@@ -3,7 +3,7 @@
 # snapshot produced by another WordPress instance.
 #
 # overwrite=false (the default) is read-only. overwrite=true stops only the named target
-# WordPress service, replaces wp-content and its named database, repairs the target URL and
+# WordPress workload, replaces wp-content and its named database, repairs the target URL and
 # administrator account, then starts it again. A fresh, readable pre-restore point is
 # required; failures roll the target files and database back before restarting WordPress.
 # The shared backend and other applications remain untouched.
@@ -45,6 +45,9 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
       no_log: true
+    - ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: wordpress
   tasks:
     - name: Resolve the source backup group
       ansible.builtin.set_fact:
@@ -71,6 +74,7 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         resolve_stack_deploy_group: "wordpress_recovery_{{ instance }}"
         resolve_stack_app_instance: "{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
 - name: "WordPress Restore | Run"
   hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
@@ -91,12 +95,30 @@
         restore_snapshot: "{{ snapshot | default('') }}"
         restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
         restore_destination: existing
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Record the completed WordPress plan or restore
       ansible.builtin.set_fact:
         wordpress_restore_complete: >-
           {{ _application_restore_complete | default(false) | bool
              or not (overwrite | default(false) | bool) }}
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "WordPress Restore | Run on Kubernetes"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Plan or perform the Kubernetes WordPress restore
+      ansible.builtin.include_role:
+        name: wordpress-kubernetes
+        tasks_from: restore.yml
+      vars:
+        wordpress_fqdn: "{{ hostvars['localhost'].wordpress_fqdn }}"
+        wordpress_restore_backup_id: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
+        restore_overwrite: "{{ overwrite | default(false) | bool }}"
+        restore_snapshot: "{{ snapshot | default('') }}"
+        restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
 - name: "WordPress Restore | Notify"
   hosts: localhost
@@ -114,10 +136,20 @@
         notify_message: "WordPress {{ instance }} was restored from its application-consistent PBS snapshot."
       when:
         - overwrite | default(false) | bool
-        - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool
+        - >-
+          (app_config.hosting.method == 'docker'
+           and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool)
+          or
+          (app_config.hosting.method == 'kubernetes'
+           and wordpress_restore_result.rc | default(1) == 0)
     - name: Fail if WordPress restore did not complete
       ansible.builtin.assert:
-        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool
+        that: >-
+          (app_config.hosting.method == 'docker'
+           and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool)
+          or
+          (app_config.hosting.method == 'kubernetes'
+           and wordpress_restore_result.rc | default(1) == 0)
         fail_msg: >-
           WordPress restore did not complete; inspect the run for its rollback status before
           retrying. No success notification was sent.

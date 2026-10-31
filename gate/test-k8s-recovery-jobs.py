@@ -210,6 +210,8 @@ def restore_pod(mode, archives, database, target="app"):
 def assert_client_tmpfs(pod, container):
     # The client's cache and temporary files need O_TMPFILE, which the container overlay
     # refuses with os error 95.
+    env = {e["name"]: e for e in container.get("env", [])}
+    assert env["HOME"]["value"] == "/root"
     mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
     assert mounts["client-tmp"] == "/tmp" and mounts["client-cache"] == "/root/.cache"
     volumes = {v["name"]: v for v in pod["volumes"]}
@@ -467,6 +469,29 @@ def shared_pair(steps):
     assert "database-client.sh dump" in dump["args"][0]
     assert "database.pxar:/recovery/database" in pod["containers"][0]["args"][0]
     assert "storage.pxar:/volumes/storage" in pod["containers"][0]["args"][0]
+
+    # WordPress needs its database dump and wp-content archive from the same stopped
+    # application state. Quiesce in the dump init container, then restart from the push
+    # container's exit trap, even if installing the PBS client fails.
+    wordpress_docs = backup_all_documents(
+        [{"name": "content", "claim": "wordpress-content", "owner": "33:33"}],
+        steps["mariadb"], "wordpress", ["wordpress"],
+    )
+    wordpress_cronjob = next(doc for doc in wordpress_docs if doc["kind"] == "CronJob")
+    wordpress_pod = wordpress_cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    dump_script = wordpress_pod["initContainers"][0]["args"][0]
+    assert dump_script.index("kubernetes-recovery-scale.py stop") < dump_script.index(
+        "database-client.sh dump")
+    assert "trap 'resume_after_dump_failure' EXIT" in dump_script
+    assert "kubernetes-recovery-scale.py start" in dump_script
+    push_script = wordpress_pod["containers"][0]["args"][0]
+    assert push_script.index("K8S_RECOVERY_STOPPED=true") < push_script.index(
+        "apt-get update -qq")
+    assert "python3 /tmp/kubernetes-recovery-scale.py start" in push_script
+    assert push_script.index("trap 'on_exit $?' EXIT") < push_script.index(
+        "apt-get update -qq")
+    assert "database.pxar:/recovery/database" in push_script
+    assert "content.pxar:/volumes/content" in push_script
 
 
 def restore_tasks():
