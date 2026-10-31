@@ -41,6 +41,11 @@ run. The Vaultwarden Login File playbook (`playbooks/maintenance/vaultwarden-log
 rewrites that file, so a direct run of it gets the `LAB_VAULT_PASSWORD` value back after
 the preflight.
 
+`LAB_LOG_BRIEF=1` shortens a direct run's log for a reader that pays per line, such as an
+LLM agent: no colour codes, no routine `lab-run` lines, no repeated TLS warning, the config
+check only when it fails, and a TASK banner only for a task that changed something,
+failed or reported a finding. Rundeck jobs never set it, so operators keep every banner.
+
 The file also holds an edge copy: the platform items of the Vaultwarden contract, without
 any application's credentials. Caddy serves `BW_SERVER`, so deploying Caddy
 (`playbooks/apps/caddy.yml`) or removing it (`playbooks/apps/remove.yml` with app

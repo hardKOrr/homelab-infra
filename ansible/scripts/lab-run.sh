@@ -29,6 +29,11 @@
 #                  Values in lab-run.env are ignored so a stored setting cannot make
 #                  ordinary jobs refresh the shared checkout. Refresh refuses tracked edits.
 #   LAB_DOCTOR     0 disables the config check     (default: 1)
+#   LAB_LOG_BRIEF  1 prints only what a reader who pays per line needs (an LLM agent):
+#                  no colour codes, no routine progress lines, no TLS warning, a one-line
+#                  config check, and only TASK banners that report something (see
+#                  ansible/callback_plugins/homelab.py). Failures print in full.
+#                  (default: unset; Rundeck jobs never set it)
 #   LAB_SSH_KEY    private key used for guests and delegated PVE node commands
 #                  (default: unset; bootstrapped runner supplies it)
 #   LAB_ENV_FILE   env file to source              (default: /etc/homelab-infra/lab-run.env)
@@ -47,6 +52,13 @@
 set -euo pipefail
 
 log() { printf '\033[1;36m[lab-run]\033[0m %s\n' "$*"; }
+# Routine progress: shown in a full log, dropped in a brief one.
+if [ "${LAB_LOG_BRIEF:-}" = "1" ]; then
+  log_detail() { :; }
+  log() { printf '[lab-run] %s\n' "$*"; }
+else
+  log_detail() { log "$@"; }
+fi
 die() { printf '\033[1;31m[lab-run] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$#" -ge 1 ] || die "usage: lab-run <playbook> [ansible-playbook args...]"
@@ -180,7 +192,7 @@ if [ "$LAB_REFRESH" = "1" ] && [ -z "${LAB_REFRESHED:-}" ]; then
   fi
   log "LAB_REPO is not a git checkout — skipping refresh"
 elif [ "$LAB_REFRESH" != "1" ]; then
-  log "refresh off — running $LAB_REPO as it stands"
+  log_detail "refresh off — running $LAB_REPO as it stands"
 fi
 
 if [ -d "$LAB_REPO/.git" ]; then
@@ -189,14 +201,20 @@ if [ -d "$LAB_REPO/.git" ]; then
   # top of the pane. A checkout without git simply omits the row.
   LAB_REVISION="$(git -C "$LAB_REPO" log --oneline -1 2>/dev/null || echo unknown)"
   export LAB_REVISION
-  log "revision $LAB_REVISION"
+  log_detail "revision $LAB_REVISION"
 fi
 
 # Rundeck's log viewer renders ANSI sequences, but ansible sees a pipe rather than a
 # terminal under any job runner and drops colour on its own. Forcing it is what makes
 # the callback's red FAILED red in the browser. NO_COLOR still wins, and an operator
 # capturing a log to a file can set ANSIBLE_NOCOLOR=1 for one run.
-if [ -z "${ANSIBLE_FORCE_COLOR:-}" ] && [ -z "${NO_COLOR:-}" ] && [ -z "${ANSIBLE_NOCOLOR:-}" ]; then
+if [ "${LAB_LOG_BRIEF:-}" = "1" ]; then
+  # Colour codes and the repeated self-signed-certificate warning cost a reader per line
+  # and say nothing the first run did not. The warning's text is matched, not its class,
+  # because a -W category must import before Python starts.
+  export ANSIBLE_NOCOLOR=1
+  export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}ignore:Unverified HTTPS request"
+elif [ -z "${ANSIBLE_FORCE_COLOR:-}" ] && [ -z "${NO_COLOR:-}" ] && [ -z "${ANSIBLE_NOCOLOR:-}" ]; then
   export ANSIBLE_FORCE_COLOR=1
 fi
 
@@ -359,7 +377,7 @@ _vault_preflight() {
   unset _vault_items
   export HOMELABINFRA_VAULT_JSON
   _vault_export_runtime
-  log "Vaultwarden preflight complete"
+  log_detail "Vaultwarden preflight complete"
 }
 
 # Caddy is down or being replaced, so Vaultwarden is out of reach behind it. Use the edge
@@ -425,7 +443,7 @@ _lab_load_login() {
   _lab_edge_json="${HOMELABINFRA_EDGE_VAULT_JSON:-}"
   unset HOMELABINFRA_EDGE_VAULT_JSON
   unset ANSIBLE_VAULT_PASSWORD_FILE ANSIBLE_VAULT_IDENTITY_LIST LAB_VAULT_PASSWORD
-  log "Vaultwarden login loaded from $_lab_login_file"
+  log_detail "Vaultwarden login loaded from $_lab_login_file"
 }
 
 if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
@@ -470,8 +488,17 @@ fi
 # removing the marker is what recovery is for. The playbook reads no config; it asserts a
 # typed confirmation and removes the marker, touching no infrastructure.
 if [ "$LAB_DOCTOR" != "0" ] && [ "$_lab_recovery" != "1" ]; then
-  PYTHON="${PYTHON:-$LAB_VENV/bin/python3}" \
-    bash scripts/config-doctor.sh "$LAB_REPO/config" \
+  # A brief log holds the doctor's report back and prints it only when it fails.
+  _lab_doctor() {
+    PYTHON="${PYTHON:-$LAB_VENV/bin/python3}" bash scripts/config-doctor.sh "$LAB_REPO/config"
+  }
+  _lab_doctor_status=0
+  if [ "${LAB_LOG_BRIEF:-}" = "1" ]; then
+    _lab_doctor_out="$(_lab_doctor 2>&1)" || { _lab_doctor_status=$?; printf '%s\n' "$_lab_doctor_out"; }
+  else
+    _lab_doctor || _lab_doctor_status=$?
+  fi
+  [ "$_lab_doctor_status" -eq 0 ] \
     || die "config-doctor found errors — nothing was changed. Fix them with the Configure App job, or see Get Config."
 fi
 
@@ -494,7 +521,7 @@ _lab_refresh_instance_lists
 playbook="$1"; shift
 [ -f "$playbook" ] || die "playbook not found: $LAB_REPO/ansible/$playbook"
 
-log "ansible-playbook $playbook $*"
+log_detail "ansible-playbook $playbook $*"
 # Recovery runs without the Proxmox wrapper for the same reason it runs without the
 # doctor: it reaches no Proxmox API and cannot resolve a token when the vault is down,
 # which is when it runs. Every other playbook goes through the wrapper, which resolves

@@ -27,6 +27,11 @@
 # run: ANSIBLE_DISPLAY_OK_HOSTS=1 lab-run playbooks/apps/sonarr.yml ... . This
 # callback owns only the empty separator because Ansible hard-codes it in each banner.
 #
+# LAB_LOG_BRIEF=1 is the one switch for a reader that pays per line, such as an LLM agent
+# driving a run: a TASK banner is then printed only when its task reports something
+# (changed, failed, unreachable, debug/assert), so the log shrinks to the findings, the
+# header and the result block. Operators never set it, so Rundeck keeps every banner.
+#
 # The class derives from `default` rather than replacing it. Failure rendering, the
 # yaml result format, diff output, loop handling and colour are ansible's, stay
 # ansible's, and keep working across upgrades; this file adds a header, a result
@@ -73,6 +78,9 @@ _SLOW_COUNT = 5
 
 _RULE = '-' * 68
 
+# See LAB_LOG_BRIEF above.
+_BRIEF = os.environ.get('LAB_LOG_BRIEF') == '1'
+
 
 class CallbackModule(DefaultCallback):
 
@@ -87,6 +95,7 @@ class CallbackModule(DefaultCallback):
         self._task_elapsed = []
         self._degradations = []
         self._problems = []
+        self._pending_banner = None
 
     # -- framing helpers -----------------------------------------------------
 
@@ -156,7 +165,17 @@ class CallbackModule(DefaultCallback):
             self._task_type_cache[task._uuid] = prefix
         self._last_task_name = task.get_name().strip()
         self._task_started.setdefault(task._uuid, time.time())
+        if _BRIEF:
+            self._pending_banner = task
+            return
         self._print_task_banner(task)
+
+    def _flush_banner(self, result):
+        # Brief mode holds each banner until its task has something to say.
+        task = self._pending_banner
+        if task is not None and task._uuid == result._task._uuid:
+            self._pending_banner = None
+            self._print_task_banner(task)
 
     def _print_task_banner(self, task):
         # Display.banner() deliberately prefixes every banner with "\n". Once the
@@ -194,6 +213,8 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_ok(self, result):
         self._note_elapsed(result)
         self._absorb_degradations(result)
+        if result._result.get('changed', False) or self._run_is_verbose(result):
+            self._flush_banner(result)
 
         # The one display decision this callback overrides. With display_ok_hosts
         # off, `default` returns before printing any unchanged result - which would
@@ -219,6 +240,7 @@ class CallbackModule(DefaultCallback):
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         self._note_elapsed(result)
+        self._flush_banner(result)
         if not ignore_errors:
             self._problems.append((self.host_label(result),
                                    result._task.get_name().strip(),
@@ -228,6 +250,7 @@ class CallbackModule(DefaultCallback):
 
     def v2_runner_on_unreachable(self, result):
         self._note_elapsed(result)
+        self._flush_banner(result)
         self._problems.append((self.host_label(result), 'UNREACHABLE',
                                self._problem_text(result)))
         super(CallbackModule, self).v2_runner_on_unreachable(result)
@@ -235,6 +258,15 @@ class CallbackModule(DefaultCallback):
     def v2_runner_on_skipped(self, result):
         self._note_elapsed(result)
         super(CallbackModule, self).v2_runner_on_skipped(result)
+
+    def v2_runner_item_on_ok(self, result):
+        if result._result.get('changed', False) or self._run_is_verbose(result):
+            self._flush_banner(result)
+        super(CallbackModule, self).v2_runner_item_on_ok(result)
+
+    def v2_runner_item_on_failed(self, result):
+        self._flush_banner(result)
+        super(CallbackModule, self).v2_runner_item_on_failed(result)
 
     @staticmethod
     def _problem_text(result):
