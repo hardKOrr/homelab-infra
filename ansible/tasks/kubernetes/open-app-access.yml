@@ -15,10 +15,23 @@
       ansible.builtin.assert:
         that:
           - homelabinfra_infra.kubernetes.firewall_alias | default('') | length > 0
+          - homelabinfra_infra.kubernetes.instance | default('') | length > 0
+          - homelabinfra_infra.kubernetes.nodes | default([]) | length > 0
           - homelabinfra_infra.kubernetes.ingress_vip | default('') is ansible.utils.ipv4_address
         fail_msg: >-
           {{ instance }} declares firewall access but the Kubernetes registry has no
-          OPNsense node alias. Re-run Deploy k3s Cluster with firewall.provider: opnsense.
+          complete OPNsense node-alias registration. Re-run Deploy k3s Cluster with
+          firewall.provider: opnsense.
+
+    # The app's egress source is this alias. Reconcile it from the current registry so
+    # stale node membership cannot silently block otherwise-correct app firewall rules.
+    - name: k8s firewall | Reconcile the owned cluster-node alias
+      ansible.builtin.include_tasks: ../firewall/k3s-cluster-alias.yml
+      vars:
+        firewall_k3s_alias_state: present
+        firewall_k3s_alias_name: "{{ homelabinfra_infra.kubernetes.firewall_alias }}"
+        firewall_k3s_cluster_name: "{{ homelabinfra_infra.kubernetes.instance }}"
+        firewall_k3s_nodes: "{{ homelabinfra_infra.kubernetes.nodes }}"
 
     - name: k8s firewall | Open the app's network access
       ansible.builtin.include_tasks: ../firewall/open-app-access.yml
