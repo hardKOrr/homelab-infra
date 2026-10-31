@@ -11,12 +11,16 @@
 #
 # Inputs:
 #   tag_group_tag   one raw platform tag, e.g. `_+lab`, `_.stack+media`, `_sonarr-foxglove`
+#   tag_group_guest_type  optional Proxmox type (`lxc` or `qemu`) used to disambiguate
+#                         a shared instance tag after every matching host is ownership-checked
 #
 # Sets:
 #   tag_group_name  the inventory group name, or '' for a tag outside the platform lane
+#   tag_group_hosts the owned hosts in the group, optionally filtered by guest type
 #
-# Callers look the result up as `groups[tag_group_name] | default([])`. An empty result is a
-# tag this platform does not own, not an error: nothing here decides whether a group exists.
+# An empty result is a tag this platform does not own, not an error: nothing here decides
+# whether a group exists. Untyped callers can keep looking up `groups[tag_group_name]`;
+# callers that provide `tag_group_guest_type` use `tag_group_hosts` for the narrowed result.
 
 # No backslash appears below. Ansible's Jinja does not unescape string literals and stock
 # Jinja does, so a capture-group replacement means different things in the two engines and
@@ -53,9 +57,34 @@
     fail_msg: "Matching inventory host lacks established project-owned guest identity. Refusing reuse."
   loop: "{{ groups[tag_group_name] | default([]) }}"
 
+- name: Tag group | Validate optional guest type
+  ansible.builtin.assert:
+    that: tag_group_guest_type in ['lxc', 'qemu']
+    fail_msg: "tag_group_guest_type must be lxc or qemu."
+  when: tag_group_guest_type is defined and tag_group_guest_type | length > 0
+
+- name: Tag group | Select all hosts when no type filter is requested
+  ansible.builtin.set_fact:
+    tag_group_hosts: "{{ groups[tag_group_name] | default([]) }}"
+  when: tag_group_guest_type is not defined or tag_group_guest_type | length == 0
+
+- name: Tag group | Start typed host selection
+  ansible.builtin.set_fact:
+    tag_group_hosts: []
+  when: tag_group_guest_type is defined and tag_group_guest_type | length > 0
+
+- name: Tag group | Filter matching hosts by Proxmox type
+  ansible.builtin.set_fact:
+    tag_group_hosts: "{{ tag_group_hosts + [item] }}"
+  loop: "{{ groups[tag_group_name] | default([]) }}"
+  when:
+    - tag_group_guest_type is defined
+    - tag_group_guest_type | length > 0
+    - hostvars[item].proxmox_vmtype | default('') == tag_group_guest_type
+
 - name: Tag group | Require unambiguous instance or stack identity
   ansible.builtin.assert:
     that:
-      - groups[tag_group_name] | default([]) | length <= 1
+      - tag_group_hosts | length <= 1
     fail_msg: "Multiple guests match the instance or stack tag. Refusing to select an arbitrary guest."
   when: tag_group_name is match('^lab_(app|stack)_')

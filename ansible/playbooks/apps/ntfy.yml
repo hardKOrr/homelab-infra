@@ -1,6 +1,6 @@
 ---
 # Deploy Ntfy — the platform notification hub (bootstrap step 2).
-# Native LXC (PATH B): dedicated container, official .deb install (see role header).
+# Defaults to a native LXC with the official .deb; config may select the Kubernetes path.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/ntfy.yml -e instance=ntfy
@@ -10,9 +10,9 @@
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
 # Play 3 records the `notifications` registry key (CONTRACT.md §3) BEFORE wiring, so
-# a standalone deploy registers Ntfy exactly as a bootstrap run does. Every later
-# notification consumer (Watchtower, unattended-upgrades, PBS, maintenance jobs)
-# reads host + topic + token from there.
+# a standalone deploy registers Ntfy exactly as a bootstrap run does. The generated
+# registry stores topology; notification tokens remain in Vaultwarden and are merged
+# into the in-memory runtime contract by load-user-vars.yml.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
@@ -67,15 +67,19 @@
     # second IP/VMID and provision a duplicate guest).
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'native'
 
     - name: Resolve this instance's guest, reusing one Remove kept
       ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars:
         resolve_guest_instance: "{{ instance }}"
+        resolve_guest_type: lxc
+      when: app_config.hosting.method == 'native'
 
     - name: Check for existing instance host
       ansible.builtin.set_fact:
         _existing_hosts: "{{ resolve_guest_hosts }}"
+      when: app_config.hosting.method == 'native'
 
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
@@ -87,7 +91,9 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
-      when: _existing_hosts | length > 0
+      when:
+        - app_config.hosting.method == 'native'
+        - _existing_hosts | default([]) | length > 0
       # Inventory bookkeeping, not a lab change: add_host always reports changed,
       # which alone keeps a fully converged re-run off changed=0.
       changed_when: false
@@ -99,10 +105,14 @@
       ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
       vars:
         ensure_guest_host: "{{ _existing_hosts[0] }}"
-      when: _existing_hosts | length > 0
+      when:
+        - app_config.hosting.method == 'native'
+        - _existing_hosts | default([]) | length > 0
 
     - name: Provision new LXC
-      when: _existing_hosts | length == 0
+      when:
+        - app_config.hosting.method == 'native'
+        - _existing_hosts | default([]) | length == 0
       block:
         # Stamp the application tag `_<instance>` so the reuse check above (and
         # remove.yml) find this guest. The app's defaults carry ownership and the
@@ -159,6 +169,16 @@
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
             homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Deploy Ntfy on Kubernetes
+      ansible.builtin.include_role:
+        name: ntfy
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -237,9 +257,8 @@
         name: homelabinfra_infra
       failed_when: false
 
-    # Shape B `notifications` per ansible/vars/CONTRACT.md §3. host is the direct
-    # LXC URL, not the public domain: consumers publish from inside the lab (and
-    # during bootstrap, before DNS or a certificate exists for ntfy.<domain>).
+    # Native instances publish directly to their LXC. Kubernetes instances use the
+    # routed HTTPS hostname because their service is inside the cluster network.
     - name: Record Ntfy facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
@@ -248,7 +267,7 @@
         generated_facts_data:
           provider: ntfy
           instance: "{{ instance }}"
-          host: "http://{{ _ntfy_deploy_host.ansible_host }}:{{ _ntfy_deploy_host.app_config.app.port }}"
+          host: "{{ _ntfy_deploy_host.ntfy_publish_host }}"
           topic: "{{ _ntfy_deploy_host.app_config.app.topic }}"
 
     # Belt-and-braces only. The key just written is already in the live
@@ -271,14 +290,23 @@
         resolve_estate_name: "{{ _ntfy_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _ntfy_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _ntfy_deploy_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if hostvars['localhost'].app_config.hosting.method == 'native'
+            and groups.get('deploy_' ~ instance, []) | length > 0
+         else hostvars['localhost'] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _ntfy_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _ntfy_deploy_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if _ntfy_deploy_host.app_config.hosting.method == 'kubernetes'
+         else _ntfy_deploy_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if _ntfy_deploy_host.app_config.hosting.method == 'kubernetes'
+         else _ntfy_deploy_host.app_config.app.port }}
     wiring_subdomain: "{{ _ntfy_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Ntfy ({{ instance }})"
@@ -324,6 +352,15 @@
     # shows what each host actually runs. Defaults cover every input - see the task file.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: _ntfy_deploy_host.app_config.hosting.method == 'native'
+
+    - name: Record the app on its Kubernetes cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ wiring_domain }}"
+      when: _ntfy_deploy_host.app_config.hosting.method == 'kubernetes'
 
     # The role already sent a "deployed" message as its authenticated-publish
     # proof, so this one reports the wiring outcome rather than repeating it.

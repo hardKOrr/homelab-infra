@@ -1,47 +1,21 @@
 ---
-# Restore Ntfy's auth database and message cache as one recovery unit through the shared
-# swap. Both live directories stay available for rollback until the restored service
-# passes its health and auth-database checks.
-- name: Ntfy restore | Resolve the auth database location
-  ansible.builtin.set_fact:
-    _ntfy_restore_auth_relative: >-
-      {{ ntfy_auth_file | replace((app_config.app.data_path | default('')).rstrip('/') ~ '/', '') }}
+- name: Ntfy restore | Use the shared Kubernetes restore Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('native')) == 'kubernetes'
 
-- name: Ntfy restore | Assert the recovery contract and separate paths
+- name: Ntfy restore | Use the native restore swap
+  ansible.builtin.include_tasks: restore-native.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('native')) == 'native'
+
+- name: Ntfy restore | Reject an unsupported hosting method
   ansible.builtin.assert:
-    that:
-      - app_config.backup.enabled | default(false) | bool
-      - app_config.backup.application_consistent | default(false) | bool
-      - ntfy_auth_file.startswith(app_config.app.data_path.rstrip('/') ~ '/')
-      - ntfy_cache_file.startswith(app_config.app.cache_path.rstrip('/') ~ '/')
-      - _ntfy_restore_auth_relative | length > 0
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
-      - homelabinfra_infra.backups is defined
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('native')) in ['native', 'kubernetes']
     fail_msg: >-
-      Ntfy restore needs its application-consistent contract, its auth database inside the
-      data path and its cache inside the cache path, PBS, and a selected recovery point for
-      overwrite=true.
-
-- name: Ntfy restore | Preview or replace the data and cache directories
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: native
-    recovery_swap_archives: [data.pxar, cache.pxar]
-    recovery_swap_paths:
-      - path: "{{ app_config.app.data_path }}"
-        source: data
-        owner: ntfy
-        group: ntfy
-        mode: "0750"
-      # An empty message cache is a valid recovery point.
-      - path: "{{ app_config.app.cache_path }}"
-        source: cache
-        owner: ntfy
-        group: ntfy
-        mode: "0750"
-        allow_empty: true
-    recovery_swap_stop_services: ["{{ app_config.app.service_name | default(ntfy_service_name) }}"]
-    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/v1/health"
-    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
+      Ntfy restore supports hosting.method native or kubernetes; refusing to mutate a
+      target hosted by an unsupported method.

@@ -3,7 +3,7 @@
 # Changes made here are overwritten on the next deploy; edit the role template
 # or config/apps/{{ instance }}.yml instead.
 
-base-url: "https://{{ instance }}.{{ _ntfy_domain }}"
+base-url: "https://{{ app_config.routing.subdomain | default(instance, true) }}.{{ _ntfy_domain }}"
 listen-http: ":{{ app_config.app.port }}"
 
 # Behind the platform reverse proxy — trust its X-Forwarded-For for rate limiting.
