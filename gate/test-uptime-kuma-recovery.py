@@ -9,7 +9,9 @@ from restore_swap_inputs import swap_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKUP = yaml.safe_load((ROOT / "ansible/roles/uptime-kuma/tasks/backup.yml").read_text())
-RESTORE = yaml.safe_load((ROOT / "ansible/roles/uptime-kuma/tasks/restore.yml").read_text())
+RESTORE = yaml.safe_load(
+    (ROOT / "ansible/roles/uptime-kuma/tasks/restore-docker.yml").read_text()
+)
 
 
 def task_named(tasks, name):
@@ -48,7 +50,7 @@ def check_restore():
         "ansible.builtin.assert"
     ]["that"]
 
-    swap = swap_inputs("uptime-kuma")
+    swap = swap_inputs("uptime-kuma", "restore-docker.yml")
     assert swap["recovery_swap_runtime"] == "docker"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_stop_services"] == ["uptime-kuma"]

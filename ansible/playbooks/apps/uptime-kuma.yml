@@ -1,6 +1,6 @@
 ---
 # Deploy Uptime Kuma — uptime monitoring for every app (bootstrap step 5).
-# Docker on LXC (PATH A): a single container on the monitoring host.
+# Docker on the monitoring VM remains the default; an instance may opt into Kubernetes.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/uptime-kuma.yml -e instance=uptime-kuma
@@ -9,10 +9,9 @@
 # It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Play 3 records the `monitoring` registry key (CONTRACT.md §3) BEFORE wiring, so a
-# standalone deploy registers Uptime Kuma exactly as a bootstrap run does. Every
-# later app deploy reads host + admin credentials from there to sign a socket.io session
-# in and register its monitor.
+# Play 3 publishes the route and DNS before recording the `monitoring` registry key
+# (CONTRACT.md §3), then registers Kuma's self-monitor. Later app deploys read its host
+# and admin credentials to sign a socket.io session and register their monitors.
 #
 # Version 2.x is locked in for its scripted database setup, not for an API: no version of
 # Uptime Kuma exposes REST monitor CRUD. See the role header and
@@ -63,9 +62,23 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: uptime-kuma
+
+    - name: Resolve the estate this instance belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published Uptime Kuma subdomain
+      ansible.builtin.set_fact:
+        uptime_kuma_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+
+    - name: Derive the published Uptime Kuma hostname
+      ansible.builtin.set_fact:
+        uptime_kuma_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      when: app_config.hosting.method == 'kubernetes'
+
   tasks:
-    # PATH A: DOCKER APP — app runs as a container on a shared stack host.
-    # The stack host is found (or created) by tag. App is deployed in Play 2.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -76,10 +89,11 @@
         # Per-instance group: add_host groups persist for the whole run, and
         # bootstrap.yml chains app playbooks via import_playbook.
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
 
-# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
-# Runs on the stack host to install and configure Uptime Kuma.
+# ── Play 2: Docker deploy ─────────────────────────────────────────────────────
+# The default method runs on the stack host to install and configure Uptime Kuma.
 - name: "Uptime Kuma | Deploy"
   # Per-instance group, not a shared one: add_host groups persist for the whole
   # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
@@ -104,7 +118,9 @@
     # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
-      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
     # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
     # on homelabinfra_infra.notifications, which does not exist yet when the first
@@ -112,6 +128,7 @@
     # hook once Ntfy is up. Idempotent copy/file tasks only.
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     # Unconditional, and deliberately not gated on homelabinfra_stack_host_created.
     # That fact means "I created this host in THIS run", which is not the same question as
@@ -128,11 +145,24 @@
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Uptime Kuma
       ansible.builtin.include_role:
         name: uptime-kuma
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "Uptime Kuma | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy Uptime Kuma into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: uptime-kuma
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
 
 
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
@@ -153,39 +183,6 @@
         name: homelabinfra_infra
       failed_when: false
 
-    # Shape B `monitoring` per ansible/vars/CONTRACT.md §3 (the role key slice 303
-    # settled — NOT the provider-named `uptime_kuma` key). notification_id is
-    # written only when one was actually provisioned: wiring/uptime-kuma.yml gates
-    # on `is defined`, so an empty value would attach an invalid channel to every
-    # monitor.
-    - name: Record monitoring facts
-      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
-      vars:
-        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        generated_facts_service: monitoring
-        generated_facts_data: >-
-          {{ {
-               'provider': 'uptime_kuma',
-               'instance': instance,
-               'host': _kuma_deploy_host.kuma_url,
-               'admin_user': _kuma_deploy_host.kuma_admin_username,
-             }
-             | combine({'notification_id': _kuma_deploy_host.kuma_notification_id}
-                       if _kuma_deploy_host.kuma_notification_id | string | length > 0
-                       else {}) }}
-
-    # Belt-and-braces only. The key just written is already in the live
-    # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there
-    # with set_fact — and this include_vars CANNOT override that, because set_fact
-    # outranks include_vars in Ansible's precedence order. It stays for a play that
-    # never loaded the registry at all; it is not what makes the wiring below see
-    # this deploy's own key.
-    - name: Reload infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
     # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
     # No-op for the default estate and for labs without a `domains:` map.
     - name: Resolve estate scope
@@ -194,22 +191,30 @@
         resolve_estate_name: "{{ _kuma_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _kuma_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    app_config: "{{ hostvars['localhost'].app_config }}"
+    _kuma_hosting_method: "{{ app_config.hosting.method }}"
+    _kuma_deploy_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if _kuma_hosting_method == 'docker' else hostvars['localhost'] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _kuma_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _kuma_deploy_host.app_config.app.port }}"
-    wiring_subdomain: "{{ _kuma_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
-    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if _kuma_hosting_method == 'kubernetes' else _kuma_deploy_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if _kuma_hosting_method == 'kubernetes'
+         else _kuma_deploy_host.app_config.app.port }}
+    wiring_subdomain: "{{ hostvars['localhost'].uptime_kuma_subdomain | default(instance) }}"
+    wiring_domain: "{{ hostvars['localhost'].uptime_kuma_fqdn | default(wiring_subdomain ~ '.' ~ homelabinfra_infra.domain) }}"
     wiring_app_display: "Uptime Kuma ({{ instance }})"
-    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
-    wiring_interval: "{{ _kuma_deploy_host.app_config.app.monitor_interval | default(60) }}"
+    wiring_monitor_url: "https://{{ wiring_domain }}"
+    wiring_interval: "{{ app_config.app.monitor_interval | default(60) }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
-    wiring_identity_mode: "{{ _kuma_deploy_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _kuma_deploy_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -230,14 +235,6 @@
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
         - wiring_identity_mode != 'none'
 
-    # Uptime Kuma monitors itself — a monitor that stops reporting is itself a
-    # signal, and it costs nothing.
-    - name: Register uptime monitor
-      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.monitoring is defined
-
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
       when:
@@ -245,10 +242,56 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
+    # The controller reaches a Kubernetes deployment through its published HTTPS
+    # route, so publish Caddy and DNS before running Kuma's socket.io setup path.
+    - name: Configure Uptime Kuma through its published Kubernetes route
+      ansible.builtin.include_role:
+        name: uptime-kuma
+        tasks_from: configure-kubernetes
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        uptime_kuma_fqdn: "{{ hostvars['localhost'].uptime_kuma_fqdn }}"
+      when: _kuma_hosting_method == 'kubernetes'
+
+    - name: Record monitoring facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: monitoring
+        generated_facts_data: >-
+          {{ {
+               'provider': 'uptime_kuma',
+               'instance': instance,
+               'host': _kuma_deploy_host.kuma_url,
+               'admin_user': _kuma_deploy_host.kuma_admin_username,
+             }
+             | combine({'notification_id': _kuma_deploy_host.kuma_notification_id}
+                       if _kuma_deploy_host.kuma_notification_id | string | length > 0
+                       else {}) }}
+
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Uptime Kuma monitors itself — a monitor that stops reporting is itself a signal.
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
     # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
     # shows what each host actually runs. Defaults cover every input - see the task file.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list
+             if _kuma_hosting_method == 'kubernetes'
+             else [groups['deploy_' ~ instance][0]] }}
+        record_guest_kind: "{{ 'kubernetes' if _kuma_hosting_method == 'kubernetes' else 'docker' }}"
 
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml

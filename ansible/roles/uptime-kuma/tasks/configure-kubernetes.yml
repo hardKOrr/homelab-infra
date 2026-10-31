@@ -1,0 +1,21 @@
+---
+# Runs after the Caddy route and DNS record exist, so the existing socket.io setup
+# path can use the same HTTPS endpoint that other application Deploys will use.
+- name: Uptime Kuma Kubernetes | Wait for its published route
+  ansible.builtin.uri:
+    url: "https://{{ uptime_kuma_fqdn }}/api/entry-page"
+    status_code: 200
+    return_content: true
+  register: _kuma_k8s_up
+  until: _kuma_k8s_up.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Uptime Kuma Kubernetes | Set the application endpoints
+  ansible.builtin.set_fact:
+    _kuma_base: "https://{{ uptime_kuma_fqdn }}"
+    _kuma_registry_url: "https://{{ uptime_kuma_fqdn }}"
+
+- name: Uptime Kuma Kubernetes | Configure the application through the shared role tasks
+  ansible.builtin.include_tasks: configure.yml

@@ -1,0 +1,36 @@
+---
+# Uptime Kuma owns one SQLite directory, mounted from the cluster's default
+# StorageClass. Keep its recovery archive named `data` so Docker PBS points remain
+# readable by the shared Kubernetes recovery Job.
+
+- name: Uptime Kuma Kubernetes | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Uptime Kuma Kubernetes | Open monitor egress through the cluster node alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Uptime Kuma Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Uptime Kuma Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _kuma_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Uptime Kuma Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _kuma_k8s_manifest }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+
+- name: Uptime Kuma Kubernetes | Schedule the shared application recovery
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        Uptime Kuma's complete SQLite data directory, including every app monitor,
+        account and setting
