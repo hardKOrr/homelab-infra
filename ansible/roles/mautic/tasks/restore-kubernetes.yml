@@ -1,0 +1,31 @@
+---
+# The cluster recovery Job restores the same database and persistent config/media claim
+# Mautic backs up; the shared MariaDB backend and sibling databases stay in place.
+- name: Mautic restore | Describe the target database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: Mautic restore | Use the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Mautic
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+          owner: "33:33"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}-web"
+        - "{{ restore_target }}-cron"
+        - "{{ restore_target }}-worker"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the Mautic config, logs and uploaded media
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/ and sign in with the
+          canonical Mautic administrator credential. Verify the data and configuration
+          restored from the selected point.

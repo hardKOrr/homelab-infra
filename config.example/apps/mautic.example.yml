@@ -6,6 +6,11 @@
 # Outbound mail (campaign sends, transactional email) reads infrastructure.yml's
 # mail.provider contract — configure that once, platform-wide, before deploying Mautic.
 # Mautic will run without it, but cannot send anything.
+
+# Docker on a VM is the default. Uncomment to run this instance on the managed cluster.
+# hosting:
+#   method: kubernetes
+
 app:
   database:
     instance: mariadb-mautic

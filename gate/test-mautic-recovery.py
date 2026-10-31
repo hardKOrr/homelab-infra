@@ -17,7 +17,8 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_t
 catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 replaced_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-replaced.yml").read_text())
-deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
+deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/docker.yml").read_text())
+restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-docker.yml").read_text())
 compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
 
@@ -29,7 +30,7 @@ def tasks_recursive(tasks):
 
 
 def check_restore_swap():
-    swap = swap_inputs("mautic")
+    swap = swap_inputs("mautic", task_file="restore-docker.yml")
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _mautic_restore_data_path }}", "source": "data/mautic",
@@ -99,6 +100,8 @@ def check_restore_swap():
 
 def static_contract():
     config = defaults["mautic_defaults"]
+    assert config["hosting"] == {
+        "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}}
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])
@@ -138,7 +141,7 @@ def static_contract():
     assert deploy_names.index(verify_runtime["name"]) < deploy_names.index(wait_health["name"])
     assert deploy_names.index(wait_health["name"]) < deploy_names.index(start_background["name"])
 
-    assert "client" not in config["backup"], "the shared client owns its pins"
+    assert config["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
     upload = next(task for task in tasks_recursive(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
     assert upload["vars"]["pbs_client_stop_services"] == ["mautic_web", "mautic_cron", "mautic_worker"]
@@ -161,6 +164,9 @@ def static_contract():
         deploy_config["ansible.builtin.lineinfile"]["line"], "Deploy and restore write local.php alike"
     assert restore_config["ansible.builtin.lineinfile"]["owner"] == "www-data"
     assert restore_config["ansible.builtin.lineinfile"]["group"] == "www-data"
+
+    assert any(task.get("name") == "Mautic restore | Preview or replace the file tree and database"
+               for task in restore_source)
     assert restore_config["ansible.builtin.lineinfile"]["mode"] == "0640"
 
 

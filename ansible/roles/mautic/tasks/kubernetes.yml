@@ -1,0 +1,211 @@
+---
+# Deploy Mautic into its owned namespace. The database stays on the named MariaDB
+# backend; this adapter owns only the web, worker and cron workloads plus their files.
+- name: Mautic Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Mautic Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Mautic Kubernetes | Add access to the named MariaDB backend
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {
+           'egress': ((app_config.firewall | default({})).egress | default([])
+                      | rejectattr('name', 'equalto', 'database') | list)
+                     + [{'name': 'database', 'protocol': 'TCP',
+                         'port': app_config.app.database_port | string,
+                         'destination': app_config.app.database_host}]}}, recursive=True) }}
+  no_log: true
+
+- name: Mautic Kubernetes | Open database and mail egress through the cluster alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+  vars:
+    firewall_sends_mail: true
+
+- name: Mautic Kubernetes | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: Mautic Kubernetes | Normalize a blank mail encryption setting
+  ansible.builtin.set_fact:
+    wiring_mail: "{{ wiring_mail | combine({'encryption': wiring_mail.encryption | default('starttls', true)}) }}"
+  no_log: true
+
+- name: Mautic Kubernetes | Require a mail transport Mautic can enforce
+  ansible.builtin.assert:
+    that: wiring_mail.encryption != 'starttls'
+    fail_msg: >-
+      Mautic cannot require StartTLS on each new SMTP connection. Set mail.encryption to
+      tls for implicit TLS, or none when plaintext is acceptable.
+  when: wiring_mail.enabled | default(false) | bool
+
+- name: Mautic Kubernetes | Generate or reuse the administrator password
+  ansible.builtin.set_fact:
+    _mautic_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Mautic Kubernetes | Store credentials in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  when: not ansible_check_mode
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: mautic
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _mautic_admin_password }}"
+      database_provider: mariadb
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: Mautic Kubernetes | Sync runtime credentials and the initial config
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-app"
+    k8s_secret_data:
+      database-password: "{{ app_config.app.database_password }}"
+      local.php: "{{ lookup('ansible.builtin.template', 'local.php.j2') }}"
+  no_log: true
+
+- name: Mautic Kubernetes | Resolve platform-owned config values
+  ansible.builtin.set_fact:
+    _mautic_k8s_config_fields: >-
+      {{ [
+           {'key': 'db_host', 'value': app_config.app.database_host},
+           {'key': 'db_port', 'value': app_config.app.database_port},
+           {'key': 'db_name', 'value': app_config.app.database.name},
+           {'key': 'db_user', 'value': app_config.app.database_user},
+           {'key': 'db_password', 'value': app_config.app.database_password},
+         ]
+         + ([
+           {'key': 'mailer_from_name',
+            'value': wiring_mail.from_name | default(app_config.app.name | default('Mautic'), true)},
+           {'key': 'mailer_from_email', 'value': wiring_mail.from_address},
+           {'key': 'mailer_dsn',
+            'value': ({'starttls': 'smtp', 'tls': 'smtps', 'none': 'smtp'}[wiring_mail.encryption])
+                     ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
+                     ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
+                     ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port},
+         ] if wiring_mail.enabled | default(false) | bool else [
+           {'key': 'mailer_dsn', 'value': 'smtp://localhost:25'},
+         ]) }}
+  no_log: true
+
+- name: Mautic Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _mautic_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Mautic Kubernetes | Apply the workload through the shared operation
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _mautic_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-web"
+      - "deployment/{{ instance }}-cron"
+      - "deployment/{{ instance }}-worker"
+    k8s_wait_timeout: 900
+
+- name: Mautic Kubernetes | Converge platform-owned config before installation
+  ansible.builtin.include_tasks: kubernetes-converge.yml
+
+- name: Mautic Kubernetes | Read whether Mautic was installed
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}-web"
+      - --
+      - php
+      - -r
+      - "echo is_file('/var/www/html/config/.installed') ? 'installed' : 'missing';"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _mautic_k8s_install_state
+  changed_when: false
+
+- name: Mautic Kubernetes | Run the non-interactive installer
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}-web"
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - www-data
+      - -c
+      - >-
+        cd /var/www/html && php bin/console mautic:install
+        {{ ('https://' ~ mautic_fqdn) | quote }}
+        {{ ('--admin_email=' ~ app_config.app.admin_user ~ '@'
+            ~ homelabinfra_infra.domain) | quote }}
+        {{ ('--admin_password=' ~ _mautic_admin_password) | quote }} --force
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  no_log: true
+  changed_when: true
+  when: _mautic_k8s_install_state.stdout | trim == 'missing'
+
+- name: Mautic Kubernetes | Record installation on the persistent config volume
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}-web"
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - www-data
+      - -c
+      - touch /var/www/html/config/.installed
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: true
+  when: _mautic_k8s_install_state.stdout | trim == 'missing'
+
+- name: Mautic Kubernetes | Converge installed config
+  ansible.builtin.include_tasks: kubernetes-converge.yml
+
+- name: Mautic Kubernetes | Describe the database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Mautic Kubernetes | Configure the shared application recovery CronJob
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      app: Mautic
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+          owner: "33:33"
+      database: "{{ k8s_database_step | default({}) }}"
+      stop:
+        - "{{ instance }}-web"
+        - "{{ instance }}-cron"
+        - "{{ instance }}-worker"
+      describe: >-
+        the MariaDB database and the Mautic config, logs and uploaded media volume

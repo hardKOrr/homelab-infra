@@ -1,0 +1,59 @@
+---
+- name: Mautic Kubernetes | Converge owned values in local.php
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - -i
+      - "deployment/{{ instance }}-web"
+      - --
+      - php
+      - /dev/stdin
+    stdin: "{{ lookup('ansible.builtin.template', 'config-converge.php.j2') }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _mautic_k8s_config
+  changed_when: "'MAUTIC_CONFIG_CHANGED' in (_mautic_k8s_config.stdout | default(''))"
+  no_log: true
+
+- name: Mautic Kubernetes | Restart consumers after a config change
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - rollout
+      - restart
+      - "deployment/{{ item }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop:
+    - "{{ instance }}-web"
+    - "{{ instance }}-cron"
+    - "{{ instance }}-worker"
+  changed_when: true
+  when: "'MAUTIC_CONFIG_CHANGED' in (_mautic_k8s_config.stdout | default(''))"
+
+- name: Mautic Kubernetes | Wait for consumers after a config change
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - rollout
+      - status
+      - "deployment/{{ item }}"
+      - --timeout=900s
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop:
+    - "{{ instance }}-web"
+    - "{{ instance }}-cron"
+    - "{{ instance }}-worker"
+  changed_when: false
+  when: "'MAUTIC_CONFIG_CHANGED' in (_mautic_k8s_config.stdout | default(''))"
