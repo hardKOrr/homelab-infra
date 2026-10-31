@@ -81,9 +81,9 @@
       - exec
       - "deployment/{{ instance }}"
       - --
-      - test
-      - -f
-      - "{{ wordpress_k8s_admin_marker }}"
+      - sh
+      - -c
+      - "cd wp-content && test -f {{ wordpress_k8s_admin_marker | basename }}"
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _wordpress_k8s_admin_marker
@@ -100,8 +100,9 @@
       - exec
       - "deployment/{{ instance }}"
       - --
-      - cat
-      - "{{ wordpress_k8s_admin_marker }}"
+      - sh
+      - -c
+      - "cd wp-content && cat {{ wordpress_k8s_admin_marker | basename }}"
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _wordpress_k8s_admin_marker_content
@@ -148,8 +149,9 @@
               - exec
               - "deployment/{{ instance }}"
               - --
-              - cat
-              - "{{ wordpress_k8s_install_state_marker }}"
+              - sh
+              - -c
+              - "cd wp-content && cat {{ wordpress_k8s_install_state_marker | basename }}"
           delegate_to: "{{ k8s_api_host }}"
           become: true
           register: _wordpress_k8s_install_state_marker_content
@@ -169,9 +171,9 @@
               - exec
               - "deployment/{{ instance }}"
               - --
-              - rm
-              - -f
-              - "{{ wordpress_k8s_install_state_marker }}"
+              - sh
+              - -c
+              - "cd wp-content && rm -f {{ wordpress_k8s_install_state_marker | basename }}"
           delegate_to: "{{ k8s_api_host }}"
           become: true
           changed_when: true
@@ -238,9 +240,9 @@
       - exec
       - "deployment/{{ instance }}"
       - --
-      - test
-      - -f
-      - "{{ wordpress_k8s_admin_marker }}"
+      - sh
+      - -c
+      - "cd wp-content && test -f {{ wordpress_k8s_admin_marker | basename }}"
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _wordpress_k8s_admin_marker_after_init

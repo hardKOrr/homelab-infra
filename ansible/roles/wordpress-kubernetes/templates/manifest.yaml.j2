@@ -70,6 +70,7 @@ spec:
         - name: wordpress
           image: {{ app_config.app.image }}
           imagePullPolicy: IfNotPresent
+          workingDir: /var/www/html
           envFrom:
             - secretRef:
                 name: {{ instance }}-env

@@ -103,6 +103,7 @@ def check_workload_and_cli_jobs():
     pod = deployment["spec"]["template"]["spec"]
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert len(pod["containers"]) == 1
+    assert pod["containers"][0]["workingDir"] == "/var/www/html"
     assert {mount["mountPath"] for mount in pod["containers"][0]["volumeMounts"]} == {
         "/var/www/html/wp-content"
     }
@@ -180,6 +181,25 @@ def check_shared_recovery_inputs():
         task.get("name") for task in state_read["always"]
     ]
     assert "k8s_job_log" not in str(detect)
+    marker_checks = [
+        task for task in main
+        if task.get("name") in {
+            "WordPress Kubernetes | Check the administrator continuity marker",
+            "WordPress Kubernetes | Read the administrator continuity marker",
+            "WordPress Kubernetes | Verify the initialization marker was recorded",
+        }
+    ]
+    assert len(marker_checks) == 3
+    for task in marker_checks:
+        argv = task["ansible.builtin.command"]["argv"]
+        assert argv[-2] == "-c"
+        assert "cd wp-content &&" in argv[-1]
+        assert "/var/www/html/wp-content/" not in argv[-1]
+    marker_read = next(task for task in state_read["block"]
+                       if task.get("name") == "WordPress Kubernetes | Read the install state from its content volume")
+    assert "cd wp-content && cat" in marker_read["ansible.builtin.command"]["argv"][-1]
+    marker_cleanup = state_read["always"][0]
+    assert "cd wp-content && rm -f" in marker_cleanup["ansible.builtin.command"]["argv"][-1]
     backup = next(task for task in main if "recovery-backup.yml" in str(task))
     recovery = backup["vars"]["k8s_recovery"]
     assert recovery["archives"] == [{
