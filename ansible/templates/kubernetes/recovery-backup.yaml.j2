@@ -333,6 +333,8 @@ spec:
                   value: "{{ _kr.client.key_url }}"
                 - name: PBS_APT_REPO
                   value: "{{ _kr.client.repository }} {{ _kr.client.suite }} {{ _kr.client.component }}"
+                - name: HOME
+                  value: /root
                 - name: TMPDIR
                   value: /tmp
 {% if stop %}

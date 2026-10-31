@@ -210,6 +210,8 @@ def restore_pod(mode, archives, database, target="app"):
 def assert_client_tmpfs(pod, container):
     # The client's cache and temporary files need O_TMPFILE, which the container overlay
     # refuses with os error 95.
+    env = {e["name"]: e for e in container.get("env", [])}
+    assert env["HOME"]["value"] == "/root"
     mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
     assert mounts["client-tmp"] == "/tmp" and mounts["client-cache"] == "/root/.cache"
     volumes = {v["name"]: v for v in pod["volumes"]}
