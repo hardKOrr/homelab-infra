@@ -1,0 +1,9 @@
+---
+# Kubelet's NFS volume plugin needs the host mount helper. Shared-storage clusters
+# and apps using an NFS volume call this same task before scheduling that workload.
+- name: Kubernetes NFS | Install the host mount helper
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+  delegate_to: "{{ k8s_nfs_client_node | default(inventory_hostname) }}"
+  become: true

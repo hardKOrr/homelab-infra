@@ -1,0 +1,21 @@
+---
+# Replace the target's data PVC through the shared Kubernetes recovery Job. The
+# existing media share remains mounted read-only and is not part of the archive.
+- name: Navidrome Kubernetes restore | Restore the application data volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Navidrome
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+          owner: "{{ restore_target_config.app.puid | default(1313) }}:{{ restore_target_config.app.pgid | default(1313) }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        Navidrome's SQLite database, users, playlists and generated state from its data
+        volume; the shared music library is not included
+      verify:
+        - >-
+          Sign in at the Navidrome URL and verify the restored owner, playlist, non-admin
+          user and saved user setting. Confirm the shared music library remains read-only.

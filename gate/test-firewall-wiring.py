@@ -151,9 +151,15 @@ def run_kubernetes_app_access(server, root, instance, firewall):
     infra = {"firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
         "api_key": "fixture-key", "api_secret": "fixture-secret",
-        "interfaces": [{"cidr": "198.51.100.0/24", "interface": "opt4"}]},
-        "kubernetes": {"firewall_alias": "homelabinfra_k3s_k3s_cluster",
-                        "ingress_vip": "198.51.100.34"}}
+        "interfaces": [
+            {"cidr": "198.51.100.0/24", "interface": "opt4"},
+            {"cidr": "203.0.113.0/24", "interface": "opt5"}]},
+        "kubernetes": {"instance": "k3s-cluster",
+                        "firewall_alias": "homelabinfra_k3s_k3s_cluster",
+                        "ingress_vip": "203.0.113.34",
+                        "nodes": [
+                            {"name": "k3s-1", "ip_address": "198.51.100.21"},
+                            {"name": "k3s-3", "ip_address": "198.51.100.23"}]}}
     play = [{
         "hosts": "localhost", "gather_facts": False,
         "vars": {"homelabinfra_infra": infra, "instance": instance,
@@ -168,8 +174,7 @@ def run_kubernetes_app_access(server, root, instance, firewall):
         capture_output=True, text=True, check=False)
     if result.returncode != 0:
         failures.append(f"Kubernetes app firewall failed:\n{result.stdout[-3000:]}")
-    return [c for c in server.calls if not c.endswith("searchRule")
-            and c != "alias/searchItem"]
+    return [c for c in server.calls if not c.endswith("searchRule")]
 
 
 def main():
@@ -227,11 +232,13 @@ def main():
 
         check("Kubernetes app deploy opens declared access through the alias",
               run_kubernetes_app_access(server, root, "kube-app", declared),
-              ["filter/addRule", "filter/addRule", "filter/apply"])
+              ["alias/searchItem", "filter/addRule", "filter/addRule", "filter/apply"])
         kube_rules = [r for r in server.rules["filter"].values()
                       if r.get("description", "").startswith("homelab-infra: kube-app ")]
         check("Kubernetes app egress source is the cluster alias",
               {r["source_net"] for r in kube_rules}, {alias_name})
+        check("Kubernetes app egress selects the interface from its node network",
+              {r["interface"] for r in kube_rules}, {"opt4"})
         k8s_playbooks = ["flaresolverr", "hi-events", "homepage", "jellyseerr",
                          "kometa", "litellm", "maintainerr", "mixpost", "searxng"]
         for app in k8s_playbooks:
