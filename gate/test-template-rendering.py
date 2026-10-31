@@ -1036,7 +1036,7 @@ def navidrome_rendering():
     ), "'\"/srv/fixtures/media:/music' not in compose"
     assert ":rw" not in compose, "':rw' not in compose"
     assert '"14533:4533"' in compose, "'\"14533:4533\"' in compose"
-    role_tasks = yaml.safe_load(read("ansible/roles/navidrome/tasks/main.yml"))
+    role_tasks = yaml.safe_load(read("ansible/roles/navidrome/tasks/resolve-library.yml"))
     ownership_guard = task_named(
         role_tasks, "Assert Navidrome storage owner matches its container user"
     )["ansible.builtin.assert"]["that"]
@@ -1054,7 +1054,7 @@ def navidrome_rendering():
             render("{{ " + expression + " }}", ownership_context) is True
         ), "matching media ownership survives Ansible's stringified set_fact ids"
     mount_matcher = task_named(
-        role_tasks, "Match Navidrome music path against declared media mounts"
+        role_tasks, "Find the declared media mount containing the Navidrome library"
     )
     mount_match_condition = mount_matcher["when"]
     assert "{{" not in mount_match_condition and "{%" not in mount_match_condition
@@ -1078,11 +1078,14 @@ def navidrome_rendering():
         role_tasks, "Assert Navidrome music path is inside a declared media mount"
     )["ansible.builtin.assert"]["that"]
     assert (
-        render("{{ " + mount_guard + " }}", {"_navidrome_music_path_mounted": True})
+        render(
+            "{{ " + mount_guard[0] + " }}",
+            {"_navidrome_library_mount": {"path": "/srv/fixtures/media"}},
+        )
         is True
     ), "mounted path is accepted"
     assert (
-        render("{{ " + mount_guard + " }}", {"_navidrome_music_path_mounted": False})
+        render("{{ " + mount_guard[0] + " }}", {"_navidrome_library_mount": {}})
         is False
     ), "unmounted path is rejected"
 

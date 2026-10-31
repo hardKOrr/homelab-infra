@@ -1,0 +1,92 @@
+---
+# The Kubernetes adapter reads Navidrome's existing media share from each cluster node
+# and persists only application-owned state in a default-StorageClass PVC.
+- name: Navidrome Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Navidrome Kubernetes | Resolve and validate its existing music library
+  ansible.builtin.import_tasks: resolve-library.yml
+
+# hostPath is safe here only when the same declared share is mounted on every eligible
+# node. Requiring the mount itself (not just a directory with the same name) prevents a
+# missing share from exposing an empty local path or allowing Navidrome to write into it.
+- name: Navidrome Kubernetes | Verify the declared media share is mounted on every node
+  ansible.builtin.command:
+    argv:
+      - mountpoint
+      - --quiet
+      - --
+      - "{{ _navidrome_library_mount.path }}"
+  delegate_to: "{{ item.name }}"
+  become: true
+  register: _navidrome_k8s_mount_checks
+  changed_when: false
+  failed_when: false
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Navidrome Kubernetes | Require the declared media share on every node
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: >-
+      The existing media share mounted at {{ _navidrome_library_mount.path }} is not
+      mounted on Kubernetes node {{ item.item.name }}. Mount the same share at that path
+      on every cluster node before deploying Navidrome; the app never creates or writes it.
+  loop: "{{ _navidrome_k8s_mount_checks.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Navidrome Kubernetes | Verify the music directory exists on every node
+  ansible.builtin.stat:
+    path: "{{ _navidrome_music_path }}"
+  delegate_to: "{{ item.name }}"
+  become: true
+  register: _navidrome_k8s_music_checks
+  changed_when: false
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Navidrome Kubernetes | Require the music directory on every node
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+    fail_msg: >-
+      Navidrome's declared music directory {{ _navidrome_music_path }} is missing on
+      Kubernetes node {{ item.item.name }}. It must be available from the same existing
+      media share before deploying.
+  loop: "{{ _navidrome_k8s_music_checks.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Navidrome Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Navidrome Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _navidrome_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Navidrome Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _navidrome_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Navidrome Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+          owner: "{{ _navidrome_uid }}:{{ _navidrome_gid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Navidrome's SQLite database, users, playlists and generated state from its data
+        volume; the shared music library is not included
