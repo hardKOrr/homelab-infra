@@ -44,6 +44,13 @@ assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
 resolve = next(task for task in provision["tasks"]
                if task.get("name") == "Resolve this instance's guest, reusing one Remove kept")
 assert resolve["vars"]["resolve_guest_type"] == "lxc"
+record_facts = next(task for task in playbook[2]["pre_tasks"]
+                    if task.get("ansible.builtin.import_tasks", "").endswith(
+                        "tasks/bootstrap/write-generated-facts.yml"))
+assert record_facts["vars"]["generated_facts_service"] == "notifications"
+assert set(record_facts["vars"]["generated_facts_data"]) == {
+    "provider", "instance", "host", "topic"
+}
 assert "tasks/kubernetes/open-app-access.yml" in read("ansible/roles/ntfy/tasks/kubernetes.yml")
 
 role_tasks = yaml.safe_load(read("ansible/roles/ntfy/tasks/kubernetes.yml"))
@@ -69,8 +76,13 @@ assert restore["vars"]["k8s_recovery"]["archives"] == [{
 assert restore["vars"]["k8s_recovery"]["stop"] == ["{{ restore_target }}"]
 assert any(task.get("ansible.builtin.include_tasks") == "credentials.yml"
            for task in restore_tasks)
-assert any("write-generated-facts.yml" in task.get("ansible.builtin.include_tasks", "")
-           for task in restore_tasks)
+restore_facts = next(task for task in restore_tasks
+                     if task.get("ansible.builtin.include_tasks", "").endswith(
+                         "tasks/bootstrap/write-generated-facts.yml"))
+assert restore_facts["vars"]["generated_facts_service"] == "notifications"
+assert set(restore_facts["vars"]["generated_facts_data"]) == {
+    "provider", "instance", "host", "topic"
+}
 dispatch = yaml.safe_load(read("ansible/roles/ntfy/tasks/restore.yml"))
 assert any(task.get("ansible.builtin.include_tasks") == "restore-kubernetes.yml"
            for task in dispatch)

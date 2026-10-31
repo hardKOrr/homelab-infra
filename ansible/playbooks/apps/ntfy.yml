@@ -10,9 +10,9 @@
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
 # Play 3 records the `notifications` registry key (CONTRACT.md §3) BEFORE wiring, so
-# a standalone deploy registers Ntfy exactly as a bootstrap run does. Every later
-# notification consumer (Watchtower, unattended-upgrades, PBS, maintenance jobs)
-# reads host + topic + token from there.
+# a standalone deploy registers Ntfy exactly as a bootstrap run does. The generated
+# registry stores topology; notification tokens remain in Vaultwarden and are merged
+# into the in-memory runtime contract by load-user-vars.yml.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
@@ -269,7 +269,6 @@
           instance: "{{ instance }}"
           host: "{{ _ntfy_deploy_host.ntfy_publish_host }}"
           topic: "{{ _ntfy_deploy_host.app_config.app.topic }}"
-          token: "{{ _ntfy_deploy_host.ntfy_publish_token }}"
 
     # Belt-and-braces only. The key just written is already in the live
     # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there

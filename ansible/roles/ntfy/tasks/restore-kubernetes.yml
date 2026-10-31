@@ -20,9 +20,9 @@
           Sign in with the credential Deploy provisions, then verify the Ntfy drill
           owner's topic access and the cached-message canary.
 
-# A fresh Deploy creates a new platform publish token in its empty auth database. The
-# restored database is authoritative, so recover its token into the canonical credential
-# and generated-facts registry before the next Deploy or backup job reads them.
+# A fresh Deploy creates a publish token in its empty auth database. The restored
+# database is authoritative, so credentials.yml recovers its token into Vaultwarden
+# and the in-memory runtime contract before the next Deploy or backup job reads them.
 - name: Ntfy Kubernetes restore | Resolve the target estate
   ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
   vars:
@@ -63,7 +63,7 @@
     - restore_overwrite | bool
     - restore_target == instance
 
-- name: Ntfy Kubernetes restore | Record the token from the restored auth database
+- name: Ntfy Kubernetes restore | Record notification topology
   ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
   vars:
     generated_facts_service: notifications
@@ -72,7 +72,6 @@
       instance: "{{ restore_target }}"
       host: "{{ ntfy_publish_host }}"
       topic: "{{ app_config.app.topic }}"
-      token: "{{ ntfy_publish_token }}"
     generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
     generated_facts_estate: "{{ restore_target_config.routing.estate | default('') }}"
   when:
