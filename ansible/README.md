@@ -41,6 +41,11 @@ run. The Vaultwarden Login File playbook (`playbooks/maintenance/vaultwarden-log
 rewrites that file, so a direct run of it gets the `LAB_VAULT_PASSWORD` value back after
 the preflight.
 
+`LAB_LOG_BRIEF=1` shortens a direct run's log for a reader that pays per line, such as an
+LLM agent: no colour codes, no routine `lab-run` lines, no repeated TLS warning, the config
+check only when it fails, and a TASK banner only for a task that changed something,
+failed or reported a finding. Rundeck jobs never set it, so operators keep every banner.
+
 The file also holds an edge copy: the platform items of the Vaultwarden contract, without
 any application's credentials. Caddy serves `BW_SERVER`, so deploying Caddy
 (`playbooks/apps/caddy.yml`) or removing it (`playbooks/apps/remove.yml` with app
@@ -78,6 +83,17 @@ checkout stays on `LAB_BRANCH` for Rundeck.
 
 To check Kometa's Plex endpoint from the cluster, run its deployed CronJob once, and
 require a clean completion log, use `lab-run playbooks/maintenance/run-kometa.yml`.
+
+## Shared storage availability
+
+Run `lab-run playbooks/maintenance/check-shared-storage.yml` to check every cluster
+node against the storage definitions marked `shared` by Proxmox, including NFS and
+ZFS over iSCSI. It reads `/storage`, `/nodes` and `/nodes/<node>/storage` with
+`pvesh get`; it changes no node or guest and is independent of Deploy. Each node lists
+every shared storage as `active` or `missing`. Inactive or absent entries count as
+missing even when a storage's node allowlist excludes that node. It prints all node
+reports before exiting non-zero for missing storage or a failed node status query.
+No shared definitions produces an explicit empty report and succeeds.
 
 ## Live operations
 
@@ -394,7 +410,8 @@ the shared files, so its allowlists are empty.
 | Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
 | Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |
 | Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
-| Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job |
+| Kubernetes NodePort claim check | `tasks/kubernetes/claim-node-port.yml` | `k8s_node_port`, `k8s_namespace`, `k8s_api_host`; run before every apply of a NodePort Service |
+| Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job; returns `k8s_job_succeeded`, `k8s_job_exit_code` and logs, with optional `k8s_job_expected_exit_codes` |
 | Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
 | Restore swap: stage, stop, move aside, install with owner, start, roll back | `tasks/recovery/restore-swap.yml`, running `scripts/restore-swap.sh` | `recovery_swap_runtime`, `recovery_swap_archives`, `recovery_swap_paths` (`path`, `source`, numeric, named or `live` `owner`/`group`, `mode`, `mount`, `allow_empty`), `recovery_swap_stop_services` with `recovery_swap_compose_project`, optional `recovery_swap_pbs_runtime`, `recovery_swap_staging_parent`, `recovery_swap_database` (`config`, `dump`), `recovery_swap_health_url` with its `_status`, `_headers` and `_follow_redirects`, and the `staged`, `stopped`, `replaced`, `verified` and `rollback` hooks |
 | A recent pre-restore point of the target, before a swap | `tasks/recovery/require-recent-pre-restore-point.yml` | `recovery_pre_restore_backup_id`, optional `recovery_pre_restore_max_age` (seconds, default one hour) |
@@ -402,7 +419,7 @@ the shared files, so its allowlists are empty.
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
 | PBS client install, backup, verify, restore | `tasks/backup/pbs-client-install.yml`, `pbs-client-backup.yml`, `pbs-client-restore.yml`, all running `scripts/pbs-client.sh`; pins in `vars/pbs-client.yml` | `pbs_client_runtime` (`docker` or `native`), `pbs_client_archives`, optional `pbs_client_stop_services` with `pbs_client_compose_project`, `pbs_client_backup_args`, `pbs_client_backup_mounts` (more host directories inside one archive), `pbs_client_keep_last`, `pbs_client_prune`, `pbs_client_restore_args`, `pbs_client_quiesced_hook` |
 | PBS client on the guest, for a recovery script that runs without Ansible (cron) | `tasks/backup/pbs-client-script.yml`, installing `scripts/pbs-client.sh` and the instance's root-only client settings | `pbs_client_runtime`, `pbs_client_config_state` (`present` or `absent`); the script then runs `backup`, `list`, `verify` or `extract` with `PBS_CLIENT_CONFIG` set |
-| Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, optional backup `stop` list and positive `stop_replicas` fallback for app-consistent PVC reads, restore `stop` and `restart` Deployments, optional `after_restore_tasks` hook |
+| Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`), optional `database` step, optional backup `stop` list and positive `stop_replicas` fallback for app-consistent reads, restore `stop` and `restart` Deployments, optional `after_restore_tasks` hook. When a backup has both `database` and `stop`, its database image needs a package manager that can install Python, and its client image needs Python so failure traps can resume the app after the database dump and volume archive. |
 | Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_source` (`registered` or `namespace-mysql`), the instance and its config |
 | Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions that need a superuser and privileges stay `provision.yml` inputs; a restore recreates the extensions the application's login created |
 | Whole MariaDB/MySQL backend guest export and restore | `tasks/database/install-server-recovery.yml`, installing `scripts/server-recovery.py` | the engine (`mariadb` or `mysql`) as its first argument; MariaDB's restore takes `--data-dir` and `--service` |

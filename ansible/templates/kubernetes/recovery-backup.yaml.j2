@@ -134,7 +134,9 @@ spec:
 {% endif %}
 {% if db %}
           # The dump finishes before the push starts: initContainers run to completion
-          # first.
+          # first. If the app also needs quiescing, do it in this same init container
+          # before the dump, then keep the Deployment stopped until the push container's
+          # exit trap runs.
           initContainers:
             - name: dump
               image: {{ db.image }}
@@ -142,8 +144,44 @@ spec:
               args:
                 - |
                   set -eu
+{% if stop %}
+                  if ! command -v python3 >/dev/null 2>&1; then
+                    if command -v apt-get >/dev/null 2>&1; then
+                      apt-get update -qq
+                      apt-get install -y -qq --no-install-recommends python3 >/dev/null
+                    elif command -v apk >/dev/null 2>&1; then
+                      apk add --no-cache python3 >/dev/null
+                    elif command -v microdnf >/dev/null 2>&1; then
+                      microdnf install -y python3 >/dev/null
+                    else
+                      echo "cannot install python3 for Kubernetes recovery quiescing"
+                      exit 1
+                    fi
+                  fi
+                  cat > /tmp/kubernetes-recovery-scale.py <<'PY'
+{{ lookup('ansible.builtin.file', _k8s_recovery_ansible_root ~ '/scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
+                  PY
+                  resume_after_dump_failure() {
+                    status=$?
+                    trap - EXIT INT TERM
+                    if [ "$status" -ne 0 ]; then
+                      python3 /tmp/kubernetes-recovery-scale.py start || \
+                        echo "ERROR: could not restart the quiesced application Deployment(s)"
+                    fi
+                    exit "$status"
+                  }
+                  trap 'resume_after_dump_failure' EXIT
+                  trap 'exit 130' INT
+                  trap 'exit 143' TERM
+                  python3 /tmp/kubernetes-recovery-scale.py stop
+{% endif %}
                   install -d -m 0700 "${DUMP_DIR}"
 {{ db.dump | trim | indent(18, true) }}
+{% if stop %}
+                  # A failed dump resumes the app above. On success, the following push
+                  # container owns the restart trap once its shell starts.
+                  trap - EXIT INT TERM
+{% endif %}
               env:
                 - name: DUMP_DIR
                   value: /recovery/database
@@ -156,6 +194,16 @@ spec:
                   valueFrom:
                     secretKeyRef: { name: {{ _kr.secret }}, key: {{ key }} }
 {% endfor %}
+{% if stop %}
+                - name: K8S_RECOVERY_DEPLOYMENTS
+                  value: {{ stop | to_json | to_json }}
+                - name: K8S_RECOVERY_STOP_REPLICAS
+                  value: "{{ _kr.stop_replicas | default(1) | int }}"
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+{% endif %}
               volumeMounts:
                 - name: recovery
                   mountPath: /recovery
@@ -219,6 +267,15 @@ spec:
                   trap 'exit 130' INT
                   trap 'exit 143' TERM
 
+{% if stop and db %}
+                  # The dump init container already stopped the application. Set the exit
+                  # flag before any PBS setup so even an early failure restarts it.
+                  K8S_RECOVERY_STOPPED=true
+                  cat > /tmp/kubernetes-recovery-scale.py <<'PY'
+{{ lookup('ansible.builtin.file', _k8s_recovery_ansible_root ~ '/scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
+                  PY
+{% endif %}
+
                   # No official image ships the client and the lab has no registry, so it
                   # comes from Proxmox's signed repository at run time.
                   apt-get update -qq
@@ -230,11 +287,13 @@ spec:
                   apt-get install -y -qq --no-install-recommends proxmox-backup-client{% if stop %} python3{% endif %} >/dev/null
 
 {% if stop %}
+{% if not db %}
                   cat > /tmp/kubernetes-recovery-scale.py <<'PY'
 {{ lookup('ansible.builtin.file', _k8s_recovery_ansible_root ~ '/scripts/kubernetes-recovery-scale.py') | indent(18, true) }}
                   PY
                   python3 /tmp/kubernetes-recovery-scale.py stop
                   K8S_RECOVERY_STOPPED=true
+{% endif %}
 {% endif %}
 
                   # Every archive in ONE snapshot: they are one application's state at one
@@ -274,6 +333,8 @@ spec:
                   value: "{{ _kr.client.key_url }}"
                 - name: PBS_APT_REPO
                   value: "{{ _kr.client.repository }} {{ _kr.client.suite }} {{ _kr.client.component }}"
+                - name: HOME
+                  value: /root
                 - name: TMPDIR
                   value: /tmp
 {% if stop %}

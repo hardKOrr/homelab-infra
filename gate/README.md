@@ -33,6 +33,7 @@ suite. Both phases run in parallel and replay each item's diagnostics in order. 
 three shards on separate runners. The suites exercise production logic, expressions and
 templates.
 
+- `test-log-brief.py`: `LAB_LOG_BRIEF=1` keeps the findings, failures and result block and drops the TASK banners of silent tasks, a full log keeps every banner, and `rundeck/log-brief.py` applies the same cut to a followed Rundeck log.
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-generate-ip-vmid.py`: `generate-ip.yml` never reallocates the address an existing guest's VMID encodes, such as an ISO appliance whose config shows no address.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
@@ -72,7 +73,8 @@ templates.
 - `test-forgejo-recovery.py`: Forgejo's quiesced data archive, and its restore swap inputs with the database dump and the staged hook refusing a point without `app.ini`.
 - `test-mautic-recovery.py`: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a point without `local.php` or media, and the replaced hook pointing the restored `local.php` at the target in a real play, with the same PHP escaping as Deploy.
 - `test-authentik-recovery.py`: Authentik's quiesced one-archive backup and its restart, and its restore swap inputs: the native PBS client, one path per owner (PostgreSQL and Redis keep their live owner), and the staged hook refusing a point without a PostgreSQL cluster.
-- `test-open-webui-restore.py`: Open WebUI's restore swap inputs under the lock its backup timer takes, the staged `webui.db` check, and the replaced and rollback hooks moving the application key in Vaultwarden and the environment file.
+- `test-open-webui-deploy.py`: Open WebUI's default Docker bootstrap, Kubernetes PVC/workload/Ingress, cluster firewall inputs, and shared backup wiring.
+- `test-open-webui-restore.py`: Open WebUI's Docker restore swap inputs and key hooks, plus Kubernetes recovery Job inputs and the key hook that updates Vaultwarden and the target Secret before startup.
 - `test-plane-restore.py`: Plane's restore swap inputs (every data bind mount, the whole project stopped, the routed health check) under its lock, the staged release and RDB checks, and the Redis RDB swapped on the backend guest and put back on rollback with the target's own keys.
 - `test-odoo-restore.py`: Odoo's restore swap inputs for its data_dir, database and dump.
 - `test-n8n-restore.py`: n8n's Docker restore swap inputs, the replaced hook giving the target the source encryption key in Vaultwarden and `n8n.env`, and rollback giving it back its own.
@@ -113,6 +115,9 @@ templates.
   point check; the replaced hook points the site URLs at the target and updates or creates
   its administrator. The guest helper and its env file only back up. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
+- `test-wordpress-kubernetes.py`: WordPress keeps Docker as its default, dispatches Deploy,
+  Backup and Restore by `hosting.method`, and renders its default-class content claim,
+  WP-CLI jobs and shared, database-consistent Kubernetes recovery inputs.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
@@ -121,6 +126,11 @@ templates.
 - `test-restore-swap.py`: the shared restore swap on fixtures: preview changes nothing; a swap installs the point with the declared owner and mode; a failure after the stop puts every original back and starts it; a staged-data failure never stops the app; an earlier rollback copy refuses the restore; a mount swaps its contents as its owner; an incomplete rollback keeps the services stopped and the copies. With a database, the dump and the database's ownership are checked before the stop, the live database dumped after it, the archived dump loaded before the replaced hook, and the live dump loaded back on rollback; a failed database rollback keeps the services stopped. A Compose app may run the native PBS client, and an owner of `live` keeps the live directory's owner. `restore_swap_inputs.py` reads a role's inputs (inside a block too) for its own test.
 - `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
 - `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
+
+When stdout is not a terminal and `CI` is unset (an LLM agent's tool call), the gate runs
+quiet: a passing lint prints one summary line per check, a passing test run prints
+`N of M ok`, and any failure prints its full log. `GATE_QUIET=0` forces the full output;
+CI lists every playbook and suite.
 
 On a Windows checkout accessed through WSL, wrap each command:
 
@@ -131,3 +141,5 @@ wsl bash -lc 'bash gate/test.sh'
 
 
 The Gate workflow runs lint and test on pull requests targeting master and pushes to master.
+
+- `test-proxmox-shared-storage.py`: runs the read-only shared storage tasks against fake pvesh responses; all-active, absent, inactive and query-error cases check exit status, every node report, repeat output and zero changes.

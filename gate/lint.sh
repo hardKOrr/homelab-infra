@@ -8,6 +8,27 @@ set -euo pipefail
 # as inventory scripts, and qbittorrent's webui-password.py blocks forever on an open stdin.
 exec < /dev/null
 
+# Quiet unless a person is watching or CI runs it: stdout that is not a terminal (an LLM
+# agent's tool call) selects GATE_QUIET=1; GATE_QUIET=0 forces the full output.
+if [ -z "${GATE_QUIET+x}" ] && [ -z "${CI:-}" ] && [ ! -t 1 ]; then
+    GATE_QUIET=1
+fi
+[ "${GATE_QUIET:-}" != 0 ] || GATE_QUIET=
+export GATE_QUIET
+
+# GATE_QUIET=1 keeps the tool chatter out of the output: a passing run prints each check's
+# one-line summary, a failing run prints everything.
+if [ -n "${GATE_QUIET:-}" ] && [ -z "${GATE_LINT_INNER:-}" ]; then
+    log="$(mktemp "${TMPDIR:-/tmp}/homelab-gate-lint.XXXXXX")"
+    trap 'rm -f -- "$log"' EXIT
+    if GATE_LINT_INNER=1 bash "${BASH_SOURCE[0]}" > "$log" 2>&1; then
+        grep -E '^(Passed:|jinja-parse:|check-)' "$log"
+        exit 0
+    fi
+    cat "$log"
+    exit 1
+fi
+
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 py="$HOME/.venvs/homelab-ansible/bin/python"
 

@@ -1,5 +1,6 @@
 ---
-# Deploy an instanced WordPress service on the services Docker stack.
+# Deploy an instanced WordPress service with the method selected in hosting.method.
+# Configurations that do not select a method keep using the services Docker stack.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/wordpress.yml -e instance=wordpress
@@ -96,6 +97,31 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
+- name: "WordPress | Open Docker network access"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Open the app's declared access from its Docker host
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        _wordpress_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}"
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        wiring_app_name: "{{ instance }}"
+        wiring_upstream_host: "{{ _wordpress_fw_host.ansible_host }}"
+        wiring_firewall: "{{ app_config.firewall | default({}) }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "WordPress | Open Kubernetes network access"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Open the app's declared access from the cluster node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
 - name: "WordPress | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -122,22 +148,45 @@
         wordpress_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
         wordpress_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
         wordpress_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "WordPress | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy WordPress into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: wordpress-kubernetes
+      vars:
+        wordpress_fqdn: "{{ hostvars['localhost'].wordpress_fqdn }}"
+        k8s_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"
+        k8s_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
+        k8s_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
+        k8s_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
 - name: "WordPress | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _wordpress_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    app_config: "{{ hostvars['localhost'].app_config }}"
+    _wordpress_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method == 'docker' else {} }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _wordpress_host.ansible_host }}"
-    wiring_upstream_port: "{{ _wordpress_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if app_config.hosting.method == 'kubernetes'
+         else _wordpress_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if app_config.hosting.method == 'kubernetes'
+         else app_config.app.port }}
     wiring_subdomain: "{{ hostvars['localhost'].wordpress_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].wordpress_fqdn }}"
     wiring_app_display: "WordPress ({{ instance }})"
     wiring_monitor_url: "https://{{ hostvars['localhost'].wordpress_fqdn }}/wp-login.php"
     wiring_auth_group: homelab-users
-    wiring_identity_mode: "{{ _wordpress_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _wordpress_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
   tasks:
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
@@ -159,6 +208,16 @@
         record_guest_names: ["{{ _wordpress_host.inventory_hostname }}"]
         record_guest_kind: docker
         record_guest_url: "https://{{ hostvars['localhost'].wordpress_fqdn }}"
+      when: app_config.hosting.method == 'docker'
+    - name: Record WordPress on each Kubernetes node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].wordpress_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:

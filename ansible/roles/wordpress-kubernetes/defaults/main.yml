@@ -1,0 +1,4 @@
+---
+wordpress_k8s_content_claim: "{{ instance }}-content"
+wordpress_k8s_admin_secret: "{{ instance }}-admin"
+wordpress_k8s_admin_marker: /var/www/html/wp-content/.homelab-infra-admin

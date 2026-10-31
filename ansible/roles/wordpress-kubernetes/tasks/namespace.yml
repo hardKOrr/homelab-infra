@@ -1,0 +1,30 @@
+---
+- name: WordPress Kubernetes | Derive its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ instance }}"
+
+- name: WordPress Kubernetes | Read namespace ownership
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wordpress_k8s_namespace_owner
+  failed_when: false
+  changed_when: false
+
+- name: WordPress Kubernetes | Require a deployed owned namespace
+  ansible.builtin.assert:
+    that:
+      - _wordpress_k8s_namespace_owner.rc == 0
+      - _wordpress_k8s_namespace_owner.stdout | trim == 'homelab-infra'
+    fail_msg: >-
+      Namespace {{ k8s_namespace }} is absent or is not owned by homelab-infra. Deploy
+      WordPress with hosting.method: kubernetes before requesting backup or restore.

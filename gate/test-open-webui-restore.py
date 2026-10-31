@@ -14,7 +14,9 @@ import yaml
 
 from restore_swap_inputs import repo, run_hook, swap_inputs
 
-tasks = yaml.safe_load((repo / "ansible/roles/open-webui/tasks/restore.yml").read_text())
+tasks = yaml.safe_load((repo / "ansible/roles/open-webui/tasks/restore-docker.yml").read_text())
+dispatch = yaml.safe_load((repo / "ansible/roles/open-webui/tasks/restore.yml").read_text())
+kubernetes = yaml.safe_load((repo / "ansible/roles/open-webui/tasks/restore-kubernetes.yml").read_text())
 staged = yaml.safe_load((repo / "ansible/roles/open-webui/tasks/restore-staged.yml").read_text())
 
 
@@ -23,7 +25,7 @@ def task_named(name):
 
 
 def check_swap_and_lock():
-    swap = swap_inputs("open-webui")
+    swap = swap_inputs("open-webui", task_file="restore-docker.yml")
     assert swap["recovery_swap_runtime"] == "docker"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{
@@ -52,6 +54,35 @@ def check_swap_and_lock():
     assert "{{ recovery_swap_stage }}/data:/source:ro" in argv and "none" in argv
     assert argv[argv.index("--entrypoint") + 2] == "{{ app_config.app.image }}"
     assert "PRAGMA integrity_check" in argv[-1]
+
+
+def check_kubernetes_restore_uses_shared_job_and_key_hook():
+    assert dispatch[0]["ansible.builtin.include_tasks"] == "restore-kubernetes.yml"
+    assert dispatch[0]["when"] == "app_config.hosting.method | default('docker') == 'kubernetes'"
+    assert dispatch[1]["ansible.builtin.include_tasks"] == "restore-docker.yml"
+    assert dispatch[1]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
+
+    restore = next(
+        task for task in kubernetes
+        if task.get("name") == "Open WebUI Kubernetes restore | Restore the data claim through the shared Job"
+    )
+    assert restore["ansible.builtin.include_tasks"].endswith("tasks/kubernetes/recovery-restore.yml")
+    recovery = restore["vars"]["k8s_recovery"]
+    assert recovery["archives"] == [
+        {"name": "data", "claim": "{{ _open_webui_restore_target }}-data"}
+    ]
+    assert recovery["stop"] == ["{{ _open_webui_restore_target }}"]
+    assert recovery["after_restore_tasks"] == "{{ role_path }}/tasks/restore-kubernetes-key.yml"
+
+    key_hook = yaml.safe_load(
+        (repo / "ansible/roles/open-webui/tasks/restore-kubernetes-key.yml").read_text()
+    )
+    vault = next(task for task in key_hook if "Carry the source key" in task.get("name", ""))
+    secret = next(task for task in key_hook if "Sync the carried key" in task.get("name", ""))
+    assert vault["ansible.builtin.include_tasks"].endswith("tasks/bitwarden/upsert-item.yml")
+    assert secret["ansible.builtin.include_tasks"].endswith("tasks/kubernetes/sync-secret.yml")
+    assert secret["vars"]["k8s_secret_name"] == "{{ restore_target }}-key"
+    assert secret["vars"]["k8s_secret_data"]["WEBUI_SECRET_KEY"] == "{{ restore_source_open_webui_secret_key }}"
 
 
 def stub_vault(log):
@@ -98,5 +129,6 @@ def check_key_hooks():
 
 if __name__ == "__main__":
     check_swap_and_lock()
+    check_kubernetes_restore_uses_shared_job_and_key_hook()
     check_key_hooks()
-    print("ok Open WebUI restore: swap inputs, lock, webui.db check and key hooks")
+    print("ok Open WebUI Docker and Kubernetes restore dispatch and key hooks")

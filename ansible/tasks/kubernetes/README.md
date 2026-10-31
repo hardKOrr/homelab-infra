@@ -64,14 +64,22 @@ CronJob that `Backup App` runs on demand), and `recovery-restore.yml` runs
 the PBS client, its tmpfs cache, the PBS trust ConfigMap, recovery-point identity and
 retention, the read-only preview, and the restore order: stage, load the database, then
 replace volumes. A role supplies `k8s_recovery` (archives, an optional database step from
-`../database/kubernetes-recovery-step.yml`, optional Deployments to quiesce for a file-only
-backup, Deployments to stop and restart during restore, and an optional after-restore task
-file). For a filesystem archive that needs quiescing, `recovery-backup.yml` scales the
-listed Deployments to zero, waits for their replica counts to reach zero, and resumes them
-after success or failure. Set `stop_replicas` when the app's declared count differs from
-one; the positive value is also used to resume a Deployment if an earlier hard-killed
-backup left it at zero. The Job gets a namespace-scoped Role limited to those Deployment
-names. The input contract is in each task file's header.
+`../database/kubernetes-recovery-step.yml`, an optional backup `stop` list, Deployments to
+stop and restart during restore, and an optional after-restore task file). When a backup
+has a database and a `stop` list, the dump init container quiesces the Deployments before
+the database dump; the push container resumes them after archiving the volumes, including
+when PBS setup or upload fails after the push container starts. There is a startup gap after
+a successful dump: if the Job pod is evicted or lost, or the push image cannot start, no
+container remains to resume the Deployments. They stay at zero with the
+`backup-quiesced` recovery marker until a later backup attempt reaches its push container
+and runs its restart trap. The dump container resumes them itself only when the dump fails.
+The database image must support installing Python, and the client image must include Python
+for its restart trap. For a filesystem-only archive that
+needs quiescing, the push container scales the listed Deployments to zero, waits for their
+replica counts to reach zero, and resumes them after success or failure. Set `stop_replicas`
+when the app's declared count differs from one; the positive value is also used to resume a
+Deployment if an earlier hard-killed backup left it at zero. The Job gets a namespace-scoped
+Role limited to those Deployment names. The input contract is in each task file's header.
 
 ## Availability and storage
 
