@@ -114,6 +114,9 @@ templates.
   point check; the replaced hook points the site URLs at the target and updates or creates
   its administrator. The guest helper and its env file only back up. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
+- `test-wordpress-kubernetes.py`: WordPress keeps Docker as its default, dispatches Deploy,
+  Backup and Restore by `hosting.method`, and renders its default-class content claim,
+  WP-CLI jobs and shared, database-consistent Kubernetes recovery inputs.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
 - `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.

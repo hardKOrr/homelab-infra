@@ -1,10 +1,11 @@
 ---
-# Default configuration for WordPress on the services Docker stack. The application
-# database is deliberately external: deploy the named MariaDB backend first.
+# Default configuration for WordPress on the services Docker stack. Kubernetes is
+# opt-in through hosting.method. The application database is deliberately external:
+# deploy the named MariaDB backend first.
 wordpress_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -14,6 +15,9 @@ wordpress_defaults:
     # is pinned so an image update is an explicit, reviewable config change.
     image: wordpress:6.9.4-php8.3-apache
     cli_image: wordpress:cli-2.12.0-php8.3
+    # Kubernetes persists wp-content on the cluster's default StorageClass. Docker keeps
+    # using data_path below and ignores this Kubernetes-only size.
+    storage: 10
     port: 8080
     container_port: 80
     table_prefix: wp_
@@ -53,3 +57,15 @@ wordpress_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      # The shared backup Job can hold WordPress stopped from its database dump through
+      # its wp-content archive. Python in this client image lets its exit trap restart
+      # WordPress even if installing the PBS client fails.
+      image: "python:3.12-bookworm"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

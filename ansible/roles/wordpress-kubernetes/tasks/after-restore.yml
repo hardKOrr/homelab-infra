@@ -1,0 +1,7 @@
+---
+# WordPress URLs and the administrator are target identity. Repair them through WP-CLI
+# after the shared restore Job has loaded the database and replaced wp-content.
+- name: WordPress Kubernetes Restore | Re-key the restored site to the target
+  ansible.builtin.include_tasks: run-cli-job.yml
+  vars:
+    wordpress_k8s_cli_mode: restore

@@ -1,0 +1,126 @@
+{# A WordPress instance owns one namespace and one durable wp-content claim. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ wordpress_k8s_content_claim }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # The default StorageClass is node-pinned and the claim is ReadWriteOnce.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 33
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        # The wp-content claim shadows this path in the image. Seed the pinned default
+        # theme once so first boot does not depend on downloading it from WordPress.org.
+        - name: seed-default-theme
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              theme="/var/www/html/wp-content/themes/{{ app_config.app.default_theme }}"
+              if [ ! -d "$theme" ]; then
+                source="/usr/src/wordpress/wp-content/themes/{{ app_config.app.default_theme }}"
+                test -d "$source" || {
+                  echo "WordPress image does not contain {{ app_config.app.default_theme }}"
+                  exit 1
+                }
+                mkdir -p /var/www/html/wp-content/themes
+                cp -a "$source" "$theme"
+                chown -R 33:33 "$theme"
+              fi
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html/wp-content
+      containers:
+        - name: wordpress
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - name: http
+              containerPort: {{ app_config.app.container_port }}
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html/wp-content
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+      volumes:
+        - name: content
+          persistentVolumeClaim:
+            claimName: {{ wordpress_k8s_content_claim }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: {{ app_config.app.container_port }}
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  rules:
+    - host: {{ wordpress_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.container_port }}
