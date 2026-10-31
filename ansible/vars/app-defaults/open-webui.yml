@@ -6,7 +6,7 @@
 open_webui_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: ai
 
@@ -20,9 +20,13 @@ open_webui_defaults:
     # Pin a published release instead of a moving upstream branch/tag image.
     image: ghcr.io/open-webui/open-webui:v0.11.4
     port: 3000
+    container_port: 8080
     service_name: open-webui
     # Open WebUI stores users, chats, documents, uploads and its embedded database here.
     data_path: "/opt/{{ instance }}/data"
+    data_mount_path: /app/backend/data
+    # Kubernetes uses the cluster's default StorageClass for this persistent data claim.
+    storage: 10   # GB
     # Keep the first-run account creation path open. Disable later from this app's admin
     # settings, or override this value in config/apps/<instance>.yml.
     enable_signup: true
@@ -45,5 +49,16 @@ open_webui_defaults:
     enabled: true
     application_consistent: true
     schedule: "0 3 * * *"
+    retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

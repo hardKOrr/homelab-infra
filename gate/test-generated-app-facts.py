@@ -80,6 +80,31 @@ def app_producers_publish_named_instance_keys():
             "url": f"http://192.0.2.80:{port}/",
         }, resolved
 
+    k8s_task = named_task(
+        list(read_tasks("ansible/playbooks/apps/open-webui.yml")),
+        "Record the Kubernetes Open WebUI endpoint for app-to-app consumers",
+    )
+    k8s_input = render(
+        k8s_task["vars"]["generated_facts_data"],
+        {
+            "instance": "open-webui",
+            "wiring_upstream_host": "192.0.2.80",
+            "wiring_upstream_port": 80,
+            "hostvars": {"localhost": {"open_webui_fqdn": "open-webui.example.test"}},
+        },
+    )
+    k8s_resolved = render(
+        normalize_expression,
+        {"_generated_facts_data": k8s_input, "instance": "open-webui"},
+    )
+    assert k8s_resolved["open-webui"] == {
+        "provider": "open-webui",
+        "instance": "open-webui",
+        "host": "http://192.0.2.80",
+        "port": "80",
+        "url": "https://open-webui.example.test/",
+    }, k8s_resolved
+
     # A rerun merges an already-resolved entry and preserves unrelated app records.
     collision = {
         "{{ instance }}": {"provider": "ollama", "url": "http://192.0.2.80:11434/"},

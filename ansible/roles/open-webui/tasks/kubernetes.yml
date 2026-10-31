@@ -1,0 +1,152 @@
+---
+# Deploy Open WebUI without an app guest. The app's selected model backends remain
+# independent; only their recorded endpoints and the LiteLLM key are consumed here.
+
+- name: Open WebUI Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Open WebUI Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# The pod leaves the network through whichever cluster node schedules it. Keep the
+# selected Ollama/LiteLLM destinations reachable through the cluster's owned OPNsense
+# alias, without opening those ports for unrelated source addresses.
+- name: Open WebUI Kubernetes | Resolve upstream firewall destinations
+  ansible.builtin.set_fact:
+    _open_webui_k8s_firewall_egress: >-
+      {{ ([{'name': 'upstream-ollama', 'protocol': 'TCP',
+            'port': _open_webui_ollama_port | string,
+            'destination': _open_webui_ollama_host}]
+          if open_webui_ollama_instance | length > 0 else [])
+         + ([{'name': 'upstream-litellm', 'protocol': 'TCP',
+              'port': _open_webui_litellm_port | string,
+              'destination': _open_webui_litellm_host}]
+            if open_webui_litellm_instance | length > 0 else []) }}
+  vars:
+    _open_webui_ollama: "{{ open_webui_registered_apps.get(open_webui_ollama_instance, {}) }}"
+    _open_webui_litellm: "{{ open_webui_registered_apps.get(open_webui_litellm_instance, {}) }}"
+    _open_webui_ollama_endpoint: >-
+      {{ _open_webui_ollama.url | default(_open_webui_ollama.host | default(''), true) }}
+    _open_webui_litellm_endpoint: >-
+      {{ _open_webui_litellm.url | default(_open_webui_litellm.host | default(''), true) }}
+    _open_webui_ollama_host: >-
+      {{ (_open_webui_ollama_endpoint | urlsplit('hostname'))
+         or (_open_webui_ollama_endpoint | regex_replace('^https?://', '')
+             | regex_replace(':[0-9]+(/.*)?$', '')) }}
+    _open_webui_litellm_host: >-
+      {{ (_open_webui_litellm_endpoint | urlsplit('hostname'))
+         or (_open_webui_litellm_endpoint | regex_replace('^https?://', '')
+             | regex_replace(':[0-9]+(/.*)?$', '')) }}
+    _open_webui_ollama_port: >-
+      {{ (_open_webui_ollama.port | default(0, true) | int)
+         or (_open_webui_ollama_endpoint | urlsplit('port')
+             | default(11434, true) | int) }}
+    _open_webui_litellm_port: >-
+      {{ (_open_webui_litellm.port | default(0, true) | int)
+         or (_open_webui_litellm_endpoint | urlsplit('port')
+             | default(4000, true) | int) }}
+  no_log: true
+
+- name: Open WebUI Kubernetes | Add named model backend firewall access
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {
+           'egress': (app_config.firewall.egress | default([])
+                      | rejectattr('name', 'in', ['upstream-ollama', 'upstream-litellm']) | list)
+                     + _open_webui_k8s_firewall_egress}}, recursive=True) }}
+  no_log: true
+  when: _open_webui_k8s_firewall_egress | length > 0
+
+- name: Open WebUI Kubernetes | Open app network access through the cluster alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Open WebUI Kubernetes | Resolve or reuse the application secret
+  ansible.builtin.set_fact:
+    _open_webui_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _open_webui_litellm_api_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).api_key
+         | default((homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).master_key
+                   | default((homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).proxy_key
+                             | default('', true), true), true) }}
+  no_log: true
+
+- name: Open WebUI Kubernetes | Store the application secret in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: open-webui
+      instance: "{{ instance }}"
+      secret_key: "{{ _open_webui_secret_key }}"
+    vault_item_secret_fields: [secret_key]
+  no_log: true
+
+- name: Open WebUI Kubernetes | Sync the application key into its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-key"
+    k8s_secret_data:
+      WEBUI_SECRET_KEY: "{{ _open_webui_secret_key }}"
+
+- name: Open WebUI Kubernetes | Sync the selected LiteLLM credential into its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-upstream"
+    k8s_secret_data:
+      OPENAI_API_KEY: "{{ _open_webui_litellm_api_key }}"
+  no_log: true
+
+- name: Open WebUI Kubernetes | Sync the application environment into its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data:
+      ENABLE_SIGNUP: "{{ 'true' if app_config.app.enable_signup | default(true) | bool else 'false' }}"
+      ENABLE_OLLAMA_API: "{{ 'true' if open_webui_ollama_url | default('') | length > 0 else 'false' }}"
+      OLLAMA_BASE_URL: "{{ open_webui_ollama_url | default('') }}"
+      OLLAMA_BASE_URLS: "{{ open_webui_ollama_url | default('') }}"
+      ENABLE_OPENAI_API: "{{ 'true' if open_webui_litellm_url | default('') | length > 0 else 'false' }}"
+      OPENAI_API_BASE_URL: "{{ open_webui_litellm_url | default('') }}"
+      OPENAI_API_BASE_URLS: "{{ open_webui_litellm_url | default('') }}"
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
+
+- name: Open WebUI Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _open_webui_manifest: "{{ lookup('ansible.builtin.template', 'kubernetes-manifest.yaml.j2') }}"
+
+- name: Open WebUI Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _open_webui_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Open WebUI Kubernetes | Validate the application backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.application_consistent | default(false) | bool
+      - (app_config.backup.schedule | string).split() | length == 5
+      - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
+    fail_msg: Open WebUI backup must be application-consistent and use a five-field cron expression.
+  when: app_config.backup.enabled | default(false) | bool
+
+# One point contains the app's SQLite database, users, chats and uploaded data. The shared
+# task quiesces the Deployment before reading its RWO claim and restores it after.
+- name: Open WebUI Kubernetes | Configure the shared application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        the Open WebUI database, users, chats, uploaded documents and application data

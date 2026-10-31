@@ -72,7 +72,8 @@ templates.
 - `test-forgejo-recovery.py`: Forgejo's quiesced data archive, and its restore swap inputs with the database dump and the staged hook refusing a point without `app.ini`.
 - `test-mautic-recovery.py`: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a point without `local.php` or media, and the replaced hook pointing the restored `local.php` at the target in a real play, with the same PHP escaping as Deploy.
 - `test-authentik-recovery.py`: Authentik's quiesced one-archive backup and its restart, and its restore swap inputs: the native PBS client, one path per owner (PostgreSQL and Redis keep their live owner), and the staged hook refusing a point without a PostgreSQL cluster.
-- `test-open-webui-restore.py`: Open WebUI's restore swap inputs under the lock its backup timer takes, the staged `webui.db` check, and the replaced and rollback hooks moving the application key in Vaultwarden and the environment file.
+- `test-open-webui-deploy.py`: Open WebUI's default Docker bootstrap, Kubernetes PVC/workload/Ingress, cluster firewall inputs, and shared backup wiring.
+- `test-open-webui-restore.py`: Open WebUI's Docker restore swap inputs and key hooks, plus Kubernetes recovery Job inputs and the key hook that updates Vaultwarden and the target Secret before startup.
 - `test-plane-restore.py`: Plane's restore swap inputs (every data bind mount, the whole project stopped, the routed health check) under its lock, the staged release and RDB checks, and the Redis RDB swapped on the backend guest and put back on rollback with the target's own keys.
 - `test-odoo-restore.py`: Odoo's restore swap inputs for its data_dir, database and dump.
 - `test-n8n-restore.py`: n8n's Docker restore swap inputs, the replaced hook giving the target the source encryption key in Vaultwarden and `n8n.env`, and rollback giving it back its own.
