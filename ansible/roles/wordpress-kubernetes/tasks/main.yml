@@ -1,0 +1,244 @@
+---
+# WordPress stays on its separately managed MariaDB instance. Kubernetes owns only the
+# namespace, the web Deployment and the wp-content claim for this WordPress instance.
+
+- name: WordPress Kubernetes | Validate administrator settings
+  ansible.builtin.assert:
+    that:
+      - app_config.app.admin_user is match('^[A-Za-z0-9_.-]+$')
+      - app_config.app.admin_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+      - app_config.app.default_theme is match('^[a-z0-9-]+$')
+      - app_config.app.table_prefix is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - app_config.app.database_host | default('') | length > 0
+      - app_config.app.database_port | default(0) | int > 0
+      - app_config.app.database_password | default('') | length > 0
+    fail_msg: >-
+      WordPress Kubernetes needs a safe administrator login, valid email, table prefix,
+      and the provisioned MariaDB connection.
+  no_log: true
+
+- name: WordPress Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: WordPress Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: WordPress Kubernetes | Require an IPv4 database endpoint for the cluster firewall
+  ansible.builtin.assert:
+    that: app_config.app.database_host is ansible.utils.ipv4_address
+    fail_msg: >-
+      WordPress's registered MariaDB endpoint is not an IPv4 address; the cluster firewall
+      rule needs the backend's resolved address.
+  when: homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+
+# MariaDB is outside the namespace. Kubernetes pod traffic leaves through whichever node
+# runs the pod, so the shared firewall task uses the cluster's owned node alias as source.
+- name: WordPress Kubernetes | Add the named MariaDB firewall destination
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {
+           'egress': ((app_config.firewall | default({})).egress | default([])
+                      | rejectattr('name', 'equalto', 'wordpress-database') | list)
+                     + [{'name': 'wordpress-database', 'protocol': 'TCP',
+                         'port': app_config.app.database_port | string,
+                         'destination': app_config.app.database_host}] }}, recursive=True) }}
+  no_log: true
+  when: homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+
+- name: WordPress Kubernetes | Open declared egress through the cluster node alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: WordPress Kubernetes | Sync the database environment into its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data:
+      WORDPRESS_DB_HOST: "{{ app_config.app.database_host }}:{{ app_config.app.database_port }}"
+      WORDPRESS_DB_NAME: "{{ app_config.app.database.name }}"
+      WORDPRESS_DB_USER: "{{ app_config.app.database_user }}"
+      WORDPRESS_DB_PASSWORD: "{{ app_config.app.database_password }}"
+      WORDPRESS_TABLE_PREFIX: "{{ app_config.app.table_prefix }}"
+  no_log: true
+
+- name: WordPress Kubernetes | Render the web workload
+  ansible.builtin.set_fact:
+    _wordpress_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: WordPress Kubernetes | Apply the web workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _wordpress_k8s_manifest }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 600
+
+- name: WordPress Kubernetes | Check the administrator continuity marker
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - test
+      - -f
+      - "{{ wordpress_k8s_admin_marker }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wordpress_k8s_admin_marker
+  failed_when: false
+  changed_when: false
+
+- name: WordPress Kubernetes | Read the administrator continuity marker
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - cat
+      - "{{ wordpress_k8s_admin_marker }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wordpress_k8s_admin_marker_content
+  when: _wordpress_k8s_admin_marker.rc == 0
+  changed_when: false
+  no_log: true
+
+- name: WordPress Kubernetes | Read the canonical administrator credential
+  ansible.builtin.set_fact:
+    _wordpress_k8s_admin_password_recorded: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default('', true) }}
+  no_log: true
+
+- name: WordPress Kubernetes | Validate an existing administrator marker
+  ansible.builtin.assert:
+    that:
+      - _wordpress_k8s_admin_password_recorded | length > 0
+      - _wordpress_k8s_admin_marker_content.stdout | trim == app_config.app.admin_user ~ '\n' ~ app_config.app.admin_email
+    fail_msg: >-
+      WordPress {{ instance }} is initialized but its administrator credential is missing
+      from Vaultwarden item homelab-infra/apps/{{ instance }}, or the configured login and
+      email no longer match the marker in its wp-content volume.
+  when: _wordpress_k8s_admin_marker.rc == 0
+  no_log: true
+
+- name: WordPress Kubernetes | Detect the current database install when no marker exists
+  when: _wordpress_k8s_admin_marker.rc != 0
+  block:
+    - name: WordPress Kubernetes | Run the read-only install check
+      ansible.builtin.include_tasks: run-cli-job.yml
+      vars:
+        wordpress_k8s_cli_mode: detect
+
+    - name: WordPress Kubernetes | Record whether the database already has a site
+      ansible.builtin.set_fact:
+        _wordpress_k8s_install_state: >-
+          {{ 'installed' if 'WORDPRESS_INSTALL_STATE=installed' in (k8s_job_log | default(''))
+             else 'uninstalled' if 'WORDPRESS_INSTALL_STATE=uninstalled' in (k8s_job_log | default(''))
+             else 'unknown' }}
+
+    - name: WordPress Kubernetes | Require the recorded login for an existing site
+      ansible.builtin.assert:
+        that:
+          - _wordpress_k8s_install_state in ['installed', 'uninstalled']
+          - _wordpress_k8s_install_state != 'installed' or _wordpress_k8s_admin_password_recorded | length > 0
+        fail_msg: >-
+          WordPress {{ instance }} already has an initialized database but no matching
+          administrator continuity marker or canonical password. Restore the WordPress
+          Vaultwarden item and source content before deploying this instance.
+      no_log: true
+
+- name: WordPress Kubernetes | Reuse or generate its initial administrator credential
+  ansible.builtin.set_fact:
+    _wordpress_k8s_admin_password: >-
+      {{ _wordpress_k8s_admin_password_recorded
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: WordPress Kubernetes | Store application and database credentials in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: wordpress
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_email: "{{ app_config.app.admin_email }}"
+      admin_password: "{{ _wordpress_k8s_admin_password }}"
+      database_provider: "{{ app_config.app.database.provider }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: WordPress Kubernetes | Sync the administrator credential for WP-CLI Jobs
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ wordpress_k8s_admin_secret }}"
+    k8s_secret_data:
+      WORDPRESS_ADMIN_PASSWORD: "{{ _wordpress_k8s_admin_password }}"
+  no_log: true
+
+- name: WordPress Kubernetes | Initialize the administrator and record continuity
+  ansible.builtin.include_tasks: run-cli-job.yml
+  vars:
+    wordpress_k8s_cli_mode: initialize
+  when: _wordpress_k8s_admin_marker.rc != 0
+
+- name: WordPress Kubernetes | Verify the initialization marker was recorded
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - test
+      - -f
+      - "{{ wordpress_k8s_admin_marker }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wordpress_k8s_admin_marker_after_init
+  changed_when: false
+  when: _wordpress_k8s_admin_marker.rc != 0
+
+- name: WordPress Kubernetes | Require the initialization marker
+  ansible.builtin.assert:
+    that: _wordpress_k8s_admin_marker_after_init.rc == 0
+    fail_msg: "WordPress {{ instance }} did not record its administrator continuity marker."
+  when: _wordpress_k8s_admin_marker.rc != 0
+
+- name: WordPress Kubernetes | Describe the external database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: WordPress Kubernetes | Schedule the shared application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: content
+          claim: "{{ wordpress_k8s_content_claim }}"
+          owner: "33:33"
+      database: "{{ k8s_database_step | default({}) }}"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        a transaction-consistent dump of {{ app_config.app.database.name }} and the
+        wp-content volume containing WordPress uploads, themes and plugins

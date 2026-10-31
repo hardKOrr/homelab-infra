@@ -1,0 +1,11 @@
+---
+- name: WordPress Kubernetes | Render the WP-CLI Job
+  ansible.builtin.set_fact:
+    _wordpress_k8s_cli_job_manifest: "{{ lookup('ansible.builtin.template', 'cli-job.yaml.j2') }}"
+
+- name: WordPress Kubernetes | Run the WP-CLI Job through the shared runner
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: "{{ instance }}-wordpress-{{ wordpress_k8s_cli_mode }}"
+    k8s_job_manifest: "{{ _wordpress_k8s_cli_job_manifest }}"
+    k8s_job_timeout: 900
