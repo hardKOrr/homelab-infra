@@ -83,6 +83,12 @@ def main():
         and "_navidrome_nfs_block_sequences | min - 1" in str(task)
         for task in library
     )
+    assert any(
+        task.get("name") == "Report the NFS firewall exception priority"
+        and "_navidrome_nfs_firewall_sequence" in str(task)
+        and "_navidrome_nfs_block_sequences | length" in str(task)
+        for task in library
+    )
 
     kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
@@ -98,6 +104,17 @@ def main():
     )
 
     nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [])[:3]
+        == ["ip", "route", "get"]
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("name") == "Report NFS route presence without private endpoints"
+        and "route to the NFS server is" in str(task)
+        for task in nfs_probe[0]["block"]
+    )
     assert any(
         task.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
         and task.get("ansible.builtin.wait_for", {}).get("port") == 2049

@@ -153,6 +153,13 @@
       Navidrome's narrow NFS exception needs a positive firewall sequence before the
       configured block policy. Adjust that policy's sequence and redeploy.
 
+- name: Report the NFS firewall exception priority
+  ansible.builtin.debug:
+    msg: >-
+      Navidrome's NFS exception uses sequence {{ _navidrome_nfs_firewall_sequence }}
+      before {{ _navidrome_nfs_block_sequences | length }} configured base block rule(s).
+  changed_when: false
+
 - name: Add read-only NFS access for Kubernetes nodes to Navidrome's app firewall rules
   ansible.builtin.set_fact:
     app_config: >-

@@ -4,6 +4,34 @@
 # an unreachable share fails promptly instead of leaving a pod in ContainerCreating.
 - name: Verify the NFS music export from one cluster node
   block:
+    - name: Check for a route to the NFS server from the cluster node
+      ansible.builtin.command:
+        argv:
+          - ip
+          - route
+          - get
+          - "{{ _navidrome_nfs_server_ip }}"
+      register: _navidrome_nfs_route_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report NFS route presence without private endpoints
+      ansible.builtin.debug:
+        msg: >-
+          A route to the NFS server is
+          {{ 'present' if _navidrome_nfs_route_probe.rc | default(1) == 0 else 'absent' }}
+          from this Kubernetes node.
+      changed_when: false
+
+    - name: Require a route to the NFS server from this cluster node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_route_probe.rc | default(1) == 0
+        fail_msg: >-
+          This Kubernetes node has no route to Navidrome's existing music NFS server.
+          Check the cluster network and its route to the media network.
+
     - name: Check NFS TCP reachability from the cluster node
       ansible.builtin.wait_for:
         host: "{{ _navidrome_nfs_server_ip }}"
