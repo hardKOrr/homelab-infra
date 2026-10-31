@@ -149,13 +149,14 @@
       - /bin/sh
       - www-data
       - -c
-      - >-
-        cd /var/www/html && php bin/console mautic:install
-        {{ ('https://' ~ mautic_fqdn) | quote }}
-        {{ ('--admin_username=' ~ app_config.app.admin_user) | quote }}
-        {{ ('--admin_email=' ~ app_config.app.admin_user ~ '@'
-            ~ homelabinfra_infra.domain) | quote }}
-        {{ ('--admin_password=' ~ _mautic_admin_password) | quote }} --force
+      - 'cd /var/www/html && exec php bin/console mautic:install "$@"'
+      - --
+      - mautic-installer
+      - "https://{{ mautic_fqdn }}"
+      - "--admin_username={{ app_config.app.admin_user }}"
+      - "--admin_email={{ app_config.app.admin_user }}@{{ homelabinfra_infra.domain }}"
+      - "--admin_password={{ _mautic_admin_password }}"
+      - --force
   delegate_to: "{{ k8s_api_host }}"
   become: true
   no_log: true

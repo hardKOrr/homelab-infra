@@ -2,10 +2,15 @@
 """Check Mautic's Kubernetes workload, config convergence and shared recovery inputs."""
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 
 import yaml
 from jinja2 import Environment
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,9 +126,41 @@ def rendered_workload():
     assert by_key[("Service", "mautic")]["spec"]["selector"]["app.kubernetes.io/component"] == "web"
 
 
+def installer_arguments():
+    task = task_named(kubernetes_tasks, "Mautic Kubernetes | Run the non-interactive installer")
+    password = "a password with ' quotes % and $(touch injected)"
+    argv = Templar(loader=DataLoader(), variables={
+        "instance": "mautic",
+        "k8s_namespace": "app-mautic", "mautic_fqdn": "mautic.example.invalid",
+        "app_config": {"app": {"admin_user": "drill-admin"}},
+        "homelabinfra_infra": {"domain": "example.invalid"},
+        "_mautic_admin_password": password,
+    }).template(task["ansible.builtin.command"]["argv"])
+    shell_index = argv.index("-c")
+    assert argv[shell_index + 2:shell_index + 4] == ["--", "mautic-installer"]
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        fake_php = root / "php"
+        fake_php.write_text("#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+        fake_php.chmod(0o755)
+        command = argv[shell_index + 1].replace("/var/www/html", directory)
+        result = subprocess.run(
+            ["/bin/sh", "-c", command, *argv[shell_index + 3:]],
+            env={**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"]},
+            capture_output=True, text=True, check=True,
+        )
+        assert json.loads(result.stdout) == [
+            "bin/console", "mautic:install", "https://mautic.example.invalid",
+            "--admin_username=drill-admin", "--admin_email=drill-admin@example.invalid",
+            "--admin_password=" + password, "--force",
+        ]
+        assert not (root / "injected").exists()
+
+
 def main():
     static_contract()
     rendered_workload()
+    installer_arguments()
     print("Mautic: Docker default, Kubernetes workload, database and shared recovery contracts passed")
 
 
