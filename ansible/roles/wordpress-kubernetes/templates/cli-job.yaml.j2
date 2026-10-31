@@ -111,7 +111,7 @@ spec:
               wp --path=/var/www/html --skip-plugins --skip-themes eval '
               $user = wp_authenticate(getenv("WORDPRESS_ADMIN_USER"), getenv("WORDPRESS_ADMIN_PASSWORD"));
               if (is_wp_error($user)) {
-                  $codes = preg_replace('/[^a-z0-9_,.-]/i', '', implode(',', $user->get_error_codes()));
+                  $codes = preg_replace("/[^a-z0-9_,.-]/i", "", implode(",", $user->get_error_codes()));
                   fwrite(STDERR, "WORDPRESS_ADMIN_AUTHENTICATION=failed; codes=" . $codes . "\n");
                   fwrite(STDERR, "The configured WordPress administrator credential could not authenticate.\n");
                   exit(1);
@@ -133,7 +133,7 @@ spec:
               wp --path=/var/www/html --skip-plugins --skip-themes eval '
               $user = wp_authenticate(getenv("WORDPRESS_ADMIN_USER"), getenv("WORDPRESS_ADMIN_PASSWORD"));
               if (is_wp_error($user)) {
-                  $codes = preg_replace('/[^a-z0-9_,.-]/i', '', implode(',', $user->get_error_codes()));
+                  $codes = preg_replace("/[^a-z0-9_,.-]/i", "", implode(",", $user->get_error_codes()));
                   fwrite(STDERR, "WORDPRESS_ADMIN_AUTHENTICATION=failed; codes=" . $codes . "\n");
                   fwrite(STDERR, "The restored WordPress administrator credential could not authenticate.\n");
                   exit(1);

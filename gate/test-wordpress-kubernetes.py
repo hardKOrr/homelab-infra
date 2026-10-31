@@ -2,6 +2,7 @@
 """Check WordPress's Kubernetes hosting and shared recovery wiring."""
 
 import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -135,6 +136,10 @@ def check_workload_and_cli_jobs():
         assert pod["volumes"][1]["persistentVolumeClaim"]["claimName"] == "wordpress-content"
         script = cli["args"][0]
         assert "--path=/var/www/html" in script
+        shell_check = subprocess.run(
+            ["sh", "-n"], input=script, text=True, capture_output=True, check=False
+        )
+        assert shell_check.returncode == 0, shell_check.stderr
         expected_secrets = ["wordpress-env"]
         if mode != "detect":
             expected_secrets.append("wordpress-admin")
