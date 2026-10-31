@@ -51,7 +51,7 @@ rules:
 {% for deployment in stop %}
       - {{ deployment }}
 {% endfor %}
-    verbs: [get]
+    verbs: [get, patch]
   - apiGroups: [apps]
     resources: [deployments/scale]
     resourceNames:

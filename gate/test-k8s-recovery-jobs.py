@@ -270,7 +270,7 @@ def shared_pair(steps):
     assert service_account["metadata"]["name"] == "app-backup"
     assert role["rules"] == [
         {"apiGroups": ["apps"], "resources": ["deployments"],
-         "resourceNames": ["app"], "verbs": ["get"]},
+         "resourceNames": ["app"], "verbs": ["get", "patch"]},
         {"apiGroups": ["apps"], "resources": ["deployments/scale"],
          "resourceNames": ["app"], "verbs": ["get", "patch"]},
     ]
@@ -295,7 +295,7 @@ def shared_pair(steps):
     assert {"ServiceAccount", "Role", "RoleBinding"} <= set(actual_budget)
     assert actual_budget["Role"]["rules"] == [
         {"apiGroups": ["apps"], "resources": ["deployments"],
-         "resourceNames": ["actual-budget"], "verbs": ["get"]},
+         "resourceNames": ["actual-budget"], "verbs": ["get", "patch"]},
         {"apiGroups": ["apps"], "resources": ["deployments/scale"],
          "resourceNames": ["actual-budget"], "verbs": ["get", "patch"]},
     ]
@@ -304,37 +304,113 @@ def shared_pair(steps):
     actual_script = actual_pod["containers"][0]["args"][0]
     assert "kubernetes-recovery-scale.py stop" in actual_script
     assert "kubernetes-recovery-scale.py start" in actual_script
+    assert actual_script.index("python3 /tmp/kubernetes-recovery-scale.py stop") < (
+        actual_script.index("proxmox-backup-client backup")
+    )
+    assert actual_script.index("set -eu") < actual_script.index(
+        "python3 /tmp/kubernetes-recovery-scale.py stop"
+    )
     assert scale_script in actual_script
     actual_env = {item["name"]: item for item in actual_pod["containers"][0]["env"]}
     assert actual_env["K8S_RECOVERY_DEPLOYMENTS"]["value"] == '["actual-budget"]'
     assert actual_env["K8S_RECOVERY_STOP_REPLICAS"]["value"] == "1"
     assert '"K8S_RECOVERY_STOP_REPLICAS", "1"' in actual_script
+    assert 'homelab-infra.io/recovery-state' in actual_script
     assert "if current == 0:" in actual_script
     assert "current = replicas" in actual_script
-    state = {"replicas": 0}
-    patched_replicas = []
 
-    def fake_scale_api(method, namespace, deployment, scale=False, payload=None):
-        assert namespace == "app-actual-budget"
-        assert deployment == "actual-budget"
-        if method == "GET":
-            replicas = state["replicas"]
-            return {
-                "spec": {"replicas": replicas},
-                "metadata": {"generation": 1},
-                "status": {"observedGeneration": 1, "replicas": replicas,
-                           "availableReplicas": replicas},
-            }
-        assert method == "PATCH" and scale
-        state["replicas"] = payload["spec"]["replicas"]
-        patched_replicas.append(state["replicas"])
-        return {}
+    def backup_cycle(initial_replicas, initial_recovery_state=None):
+        state = {"replicas": initial_replicas, "annotations": {}}
+        if initial_recovery_state:
+            state["annotations"][SCALE_SCRIPT.RECOVERY_STATE_ANNOTATION] = (
+                initial_recovery_state
+            )
+        operations = []
 
-    with patch.object(SCALE_SCRIPT, "api", side_effect=fake_scale_api):
-        SCALE_SCRIPT.stop("app-actual-budget", ["actual-budget"], 1)
-        SCALE_SCRIPT.start("app-actual-budget", ["actual-budget"], 1)
-    assert patched_replicas == [0, 1]
-    assert state["replicas"] == 1
+        def fake_scale_api(method, namespace, deployment, scale=False, payload=None):
+            assert namespace == "app-actual-budget"
+            assert deployment == "actual-budget"
+            if method == "GET":
+                replicas = state["replicas"]
+                return {
+                    "spec": {"replicas": replicas},
+                    "metadata": {"annotations": state["annotations"], "generation": 1},
+                    "status": {"observedGeneration": 1, "replicas": replicas,
+                               "availableReplicas": replicas},
+                }
+            assert method == "PATCH"
+            if scale:
+                state["replicas"] = payload["spec"]["replicas"]
+                operations.append(("replicas", state["replicas"]))
+            else:
+                for key, value in payload["metadata"]["annotations"].items():
+                    if value is None:
+                        state["annotations"].pop(key, None)
+                    else:
+                        state["annotations"][key] = value
+                    operations.append(("recovery-state", value))
+            return {}
+
+        with patch.object(SCALE_SCRIPT, "api", side_effect=fake_scale_api):
+            SCALE_SCRIPT.stop("app-actual-budget", ["actual-budget"], 1)
+            SCALE_SCRIPT.start("app-actual-budget", ["actual-budget"], 1)
+        assert operations[-3:] == [
+            ("replicas", 0), ("replicas", 1),
+            ("recovery-state", None),
+        ]
+        assert state["replicas"] == 1
+        assert SCALE_SCRIPT.RECOVERY_STATE_ANNOTATION not in state["annotations"]
+        return operations
+
+    normal = backup_cycle(1)
+    assert normal[:2] == [("recovery-state", SCALE_SCRIPT.BACKUP_QUIESCED),
+                          ("replicas", 0)]
+    interrupted = backup_cycle(0, SCALE_SCRIPT.BACKUP_QUIESCED)
+    assert interrupted[0] == ("replicas", 0)
+
+    def refuse_backup(replicas, recovery_state):
+        state = {"replicas": replicas, "annotations": {}}
+        if recovery_state:
+            state["annotations"][SCALE_SCRIPT.RECOVERY_STATE_ANNOTATION] = recovery_state
+        calls = []
+
+        def fake_scale_api(method, namespace, deployment, scale=False, payload=None):
+            assert method == "GET"
+            calls.append(method)
+            return {"spec": {"replicas": state["replicas"]},
+                    "metadata": {"annotations": state["annotations"]}}
+
+        with patch.object(SCALE_SCRIPT, "api", side_effect=fake_scale_api):
+            try:
+                SCALE_SCRIPT.stop("app-actual-budget", ["actual-budget"], 1)
+            except RuntimeError as error:
+                assert "refusing" in str(error)
+            else:
+                raise AssertionError("backup accepted a Deployment that should be held")
+        assert calls == ["GET"]
+
+    refuse_backup(0, None)
+    refuse_backup(0, "restore-in-progress")
+    refuse_backup(0, "restore-failed")
+    refuse_backup(1, "restore-failed")
+
+    resume_calls = []
+
+    def fake_restore_hold_api(method, namespace, deployment, scale=False, payload=None):
+        assert method == "GET"
+        resume_calls.append(method)
+        return {"spec": {"replicas": 0}, "metadata": {"annotations": {
+            SCALE_SCRIPT.RECOVERY_STATE_ANNOTATION: "restore-failed",
+        }}}
+
+    with patch.object(SCALE_SCRIPT, "api", side_effect=fake_restore_hold_api):
+        try:
+            SCALE_SCRIPT.start("app-actual-budget", ["actual-budget"], 1)
+        except RuntimeError as error:
+            assert "refusing to resume" in str(error)
+        else:
+            raise AssertionError("backup exit handler resumed a restore-held Deployment")
+    assert resume_calls == ["GET"]
 
     # Plan: the same client path into scratch, with the target read-only.
     pod, containers = restore_pod("plan", archives, postgres)
@@ -395,6 +471,14 @@ def shared_pair(steps):
 
 def restore_tasks():
     tasks = tasks_of("ansible/tasks/kubernetes/recovery-restore.yml")
+    selectors = task_named(tasks, "k8s restore | Read each stopped Deployment's pod selector")
+    mark = task_named(tasks, "k8s restore | Mark the target Deployments as restore-in-progress")
+    assert selectors["when"] == "restore_overwrite | bool"
+    assert "get" in selectors["ansible.builtin.command"]["argv"]
+    assert mark["when"] == "restore_overwrite | bool"
+    assert "homelab-infra.io/recovery-state=restore-in-progress" in (
+        mark["ansible.builtin.command"]["argv"]
+    )
     wait = task_named(tasks, "k8s restore | Wait for the application pods to go away")
     selector = next(arg for arg in wait["ansible.builtin.command"]["argv"]
                     if str(arg).startswith("--selector="))
@@ -420,12 +504,24 @@ def restore_tasks():
     # A failed restore leaves every stopped Deployment at zero.
     keep = task_named(tasks, "k8s restore | Keep the target stopped")
     assert "--replicas=0" in keep["ansible.builtin.command"]["argv"]
+    failed = task_named(tasks, "k8s restore | Mark the target Deployments as restore-failed")
+    assert "homelab-infra.io/recovery-state=restore-failed" in (
+        failed["ansible.builtin.command"]["argv"]
+    )
+    assert failed["failed_when"] is False
+    clear = task_named(tasks, "k8s restore | Clear the target restore marker")
+    assert "homelab-infra.io/recovery-state-" in clear["ansible.builtin.command"]["argv"]
     names = [task.get("name", "") for task in tasks]
     order = ["k8s restore | Stop the target application", "k8s restore | Run the restore job",
              "k8s restore | Apply the restored ConfigMaps",
              "k8s restore | Run the app's after-restore tasks",
-             "k8s restore | Start the target application again"]
+             "k8s restore | Start the target application again",
+             "k8s restore | Wait for the target application to come back",
+             "k8s restore | Clear the target restore marker",
+             "k8s restore | Mark the restore complete"]
     assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
+    assert names.index(mark["name"]) < names.index("k8s restore | Stop the target application")
+    assert names.index(failed["name"]) < names.index(keep["name"])
 
 
 def include_vars(tasks, shared_file):

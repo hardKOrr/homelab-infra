@@ -16,8 +16,8 @@
 #                 part of existing recovery points; keep them when changing a role.
 #     database    optional k8s_database_step from tasks/database/kubernetes-recovery-step.yml
 #     stop        optional Deployment names to quiesce while the PVC archive is read
-#     stop_replicas optional positive declared replica count if a previous backup left a
-#                   Deployment at zero (defaults to one)
+#     stop_replicas optional positive declared replica count for a Deployment marked as
+#                   quiesced by an interrupted backup (defaults to one)
 #     describe    one line naming what the recovery point holds, for the operator
 
 - name: k8s backup | Assert inputs
