@@ -1,0 +1,35 @@
+---
+# Refuse a NodePort that a Service outside this instance's namespace already holds.
+#
+# NodePorts are cluster-wide, unlike everything else this platform coordinates by
+# namespace. Run it before every apply, not only on create, so a converged re-run keeps
+# confirming that nothing else took the port between runs.
+#
+# Inputs:
+#   k8s_node_port — the NodePort the instance's Service declares
+#   k8s_namespace, k8s_api_host — from resolve-cluster.yml and derive-namespace.yml
+
+- name: k8s node port | Read every Service in the cluster
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, svc, --all-namespaces, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_all_services
+  changed_when: false
+
+- name: k8s node port | Assert the NodePort is not claimed outside this namespace
+  vars:
+    _k8s_other_node_ports: >-
+      {{ (_k8s_all_services.stdout | from_json)['items'] | default([])
+         | rejectattr('metadata.namespace', 'equalto', k8s_namespace)
+         | selectattr('spec.ports', 'defined')
+         | map(attribute='spec.ports') | list | flatten
+         | selectattr('nodePort', 'defined')
+         | map(attribute='nodePort') | list }}
+  ansible.builtin.assert:
+    that: (k8s_node_port | int) not in _k8s_other_node_ports
+    fail_msg: >-
+      NodePort {{ k8s_node_port }} is already claimed by a Service outside namespace
+      {{ k8s_namespace }}. NodePorts are cluster-wide, so another instance cannot reuse
+      it. Override the instance's node port in config/apps/{{ instance }}.yml with an
+      unused port in the 30000-32767 range and re-run this deploy.

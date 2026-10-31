@@ -38,6 +38,8 @@ DATABASE_DUMP = re.compile(
 )
 K8S_JOB = re.compile(r"^\s*kind:\s*[\"']?(?:CronJob|Job)\b", re.MULTILINE)
 PBS_CLIENT = re.compile(r"proxmox-backup-client")
+# Reading the cluster's claimed NodePorts to refuse a duplicate.
+K8S_NODE_PORT_CLAIM = re.compile(r"""selectattr\(\s*['"]nodePort['"]""")
 # Moving or copying state into place: an `mv`/`cp` argv, a shell `mv` or `cp -a` command,
 # or Python's os.replace/shutil.move.
 RESTORE_SWAP = re.compile(
@@ -101,6 +103,11 @@ PRIMITIVES = {
         and bool(K8S_JOB.search(code))
         and bool(PBS_CLIENT.search(code)),
     ),
+    "k8s-node-port-claim": (
+        "checking the cluster for an already claimed NodePort",
+        ("ansible/tasks/kubernetes/claim-node-port.yml",),
+        lambda path, code: bool(K8S_NODE_PORT_CLAIM.search(code)),
+    ),
     "restore-swap": (
         "a restore moving live state aside or restored state into place",
         RESTORE_SWAP_SHARED,
@@ -119,6 +126,7 @@ ALLOWLIST = {
     "pbs-client-install": set(),
     "database-dump": set(),
     "k8s-recovery-job": set(),
+    "k8s-node-port-claim": set(),
     "restore-swap": set(),
     "restore-ownership": set(),
 }
