@@ -35,6 +35,8 @@
 #   k8s_job_timeout       — seconds to wait for completion (default 1800)
 #   k8s_job_expected_exit_codes — non-zero container exit codes the caller interprets;
 #                                 these Jobs are cleaned up and returned without failing.
+#   k8s_job_report_changed    — default true; set false when a successful one-shot job is
+#                               observational and its create/cleanup is not lasting state.
 #   k8s_job_must_succeed  — default true. false reports the outcome and lets the caller
 #                           decide, for a caller that treats failure as information.
 #
@@ -90,7 +92,7 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   when: k8s_job_manifest | default('') | trim | length > 0
-  changed_when: true
+  changed_when: k8s_job_report_changed | default(true) | bool
 
 # `create job --from=cronjob/...` is how a scheduled job is run early without a second
 # copy of its definition. The alternative — rendering the same pod template twice, once for
@@ -110,7 +112,7 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   when: k8s_job_from_cronjob | default('') | length > 0
-  changed_when: true
+  changed_when: k8s_job_report_changed | default(true) | bool
 
 # Polled rather than `kubectl wait --for=condition=complete`, because that waits out the
 # full timeout on a Job that has already given up: it cannot watch for two conditions at
@@ -222,7 +224,7 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   when: k8s_job_succeeded | bool or k8s_job_expected_exit | bool
-  changed_when: true
+  changed_when: k8s_job_report_changed | default(true) | bool
 
 # The Job's own log is quoted into the failure, not left for the operator to go and find.
 # The same reasoning as apply-manifest.yml's diagnostic block: a job that reports only

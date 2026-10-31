@@ -193,9 +193,17 @@ def check_shared_recovery_inputs():
     cli_runner = tasks("ansible/roles/wordpress-kubernetes/tasks/run-cli-job.yml")
     job_vars = cli_runner[1]["vars"]
     assert job_vars["k8s_job_expected_exit_codes"] == "{{ [41, 42] if wordpress_k8s_cli_mode == 'detect' else [] }}"
+    assert job_vars["k8s_job_report_changed"] == "{{ wordpress_k8s_cli_mode != 'detect' }}"
 
     shared_runner = tasks("ansible/tasks/kubernetes/run-job.yml")
     runner_names = [task.get("name") for task in shared_runner]
+    for name in (
+        "k8s job | Create the job from its manifest",
+        "k8s job | Create the job from its cronjob",
+        "k8s job | Delete the job now that it succeeded or returned an expected code",
+    ):
+        task = next(task for task in shared_runner if task.get("name") == name)
+        assert task["changed_when"] == "k8s_job_report_changed | default(true) | bool"
     wait_index = runner_names.index("k8s job | Wait for the job to finish")
     exit_code_index = runner_names.index("k8s job | Read the completed main container exit code")
     expected_index = runner_names.index("k8s job | Record whether the exit code was expected")
