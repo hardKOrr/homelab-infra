@@ -4,14 +4,13 @@
 # This file is git-managed — git pull may update these defaults.
 #
 # Mail and database backends are named instances, not private sidecars.
-# roles/mautic/tasks/main.yml provisions its database on the named
-# MariaDB backend through tasks/database/provision.yml, and reads outbound mail through
-# tasks/mail/resolve-mail.yml — the same two seams roles/odoo/tasks/main.yml already
-# proved for PostgreSQL.
+# playbooks/apps/mautic.yml provisions its database on the named MariaDB backend through
+# tasks/database/provision.yml and reads outbound mail through tasks/mail/resolve-mail.yml
+# — the same two seams Odoo already proved for PostgreSQL.
 mautic_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -40,6 +39,7 @@ mautic_defaults:
     # The four subdirectories mirror the upstream mautic/docker-mautic example's volume
     # list (see roles/mautic/defaults/main.yml).
     data_path: "/opt/mautic/{{ instance }}/data"
+    storage: 10
 
     admin_user: admin
 
@@ -55,6 +55,16 @@ mautic_defaults:
     schedule: "0 3 * * *"
     datastore: ""
     backup_id: ""
+    retention_days: 14
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
 
   # Recovery boundary: restore the Mautic database and this instance's complete data
   # directory from the same recovery point. The shared MariaDB guest stays in place when

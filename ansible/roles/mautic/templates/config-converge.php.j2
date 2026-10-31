@@ -1,0 +1,51 @@
+<?php
+$path = '/var/www/html/config/local.php';
+if (!is_file($path)) {
+    fwrite(STDERR, "Mautic local.php is missing from its persistent volume.\n");
+    exit(1);
+}
+
+$parameters = [];
+include $path;
+if (!is_array($parameters)) {
+    fwrite(STDERR, "Mautic local.php did not define its parameters array.\n");
+    exit(1);
+}
+
+$fields = json_decode(
+    base64_decode('{{ _mautic_k8s_config_fields | to_json | b64encode }}'),
+    true,
+    512,
+    JSON_THROW_ON_ERROR
+);
+$desired = array_column($fields, 'value', 'key');
+if (is_file('/var/www/html/config/.installed')) {
+    $desired['db_driver'] = 'pdo_mysql';
+    $desired['site_url'] = 'https://{{ mautic_fqdn }}';
+}
+
+$changed = false;
+foreach ($desired as $key => $value) {
+    $value = str_replace('%', '%%', (string) $value);
+    if (!array_key_exists($key, $parameters) || (string) $parameters[$key] !== $value) {
+        $parameters[$key] = $value;
+        $changed = true;
+    }
+}
+
+if ($changed) {
+    $temporary = $path . '.homelab-infra-' . getmypid();
+    $contents = "<?php\n\$parameters = " . var_export($parameters, true) . ";\n";
+    if (file_put_contents($temporary, $contents, LOCK_EX) === false
+        || !chmod($temporary, 0640)
+        || !chown($temporary, 'www-data')
+        || !chgrp($temporary, 'www-data')
+        || !rename($temporary, $path)) {
+        @unlink($temporary);
+        fwrite(STDERR, "Could not atomically update Mautic local.php.\n");
+        exit(1);
+    }
+    echo "MAUTIC_CONFIG_CHANGED\n";
+} else {
+    echo "MAUTIC_CONFIG_UNCHANGED\n";
+}
