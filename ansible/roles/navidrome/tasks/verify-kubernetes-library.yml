@@ -4,6 +4,12 @@
 # an unreachable share fails promptly instead of leaving a pod in ContainerCreating.
 - name: Verify the NFS music export from one cluster node
   block:
+    - name: Reset per-node NFS probe results
+      ansible.builtin.set_fact:
+        _navidrome_nfs_probe_dir: {}
+        _navidrome_nfs_probe_mount: {}
+      changed_when: false
+
     - name: Check for a route to the NFS server from the cluster node
       ansible.builtin.command:
         argv:

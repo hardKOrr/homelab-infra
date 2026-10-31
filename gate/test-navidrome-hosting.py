@@ -104,6 +104,11 @@ def main():
     )
 
     nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
+    assert nfs_probe[0]["block"][0].get("ansible.builtin.set_fact") == {
+        "_navidrome_nfs_probe_dir": {},
+        "_navidrome_nfs_probe_mount": {},
+    }
+    assert nfs_probe[0]["block"][0].get("changed_when") is False
     assert any(
         task.get("ansible.builtin.command", {}).get("argv", [])[:3]
         == ["ip", "route", "get"]
