@@ -135,3 +135,5 @@ wsl bash -lc 'bash gate/test.sh'
 
 
 The Gate workflow runs lint and test on pull requests targeting master and pushes to master.
+
+- `test-proxmox-shared-storage.py`: runs the read-only shared storage tasks against fake pvesh responses; all-active, absent, inactive and query-error cases check exit status, every node report, repeat output and zero changes.

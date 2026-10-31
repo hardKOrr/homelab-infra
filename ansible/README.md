@@ -79,6 +79,17 @@ checkout stays on `LAB_BRANCH` for Rundeck.
 To check Kometa's Plex endpoint from the cluster, run its deployed CronJob once, and
 require a clean completion log, use `lab-run playbooks/maintenance/run-kometa.yml`.
 
+## Shared storage availability
+
+Run `lab-run playbooks/maintenance/check-shared-storage.yml` to check every cluster
+node against the storage definitions marked `shared` by Proxmox, including NFS and
+ZFS over iSCSI. It reads `/storage`, `/nodes` and `/nodes/<node>/storage` with
+`pvesh get`; it changes no node or guest and is independent of Deploy. Each node lists
+every shared storage as `active` or `missing`. Inactive or absent entries count as
+missing even when a storage's node allowlist excludes that node. It prints all node
+reports before exiting non-zero for missing storage or a failed node status query.
+No shared definitions produces an explicit empty report and succeeds.
+
 ## Live operations
 
 Live runs may overlap; there is no lab lock. Ordinary runs use the on-disk checkout, so a
