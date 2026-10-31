@@ -156,15 +156,25 @@ def database_steps():
 
 
 def backup_all_documents(archives, database, instance="app", stop=None, stop_replicas=None):
-    kr = {
-        "backup_id": instance, "repository": "token@pbs:store", "datastore": "store",
-        "schedule": "0 3 * * *", "timezone": "UTC", "timeout": 3600,
-        "retention_days": 14, "scratch_gi": 2, "secret": f"{instance}-backup",
-        "ntfy_url": "", "ntfy_token": False, "client": CLIENT, "archives": archives,
-        "database": database, "stop": stop or [],
-    }
+    recovery = {"archives": archives, "database": database, "stop": stop or []}
     if stop_replicas is not None:
-        kr["stop_replicas"] = stop_replicas
+        recovery["stop_replicas"] = stop_replicas
+    resolve = task_named(tasks_of("ansible/tasks/kubernetes/recovery-backup.yml"),
+                         "k8s backup | Resolve the backup's identity and destination")
+    kr = render(resolve["ansible.builtin.set_fact"]["_kr"], {
+        "instance": instance,
+        "app_config": {"backup": {
+            "backup_id": instance, "schedule": "0 3 * * *", "timeout_seconds": 3600,
+            "retention_days": 14, "scratch_size": 2, "client": CLIENT,
+        }},
+        "k8s_pbs_repository": "token@pbs:store", "k8s_pbs_datastore": "store",
+        "k8s_recovery": recovery,
+        "homelabinfra_config": {"timezone": "UTC"},
+        "homelabinfra_infra": {"notifications": {
+            "provider": "none", "host": "", "topic": "homelab",
+        }},
+        "_kr_ntfy_token": "",
+    })
     text = render(BACKUP.read_text(encoding="utf-8"), {
         "_kr": kr, "instance": instance, "k8s_namespace": f"app-{instance}",
         "k8s_pbs_fingerprint": FINGERPRINT,
@@ -249,12 +259,14 @@ def shared_pair(steps):
     assert "serviceAccountName" not in ordinary_pod
 
     quiesced = backup_all_documents([{"name": "data", "claim": "app-storage"}], {},
-                                    "app", ["app"])
+                                    "app", ["app"], stop_replicas=3)
     service_account = next(d for d in quiesced if d["kind"] == "ServiceAccount")
     role = next(d for d in quiesced if d["kind"] == "Role")
     binding = next(d for d in quiesced if d["kind"] == "RoleBinding")
     cronjob = next(d for d in quiesced if d["kind"] == "CronJob")
     pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert {entry["name"]: entry for entry in pod["containers"][0]["env"]}[
+        "K8S_RECOVERY_STOP_REPLICAS"]["value"] == "3"
     assert service_account["metadata"]["name"] == "app-backup"
     assert role["rules"] == [
         {"apiGroups": ["apps"], "resources": ["deployments"],
