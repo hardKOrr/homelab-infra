@@ -20,6 +20,14 @@ rd run -i <id> -- -<option> <value>
 rd executions follow -e <id> -f
 ```
 
+An agent or any reader that pays per line filters the followed log. The filter strips
+colour codes, drops the repeated TLS warning and drops every TASK banner that no result
+line follows; failures and findings pass through, and Rundeck keeps the full log:
+
+```sh
+rd executions follow -e <id> -f | python3 rundeck/log-brief.py
+```
+
 SABnzbd Deploy registers the selected download client in deployed Usenet consumers and
 creates missing categories. **Manage / Integrations / Wire Media Stack** remains the
 stack-wide reconciliation job: it registers every compatible download client, syncs *arr

@@ -41,6 +41,11 @@ run. The Vaultwarden Login File playbook (`playbooks/maintenance/vaultwarden-log
 rewrites that file, so a direct run of it gets the `LAB_VAULT_PASSWORD` value back after
 the preflight.
 
+`LAB_LOG_BRIEF=1` shortens a direct run's log for a reader that pays per line, such as an
+LLM agent: no colour codes, no routine `lab-run` lines, no repeated TLS warning, the config
+check only when it fails, and a TASK banner only for a task that changed something,
+failed or reported a finding. Rundeck jobs never set it, so operators keep every banner.
+
 The file also holds an edge copy: the platform items of the Vaultwarden contract, without
 any application's credentials. Caddy serves `BW_SERVER`, so deploying Caddy
 (`playbooks/apps/caddy.yml`) or removing it (`playbooks/apps/remove.yml` with app
@@ -78,6 +83,17 @@ checkout stays on `LAB_BRANCH` for Rundeck.
 
 To check Kometa's Plex endpoint from the cluster, run its deployed CronJob once, and
 require a clean completion log, use `lab-run playbooks/maintenance/run-kometa.yml`.
+
+## Shared storage availability
+
+Run `lab-run playbooks/maintenance/check-shared-storage.yml` to check every cluster
+node against the storage definitions marked `shared` by Proxmox, including NFS and
+ZFS over iSCSI. It reads `/storage`, `/nodes` and `/nodes/<node>/storage` with
+`pvesh get`; it changes no node or guest and is independent of Deploy. Each node lists
+every shared storage as `active` or `missing`. Inactive or absent entries count as
+missing even when a storage's node allowlist excludes that node. It prints all node
+reports before exiting non-zero for missing storage or a failed node status query.
+No shared definitions produces an explicit empty report and succeeds.
 
 ## Live operations
 
@@ -394,6 +410,7 @@ the shared files, so its allowlists are empty.
 | Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
 | Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |
 | Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
+| Kubernetes NodePort claim check | `tasks/kubernetes/claim-node-port.yml` | `k8s_node_port`, `k8s_namespace`, `k8s_api_host`; run before every apply of a NodePort Service |
 | Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job; returns `k8s_job_succeeded`, `k8s_job_exit_code` and logs, with optional `k8s_job_expected_exit_codes` |
 | Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
 | Restore swap: stage, stop, move aside, install with owner, start, roll back | `tasks/recovery/restore-swap.yml`, running `scripts/restore-swap.sh` | `recovery_swap_runtime`, `recovery_swap_archives`, `recovery_swap_paths` (`path`, `source`, numeric, named or `live` `owner`/`group`, `mode`, `mount`, `allow_empty`), `recovery_swap_stop_services` with `recovery_swap_compose_project`, optional `recovery_swap_pbs_runtime`, `recovery_swap_staging_parent`, `recovery_swap_database` (`config`, `dump`), `recovery_swap_health_url` with its `_status`, `_headers` and `_follow_redirects`, and the `staged`, `stopped`, `replaced`, `verified` and `rollback` hooks |

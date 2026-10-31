@@ -33,6 +33,7 @@ suite. Both phases run in parallel and replay each item's diagnostics in order. 
 three shards on separate runners. The suites exercise production logic, expressions and
 templates.
 
+- `test-log-brief.py`: `LAB_LOG_BRIEF=1` keeps the findings, failures and result block and drops the TASK banners of silent tasks, a full log keeps every banner, and `rundeck/log-brief.py` applies the same cut to a followed Rundeck log.
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-generate-ip-vmid.py`: `generate-ip.yml` never reallocates the address an existing guest's VMID encodes, such as an ISO appliance whose config shows no address.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
@@ -127,6 +128,11 @@ templates.
 - `test-mariadb-recovery.py`: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with rollback.
 - `test-mysql-recovery.py`: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-restore point when a load fails.
 
+When stdout is not a terminal and `CI` is unset (an LLM agent's tool call), the gate runs
+quiet: a passing lint prints one summary line per check, a passing test run prints
+`N of M ok`, and any failure prints its full log. `GATE_QUIET=0` forces the full output;
+CI lists every playbook and suite.
+
 On a Windows checkout accessed through WSL, wrap each command:
 
 ```bash
@@ -136,3 +142,5 @@ wsl bash -lc 'bash gate/test.sh'
 
 
 The Gate workflow runs lint and test on pull requests targeting master and pushes to master.
+
+- `test-proxmox-shared-storage.py`: runs the read-only shared storage tasks against fake pvesh responses; all-active, absent, inactive and query-error cases check exit status, every node report, repeat output and zero changes.

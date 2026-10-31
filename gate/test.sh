@@ -7,6 +7,14 @@ set -uo pipefail
 # and will block forever on an open one. `< /dev/null` turns that into an immediate EOF.
 exec < /dev/null
 
+# Quiet unless a person is watching or CI runs it: stdout that is not a terminal (an LLM
+# agent's tool call) selects GATE_QUIET=1; GATE_QUIET=0 forces the full output.
+if [ -z "${GATE_QUIET+x}" ] && [ -z "${CI:-}" ] && [ ! -t 1 ]; then
+    GATE_QUIET=1
+fi
+[ "${GATE_QUIET:-}" != 0 ] || GATE_QUIET=
+export GATE_QUIET
+
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 
@@ -61,19 +69,23 @@ gate_suite_one() {
 }
 export -f gate_run_one gate_check_one gate_suite_one
 
-# Replays each item's verdict and, for a failure, its whole log.
+# Replays each item's verdict and, for a failure, its whole log. GATE_QUIET=1 drops the
+# per-item "ok" lines and prints one count instead.
 gate_report() {
-    local item slug
+    local item slug passed=0
     for item in "$@"; do
         slug="${item//\//__}"
         if [ -e "$GATE_TMP/$slug.fail" ]; then
             rc=1
             echo "== FAIL $item"
             cat "$GATE_TMP/$slug.log"
+        elif [ -n "${GATE_QUIET:-}" ]; then
+            passed=$((passed + 1))
         else
             echo "== ok   $item"
         fi
     done
+    [ -z "${GATE_QUIET:-}" ] || echo "== $passed of $# ok"
 }
 
 # GATE_SHARD=k/n runs the k-th of n slices, so CI can spread the gate over several
