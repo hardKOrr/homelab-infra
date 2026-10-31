@@ -12,12 +12,13 @@ if (!is_array($parameters)) {
     exit(1);
 }
 
-$desired = json_decode(
+$fields = json_decode(
     base64_decode('{{ _mautic_k8s_config_fields | to_json | b64encode }}'),
     true,
     512,
     JSON_THROW_ON_ERROR
 );
+$desired = array_column($fields, 'value', 'key');
 if (is_file('/var/www/html/config/.installed')) {
     $desired['db_driver'] = 'pdo_mysql';
     $desired['site_url'] = 'https://{{ mautic_fqdn }}';
