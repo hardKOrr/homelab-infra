@@ -159,7 +159,19 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   no_log: true
+  register: _mautic_k8s_install_result
+  failed_when: false
   changed_when: true
+  when: _mautic_k8s_install_state.stdout | trim == 'missing'
+
+- name: Mautic Kubernetes | Report an installer failure without credentials
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mautic_k8s_install_result }}"
+    scrub_failure_secrets:
+      - "{{ _mautic_admin_password }}"
+      - "{{ app_config.app.database_password }}"
+    scrub_failure_context: Mautic installer failed
   when: _mautic_k8s_install_state.stdout | trim == 'missing'
 
 - name: Mautic Kubernetes | Record installation on the persistent config volume
