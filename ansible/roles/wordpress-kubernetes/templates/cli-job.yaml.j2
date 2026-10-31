@@ -51,8 +51,20 @@ spec:
             - |
               set -eu
 {% if wordpress_k8s_cli_mode == 'detect' %}
-              state_marker={{ wordpress_k8s_install_state_marker | to_json }}
-              rm -f "$state_marker"
+              # Exit codes: 0 installed with marker, 41 installed without marker,
+              # 42 uninstalled, 43 marker/login mismatch. The shared runner returns
+              # the main container status without requiring the kubelet log proxy.
+              admin_marker={{ wordpress_k8s_admin_marker | to_json }}
+              marker_present=false
+              if [ -f "$admin_marker" ]; then
+                marker_user="$(sed -n '1p' "$admin_marker")"
+                marker_email="$(sed -n '2p' "$admin_marker")"
+                if [ "$marker_user" != "$WORDPRESS_ADMIN_USER" ] || [ "$marker_email" != "$WORDPRESS_ADMIN_EMAIL" ]; then
+                  echo "The wp-content administrator marker does not match the configured login."
+                  exit 43
+                fi
+                marker_present=true
+              fi
               wp --path=/var/www/html --skip-plugins --skip-themes db check >/dev/null
               if wp --path=/var/www/html --skip-plugins --skip-themes core is-installed >/dev/null 2>&1; then
                 login="$(wp --path=/var/www/html --skip-plugins --skip-themes user get "$WORDPRESS_ADMIN_USER" --field=user_login)"
@@ -61,14 +73,19 @@ spec:
                   echo "The initialized WordPress site does not contain the configured administrator."
                   exit 1
                 fi
-                install_state=installed
                 echo WORDPRESS_INSTALL_STATE=installed
+                if [ "$marker_present" = true ]; then
+                  exit 0
+                fi
+                exit 41
               else
-                install_state=uninstalled
                 echo WORDPRESS_INSTALL_STATE=uninstalled
+                if [ "$marker_present" = true ]; then
+                  echo "The administrator marker exists but the WordPress database is not initialized."
+                  exit 43
+                fi
+                exit 42
               fi
-              printf '%s\n' "$install_state" > "$state_marker"
-              chmod 0600 "$state_marker"
 {% elif wordpress_k8s_cli_mode == 'initialize' %}
               if [ "{{ _wordpress_k8s_install_state }}" = uninstalled ]; then
                 if ! wp --path=/var/www/html --skip-plugins --skip-themes core is-installed >/dev/null 2>&1; then

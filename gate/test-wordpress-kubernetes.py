@@ -29,7 +29,7 @@ def fixture():
         "wordpress_fqdn": "wordpress.example.test",
         "wordpress_k8s_content_claim": "wordpress-content",
         "wordpress_k8s_admin_secret": "wordpress-admin",
-        "wordpress_k8s_install_state_marker": "/var/www/html/wp-content/.homelab-infra-install-state",
+        "wordpress_k8s_admin_marker": "/var/www/html/wp-content/.homelab-infra-admin",
         "app_config": {"app": {
             "image": "wordpress:6.9.4-php8.3-apache",
             "cli_image": "wordpress:cli-2.12.0-php8.3",
@@ -103,7 +103,6 @@ def check_workload_and_cli_jobs():
     pod = deployment["spec"]["template"]["spec"]
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert len(pod["containers"]) == 1
-    assert pod["containers"][0]["workingDir"] == "/var/www/html"
     assert {mount["mountPath"] for mount in pod["containers"][0]["volumeMounts"]} == {
         "/var/www/html/wp-content"
     }
@@ -142,11 +141,12 @@ def check_workload_and_cli_jobs():
         assert [ref["secretRef"]["name"] for ref in cli["envFrom"]] == expected_secrets
         if mode == "detect":
             assert "WORDPRESS_INSTALL_STATE=installed" in script
-            assert 'state_marker="/var/www/html/wp-content/.homelab-infra-install-state"' in script
-            assert 'install_state=installed' in script
-            assert 'install_state=uninstalled' in script
-            assert 'printf \'%s\\n\' "$install_state" > "$state_marker"' in script
-            assert ".homelab-infra-admin" not in script
+            assert 'admin_marker="/var/www/html/wp-content/.homelab-infra-admin"' in script
+            assert "marker_user=\"$(sed -n '1p' \"$admin_marker\")\"" in script
+            assert 'exit 41' in script
+            assert 'exit 42' in script
+            assert 'exit 43' in script
+            assert "marker_email" in script
         elif mode == "initialize":
             assert "core install" in script
             assert "theme activate" in script
@@ -171,35 +171,31 @@ def check_shared_recovery_inputs():
     ):
         assert shared in main_text
     detect = next(task for task in main
-                  if task.get("name") == "WordPress Kubernetes | Detect the current database install when no marker exists")
+                  if task.get("name") == "WordPress Kubernetes | Detect the database install and administrator continuity")
     detect_names = [task.get("name") for task in detect["block"]]
     assert "WordPress Kubernetes | Run the read-only install check" in detect_names
-    assert "WordPress Kubernetes | Read the database install state recorded by the Job" in detect_names
-    state_read = next(task for task in detect["block"]
-                      if task.get("name") == "WordPress Kubernetes | Read the database install state recorded by the Job")
-    assert "WordPress Kubernetes | Remove the temporary install state marker" in [
-        task.get("name") for task in state_read["always"]
-    ]
+    assert "WordPress Kubernetes | Record the detected database and marker state" in detect_names
+    assert "WordPress Kubernetes | Require the recorded login for an existing site" in detect_names
     assert "k8s_job_log" not in str(detect)
-    marker_checks = [
-        task for task in main
-        if task.get("name") in {
-            "WordPress Kubernetes | Check the administrator continuity marker",
-            "WordPress Kubernetes | Read the administrator continuity marker",
-            "WordPress Kubernetes | Verify the initialization marker was recorded",
-        }
-    ]
-    assert len(marker_checks) == 3
-    for task in marker_checks:
-        argv = task["ansible.builtin.command"]["argv"]
-        assert argv[-2] == "-c"
-        assert "cd wp-content &&" in argv[-1]
-        assert "/var/www/html/wp-content/" not in argv[-1]
-    marker_read = next(task for task in state_read["block"]
-                       if task.get("name") == "WordPress Kubernetes | Read the install state from its content volume")
-    assert "cd wp-content && cat" in marker_read["ansible.builtin.command"]["argv"][-1]
-    marker_cleanup = state_read["always"][0]
-    assert "cd wp-content && rm -f" in marker_cleanup["ansible.builtin.command"]["argv"][-1]
+    assert "kubectl" not in main_text
+    initialize = next(task for task in main
+                      if task.get("name") == "WordPress Kubernetes | Initialize the administrator and record continuity")
+    assert initialize["when"] == "not (_wordpress_k8s_admin_marker_present | bool)"
+    cli_runner = tasks("ansible/roles/wordpress-kubernetes/tasks/run-cli-job.yml")
+    job_vars = cli_runner[1]["vars"]
+    assert job_vars["k8s_job_expected_exit_codes"] == "{{ [41, 42] if wordpress_k8s_cli_mode == 'detect' else [] }}"
+
+    shared_runner = tasks("ansible/tasks/kubernetes/run-job.yml")
+    runner_names = [task.get("name") for task in shared_runner]
+    wait_index = runner_names.index("k8s job | Wait for the job to finish")
+    exit_code_index = runner_names.index("k8s job | Read the completed main container exit code")
+    expected_index = runner_names.index("k8s job | Record whether the exit code was expected")
+    assert wait_index < exit_code_index < expected_index
+    cleanup = next(task for task in shared_runner
+                   if task.get("name") == "k8s job | Delete the job now that it succeeded or returned an expected code")
+    assert "k8s_job_expected_exit" in cleanup["when"]
+    fail = next(task for task in shared_runner if task.get("name") == "k8s job | Fail with what the job said")
+    assert "not (k8s_job_expected_exit | bool)" in fail["when"]
     backup = next(task for task in main if "recovery-backup.yml" in str(task))
     recovery = backup["vars"]["k8s_recovery"]
     assert recovery["archives"] == [{

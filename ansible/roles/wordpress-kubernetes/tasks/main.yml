@@ -71,45 +71,6 @@
     k8s_wait_for: ["deployment/{{ instance }}"]
     k8s_wait_timeout: 600
 
-- name: WordPress Kubernetes | Check the administrator continuity marker
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - exec
-      - "deployment/{{ instance }}"
-      - --
-      - sh
-      - -c
-      - "cd wp-content && test -f {{ wordpress_k8s_admin_marker | basename }}"
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _wordpress_k8s_admin_marker
-  failed_when: false
-  changed_when: false
-
-- name: WordPress Kubernetes | Read the administrator continuity marker
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - exec
-      - "deployment/{{ instance }}"
-      - --
-      - sh
-      - -c
-      - "cd wp-content && cat {{ wordpress_k8s_admin_marker | basename }}"
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _wordpress_k8s_admin_marker_content
-  when: _wordpress_k8s_admin_marker.rc == 0
-  changed_when: false
-  no_log: true
-
 - name: WordPress Kubernetes | Read the canonical administrator credential
   ansible.builtin.set_fact:
     _wordpress_k8s_admin_password_recorded: >-
@@ -117,66 +78,19 @@
          | default('', true) }}
   no_log: true
 
-- name: WordPress Kubernetes | Validate an existing administrator marker
-  ansible.builtin.assert:
-    that:
-      - _wordpress_k8s_admin_password_recorded | length > 0
-      - _wordpress_k8s_admin_marker_content.stdout | trim == app_config.app.admin_user ~ '\n' ~ app_config.app.admin_email
-    fail_msg: >-
-      WordPress {{ instance }} is initialized but its administrator credential is missing
-      from Vaultwarden item homelab-infra/apps/{{ instance }}, or the configured login and
-      email no longer match the marker in its wp-content volume.
-  when: _wordpress_k8s_admin_marker.rc == 0
-  no_log: true
-
-- name: WordPress Kubernetes | Detect the current database install when no marker exists
-  when: _wordpress_k8s_admin_marker.rc != 0
+- name: WordPress Kubernetes | Detect the database install and administrator continuity
   block:
     - name: WordPress Kubernetes | Run the read-only install check
       ansible.builtin.include_tasks: run-cli-job.yml
       vars:
         wordpress_k8s_cli_mode: detect
 
-    - name: WordPress Kubernetes | Read the database install state recorded by the Job
-      block:
-        - name: WordPress Kubernetes | Read the install state from its content volume
-          ansible.builtin.command:
-            argv:
-              - k3s
-              - kubectl
-              - --namespace
-              - "{{ k8s_namespace }}"
-              - exec
-              - "deployment/{{ instance }}"
-              - --
-              - sh
-              - -c
-              - "cd wp-content && cat {{ wordpress_k8s_install_state_marker | basename }}"
-          delegate_to: "{{ k8s_api_host }}"
-          become: true
-          register: _wordpress_k8s_install_state_marker_content
-          changed_when: false
-
-        - name: WordPress Kubernetes | Record the database install state
-          ansible.builtin.set_fact:
-            _wordpress_k8s_install_state: "{{ _wordpress_k8s_install_state_marker_content.stdout | trim }}"
-      always:
-        - name: WordPress Kubernetes | Remove the temporary install state marker
-          ansible.builtin.command:
-            argv:
-              - k3s
-              - kubectl
-              - --namespace
-              - "{{ k8s_namespace }}"
-              - exec
-              - "deployment/{{ instance }}"
-              - --
-              - sh
-              - -c
-              - "cd wp-content && rm -f {{ wordpress_k8s_install_state_marker | basename }}"
-          delegate_to: "{{ k8s_api_host }}"
-          become: true
-          changed_when: true
+    - name: WordPress Kubernetes | Record the detected database and marker state
+      ansible.builtin.set_fact:
+        _wordpress_k8s_install_state: >-
+          {{ 'installed' if k8s_job_exit_code | int in [0, 41]
+             else 'uninstalled' if k8s_job_exit_code | int == 42 else 'unknown' }}
+        _wordpress_k8s_admin_marker_present: "{{ k8s_job_exit_code | int == 0 }}"
 
     - name: WordPress Kubernetes | Require the recorded login for an existing site
       ansible.builtin.assert:
@@ -185,8 +99,8 @@
           - _wordpress_k8s_install_state != 'installed' or _wordpress_k8s_admin_password_recorded | length > 0
         fail_msg: >-
           WordPress {{ instance }} already has an initialized database but no matching
-          administrator continuity marker or canonical password. Restore the WordPress
-          Vaultwarden item and source content before deploying this instance.
+          administrator login and canonical password. Restore the WordPress Vaultwarden
+          item and source content before deploying this instance.
       no_log: true
 
 - name: WordPress Kubernetes | Reuse or generate its initial administrator credential
@@ -228,32 +142,7 @@
   ansible.builtin.include_tasks: run-cli-job.yml
   vars:
     wordpress_k8s_cli_mode: initialize
-  when: _wordpress_k8s_admin_marker.rc != 0
-
-- name: WordPress Kubernetes | Verify the initialization marker was recorded
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - exec
-      - "deployment/{{ instance }}"
-      - --
-      - sh
-      - -c
-      - "cd wp-content && test -f {{ wordpress_k8s_admin_marker | basename }}"
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _wordpress_k8s_admin_marker_after_init
-  changed_when: false
-  when: _wordpress_k8s_admin_marker.rc != 0
-
-- name: WordPress Kubernetes | Require the initialization marker
-  ansible.builtin.assert:
-    that: _wordpress_k8s_admin_marker_after_init.rc == 0
-    fail_msg: "WordPress {{ instance }} did not record its administrator continuity marker."
-  when: _wordpress_k8s_admin_marker.rc != 0
+  when: not (_wordpress_k8s_admin_marker_present | bool)
 
 - name: WordPress Kubernetes | Describe the external database recovery step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml

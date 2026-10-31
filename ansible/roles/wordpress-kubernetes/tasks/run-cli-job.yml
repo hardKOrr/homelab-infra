@@ -9,3 +9,4 @@
     k8s_job_name: "{{ instance }}-wordpress-{{ wordpress_k8s_cli_mode }}"
     k8s_job_manifest: "{{ _wordpress_k8s_cli_job_manifest }}"
     k8s_job_timeout: 900
+    k8s_job_expected_exit_codes: "{{ [41, 42] if wordpress_k8s_cli_mode == 'detect' else [] }}"
