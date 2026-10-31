@@ -10,7 +10,7 @@
 actual_budget_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -23,8 +23,12 @@ actual_budget_defaults:
   app:
     image: docker.io/actualbudget/actual-server:latest
     port: 5006
+    container_port: 5006
     data_path: "/opt/{{ instance }}/data"
     service_name: actual_server
+    # Used only by the Kubernetes backend. Omitting storageClassName selects the
+    # cluster's default StorageClass, whose volumes are node-pinned and retained.
+    storage: 5
 
   routing:
     subdomain: actual-budget
@@ -42,3 +46,11 @@ actual_budget_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

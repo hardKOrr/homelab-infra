@@ -10,8 +10,9 @@
 #
 # Nothing restores on a schedule or on a failure. `restore_overwrite: false` is the plan:
 # the same Job in the same namespace runs the client against the named snapshot and writes
-# nothing to the target. `true` stops the target, runs the Job, and starts it again. A
-# failed restore leaves every stopped Deployment at zero replicas.
+# nothing to the target. `true` marks and stops the target, runs the Job, and starts it
+# again. A failed or interrupted restore leaves its Deployment marked and at zero so a
+# scheduled backup refuses to archive a possibly partial state.
 #
 # Inputs:
 #   instance, app_config                     the SOURCE instance and its merged config
@@ -168,26 +169,44 @@
       changed_when: true
 
 # ── Restore: the destructive path ─────────────────────────────────────────────
+- name: k8s restore | Read each stopped Deployment's pod selector
+  when: restore_overwrite | bool
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - get
+      - "deployment/{{ item }}"
+      - -o
+      - jsonpath={.spec.selector.matchLabels}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop: "{{ k8s_recovery.stop }}"
+  register: _kr_selectors
+  changed_when: false
+
+- name: k8s restore | Mark the target Deployments as restore-in-progress
+  when: restore_overwrite | bool
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - annotate
+      - "deployment/{{ item }}"
+      - homelab-infra.io/recovery-state=restore-in-progress
+      - --overwrite
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop: "{{ k8s_recovery.stop }}"
+  changed_when: true
+
 - name: k8s restore | Restore the snapshot into the target
   when: restore_overwrite | bool
   block:
-    - name: k8s restore | Read each stopped Deployment's pod selector
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - get
-          - "deployment/{{ item }}"
-          - -o
-          - jsonpath={.spec.selector.matchLabels}
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      loop: "{{ k8s_recovery.stop }}"
-      register: _kr_selectors
-      changed_when: false
-
     # Stopped, not left running: the application would otherwise read and write state
     # that is being replaced underneath it.
     - name: k8s restore | Stop the target application
@@ -335,6 +354,23 @@
       loop: "{{ k8s_recovery.stop + (k8s_recovery.restart | default([])) }}"
       changed_when: false
 
+    - name: k8s restore | Clear the target restore marker
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - annotate
+          - "deployment/{{ item }}"
+          - homelab-infra.io/recovery-state-
+          - --overwrite
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      register: _kr_restore_marker_removed
+      changed_when: "'not annotated' not in (_kr_restore_marker_removed.stdout | default(''))"
+
     - name: k8s restore | Mark the restore complete
       ansible.builtin.set_fact:
         _application_restore_complete: true
@@ -350,6 +386,23 @@
   # Left down on purpose: a target holding half of one point in time and half of another
   # is worse in front of users than stopped. The operator decides.
   rescue:
+    - name: k8s restore | Mark the target Deployments as restore-failed
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - annotate
+          - "deployment/{{ item }}"
+          - homelab-infra.io/recovery-state=restore-failed
+          - --overwrite
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ k8s_recovery.stop }}"
+      failed_when: false
+      changed_when: true
+
     - name: k8s restore | Keep the target stopped
       ansible.builtin.command:
         argv:

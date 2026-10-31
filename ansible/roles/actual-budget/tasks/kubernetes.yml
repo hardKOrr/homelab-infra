@@ -1,0 +1,41 @@
+---
+# Deploy Actual Budget into the namespace owned by this instance. The PVC stores the
+# complete /data recovery unit; the shared Kubernetes tasks own the workload and PBS jobs.
+- name: Actual Budget Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Actual Budget Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Actual Budget Kubernetes | Resolve and store the application credential
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Actual Budget Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _actual_budget_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Actual Budget Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _actual_budget_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Actual Budget Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        the Actual Budget /data volume, including its server account and budget files
+
+- name: Actual Budget Kubernetes | Initialize or verify the server password
+  ansible.builtin.include_tasks: reset-password-kubernetes.yml
+  vars:
+    actual_budget_reset_password: "{{ _actual_budget_server_password }}"

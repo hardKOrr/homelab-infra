@@ -16,6 +16,8 @@
 #                 part of existing recovery points; keep them when changing a role.
 #     database    optional k8s_database_step from tasks/database/kubernetes-recovery-step.yml
 #     stop        optional Deployment names to quiesce while the PVC archive is read
+#     stop_replicas optional positive declared replica count for a Deployment marked as
+#                   quiesced by an interrupted backup (defaults to one)
 #     describe    one line naming what the recovery point holds, for the operator
 
 - name: k8s backup | Assert inputs
@@ -27,12 +29,21 @@
       - "'database' not in (k8s_recovery.archives | map(attribute='name'))"
       - k8s_recovery.stop | default([]) is sequence
       - k8s_recovery.stop | default([]) is not string
+      - k8s_recovery.stop | default([]) | unique | length == k8s_recovery.stop | default([]) | length
       - >-
         (k8s_recovery.stop | default([])
          | reject('match', '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') | list | length) == 0
+      - >-
+        (k8s_recovery.stop | default([]) | length == 0)
+        or (k8s_recovery.stop_replicas | default(1) | int > 0)
+      - >-
+        not (k8s_recovery.stop | default([]) | length > 0
+             and k8s_recovery.database | default({}) | length > 0)
     fail_msg: >-
       recovery-backup.yml needs k8s_recovery.archives, each with a unique name other than
-      `database` (the dump's archive), and optional DNS-label Deployment names in stop.
+      `database` (the dump's archive). Optional stop names must be unique DNS-label
+      Deployment names; quiescing does not combine with a database init-container dump,
+      and stop_replicas must be positive.
 
 - name: k8s backup | Resolve the lab's PBS target
   ansible.builtin.include_tasks: ../backup/resolve-pbs-target.yml
@@ -89,6 +100,7 @@
           archives: "{{ k8s_recovery.archives }}"
           database: "{{ k8s_recovery.database | default({}, true) }}"
           stop: "{{ k8s_recovery.stop | default([]) }}"
+          stop_replicas: "{{ k8s_recovery.stop_replicas | default(1) | int }}"
 
     # The PBS token is canonical in the Vaultwarden item `homelab-infra/backups`, copied
     # here, never generated here. A namespace Secret is deleted with the namespace.

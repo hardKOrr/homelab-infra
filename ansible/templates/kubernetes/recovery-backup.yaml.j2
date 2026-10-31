@@ -51,7 +51,7 @@ rules:
 {% for deployment in stop %}
       - {{ deployment }}
 {% endfor %}
-    verbs: [get]
+    verbs: [get, patch]
   - apiGroups: [apps]
     resources: [deployments/scale]
     resourceNames:
@@ -279,6 +279,8 @@ spec:
 {% if stop %}
                 - name: K8S_RECOVERY_DEPLOYMENTS
                   value: {{ stop | to_json | to_json }}
+                - name: K8S_RECOVERY_STOP_REPLICAS
+                  value: "{{ _kr.stop_replicas | default(1) | int }}"
                 - name: POD_NAMESPACE
                   valueFrom:
                     fieldRef:

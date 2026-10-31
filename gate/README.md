@@ -51,7 +51,8 @@ templates.
 - `test-emby-hardware-transcoding.py`: Emby's VA-API settings and DRI group access follow the declared device, converge on repeat runs, and turn hardware encoding off when no device is declared.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.
-- `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
+- `test-actual-budget-password.py`: Actual Budget's Docker and Kubernetes terminal password exchanges and failure handling.
+- `test-actual-budget-kubernetes.py`: Actual Budget's opt-in Kubernetes workload, shared PBS recovery path, and Docker default.
 - `test-plex-recovery.py`: Plex native capability/dispatch, non-mutating restore preview, the source-group check and both server-token guards.
 - `test-plex-hardware-transcoding.py`: Plex hardware decoding/encoding preferences follow the declared `/dev/dri` device and converge on repeat runs.
 - `test-ntfy-recovery.py`: native auth/cache archives and the two paths, owner and auth-database checks Ntfy gives the restore swap.

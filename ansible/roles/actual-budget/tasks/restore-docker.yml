@@ -1,0 +1,31 @@
+---
+# Restore Actual Budget's data directory through the shared swap. The generic Restore App
+# playbook only dispatches here for applications that explicitly declare this path;
+# ordinary Docker applications remain covered by their whole-guest PBS snapshots.
+
+- name: Actual Budget restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Actual Budget restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Actual Budget restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.data_path }}"
+        owner: 1001
+        group: 1001
+        mode: "0750"
+    recovery_swap_stop_services: ["{{ app_config.app.service_name }}"]
+    recovery_swap_compose_project: "{{ actual_budget_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

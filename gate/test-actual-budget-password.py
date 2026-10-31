@@ -31,6 +31,26 @@ os.write(1,b"Password changed!\\n")
 
 
 def main():
+    docker_command = helper.build_command("docker", ["/opt/actual-budget", "actual_server"])
+    assert docker_command == [
+        "docker", "compose", "--project-directory", "/opt/actual-budget", "exec",
+        "actual_server", "node", "/app/src/scripts/reset-password.js",
+    ]
+    kubernetes_command = helper.build_command(
+        "kubernetes", ["app-actual-budget", "actual-budget-pod", "actual-budget"]
+    )
+    assert kubernetes_command == [
+        "k3s", "kubectl", "--namespace", "app-actual-budget", "exec", "--stdin", "--tty",
+        "actual-budget-pod", "--container", "actual-budget", "--", "node",
+        "/app/src/scripts/reset-password.js",
+    ]
+    try:
+        helper.build_command("kubernetes", ["app-actual-budget"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an incomplete Kubernetes target was accepted")
+
     with tempfile.TemporaryDirectory() as directory:
         script = Path(directory) / "native-prompt.py"
         script.write_text(fixture)
