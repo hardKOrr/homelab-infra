@@ -2,10 +2,11 @@
 
 Navidrome defaults to Docker on the media stack. Setting `hosting.method: kubernetes`
 deploys one instance namespace with a default-StorageClass PVC for `/data`. The declared
-music library stays on the existing media share: every Kubernetes node must mount that
-share at the configured `media_storage.mounts[].path`, and the pod mounts only
-`media_storage.library` plus `app.library_subpath` at `/music` as read-only. Deploy checks
-the share mount and library directory on every cluster node before creating the namespace.
+music library stays on its existing NFSv4 share: Deploy resolves the source behind the
+configured `media_storage.mounts[].host` on the configured Proxmox node, then gives the pod
+only `media_storage.library` plus `app.library_subpath` at `/music` as a read-only NFS
+volume. Kubernetes node access to the NFS endpoint is opened through the cluster-node
+firewall alias.
 
 Both hosting methods use Navidrome's application data as one PBS recovery unit. Docker
 uses the shared PBS client and restore swap; Kubernetes uses the shared recovery CronJob

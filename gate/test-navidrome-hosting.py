@@ -37,6 +37,26 @@ def main():
         for play in playbook
     )
     assert "tasks/kubernetes/open-app-access.yml" in str(playbook)
+    assert any(
+        task.get("ansible.builtin.include_tasks")
+        == "../../roles/navidrome/tasks/resolve-kubernetes-library.yml"
+        for play in playbook
+        if play["name"] == "Navidrome | Prepare Kubernetes"
+        for task in play["tasks"]
+    )
+    library = read_yaml("ansible/roles/navidrome/tasks/resolve-kubernetes-library.yml")
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "findmnt"
+        and task.get("delegate_to") == "{{ homelabinfra_config.proxmox.node }}"
+        and task.get("no_log") is True
+        for task in library
+    )
+    assert any(
+        task.get("ansible.builtin.set_fact", {}).get("app_config")
+        and task.get("no_log") is True
+        and "navidrome-music-library" in str(task.get("vars", {}))
+        for task in library
+    )
 
     kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
@@ -47,8 +67,11 @@ def main():
     manifest = (REPO / "ansible/roles/navidrome/templates/manifest.yaml.j2").read_text()
     assert "name: {{ instance }}-data" in manifest
     assert "storageClassName:" not in manifest
-    assert "hostPath:" in manifest
-    assert "path: {{ _navidrome_music_path | to_json }}" in manifest
+    assert "nfs:" in manifest
+    assert "server: {{ _navidrome_nfs_server_ip | to_json }}" in manifest
+    assert "path: {{ _navidrome_nfs_path | to_json }}" in manifest
+    assert "readOnly: true" in manifest
+    assert "hostPath:" not in manifest
     assert "mountPath: /music\n              readOnly: true" in manifest
     assert "runAsUser: {{ _navidrome_uid }}" in manifest
     assert "ND_DATAFOLDER" in manifest and "ND_MUSICFOLDER" in manifest

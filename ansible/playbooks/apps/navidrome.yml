@@ -92,6 +92,10 @@
   become: false
   gather_facts: false
   tasks:
+    - name: Resolve Navidrome's existing library share for Kubernetes
+      ansible.builtin.include_tasks: ../../roles/navidrome/tasks/resolve-kubernetes-library.yml
+      when: app_config.hosting.method == 'kubernetes'
+
     - name: Refresh inventory for cluster access
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'

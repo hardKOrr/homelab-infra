@@ -1036,6 +1036,58 @@ def navidrome_rendering():
     ), "'\"/srv/fixtures/media:/music' not in compose"
     assert ":rw" not in compose, "':rw' not in compose"
     assert '"14533:4533"' in compose, "'\"14533:4533\"' in compose"
+
+    manifest = render(
+        read("ansible/roles/navidrome/templates/manifest.yaml.j2"),
+        {
+            "instance": "navidrome-fixture",
+            "navidrome_fqdn": "navidrome.example.test",
+            "app_config": {
+                "app": {
+                    "image": "deluan/navidrome:latest",
+                    "storage": 5,
+                    "port": 14533,
+                    "container_port": 4533,
+                    "extra_env": {},
+                }
+            },
+            "homelabinfra_config": {"timezone": "UTC"},
+            "_navidrome_uid": 1313,
+            "_navidrome_gid": 1313,
+            "_navidrome_nfs_server_ip": "192.0.2.50",
+            "_navidrome_nfs_path": "/exports/media/music",
+        },
+    )
+    assert "storageClassName:" not in manifest, "the PVC selects the cluster default class"
+    assert 'server: "192.0.2.50"' in manifest, "NFS server renders as YAML string"
+    assert 'path: "/exports/media/music"' in manifest, "only the music subdirectory is mounted"
+    assert manifest.count("readOnly: true") == 2, "both NFS volume and pod mount are read-only"
+    assert "hostPath:" not in manifest, "cluster nodes do not need a local share mount"
+
+    library_tasks = yaml.safe_load(
+        read("ansible/roles/navidrome/tasks/resolve-kubernetes-library.yml")
+    )
+    source_task = task_named(library_tasks, "Resolve the NFS source and the music subdirectory")
+    path_task = task_named(
+        library_tasks, "Resolve the NFS export path for Navidrome's music subdirectory"
+    )
+    source_context = {
+        "_navidrome_source_mount": {
+            "source": "192.0.2.50:/exports",
+            "target": "/srv/nfs",
+        },
+        "_navidrome_library_mount": {
+            "host": "/srv/nfs/media",
+            "path": "/mnt/data",
+        },
+        "_navidrome_music_path": "/mnt/data/music",
+    }
+    for key, expression in source_task["ansible.builtin.set_fact"].items():
+        source_context[key] = render(expression, source_context)
+    for key, expression in path_task["ansible.builtin.set_fact"].items():
+        source_context[key] = render(expression, source_context)
+    assert source_context["_navidrome_nfs_path"] == "/exports/media/music"
+
     role_tasks = yaml.safe_load(read("ansible/roles/navidrome/tasks/resolve-library.yml"))
     ownership_guard = task_named(
         role_tasks, "Assert Navidrome storage owner matches its container user"

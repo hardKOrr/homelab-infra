@@ -91,9 +91,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ instance }}-data
         - name: music
-          hostPath:
-            path: {{ _navidrome_music_path | to_json }}
-            type: Directory
+          nfs:
+            server: {{ _navidrome_nfs_server_ip | to_json }}
+            path: {{ _navidrome_nfs_path | to_json }}
+            readOnly: true
 ---
 apiVersion: v1
 kind: Service
