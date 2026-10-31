@@ -152,6 +152,7 @@
       - >-
         cd /var/www/html && php bin/console mautic:install
         {{ ('https://' ~ mautic_fqdn) | quote }}
+        {{ ('--admin_username=' ~ app_config.app.admin_user) | quote }}
         {{ ('--admin_email=' ~ app_config.app.admin_user ~ '@'
             ~ homelabinfra_infra.domain) | quote }}
         {{ ('--admin_password=' ~ _mautic_admin_password) | quote }} --force
