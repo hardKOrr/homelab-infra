@@ -1,0 +1,109 @@
+---
+- name: Ntfy Kubernetes | Resolve estate-scoped routing facts
+  ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+- name: Ntfy Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Ntfy Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Ntfy Kubernetes | Resolve the public hostname and publish endpoint
+  ansible.builtin.set_fact:
+    _ntfy_domain: >-
+      {{ homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_fqdn: >-
+      {{ app_config.routing.subdomain | default(instance, true) }}.{{
+         homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_publish_host_url: >-
+      https://{{ app_config.routing.subdomain | default(instance, true) }}.{{
+      homelabinfra_infra.domain
+      | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_http_base_url: "http://{{ k8s_cluster_facts.ingress_vip }}"
+    ntfy_http_host_header: >-
+      {{ app_config.routing.subdomain | default(instance, true) }}.{{
+         homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+
+- name: Ntfy Kubernetes | Open declared cluster network access
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Ntfy Kubernetes | Save the publish credential before applying it
+  ansible.builtin.include_tasks: credentials-prepare.yml
+
+- name: Ntfy Kubernetes | Sync the publish password into the instance namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      publish-password: "{{ _ntfy_password }}"
+  no_log: true
+
+- name: Ntfy Kubernetes | Render the workload and server configuration
+  ansible.builtin.set_fact:
+    _ntfy_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Ntfy Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _ntfy_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Ntfy Kubernetes | Wait for the public health endpoint
+  ansible.builtin.uri:
+    url: "{{ ntfy_http_base_url }}/v1/health"
+    headers:
+      Host: "{{ ntfy_http_host_header }}"
+    status_code: 200
+  register: _ntfy_health
+  until: _ntfy_health.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Ntfy Kubernetes | Set the Ntfy CLI command adapter
+  ansible.builtin.set_fact:
+    ntfy_cli_prefix:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - ntfy
+    ntfy_cli_delegate: "{{ k8s_api_host }}"
+
+- name: Ntfy Kubernetes | Provision the publish account and token
+  ansible.builtin.include_tasks: credentials-provision.yml
+
+- name: Ntfy Kubernetes | Publish the current endpoint and token to dependent jobs
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ (homelabinfra_infra | default({}))
+         | combine({'notifications': {
+             'provider': 'ntfy',
+             'instance': instance,
+             'host': ntfy_publish_host,
+             'topic': app_config.app.topic,
+             'token': ntfy_publish_token
+           }}, recursive=True) }}
+
+- name: Ntfy Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the Ntfy auth database, retained messages and attachment cache as one
+        application-consistent recovery point

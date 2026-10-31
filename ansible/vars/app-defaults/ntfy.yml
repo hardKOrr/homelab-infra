@@ -1,12 +1,13 @@
 ---
 # Default Proxmox and app configuration for Ntfy — the platform notification hub.
+# It remains a native LXC by default; Kubernetes is selected per instance.
 # Users override specific values in config/apps/ntfy.yml.
 # This file is git-managed — git pull may update these defaults.
 
 ntfy_defaults:
   hosting:
     method: native
-    supported: [native-lxc]
+    supported: [native-lxc, kubernetes]
     impossible: {}
   recovery:
     methods: [native]
@@ -39,6 +40,8 @@ ntfy_defaults:
 
   app:
     port: 80                    # HTTP listener (publish + subscribe + web UI)
+    image: binwiederhier/ntfy:latest
+    storage: 4                   # GB — auth database, message cache and attachments
     data_path: /var/lib/ntfy    # auth database lives here
     service_name: ntfy          # systemd unit — playbooks/apps/remove.yml stops this
     cache_path: /var/cache/ntfy # message cache + attachments
@@ -64,6 +67,17 @@ ntfy_defaults:
   backup:
     enabled: true
     application_consistent: true
+    schedule: "0 3 * * *"
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

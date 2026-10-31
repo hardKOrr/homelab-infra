@@ -1,0 +1,80 @@
+---
+# Ntfy's auth database and message/attachment cache share one claim and one recovery
+# archive. The shared Job restores the complete PVC into the already deployed namespace.
+- name: Ntfy Kubernetes restore | Restore auth and cache through the shared recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Ntfy
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+          owner: "0:0"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the Ntfy auth database, retained messages and attachment cache as one
+        application-consistent recovery point
+      verify:
+        - >-
+          Sign in with the credential Deploy provisions, then verify the Ntfy drill
+          owner's topic access and the cached-message canary.
+
+# A fresh Deploy creates a new platform publish token in its empty auth database. The
+# restored database is authoritative, so recover its token into the canonical credential
+# and generated-facts registry before the next Deploy or backup job reads them.
+- name: Ntfy Kubernetes restore | Resolve the target estate
+  ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ restore_target_config.routing.estate | default('') }}"
+  when:
+    - restore_overwrite | bool
+    - restore_target == instance
+
+- name: Ntfy Kubernetes restore | Set the target credential command inputs
+  ansible.builtin.set_fact:
+    _ntfy_domain: >-
+      {{ homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_publish_host_url: >-
+      https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{
+      homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_http_base_url: "http://{{ k8s_cluster_facts.ingress_vip }}"
+    ntfy_http_host_header: >-
+      {{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{
+      homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain, true) }}
+    ntfy_cli_prefix:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ restore_target }}"
+      - --
+      - ntfy
+    ntfy_cli_delegate: "{{ k8s_api_host }}"
+  when:
+    - restore_overwrite | bool
+    - restore_target == instance
+
+- name: Ntfy Kubernetes restore | Reconcile the restored publish credential
+  ansible.builtin.include_tasks: credentials.yml
+  when:
+    - restore_overwrite | bool
+    - restore_target == instance
+
+- name: Ntfy Kubernetes restore | Record the token from the restored auth database
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    generated_facts_service: notifications
+    generated_facts_data:
+      provider: ntfy
+      instance: "{{ restore_target }}"
+      host: "{{ ntfy_publish_host }}"
+      topic: "{{ app_config.app.topic }}"
+      token: "{{ ntfy_publish_token }}"
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_estate: "{{ restore_target_config.routing.estate | default('') }}"
+  when:
+    - restore_overwrite | bool
+    - restore_target == instance

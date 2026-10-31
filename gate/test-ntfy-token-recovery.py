@@ -11,9 +11,9 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-ROLE = yaml.safe_load((REPO / "ansible/roles/ntfy/tasks/main.yml").read_text())
-CREATE = copy.deepcopy(next(task for task in ROLE if task.get("name") == "Create access token"))
-SELECT = copy.deepcopy(next(task for task in ROLE if task.get("name") == "Select the effective access token"))
+PROVISION = yaml.safe_load((REPO / "ansible/roles/ntfy/tasks/credentials-provision.yml").read_text())
+CREATE = copy.deepcopy(next(task for task in PROVISION if task.get("name") == "Create access token"))
+SELECT = copy.deepcopy(next(task for task in PROVISION if task.get("name") == "Select the effective access token"))
 
 
 def run_case(name, recorded_token, guest_token, expected_token, should_create):
@@ -51,6 +51,7 @@ def run_case(name, recorded_token, guest_token, expected_token, should_create):
                             "homelabinfra_infra": {
                                 "notifications": {"token": recorded_token}
                             },
+                            "ntfy_cli_delegate": "localhost",
                             "_ntfy_existing_token": guest_token,
                             "fixture_minted_token": "tk_fixtureNew",
                             "fixture_expected_token": expected_token,

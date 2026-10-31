@@ -55,8 +55,22 @@ def current_combination(slug, defaults):
             or "vm"
         )
     elif "tasks/kubernetes/open-app-access.yml" in source or "kubernetes.core." in source:
-        method = "kubernetes"
-        guest_type = ""
+        # A native app may add Kubernetes as an opt-in path. Its existing guest
+        # creation remains the default; a Kubernetes-only app has no native create task.
+        if any(path in source for path in (
+            "tasks/proxmox/lxc-create.yml",
+            "tasks/proxmox/vm-create.yml",
+        )):
+            method = "native"
+            proxmox = defaults.get("proxmox", {})
+            guest_type = (
+                proxmox.get("guest_type")
+                or proxmox.get("type")
+                or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
+            )
+        else:
+            method = "kubernetes"
+            guest_type = ""
     elif re.search(r"community\.docker\.|docker_compose_v2|docker_container", source):
         method = "docker"
         proxmox = defaults.get("proxmox", {})

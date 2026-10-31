@@ -83,6 +83,15 @@ def check_resolver():
     run_case({"ntfy": guest(tags=["_+lab", "_ntfy"])}, ["ntfy"])
     run_case({"ntfy": guest()}, ["ntfy"])
     run_case({"ntfy": guest()}, ["ntfy"], guest_type="lxc")
+    # A Kubernetes app record tags every cluster VM with _<instance>. Switching back to
+    # the native LXC must ignore those tagged VMs and still reuse its exact-name LXC.
+    run_case({
+        "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
+        "ntfy": guest(),
+    }, ["ntfy"], guest_type="lxc")
+    run_case({
+        "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
+    }, [], guest_type="lxc")
     run_case({"other": guest("ntfy-other")}, [])
     run_case({"ntfy-a": guest(), "ntfy-b": guest()}, failure="Multiple _+lab guests are named ntfy")
     run_case({"ntfy": guest(vmtype="qemu")}, failure="Refusing to adopt it", guest_type="lxc")

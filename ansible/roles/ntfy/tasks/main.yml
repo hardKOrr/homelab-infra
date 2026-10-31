@@ -1,5 +1,6 @@
 ---
 # ntfy role — native LXC deployment (official .deb from GitHub releases).
+# The opt-in Kubernetes path is in kubernetes.yml and uses the official upstream image.
 # Called from Play 2 of playbooks/apps/ntfy.yml. Target: dedicated LXC.
 #
 # Install channel: upstream publishes a Debian package per release
@@ -133,199 +134,16 @@
   changed_when: false
 
 # ── Publish account ───────────────────────────────────────────────────────────
-- name: Resolve publish credentials
+- name: Set native credential command inputs
   ansible.builtin.set_fact:
-    _ntfy_user: "{{ app_config.app.user | default('homelab') }}"
-    # Reuse whatever bootstrap already handed to Watchtower/PBS/etc; only a lab
-    # with no recorded password (first deploy, or a lost facts.yml) generates one.
-    _ntfy_password: >-
-      {{ homelabinfra_infra.notifications.password
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-    _ntfy_password_known: >-
-      {{ homelabinfra_infra.notifications.password | default('') | length > 0 }}
-    # Matches the START of `ntfy user list`'s line for this account, which carries trailing
-    # detail: "user homelab (role: user, tier: none)". The trailing (\s|$) stops `homelab`
-    # from also matching a `homelab-admin`, and regex_escape keeps a username with regex
-    # punctuation from being read as a pattern.
-    _ntfy_user_re: >-
-      {{ '^user ' ~ (app_config.app.user | default('homelab') | regex_escape) ~ '(\s|$)' }}
-  no_log: true
+    ntfy_cli_prefix: [ntfy]
+    ntfy_cli_delegate: "{{ inventory_hostname }}"
+    ntfy_publish_host_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    ntfy_http_base_url: "http://localhost:{{ app_config.app.port }}"
+    ntfy_http_host_header: ""
 
-# The item is stored twice in a run: here, before `ntfy user change-pass` applies the
-# password (so a generated password is never applied without being recorded), and again
-# below once the access token exists. This first write must therefore MERGE — it does
-# not know the token, and a canonical write would delete the token the previous run
-# stored, leaving the vault without it until the second write lands and permanently if
-# the run failed in between.
-- name: Store publish account secret before applying it
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: homelab-infra/notifications
-    vault_item_merge: true
-    vault_item_fields:
-      provider: ntfy
-      instance: "{{ instance }}"
-      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
-      topic: "{{ app_config.app.topic }}"
-      user: "{{ _ntfy_user }}"
-      password: "{{ _ntfy_password }}"
-    vault_item_secret_fields: [password]
-
-- name: List existing ntfy users
-  ansible.builtin.command:
-    cmd: ntfy user list
-  register: _ntfy_user_list
-  changed_when: false
-
-# The existence test matches the line PREFIX, with multiline, because `ntfy user list`
-# prints trailing detail and the anchors were wrong in two ways:
-#
-#   user homelab (role: user, tier: none)
-#     - read-write access to topic homelab
-#
-# The old pattern was '^user homelab$', which cannot match that line — and without
-# multiline=True, ^ and $ anchor to the whole STRING rather than each line, so it could
-# not have matched even if the format were bare. The test therefore always said "absent":
-# `user add` ran on every deploy and failed the moment the account already existed, so
-# this role was not idempotent and every re-run of Ntfy died here. It only ever passed
-# because it had never been run twice.
-- name: Create publish account
-  ansible.builtin.command:
-    cmd: "ntfy user add --role=user {{ _ntfy_user }}"
-  environment:
-    NTFY_PASSWORD: "{{ _ntfy_password }}"
-  when: _ntfy_user_list.stdout is not search(_ntfy_user_re, multiline=True)
-  changed_when: true
-  no_log: true
-
-# Only fires when the canonical item did not hold a password; the newly generated value
-# was already stored and verified before this reset.
-- name: Reset publish account password after creating its vault value
-  ansible.builtin.command:
-    cmd: "ntfy user change-pass {{ _ntfy_user }}"
-  environment:
-    NTFY_PASSWORD: "{{ _ntfy_password }}"
-  when:
-    - not (_ntfy_password_known | bool)
-    - _ntfy_user_list.stdout is search(_ntfy_user_re, multiline=True)
-  changed_when: true
-  no_log: true
-
-# ntfy access is declarative — re-applying the same grant is a no-op — so the grant
-# is read first and applied only when it is missing. `ntfy access <user>` prints one
-# header line per user followed by an indented line per grant:
-#   user homelab (role: user, tier: none)
-#   - read-write access to topic homelab
-- name: Read the publish account's current topic access
-  ansible.builtin.command:
-    cmd: "ntfy access {{ _ntfy_user }}"
-  register: _ntfy_access_list
-  changed_when: false
-
-- name: Grant read-write access on the homelab topic
-  ansible.builtin.command:
-    cmd: "ntfy access {{ _ntfy_user }} {{ app_config.app.topic }} rw"
-  vars:
-    _ntfy_access_re: >-
-      ^-\s+read-write access to topic {{ app_config.app.topic | regex_escape }}\s*$
-  when: not (_ntfy_access_list.stdout is search(_ntfy_access_re, multiline=True))
-  changed_when: true
-
-# ── Access token ──────────────────────────────────────────────────────────────
-# Tools publish with a bearer token rather than the password, so a rotated
-# password does not invalidate every configured notifier at once.
-- name: List existing access tokens
-  ansible.builtin.command:
-    cmd: "ntfy token list {{ _ntfy_user }}"
-  register: _ntfy_token_list
-  changed_when: false
-  no_log: true
-
-- name: Recover the homelab-infra token from the guest
-  ansible.builtin.set_fact:
-    _ntfy_existing_token: >-
-      {{ (_ntfy_token_list.stdout_lines | default([])
-          | select('search', ntfy_token_label)
-          | map('regex_search', 'tk_[A-Za-z0-9]+')
-          | select('string') | list | first | default('')) }}
-  no_log: true
-
-- name: Create access token
-  ansible.builtin.command:
-    cmd: "ntfy token add --label {{ ntfy_token_label }} {{ _ntfy_user }}"
-  register: _ntfy_token_add
-  when: _ntfy_existing_token | length == 0
-  changed_when: true
-  no_log: true
-
-- name: Select the effective access token
-  ansible.builtin.set_fact:
-    # Conditional chain rather than chained `| default(..., true)`: a regex_search
-    # that matches nothing returns None, which would propagate through default()
-    # and make the assert below fail on `None | length` instead of on an empty
-    # string. The guest's labeled token is authoritative: a previously recorded
-    # token may refer to an earlier disposable guest, so only use a token that
-    # `ntfy token list` found on this guest. If none exists, use the one just minted.
-    _ntfy_token: >-
-      {{ _ntfy_existing_token if _ntfy_existing_token | length > 0
-         else (_ntfy_token_add.stdout | default('')
-               | regex_search('tk_[A-Za-z0-9]+') | default('', true)) }}
-  no_log: true
-
-- name: Assert a publish token is available
-  ansible.builtin.assert:
-    that: _ntfy_token | length > 0
-    fail_msg: >-
-      Could not obtain an ntfy access token for {{ _ntfy_user }}. Check
-      `ntfy token list {{ _ntfy_user }}` on the guest.
-
-- name: Store and verify the effective publish credentials
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: homelab-infra/notifications
-    vault_item_fields:
-      provider: ntfy
-      instance: "{{ instance }}"
-      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
-      topic: "{{ app_config.app.topic }}"
-      user: "{{ _ntfy_user }}"
-      password: "{{ _ntfy_password }}"
-      token: "{{ _ntfy_token }}"
-    vault_item_secret_fields: [password, token]
-
-# ── Prove the closed-by-default policy actually holds ─────────────────────────
-- name: Verify authenticated publish succeeds
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/{{ app_config.app.topic }}"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ _ntfy_token }}"
-      Title: "Ntfy deployed"
-    body: "{{ instance }} is up — homelab-infra notifications route to this topic."
-    body_format: raw
-    status_code: 200
-  # A probe, not a convergence step: it proves the token works and leaves a message
-  # in the topic, but changes no managed state, so a re-run must not report `changed`.
-  changed_when: false
-  no_log: true
-
-- name: Verify anonymous publish is denied
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/{{ app_config.app.topic }}"
-    method: POST
-    body: "anonymous publish probe"
-    body_format: raw
-    status_code: [401, 403]
-  changed_when: false
-
-# ── Hand the credentials back to the playbook ─────────────────────────────────
-# Play 3 reads these off hostvars and writes the notifications registry key.
-- name: Export publish credentials to the playbook
-  ansible.builtin.set_fact:
-    ntfy_publish_user: "{{ _ntfy_user }}"
-    ntfy_publish_password: "{{ _ntfy_password }}"
-    ntfy_publish_token: "{{ _ntfy_token }}"
-  no_log: true
+- name: Provision the publish account and token
+  ansible.builtin.include_tasks: credentials.yml
 
 # ── Lab maintenance scripts ───────────────────────────────────────────────────
 - name: Install lab maintenance scripts

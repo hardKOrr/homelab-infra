@@ -55,7 +55,7 @@ def check_contract():
 
 
 def check_restore():
-    swap = swap_inputs("ntfy")
+    swap = swap_inputs("ntfy", "restore-native.yml")
     assert swap["recovery_swap_runtime"] == "native"
     assert swap["recovery_swap_archives"] == ["data.pxar", "cache.pxar"]
     data, cache = swap["recovery_swap_paths"]
