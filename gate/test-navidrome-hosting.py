@@ -51,10 +51,36 @@ def main():
         and task.get("no_log") is True
         for task in library
     )
+    source_probe = next(
+        task for task in library
+        if task.get("name") == "Check NFS service reachability from the existing media mount host"
+    )
+    assert source_probe.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
+    assert source_probe.get("ansible.builtin.wait_for", {}).get("port") == 2049
+    assert source_probe.get("delegate_to") == "{{ homelabinfra_config.proxmox.node }}"
+    assert source_probe.get("no_log") is True
+    assert any(
+        task.get("name") == "Report NFS service reachability from the existing media mount host"
+        and "NFS TCP/2049 is" in str(task)
+        for task in library
+    )
     assert any(
         task.get("ansible.builtin.set_fact", {}).get("app_config")
         and task.get("no_log") is True
         and "navidrome-music-library" in str(task.get("vars", {}))
+        and "_navidrome_nfs_firewall_sequence" in str(task.get("vars", {}))
+        for task in library
+    )
+    assert any(
+        task.get("name") == "Collect configured NFS-blocking firewall sequence numbers"
+        and "homelabinfra_infra.firewall.base.rules" in str(task)
+        and "homelabinfra_infra.firewall.base.enabled" in str(task)
+        and task.get("no_log") is True
+        for task in library
+    )
+    assert any(
+        task.get("name") == "Resolve the NFS egress rule sequence before the base policy"
+        and "_navidrome_nfs_block_sequences | min - 1" in str(task)
         for task in library
     )
 
