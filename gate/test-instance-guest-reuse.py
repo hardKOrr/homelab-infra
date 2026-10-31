@@ -91,6 +91,18 @@ def check_resolver():
     }, ["ntfy"], guest_type="lxc")
     run_case({
         "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
+        "ntfy": guest(tags=["_+lab", "_ntfy"]),
+    }, ["ntfy"], guest_type="lxc")
+    run_case({
+        "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
+        "ntfy": guest(tags=["_+lab", "_ntfy"]),
+    }, ["k3s-1"], guest_type="vm")
+    run_case({
+        "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
+        "ntfy": guest(tags=["_+lab", "_ntfy"]),
+    }, failure="Multiple guests match the instance or stack tag")
+    run_case({
+        "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy"]),
     }, [], guest_type="lxc")
     run_case({"other": guest("ntfy-other")}, [])
     run_case({"ntfy-a": guest(), "ntfy-b": guest()}, failure="Multiple _+lab guests are named ntfy")

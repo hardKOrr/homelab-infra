@@ -23,6 +23,10 @@
   ansible.builtin.include_tasks: tag-group.yml
   vars:
     tag_group_tag: "_{{ resolve_guest_instance }}"
+    tag_group_guest_type: >-
+      {{ 'lxc' if resolve_guest_type | default('') == 'lxc'
+         else 'qemu' if resolve_guest_type | default('') == 'vm'
+         else '' }}
 
 - name: Resolve instance guest | Validate an optional guest type
   ansible.builtin.assert:
@@ -32,7 +36,7 @@
 
 - name: Resolve instance guest | Start the exact-name owned guest list
   ansible.builtin.set_fact:
-    _resolve_guest_tagged_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    _resolve_guest_tagged_hosts: "{{ tag_group_hosts | default(groups[tag_group_name] | default([])) }}"
     _resolve_guest_named_owned_hosts: []
 
 - name: Resolve instance guest | Start the tagged guest list for the requested type
