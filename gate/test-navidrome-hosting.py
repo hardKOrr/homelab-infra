@@ -72,6 +72,15 @@ def main():
         and task.get("no_log") is True
         for task in nfs_probe[0]["block"]
     )
+    probe_diagnostic = next(
+        task
+        for task in nfs_probe[0]["block"]
+        if task.get("name") == "Report an NFS probe failure without private endpoints"
+    )
+    assert "_navidrome_nfs_server_ip" in str(probe_diagnostic)
+    assert "_navidrome_nfs_path" in str(probe_diagnostic)
+    assert "<NFS server>" in str(probe_diagnostic)
+    assert "<music export>" in str(probe_diagnostic)
     assert nfs_probe[0]["always"][-1].get("ansible.builtin.file", {}).get("state") == "absent"
 
     manifest = (REPO / "ansible/roles/navidrome/templates/manifest.yaml.j2").read_text()
