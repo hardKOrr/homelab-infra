@@ -157,10 +157,28 @@ def installer_arguments():
         assert not (root / "injected").exists()
 
 
+def installation_finishes_migrations():
+    names = [task.get("name") for task in kubernetes_tasks]
+    install = names.index("Mautic Kubernetes | Run the non-interactive installer")
+    migrate = names.index("Mautic Kubernetes | Finish the installed schema migrations")
+    marker = names.index("Mautic Kubernetes | Record installation on the persistent config volume")
+    converge = names.index("Mautic Kubernetes | Converge installed config")
+    assert install < migrate < marker < converge
+    task = kubernetes_tasks[migrate]
+    assert task["when"] == "_mautic_k8s_install_state.stdout | trim == 'missing'"
+    assert task["ansible.builtin.command"]["argv"][-1] == (
+        "cd /var/www/html && exec php bin/console doctrine:migrations:migrate --no-interaction"
+    )
+    assert task["no_log"] is True
+    report = task_named(kubernetes_tasks, "Mautic Kubernetes | Report a migration failure without credentials")
+    assert report["vars"]["scrub_failure_result"] == "{{ _mautic_k8s_migrations_result }}"
+
+
 def main():
     static_contract()
     rendered_workload()
     installer_arguments()
+    installation_finishes_migrations()
     print("Mautic: Docker default, Kubernetes workload, database and shared recovery contracts passed")
 
 

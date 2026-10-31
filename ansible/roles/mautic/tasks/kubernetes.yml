@@ -175,6 +175,45 @@
     scrub_failure_context: Mautic installer failed
   when: _mautic_k8s_install_state.stdout | trim == 'missing'
 
+# The web entrypoint skipped migrations when it started against the empty database.
+# Finish them before accepting the installation or taking its first recovery point.
+# Otherwise the restored web pod runs pending config migrations (including the legacy
+# mailer conversion) and the next Deploy must repair the platform mail settings.
+- name: Mautic Kubernetes | Finish the installed schema migrations
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}-web"
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - www-data
+      - -c
+      - cd /var/www/html && exec php bin/console doctrine:migrations:migrate --no-interaction
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  no_log: true
+  register: _mautic_k8s_migrations_result
+  failed_when: false
+  changed_when: true
+  when: _mautic_k8s_install_state.stdout | trim == 'missing'
+
+- name: Mautic Kubernetes | Report a migration failure without credentials
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mautic_k8s_migrations_result }}"
+    scrub_failure_secrets:
+      - "{{ _mautic_admin_password }}"
+      - "{{ app_config.app.database_password }}"
+      - "{{ wiring_mail.password | default('') }}"
+    scrub_failure_context: Mautic schema migrations failed
+  when: _mautic_k8s_install_state.stdout | trim == 'missing'
+
 - name: Mautic Kubernetes | Record installation on the persistent config volume
   ansible.builtin.command:
     argv:
