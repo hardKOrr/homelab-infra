@@ -56,6 +56,8 @@ APPS = {
                  "engine": None, "archives": ["data"], "stop": ["src"]},
     "actual-budget": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
                       "engine": None, "archives": ["data"], "stop": ["src"]},
+    "navidrome": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
+                  "engine": None, "archives": ["data"], "stop": ["src"]},
 }
 
 
@@ -155,7 +157,8 @@ def database_steps():
     return {"postgresql": postgres, "namespace-mysql": mysql, "mariadb": mariadb}
 
 
-def backup_all_documents(archives, database, instance="app", stop=None, stop_replicas=None):
+def backup_all_documents(archives, database, instance="app", stop=None, stop_replicas=None,
+                         backup_config=None):
     recovery = {"archives": archives, "database": database, "stop": stop or []}
     if stop_replicas is not None:
         recovery["stop_replicas"] = stop_replicas
@@ -163,7 +166,7 @@ def backup_all_documents(archives, database, instance="app", stop=None, stop_rep
                          "k8s backup | Resolve the backup's identity and destination")
     kr = render(resolve["ansible.builtin.set_fact"]["_kr"], {
         "instance": instance,
-        "app_config": {"backup": {
+        "app_config": {"backup": backup_config if backup_config is not None else {
             "backup_id": instance, "schedule": "0 3 * * *", "timeout_seconds": 3600,
             "retention_days": 14, "scratch_size": 2, "client": CLIENT,
         }},
@@ -185,19 +188,33 @@ def backup_all_documents(archives, database, instance="app", stop=None, stop_rep
     return list(yaml.safe_load_all(text))
 
 
-def backup_documents(archives, database, instance="app", stop=None, stop_replicas=None):
-    documents = backup_all_documents(archives, database, instance, stop, stop_replicas)
+def backup_documents(archives, database, instance="app", stop=None, stop_replicas=None,
+                     backup_config=None):
+    documents = backup_all_documents(archives, database, instance, stop, stop_replicas,
+                                    backup_config)
     return (next(d for d in documents if d["kind"] == "ConfigMap"),
             next(d for d in documents if d["kind"] == "CronJob"))
 
 
-def restore_pod(mode, archives, database, target="app"):
+def restore_pod(mode, archives, database, target="app", backup_config=None):
     kr = {
         "mode": mode, "job_name": f"{target}-restore-{mode}", "target": target,
         "timeout": 900, "secret": f"{target}-restore", "backup_id": "source",
         "snapshot": "host/source/2026-10-27T03:00:00Z", "scratch_gi": 2, "client": CLIENT,
         "archives": archives, "database": database,
     }
+    if backup_config is not None:
+        resolve = task_named(tasks_of("ansible/tasks/kubernetes/recovery-restore.yml"),
+                             "k8s restore | Resolve the restore's identity")
+        kr = render(resolve["ansible.builtin.set_fact"]["_kr"], {
+            "restore_target": target,
+            "restore_overwrite": mode == "restore",
+            "restore_snapshot": kr["snapshot"],
+            "instance": "source",
+            "app_config": {"backup": backup_config},
+            "restore_target_config": {"backup": backup_config},
+            "k8s_recovery": {"archives": archives, "database": database},
+        })
     job = yaml.safe_load(render(RESTORE.read_text(encoding="utf-8"), {
         "_kr": kr, "k8s_pbs_repository": "token@pbs:store",
         "k8s_pbs_fingerprint": FINGERPRINT,
@@ -569,6 +586,8 @@ def app_render(app, spec, steps):
         "karakeep_fqdn": "src.example.test",
         "karakeep_data_uid": 1000,
         "karakeep_data_gid": 1000,
+        "_navidrome_uid": 1000,
+        "_navidrome_gid": 1000,
         "app_config": {"app": {
             "database": {"name": "db", "provider": "mariadb"},
             "database_host": "database.example.test", "database_port": 3306,
@@ -582,6 +601,14 @@ def app_render(app, spec, steps):
             "puid": 1000, "pgid": 1000,
         }},
     }
+
+    # Exercise Navidrome's production defaults, rather than masking missing recovery
+    # inputs with CLIENT. Deploy must be able to render both Jobs without overrides.
+    backup_config = None
+    if app == "navidrome":
+        defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/navidrome.yml")
+                                  .read_text(encoding="utf-8"))["navidrome_defaults"]
+        backup_config = defaults["backup"]
 
     backup = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['file']}"),
                                  "recovery-backup.yml"), variables)
@@ -635,11 +662,12 @@ def app_render(app, spec, steps):
 
     _, cronjob = backup_documents(
         backup["archives"], backup.get("database") or {}, "src",
-        backup.get("stop"), backup.get("stop_replicas"),
+        backup.get("stop"), backup.get("stop_replicas"), backup_config,
     )
     assert cronjob["metadata"]["name"] == "src-backup"
     for mode in ("plan", "restore"):
-        restore_pod(mode, restore["archives"], restore.get("database") or {}, "dst")
+        restore_pod(mode, restore["archives"], restore.get("database") or {}, "dst",
+                    backup_config)
 
 
 def app_contracts():
