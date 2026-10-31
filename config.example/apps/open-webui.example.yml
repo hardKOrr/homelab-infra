@@ -1,5 +1,6 @@
 ---
-# Open WebUI — persistent chat interface on the AI Docker stack.
+# Open WebUI — persistent chat interface. Docker on a VM remains the default; set
+# hosting.method to kubernetes to run it in the managed cluster instead.
 #
 # Copy this file to config/apps/open-webui.yml (or to the name of another instance) and
 # set at least one named upstream. The names below must already exist in the generated
@@ -9,6 +10,9 @@
 # Open WebUI's users, chats, documents and uploads live below /opt/<instance>/data and are
 # covered by its application-consistent PBS backup. The selected upstream applications are
 # independent and are never removed or included in this recovery unit.
+
+hosting:
+  method: docker # docker | kubernetes
 
 app:
   upstreams:

@@ -1,0 +1,89 @@
+---
+# Restore one Open WebUI PVC archive through the shared Kubernetes recovery Job. The
+# target's WEBUI_SECRET_KEY is carried from Vaultwarden after the archive is replaced and
+# before the Deployment starts, so encrypted database values remain readable.
+
+- name: Open WebUI Kubernetes restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Open WebUI needs a PBS-backed Kubernetes recovery contract. Keep overwrite=false to
+      list snapshots before selecting one.
+
+- name: Open WebUI Kubernetes restore | Resolve source and target backup groups
+  ansible.builtin.set_fact:
+    _open_webui_restore_target: "{{ restore_target | default(instance, true) }}"
+    _open_webui_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _open_webui_target_backup_id: >-
+      {{ restore_target_backup_id | default(
+           restore_target_config.backup.backup_id | default('', true) or
+           (restore_target | default(instance, true)), true) }}
+  no_log: true
+
+- name: Open WebUI Kubernetes restore | Validate backup group identifiers
+  ansible.builtin.assert:
+    that:
+      - _open_webui_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - _open_webui_target_backup_id is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: Open WebUI Kubernetes recovery requires safe source and target backup IDs.
+  no_log: true
+
+- name: Open WebUI Kubernetes restore | Validate the selected recovery points
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot is match('^host/' ~ (_open_webui_restore_backup_id | regex_escape) ~ '/.+$')
+      - >-
+        restore_destination | default('existing') != 'existing'
+        or
+        (restore_pre_restore_point | default('') is match(
+          '^host/' ~ (_open_webui_target_backup_id | regex_escape) ~ '/.+$')
+         and restore_pre_restore_point != restore_snapshot)
+    fail_msg: >-
+      The selected recovery point must belong to the source backup group; an existing target
+      also needs a different pre-restore point from its own backup group. No target data was
+      replaced.
+  no_log: true
+  when:
+    - restore_overwrite | bool
+    - restore_snapshot | default('') | length > 0
+
+- name: Open WebUI Kubernetes restore | Require the source application key
+  ansible.builtin.assert:
+    that: restore_source_open_webui_secret_key | default('') | length > 0
+    fail_msg: >-
+      The source Open WebUI application key is missing or unreadable in Vaultwarden. Restore
+      that canonical key before retrying; no target data was replaced.
+  no_log: true
+  when: restore_overwrite | bool
+
+- name: Open WebUI Kubernetes restore | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Open WebUI Kubernetes restore | Derive the target namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ _open_webui_restore_target }}"
+
+- name: Open WebUI Kubernetes restore | Restore the data claim through the shared Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Open WebUI
+      archives:
+        - name: data
+          claim: "{{ _open_webui_restore_target }}-data"
+      stop:
+        - "{{ _open_webui_restore_target }}"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-key.yml"
+      describe: >-
+        Open WebUI's SQLite database, users, chats, uploaded documents and application data
+      verify:
+        - >-
+          Sign in to the restored Open WebUI instance and check that the saved prompt and
+          its settings are present, with the selected Ollama connection still available.
