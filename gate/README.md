@@ -72,6 +72,7 @@ templates.
 - `test-immich-restore.py`: Immich's restore swap inputs for its media mount and its database and dump.
 - `test-forgejo-recovery.py`: Forgejo's quiesced data archive, and its restore swap inputs with the database dump and the staged hook refusing a point without `app.ini`.
 - `test-mautic-recovery.py`: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a point without `local.php` or media, and the replaced hook pointing the restored `local.php` at the target in a real play, with the same PHP escaping as Deploy.
+- `test-mautic-kubernetes.py`: Mautic's Docker default, opt-in Kubernetes web/cron/worker workloads, cluster database firewall input, and shared backup and restore recovery contracts.
 - `test-authentik-recovery.py`: Authentik's quiesced one-archive backup and its restart, and its restore swap inputs: the native PBS client, one path per owner (PostgreSQL and Redis keep their live owner), and the staged hook refusing a point without a PostgreSQL cluster.
 - `test-open-webui-deploy.py`: Open WebUI's default Docker bootstrap, Kubernetes PVC/workload/Ingress, cluster firewall inputs, and shared backup wiring.
 - `test-open-webui-restore.py`: Open WebUI's Docker restore swap inputs and key hooks, plus Kubernetes recovery Job inputs and the key hook that updates Vaultwarden and the target Secret before startup.

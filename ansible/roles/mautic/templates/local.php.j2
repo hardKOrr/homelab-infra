@@ -1,10 +1,9 @@
 <?php
 // {{ ansible_managed }}
 //
-// SEED CONTENT ONLY — rendered once, by roles/mautic/tasks/main.yml, when this file does
-// not exist yet. Every later run leaves this file in place and instead converges the
-// specific platform-owned keys below through a set of `lineinfile` tasks in that same
-// file, matched by the exact `'key' => ...,` line shape this template writes.
+// SEED CONTENT ONLY — rendered by the selected Deploy adapter when this file does not
+// exist yet. The Docker adapter converges its owned keys with `lineinfile`; the Kubernetes
+// adapter merges the same keys through its PHP config hook. Both preserve Mautic's keys.
 //
 // WHY NOT JUST RE-TEMPLATE IT EVERY RUN
 //
@@ -20,7 +19,7 @@
 //
 // mautic/docker-mautic's own entrypoints treat "both of these are non-empty in
 // local.php" as their only signal that Mautic is already installed — see the identical,
-// longer comment on roles/mautic/tasks/main.yml's converge task. Seeding them before
+// longer comment on roles/mautic/tasks/docker.yml's converge task. Seeding them before
 // `mautic:install` has ever run would make the image apply raw schema migrations to an
 // empty database instead of waiting for this role's own installer. Both keys, along
 // with `secret_key`, are written into this file by Mautic itself once installation
@@ -49,7 +48,7 @@ $parameters = array(
     'mailer_from_email' => '{{ wiring_mail.from_address | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
     # A single Symfony Mailer DSN, not the discrete mailer_transport/host/port/user/
     # password/encryption/auth_mode keys those seven were replaced by — see the header
-    # comment on roles/mautic/tasks/main.yml's converge task for how that was confirmed
+    # comment on roles/mautic/tasks/docker.yml's converge task for how that was confirmed
     # against the pinned release's own source rather than assumed.
     #
     # SCHEME: `mail.encryption` (CONTRACT.md, config-doctor.sh) is `starttls | tls |
@@ -60,7 +59,7 @@ $parameters = array(
     # $dsn->getScheme()`, then `port ?: 465`) and maps to `smtps`; `none` maps to
     # plain `smtp`, which is genuinely unencrypted-unless-the-server-insists-otherwise
     # with this transport, and that is what `none` asks for. `starttls` also maps to
-    # plain `smtp` here, but roles/mautic/tasks/main.yml refuses to deploy at all when
+    # plain `smtp` here, but the Mautic Deploy adapters refuse to deploy when
     # `mail.encryption: starttls` is configured — stock Symfony Mailer has no DSN
     # option that forces a connection to refuse an opportunistic STARTTLS upgrade the
     # server offers, so every connection this transport opens is independently

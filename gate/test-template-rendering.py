@@ -1143,7 +1143,7 @@ def navidrome_rendering():
 
 
 def mautic_rendering():
-    tasks = yaml.safe_load(read("ansible/roles/mautic/tasks/main.yml"))
+    tasks = yaml.safe_load(read("ansible/roles/mautic/tasks/docker.yml"))
     converge = task_named(
         tasks, "Mautic | Converge platform-owned configuration fields"
     )
