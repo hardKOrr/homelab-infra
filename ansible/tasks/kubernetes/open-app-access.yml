@@ -1,7 +1,8 @@
 ---
 # Open a Kubernetes app's declared OPNsense access through the alias for every node in
-# its cluster. The ingress VIP remains the address used for interface selection and
-# inbound NAT targets; only egress rules use the cluster-node alias as their source.
+# its cluster. The ingress VIP remains the inbound NAT target; egress rules use the
+# cluster-node alias as their source, and select the firewall interface from a node
+# address on that same network.
 
 - name: k8s firewall | Open declared cluster access
   when:
@@ -38,5 +39,6 @@
       vars:
         wiring_app_name: "{{ instance }}"
         wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+        wiring_firewall_interface_host: "{{ homelabinfra_infra.kubernetes.nodes[0].ip_address }}"
         wiring_firewall_source: "{{ homelabinfra_infra.kubernetes.firewall_alias }}"
         wiring_firewall: "{{ app_config.firewall | default({}) }}"

@@ -9,7 +9,9 @@
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name       — instance name; every rule is described
 #                           "homelab-infra: <instance> <direction> <name>"
-#   wiring_upstream_host  — the guest's IPv4 address (interface selector / NAT target)
+#   wiring_upstream_host  — the guest's IPv4 address (default interface selector / NAT target)
+#   wiring_firewall_interface_host — optional IPv4 address used to select the firewall
+#                                    interface; defaults to wiring_upstream_host
 #   wiring_firewall_source — optional OPNsense alias used as the egress source
 #   wiring_firewall       — the merged app_config.firewall:
 #       egress:   list of {name, protocol, port, source_port, destination, sequence}
@@ -42,11 +44,12 @@
     fw_validate: "{{ _fw_cfg.validate_certs | default(false) }}"
     fw_owner_prefix: "homelab-infra: {{ wiring_app_name }} "
     _fw_source_net: "{{ wiring_firewall_source | default(wiring_upstream_host, true) }}"
+    _fw_interface_host: "{{ wiring_firewall_interface_host | default(wiring_upstream_host, true) }}"
     _fw_interfaces_json: >-
       {%- set found = [] -%}
       {%- for entry in _fw_cfg.interfaces | default([]) -%}
       {%-   if entry.cidr is defined and entry.interface is defined
-              and entry.cidr | ansible.utils.network_in_network(wiring_upstream_host) -%}
+              and entry.cidr | ansible.utils.network_in_network(_fw_interface_host) -%}
       {%-     set _ = found.append(entry.interface) -%}
       {%-   endif -%}
       {%- endfor -%}
@@ -58,6 +61,7 @@
         that:
           - wiring_app_name | default('') | length > 0
           - wiring_upstream_host | default('') is ansible.utils.ipv4_address
+          - _fw_interface_host | default('') is ansible.utils.ipv4_address
           - _fw_source_net | default('') | length > 0
           - _fw_cfg.host | default('') | length > 0
           - _fw_cfg.api_key | default('') | length > 0
@@ -66,7 +70,7 @@
         fail_msg: >-
           {{ wiring_app_name }} declares firewall access, which needs firewall.host and
           exactly one firewall.interfaces entry whose cidr contains
-          {{ wiring_upstream_host | default('<no address>') }} (found
+          {{ _fw_interface_host | default('<no address>') }} (found
           {{ _fw_interfaces | length }}) in config/infrastructure.yml, and api_key +
           api_secret in the homelab-infra/firewall vault item (Store Secret job).
 
