@@ -31,6 +31,47 @@ def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
 
 
+def prepare_kubernetes_media_volumes(shares):
+    tasks = yaml.safe_load(
+        read("ansible/tasks/kubernetes/prepare-media-volumes.yml")
+    )
+    variables = {"k8s_media_shares": shares}
+
+    def require_assertions(task, context):
+        for expression in task["ansible.builtin.assert"]["that"]:
+            result = render("{{ " + expression + " }}", context)
+            assert result is True, f"shared media-volume assertion failed: {expression}"
+
+    require_assertions(
+        task_named(tasks, "Kubernetes media volumes | Require a list of NFS shares"),
+        variables,
+    )
+    entry_task = task_named(tasks, "Kubernetes media volumes | Validate each NFS share")
+    items = render(entry_task["loop"], variables)
+    assert items == shares, "the shared task loop must consume k8s_media_shares"
+    for share in items:
+        require_assertions(entry_task, {**variables, "item": share})
+    require_assertions(
+        task_named(
+            tasks,
+            "Kubernetes media volumes | Require unique volume names and mount paths",
+        ),
+        variables,
+    )
+
+    output_task = task_named(
+        tasks,
+        "Kubernetes media volumes | Build NFS volumes and container mounts",
+    )
+    for key, expression in output_task["ansible.builtin.set_fact"].items():
+        variables[key] = render(expression, variables)
+        assert isinstance(variables[key], list), f"{key} must be a typed list"
+    return {
+        "k8s_media_volumes": variables["k8s_media_volumes"],
+        "k8s_media_volume_mounts": variables["k8s_media_volume_mounts"],
+    }
+
+
 class CaddyRendering:
 
     def setup(self):
@@ -1037,25 +1078,34 @@ def navidrome_rendering():
     assert ":rw" not in compose, "':rw' not in compose"
     assert '"14533:4533"' in compose, "'\"14533:4533\"' in compose"
 
+    manifest_context = {
+        "instance": "navidrome-fixture",
+        "navidrome_fqdn": "navidrome.example.test",
+        "app_config": {
+            "app": {
+                "image": "deluan/navidrome:latest",
+                "storage": 5,
+                "port": 14533,
+                "container_port": 4533,
+                "extra_env": {},
+            }
+        },
+        "homelabinfra_config": {"timezone": "UTC"},
+        "_navidrome_uid": 1313,
+        "_navidrome_gid": 1313,
+    }
+    music_share = {
+        "name": "music",
+        "server": "192.0.2.50",
+        "path": "/exports/media/music",
+        "mount_path": "/music",
+        "read_only": True,
+    }
     manifest = render(
         read("ansible/roles/navidrome/templates/manifest.yaml.j2"),
         {
-            "instance": "navidrome-fixture",
-            "navidrome_fqdn": "navidrome.example.test",
-            "app_config": {
-                "app": {
-                    "image": "deluan/navidrome:latest",
-                    "storage": 5,
-                    "port": 14533,
-                    "container_port": 4533,
-                    "extra_env": {},
-                }
-            },
-            "homelabinfra_config": {"timezone": "UTC"},
-            "_navidrome_uid": 1313,
-            "_navidrome_gid": 1313,
-            "_navidrome_nfs_server_ip": "192.0.2.50",
-            "_navidrome_nfs_path": "/exports/media/music",
+            **manifest_context,
+            **prepare_kubernetes_media_volumes([music_share]),
         },
     )
     assert "storageClassName:" not in manifest, "the PVC selects the cluster default class"
@@ -1063,6 +1113,81 @@ def navidrome_rendering():
     assert 'path: "/exports/media/music"' in manifest, "only the music subdirectory is mounted"
     assert manifest.count("readOnly: true") == 2, "both NFS volume and pod mount are read-only"
     assert "hostPath:" not in manifest, "cluster nodes do not need a local share mount"
+
+    reusable_shares = [
+        music_share,
+        {
+            "name": "downloads",
+            "server": "192.0.2.50",
+            "path": "/exports/downloads",
+            "mount_path": "/downloads",
+            "read_only": False,
+        },
+    ]
+    reusable_manifest = render(
+        read("ansible/roles/navidrome/templates/manifest.yaml.j2"),
+        {
+            **manifest_context,
+            **prepare_kubernetes_media_volumes(reusable_shares),
+        },
+    )
+    rendered_docs = list(yaml.safe_load_all(reusable_manifest))
+    deployment = next(doc for doc in rendered_docs if doc["kind"] == "Deployment")
+    pod_spec = deployment["spec"]["template"]["spec"]
+    rendered_volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+    rendered_mounts = {
+        mount["name"]: mount
+        for mount in pod_spec["containers"][0]["volumeMounts"]
+    }
+    assert rendered_volumes["music"]["nfs"] == {
+        "server": "192.0.2.50",
+        "path": "/exports/media/music",
+        "readOnly": True,
+    }
+    assert rendered_mounts["music"] == {
+        "name": "music",
+        "mountPath": "/music",
+        "readOnly": True,
+    }
+    assert rendered_volumes["downloads"]["nfs"] == {
+        "server": "192.0.2.50",
+        "path": "/exports/downloads",
+        "readOnly": False,
+    }
+    assert rendered_mounts["downloads"] == {
+        "name": "downloads",
+        "mountPath": "/downloads",
+        "readOnly": False,
+    }
+
+    def assert_media_shares_rejected(shares, expression):
+        try:
+            prepare_kubernetes_media_volumes(shares)
+        except AssertionError as error:
+            assert expression in str(error)
+        else:
+            raise AssertionError(f"the shared media-volume seam must reject {expression}")
+
+    assert_media_shares_rejected(
+        [{**music_share, "path": "/exports/../private"}],
+        "item.path is not search",
+    )
+    assert_media_shares_rejected(
+        {"music": music_share},
+        "k8s_media_shares is not mapping",
+    )
+    assert_media_shares_rejected(
+        [{**music_share, "read_only": "true"}],
+        "item.read_only is boolean",
+    )
+    assert_media_shares_rejected(
+        [music_share, {**music_share, "path": "/exports/music-copy", "mount_path": "/music-copy"}],
+        "map(attribute='name')",
+    )
+    assert_media_shares_rejected(
+        [music_share, {**music_share, "name": "music-copy", "path": "/exports/music-copy"}],
+        "map(attribute='mount_path')",
+    )
 
     library_tasks = yaml.safe_load(
         read("ansible/roles/navidrome/tasks/resolve-kubernetes-library.yml")

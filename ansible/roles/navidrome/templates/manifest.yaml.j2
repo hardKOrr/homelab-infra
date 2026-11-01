@@ -67,9 +67,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: music
-              mountPath: /music
-              readOnly: true
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+              readOnly: {{ mount.readOnly | to_json }}
+{% endfor %}
           readinessProbe:
             httpGet:
               path: /ping
@@ -90,11 +92,13 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ instance }}-data
-        - name: music
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
           nfs:
-            server: {{ _navidrome_nfs_server_ip | to_json }}
-            path: {{ _navidrome_nfs_path | to_json }}
-            readOnly: true
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
 ---
 apiVersion: v1
 kind: Service

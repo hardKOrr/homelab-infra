@@ -92,11 +92,26 @@ def main():
 
     kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
+    assert "../../../tasks/kubernetes/prepare-media-volumes.yml" in includes
     assert "../../../tasks/kubernetes/ensure-nfs-client.yml" in includes
     assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
     assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
     assert "verify-kubernetes-library.yml" in includes
     assert not any("recovery" in include and "kubernetes/" not in include for include in includes)
+    prepare_media = next(
+        task for task in kubernetes_tasks
+        if task.get("ansible.builtin.include_tasks")
+        == "../../../tasks/kubernetes/prepare-media-volumes.yml"
+    )
+    assert prepare_media["vars"]["k8s_media_shares"] == [
+        {
+            "name": "music",
+            "server": "{{ _navidrome_nfs_server_ip }}",
+            "path": "{{ _navidrome_nfs_path }}",
+            "mount_path": "/music",
+            "read_only": True,
+        }
+    ]
     cluster_tasks = read_yaml("ansible/roles/k3s_cluster/tasks/main.yml")
     assert any(
         task.get("ansible.builtin.import_tasks") == "../../../tasks/kubernetes/ensure-nfs-client.yml"
@@ -151,12 +166,11 @@ def main():
     manifest = (REPO / "ansible/roles/navidrome/templates/manifest.yaml.j2").read_text()
     assert "name: {{ instance }}-data" in manifest
     assert "storageClassName:" not in manifest
-    assert "nfs:" in manifest
-    assert "server: {{ _navidrome_nfs_server_ip | to_json }}" in manifest
-    assert "path: {{ _navidrome_nfs_path | to_json }}" in manifest
-    assert "readOnly: true" in manifest
+    assert "for volume in k8s_media_volumes" in manifest
+    assert "for mount in k8s_media_volume_mounts" in manifest
+    assert "server: {{ volume.nfs.server | to_json }}" in manifest
+    assert "path: {{ volume.nfs.path | to_json }}" in manifest
     assert "hostPath:" not in manifest
-    assert "mountPath: /music\n              readOnly: true" in manifest
     assert "runAsUser: {{ _navidrome_uid }}" in manifest
     assert "ND_DATAFOLDER" in manifest and "ND_MUSICFOLDER" in manifest
     assert "kind: Ingress" in manifest

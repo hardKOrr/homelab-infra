@@ -1,0 +1,82 @@
+---
+# Build Kubernetes NFS volumes and mounts from externally managed media shares.
+- name: Kubernetes media volumes | Require a list of NFS shares
+  ansible.builtin.assert:
+    that:
+      - k8s_media_shares is defined
+      - k8s_media_shares is sequence
+      - k8s_media_shares is not string
+      - k8s_media_shares is not mapping
+      - k8s_media_shares | length > 0
+    fail_msg: Kubernetes media volumes require a non-empty list of NFS shares.
+
+- name: Kubernetes media volumes | Validate each NFS share
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.name is defined
+      - item.name is string
+      - item.name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - item.name | length <= 63
+      - item.server is defined
+      - item.server is string
+      - item.server | length > 0
+      - item.server is not search('[\s,]')
+      - item.path is defined
+      - item.path is string
+      - item.path.startswith('/')
+      - item.path is not search('//')
+      - item.path is not search('/(?:\.|\.\.)(?:/|$)')
+      - item.path is not search('[\x00-\x1f\x7f]')
+      - item.path == '/' or item.path == item.path.rstrip('/')
+      - item.mount_path is defined
+      - item.mount_path is string
+      - item.mount_path.startswith('/')
+      - item.mount_path != '/'
+      - item.mount_path is not search('//')
+      - item.mount_path is not search('/(?:\.|\.\.)(?:/|$)')
+      - item.mount_path is not search('[\x00-\x1f\x7f]')
+      - item.mount_path == item.mount_path.rstrip('/')
+      - item.read_only is defined
+      - item.read_only is boolean
+    fail_msg: >-
+      Each Kubernetes media share needs a safe volume name, NFS server, absolute export
+      path, non-root absolute mount path, and boolean read_only value.
+  no_log: true
+  loop: "{{ k8s_media_shares }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed share') }}"
+
+- name: Kubernetes media volumes | Require unique volume names and mount paths
+  ansible.builtin.assert:
+    that:
+      - (k8s_media_shares | map(attribute='name') | list | unique | list | length) == (k8s_media_shares | length)
+      - (k8s_media_shares | map(attribute='mount_path') | list | unique | list | length) == (k8s_media_shares | length)
+    fail_msg: Kubernetes media share volume names and mount paths must be unique.
+
+- name: Kubernetes media volumes | Build NFS volumes and container mounts
+  no_log: true
+  ansible.builtin.set_fact:
+    k8s_media_volumes: >-
+      {%- set volumes = [] -%}
+      {%- for share in k8s_media_shares -%}
+      {%- set _ = volumes.append({
+        'name': share.name,
+        'nfs': {
+          'server': share.server,
+          'path': share.path,
+          'readOnly': share.read_only
+        }
+      }) -%}
+      {%- endfor -%}
+      {{ volumes }}
+    k8s_media_volume_mounts: >-
+      {%- set mounts = [] -%}
+      {%- for share in k8s_media_shares -%}
+      {%- set _ = mounts.append({
+        'name': share.name,
+        'mountPath': share.mount_path,
+        'readOnly': share.read_only
+      }) -%}
+      {%- endfor -%}
+      {{ mounts }}

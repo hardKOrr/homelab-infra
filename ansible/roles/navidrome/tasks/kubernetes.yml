@@ -13,6 +13,16 @@
       Navidrome Kubernetes requires the existing music share to be resolved before
       preparing the cluster workload.
 
+- name: Navidrome Kubernetes | Prepare the read-only music volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares:
+      - name: music
+        server: "{{ _navidrome_nfs_server_ip }}"
+        path: "{{ _navidrome_nfs_path }}"
+        mount_path: /music
+        read_only: true
+
 - name: Navidrome Kubernetes | Ensure the NFS client on every cluster node
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
   vars:
