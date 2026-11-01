@@ -1,0 +1,7 @@
+---
+- name: Authentik backup | Dump the registered database through the shared client
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _authentik_backup_scratch.path }}/{{ app_config.app.database.name }}.dump"

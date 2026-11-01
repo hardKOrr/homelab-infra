@@ -1,0 +1,77 @@
+---
+- name: Authentik Kubernetes | Require the registered PostgreSQL connection
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database.provider == 'postgresql'
+      - app_config.app.database_host | default('') | length > 0
+      - app_config.app.database_password | default('') | length > 0
+    fail_msg: Authentik Kubernetes requires its registered PostgreSQL backend.
+  no_log: true
+
+- name: Authentik Kubernetes | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Authentik Kubernetes | Ensure the owned namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Authentik Kubernetes | Add database firewall egress
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {'egress':
+           ((app_config.firewall | default({})).egress | default([])
+            | rejectattr('name', 'equalto', 'authentik-database') | list)
+           + [{'name': 'authentik-database', 'protocol': 'TCP',
+               'port': app_config.app.database_port | string,
+               'destination': app_config.app.database_host}]}}, recursive=True) }}
+  no_log: true
+
+- name: Authentik Kubernetes | Open access through the cluster node alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Authentik Kubernetes | Resolve the private runtime environment
+  ansible.builtin.set_fact:
+    _authentik_k8s_env:
+      AUTHENTIK_POSTGRESQL__HOST: "{{ app_config.app.database_host }}"
+      AUTHENTIK_POSTGRESQL__PORT: "{{ app_config.app.database_port | string }}"
+      AUTHENTIK_POSTGRESQL__NAME: "{{ app_config.app.database.name }}"
+      AUTHENTIK_POSTGRESQL__USER: "{{ app_config.app.database_user }}"
+      AUTHENTIK_POSTGRESQL__PASSWORD: "{{ app_config.app.database_password }}"
+      AUTHENTIK_REDIS__HOST: localhost
+      AUTHENTIK_SECRET_KEY: "{{ _authentik_secret_key }}"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "{{ _authentik_admin_password }}"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "{{ _authentik_api_token }}"
+      AUTHENTIK_BOOTSTRAP_EMAIL: "{{ app_config.app.admin_email }}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+  no_log: true
+
+- name: Authentik Kubernetes | Sync canonical credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data: "{{ _authentik_k8s_env }}"
+  no_log: true
+
+- name: Authentik Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 900
+
+- name: Authentik Kubernetes | Describe the registered database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Authentik Kubernetes | Schedule the paired recovery point
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - {name: data, claim: "{{ instance }}-data", owner: "1000:1000"}
+      database: "{{ k8s_database_step | default({}) }}"
+      stop: ["{{ instance }}"]
+      describe: Authentik PostgreSQL database, media, certificates and custom templates

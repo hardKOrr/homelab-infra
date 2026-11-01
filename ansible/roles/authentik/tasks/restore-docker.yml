@@ -1,0 +1,86 @@
+---
+# Restore the complete Authentik data tree into one existing instance through the shared
+# swap. The point holds PostgreSQL's data directory, Redis and Authentik's own files; each
+# is its own path because each has its own owner. PostgreSQL and Redis keep the owner their
+# container gave the live directory, so a configured image with another uid still works.
+# Backups run the native PBS client, so the restore does too.
+- name: Authentik restore | Resolve source and target identities
+  ansible.builtin.set_fact:
+    _authentik_restore_data_path: "{{ app_config.app.data_path | default('') }}"
+    _authentik_restore_project_dir: "{{ authentik_project_dir | default('/opt/' ~ instance) }}"
+    _authentik_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _authentik_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _authentik_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _authentik_restore_destination: "{{ restore_destination | default('existing', true) }}"
+
+- name: Authentik restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _authentik_restore_data_path.startswith(_authentik_restore_project_dir ~ '/')
+      - "'..' not in _authentik_restore_data_path.split('/')"
+      - _authentik_restore_data_path != '/'
+      - _authentik_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _authentik_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_authentik_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Authentik restore needs its application-consistent contract, instance-owned data
+      path, safe source and target backup ids, and a selected recovery point when
+      overwrite=true.
+
+- name: Authentik restore | Require an existing Authentik target
+  ansible.builtin.assert:
+    that: _authentik_restore_destination == 'existing'
+    fail_msg: >-
+      Authentik native restore replaces an existing instance. Deploy the intended target
+      first; restoring into a new instance name is not supported.
+
+- name: Authentik restore | Validate the selected source group
+  ansible.builtin.assert:
+    that:
+      - _authentik_restore_snapshot.startswith('host/' ~ _authentik_restore_source_backup_id ~ '/')
+      - _authentik_restore_snapshot | length > ('host/' ~ _authentik_restore_source_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Authentik recovery point must belong to
+      host/{{ _authentik_restore_source_backup_id }}/.
+  when: _authentik_restore_snapshot | length > 0
+
+- name: Authentik restore | Validate the independent pre-restore group
+  ansible.builtin.assert:
+    that:
+      - restore_pre_restore_point is defined
+      - restore_pre_restore_point.startswith('host/' ~ _authentik_restore_target_backup_id ~ '/')
+      - restore_pre_restore_point != _authentik_restore_snapshot
+      - restore_pre_restore_point | length > ('host/' ~ _authentik_restore_target_backup_id ~ '/') | length
+    fail_msg: >-
+      Existing-target Authentik restore needs an independent pre-restore point in
+      host/{{ _authentik_restore_target_backup_id }}/.
+  when: restore_overwrite | bool
+
+- name: Authentik restore | Preview or replace the data tree
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_pbs_runtime: native
+    recovery_swap_backup_id: "{{ _authentik_restore_source_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _authentik_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    # Staging sits in the project directory, so a kept failure stays out of the next backup.
+    recovery_swap_staging_parent: "{{ _authentik_restore_project_dir }}"
+    recovery_swap_paths:
+      - {path: "{{ _authentik_restore_data_path }}/database", source: data/database, owner: live, group: live, mode: "0700"}
+      - {path: "{{ _authentik_restore_data_path }}/redis", source: data/redis, owner: live, group: live, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/media", source: data/media, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/certs", source: data/certs, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+      - {path: "{{ _authentik_restore_data_path }}/custom-templates", source: data/custom-templates, owner: 1000, group: 1000, mode: "0750", allow_empty: true}
+    recovery_swap_stop_services: [postgresql, redis, server, worker]
+    recovery_swap_compose_project: "{{ _authentik_restore_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
+    recovery_swap_health_status: [200, 204]

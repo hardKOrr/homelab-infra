@@ -9,6 +9,7 @@
 # migrations and the server and worker must move together. Re-running the deploy
 # playbook is the controlled upgrade path (see the role header).
 services:
+{% if not _authentik_external_database %}
   postgresql:
     image: {{ app_config.app.postgres_image }}
     container_name: "{{ instance }}-postgresql"
@@ -26,6 +27,7 @@ services:
       POSTGRES_USER: "${PG_USER}"
       POSTGRES_DB: "${PG_DB}"
 
+{% endif %}
   redis:
     image: {{ app_config.app.redis_image }}
     container_name: "{{ instance }}-redis"
@@ -47,7 +49,8 @@ services:
     command: server
     environment:
       AUTHENTIK_REDIS__HOST: redis
-      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__HOST: "${PG_HOST}"
+      AUTHENTIK_POSTGRESQL__PORT: "${PG_PORT}"
       AUTHENTIK_POSTGRESQL__USER: "${PG_USER}"
       AUTHENTIK_POSTGRESQL__NAME: "${PG_DB}"
       AUTHENTIK_POSTGRESQL__PASSWORD: "${PG_PASS}"
@@ -64,8 +67,10 @@ services:
       - "{{ app_config.app.port }}:9000"
       - "{{ app_config.app.https_port }}:9443"
     depends_on:
+{% if not _authentik_external_database %}
       postgresql:
         condition: service_healthy
+{% endif %}
       redis:
         condition: service_healthy
 
@@ -79,7 +84,8 @@ services:
     user: root
     environment:
       AUTHENTIK_REDIS__HOST: redis
-      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__HOST: "${PG_HOST}"
+      AUTHENTIK_POSTGRESQL__PORT: "${PG_PORT}"
       AUTHENTIK_POSTGRESQL__USER: "${PG_USER}"
       AUTHENTIK_POSTGRESQL__NAME: "${PG_DB}"
       AUTHENTIK_POSTGRESQL__PASSWORD: "${PG_PASS}"
@@ -91,7 +97,9 @@ services:
       - "{{ app_config.app.data_path }}/certs:/certs"
       - "{{ app_config.app.data_path }}/custom-templates:/templates"
     depends_on:
+{% if not _authentik_external_database %}
       postgresql:
         condition: service_healthy
+{% endif %}
       redis:
         condition: service_healthy

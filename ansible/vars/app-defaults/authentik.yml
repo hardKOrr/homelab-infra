@@ -6,7 +6,7 @@
 authentik_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   recovery:
     methods: [native]
@@ -28,6 +28,14 @@ authentik_defaults:
   stack: sso
 
   app:
+    # Kubernetes requires a registered backend. Keep this mapping when returning
+    # to Docker with a logical recovery point. Empty instance keeps embedded PostgreSQL.
+    database:
+      provider: postgresql
+      instance: ""
+      name: "{{ instance | replace('-', '_') | replace('.', '_') }}"
+      role: "{{ instance | replace('-', '_') | replace('.', '_') }}"
+    storage: 5                 # Kubernetes app volume, default StorageClass
     port: 9000                  # Authentik HTTP listener (the API + UI)
     https_port: 9443            # Authentik HTTPS listener, unused behind the proxy
     data_path: "/opt/{{ instance }}/data"
