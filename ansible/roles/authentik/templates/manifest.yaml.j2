@@ -64,6 +64,24 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ instance }}-env
+{% if component == 'worker' %}
+          # Server and worker share a pod network, so their listeners must differ.
+          env:
+            - {name: AUTHENTIK_LISTEN__HTTP, value: "0.0.0.0:9100"}
+            - {name: AUTHENTIK_LISTEN__HTTPS, value: "0.0.0.0:9543"}
+            - {name: AUTHENTIK_LISTEN__METRICS, value: "0.0.0.0:9301"}
+          startupProbe:
+            exec:
+              command: [ak, healthcheck]
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            exec:
+              command: [ak, healthcheck]
+            periodSeconds: 10
+            timeoutSeconds: 10
+{% endif %}
           volumeMounts:
             - {name: data, mountPath: /media, subPath: media}
             - {name: data, mountPath: /certs, subPath: certs}

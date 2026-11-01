@@ -131,6 +131,14 @@ def main():
             assert {v["subPath"] for v in container["volumeMounts"]} == {"media", "certs", "custom-templates"}
         assert containers["server"]["securityContext"]["runAsUser"] == 1000
         assert containers["server"]["readinessProbe"]["httpGet"]["path"] == "/-/health/ready/"
+        # Shared network listeners must not strand a healthy server with a dead worker.
+        assert {entry["name"]: entry["value"] for entry in containers["worker"]["env"]} == {
+            "AUTHENTIK_LISTEN__HTTP": "0.0.0.0:9100",
+            "AUTHENTIK_LISTEN__HTTPS": "0.0.0.0:9543",
+            "AUTHENTIK_LISTEN__METRICS": "0.0.0.0:9301",
+        }
+        for probe in ["startupProbe", "readinessProbe"]:
+            assert containers["worker"][probe]["exec"]["command"] == ["ak", "healthcheck"]
         assert "volumeMounts" not in containers["redis"]
         assert not any("hostPath" in volume for volume in pod["volumes"])
         ingress = objects["Ingress"]["spec"]["rules"][0]
