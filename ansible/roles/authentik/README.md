@@ -125,7 +125,11 @@ registered instance name when selecting Kubernetes. `app.database` defaults to p
 `postgresql` and a database and role named after the application instance (hyphens and
 dots become underscores). Override those fields to select another database and role. Database egress uses the cluster node firewall alias.
 The estate's canonical SSO item retains the signing key, API token and administrator
-password; the Kubernetes Secret is only a runtime copy. Identity declarations and the
+password; the Kubernetes Secret is only a runtime copy. If the registered database
+already contains the Authentik schema, Deploy requires the signing key, administrator
+password and API token from that estate's SSO item before generating any credentials.
+Restore an incomplete or missing item first; a local marker is not required for this guard.
+Identity declarations and the
 DNS, Caddy and monitoring wiring follow the same configuration as Docker.
 
 Kubernetes backup stops the pod's writers and pairs a logical database dump in

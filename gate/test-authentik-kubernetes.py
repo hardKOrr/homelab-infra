@@ -21,7 +21,52 @@ def includes(name):
     return {task.get("ansible.builtin.include_tasks"): task for task in tasks(name)}
 
 
+def check_registered_credential_guard():
+    """Run the actual probe and guard with a stubbed backend, before secret generation."""
+    main_tasks = {task["name"]: task for task in tasks("main.yml")}
+    query = main_tasks["Check the registered database for the Authentik schema"].copy()
+    for key in ["delegate_to", "become", "become_user"]:
+        query.pop(key)
+    check = main_tasks["Require a definitive registered database schema check"]
+    guard = main_tasks["Refuse to replace credentials for an initialized registered database"]
+    assert list(main_tasks).index(guard["name"]) < list(main_tasks).index(
+        "Resolve secrets (reuse what exists, generate only what is missing)")
+    with tempfile.TemporaryDirectory(prefix="authentik-credential-guard-") as temporary:
+        root = Path(temporary)
+        client = root / "psql"
+        client.write_text("#!/bin/sh\ncase \"$*\" in *authentik_core_user*) ;; *) exit 9;; esac\n"
+                          'case "$SCHEMA" in failed) exit 2;; *) printf "%s\\n" "$SCHEMA";; esac\n')
+        client.chmod(0o755)
+        query["ansible.builtin.command"] = {"argv": [str(client), *query["ansible.builtin.command"]["argv"][1:]]}
+        complete = {"secret_key": "retained-signing-key", "admin_password": "retained-admin", "token": "retained-token"}
+        cases = [("f", {}, True), ("t", complete, True), ("t", {}, False),
+                 ("failed", complete, False), ("unknown", complete, False)]
+        cases += [("t", complete | {field: ""}, False) for field in complete]
+        for method in ["docker", "kubernetes"]:
+            for schema, recorded, passes in cases:
+                marker = root / "generation-reached"
+                marker.unlink(missing_ok=True)
+                play = [{"hosts": "localhost", "gather_facts": False,
+                         "environment": {"SCHEMA": schema},
+                         "vars": {"instance": "authentik-second", "_authentik_external_database": True,
+                                  "app_config": {"hosting": {"method": method}},
+                                  "database_app_target": {"name": "authentik_second", "port": 5432},
+                                  "_authentik_recorded_sso": recorded,
+                                  # Local .env cannot substitute for the canonical SSO item here.
+                                  "_authentik_env_existing": {"AUTHENTIK_SECRET_KEY": "local-key"}},
+                         "tasks": [query, check, guard,
+                                   {"ansible.builtin.copy": {"dest": str(marker), "content": "reached"}}]}]
+                path = root / "guard.yml"
+                path.write_text(yaml.safe_dump(play))
+                result = subprocess.run([str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"),
+                                         "-i", "localhost,", "-c", "local", str(path)],
+                                        capture_output=True, text=True, check=False)
+                assert (result.returncode == 0) == passes, (method, schema, recorded.keys(), result.stdout, result.stderr)
+                assert marker.exists() == passes
+
+
 def main():
+    check_registered_credential_guard()
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/authentik.yml").read_text())["authentik_defaults"]
     assert defaults["hosting"]["method"] == "docker"
     assert set(defaults["hosting"]["supported"]) == {"docker-vm", "docker-lxc", "kubernetes"}

@@ -229,6 +229,54 @@
   when: _authentik_database_marker.stat.exists | default(false)
   no_log: true
 
+# Registered PostgreSQL has no local PG_VERSION marker. Inspect the backend before
+# generating anything: bootstrap variables never replace credentials in an existing schema.
+- name: Resolve the registered database for credential continuity
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+  when: _authentik_external_database | bool
+
+- name: Check the registered database for the Authentik schema
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - "--dbname={{ database_app_target.name }}"
+      - "--port={{ database_app_target.port }}"
+      - "--command=SELECT to_regclass('public.authentik_core_user') IS NOT NULL"
+  delegate_to: database_app_target
+  become: true
+  become_user: postgres
+  register: _authentik_registered_schema
+  changed_when: false
+  when: _authentik_external_database | bool
+
+- name: Require a definitive registered database schema check
+  ansible.builtin.assert:
+    that: _authentik_registered_schema.stdout | trim in ['t', 'f']
+    fail_msg: Could not determine whether the registered Authentik database is initialized.
+  when: _authentik_external_database | bool
+
+- name: Refuse to replace credentials for an initialized registered database
+  ansible.builtin.assert:
+    that:
+      - _authentik_recorded_sso.secret_key | default('', true) | length > 0
+      - _authentik_recorded_sso.admin_password | default('', true) | length > 0
+      - _authentik_recorded_sso.token | default('', true) | length > 0
+    fail_msg: >-
+      Authentik {{ instance }} already has a schema on its registered PostgreSQL backend
+      but its estate-scoped Vaultwarden SSO credentials are incomplete. Restore that
+      item before deploying; generating replacements would strand encrypted data and
+      credential-dependent clients. The database login is managed separately.
+  when:
+    - _authentik_external_database | bool
+    - _authentik_registered_schema.stdout | trim == 't'
+  no_log: true
+
 - name: Resolve secrets (reuse what exists, generate only what is missing)
   ansible.builtin.set_fact:
     _authentik_pg_pass: >-
