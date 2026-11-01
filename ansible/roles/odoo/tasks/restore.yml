@@ -1,92 +1,12 @@
 ---
-# Restore Odoo's application-consistent PostgreSQL database and filestore snapshot through
-# the shared swap. Both archives are fetched and the dump checked while Odoo still runs; a
-# failure after the stop puts the original data_dir and database back and starts Odoo.
+- name: Odoo restore | Restore Docker state
+  ansible.builtin.include_tasks: restore-docker.yml
+  when: >-
+    (restore_target_config | default(app_config, true)).hosting.method
+    | default('docker') == 'docker'
 
-- name: Odoo restore | Resolve target database, backend and credential
-  ansible.builtin.set_fact:
-    _odoo_restore_database_backend: >-
-      {{ (homelabinfra_infra.databases | default({})).get(
-           app_config.app.database.instance | default(''), {}) }}
-    _odoo_restore_database_user: >-
-      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_user
-         | default(app_config.app.database_user
-           | default(app_config.app.database.role | default('')), true) }}
-    _odoo_restore_database_password: >-
-      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_password
-         | default(app_config.app.database_password | default(''), true) }}
-    _odoo_restore_database_name: "{{ app_config.app.database.name | default('') }}"
-    _odoo_restore_filestore_path: "{{ app_config.app.filestore_path | default('') }}"
-    _odoo_restore_source_backend: >-
-      {{ (homelabinfra_infra.databases | default({})).get(
-           (restore_source_database | default({})).get('instance', ''), {}) }}
-  no_log: true
-
-- name: Odoo restore | Assert the restore contract
-  ansible.builtin.assert:
-    that:
-      - restore_target is defined and restore_target | length > 0
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
-      - _odoo_restore_database_backend.provider | default('') == 'postgresql'
-      - _odoo_restore_database_backend.host | default('') | length > 0
-      - _odoo_restore_database_backend.port | default(0) | int > 0
-      - _odoo_restore_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
-      - _odoo_restore_database_user | length > 0
-      - _odoo_restore_database_password | length > 0
-      - _odoo_restore_filestore_path is match('^/[^/].*')
-      - _odoo_restore_filestore_path != '/'
-      - homelabinfra_infra.backups is defined
-    fail_msg: >-
-      Odoo restore needs a target, named PostgreSQL backend, target database credential,
-      non-root filestore path, and a snapshot when overwrite=true.
-  no_log: true
-
-- name: Odoo restore | Require a separate target database for a new destination
-  ansible.builtin.assert:
-    that:
-      - restore_source_database is mapping
-      - restore_source_database.instance | default('') | length > 0
-      - restore_source_database.name | default('') | length > 0
-      - _odoo_restore_source_backend.host | default('') | length > 0
-      - _odoo_restore_source_backend.port | default(0) | int > 0
-      - >-
-        not (
-          restore_source_database.name == _odoo_restore_database_name
-          and _odoo_restore_source_backend.host == _odoo_restore_database_backend.host
-          and (_odoo_restore_source_backend.port | int) == (_odoo_restore_database_backend.port | int)
-        )
-    fail_msg: >-
-      A new Odoo restore must use a target database name or PostgreSQL backend distinct from
-      the source. Never let an isolated instance overwrite the source's named database.
-  when: restore_destination == 'new'
-  no_log: true
-
-- name: Odoo restore | Preview or replace the data_dir and database
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: docker
-    recovery_swap_archives: [database.pxar, filestore.pxar]
-    recovery_swap_paths:
-      - path: "{{ _odoo_restore_filestore_path }}"
-        source: filestore
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
-        mode: "0750"
-    recovery_swap_database:
-      config: "{{ app_config.app.database }}"
-      dump: database/odoo.dump
-    recovery_swap_stop_services: [odoo]
-    recovery_swap_compose_project: "{{ odoo_project_dir }}"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/web/health"
-
-- name: Odoo restore | Explain the read-only plan
-  ansible.builtin.debug:
-    msg:
-      - "PLAN ONLY — nothing was changed."
-      - >-
-        A selected Odoo snapshot contains database.pxar (named PostgreSQL database
-        {{ _odoo_restore_database_name }}) and filestore.pxar
-        ({{ _odoo_restore_filestore_path }}).
-      - "Re-run with recovery_point=<snapshot> and overwrite=true only after verifying the target."
-  when: not (restore_overwrite | bool)
+- name: Odoo restore | Restore Kubernetes state
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    (restore_target_config | default(app_config, true)).hosting.method
+    | default('docker') == 'kubernetes'

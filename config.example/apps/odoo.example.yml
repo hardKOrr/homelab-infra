@@ -4,7 +4,13 @@
 # Community CRM includes leads, opportunities, pipeline stages, activities and reporting.
 # Enterprise-only features such as Studio, VoIP, lead mining and advanced support are not
 # enabled or required by this baseline.
+# Default: Docker on the services VM. Select Kubernetes explicitly after deploying
+# the cluster; the named PostgreSQL backend stays outside Kubernetes.
+hosting:
+  method: docker  # kubernetes is also supported
 app:
+  # Kubernetes data_dir claim size in GiB, using the cluster's default StorageClass.
+  # storage: 10
   database:
     instance: postgresql-odoo
     version: "16"
@@ -23,4 +29,5 @@ backup:
 
 # Recovery boundary: restore the PostgreSQL-odoo database and this instance's
 # filestore from the same recovery point. The PostgreSQL backend is shared and
-# must not be removed as part of Odoo removal.
+# must not be removed as part of Odoo removal. Both hosting methods use database.pxar
+# (odoo.dump) and filestore.pxar, so their recovery points can move between methods.

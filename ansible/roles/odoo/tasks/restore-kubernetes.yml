@@ -1,0 +1,52 @@
+---
+- name: Odoo restore | Require a separate database for a new destination
+  ansible.builtin.assert:
+    that:
+      - restore_source_database is mapping
+      - restore_source_database.instance | default('') | length > 0
+      - restore_source_database.name | default('') | length > 0
+      - _odoo_source_backend.host | default('') | length > 0
+      - _odoo_source_backend.port | default(0) | int > 0
+      - >-
+        not (restore_source_database.name == restore_target_config.app.database.name
+             and _odoo_source_backend.host == _odoo_target_backend.host
+             and (_odoo_source_backend.port | int) == (_odoo_target_backend.port | int))
+    fail_msg: A new Odoo restore must not overwrite the source instance's database.
+  vars:
+    _odoo_source_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           (restore_source_database | default({})).get('instance', ''), {}) }}
+    _odoo_target_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           restore_target_config.app.database.instance, {}) }}
+  when: restore_destination == 'new'
+  no_log: true
+
+- name: Odoo restore | Require a recent target safety point
+  ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: >-
+      {{ restore_target_config.backup.backup_id | default('', true) or restore_target }}
+  when: restore_overwrite | bool
+
+- name: Odoo restore | Describe the registered target database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: Odoo restore | Restore through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Odoo
+      archives:
+        - name: filestore
+          claim: "{{ restore_target }}-filestore"
+          owner: "{{ restore_target_config.app.puid }}:{{ restore_target_config.app.pgid }}"
+      database: "{{ k8s_database_step }}"
+      stop: ["{{ restore_target }}"]
+      describe: the named PostgreSQL database and Odoo data_dir including attachments
+      verify:
+        - Sign in to Odoo and check the restored CRM record and its binary attachment.

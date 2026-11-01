@@ -13,7 +13,7 @@ def main():
         (ROOT / "ansible/vars/app-defaults/odoo.yml").read_text(encoding="utf-8")
     )["odoo_defaults"]["app"]
     tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/odoo/tasks/main.yml").read_text(encoding="utf-8")
+        (ROOT / "ansible/roles/odoo/tasks/docker.yml").read_text(encoding="utf-8")
     )
     task = next(task for task in tasks if task.get("name") == "Odoo | Render configuration")
     template = task["ansible.builtin.template"]
