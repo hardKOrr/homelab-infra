@@ -1,13 +1,13 @@
 ---
 # Default Proxmox and app configuration for Ntfy — the platform notification hub.
-# It remains a native LXC by default; Kubernetes is selected per instance.
+# It remains a native LXC by default; a VM or Kubernetes is selected per instance.
 # Users override specific values in config/apps/ntfy.yml.
 # This file is git-managed — git pull may update these defaults.
 
 ntfy_defaults:
   hosting:
     method: native
-    supported: [native-lxc, kubernetes]
+    supported: [native-lxc, native-vm, kubernetes]
     impossible: {}
   recovery:
     methods: [native]
@@ -16,7 +16,7 @@ ntfy_defaults:
       restore_playbook: restore-app.yml
 
   proxmox:
-    type: lxc                   # native LXC — single Go binary, no Docker needed
+    guest_type: lxc             # lxc or vm — single Go binary, no Docker needed
     # Boot tier 30 — notifications come up before the things that report to them, so
     # an ascent that goes wrong is able to say so.
     boot_order: 30

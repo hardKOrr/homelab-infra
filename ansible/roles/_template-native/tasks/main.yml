@@ -1,7 +1,10 @@
 ---
-# APP_NAME role — native LXC deployment (single binary or package-installed).
+# APP_NAME role — native LXC or VM deployment (single binary or package-installed).
 # This role is called from Play 2 of playbooks/apps/APP_NAME.yml.
-# Target host: a dedicated LXC container (provisioned in Play 1).
+# Target host: a dedicated LXC or cloud-init VM (provisioned in Play 1).
+# Play 1 on localhost includes this role with tasks_from: provision and sets
+# native_guest_network_app: APP_NAME. proxmox.guest_type selects lxc (default)
+# or vm; the same install/configure tasks below run on either guest.
 #
 # Variables available:
 #   app_config        — merged defaults + user config (from Play 1)

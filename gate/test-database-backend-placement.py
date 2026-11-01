@@ -13,8 +13,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-PREPARE = ROOT / "ansible/tasks/database/resolve-backend-placement.yml"
-PROVISION = ROOT / "ansible/tasks/database/provision-backend-guest.yml"
+PREPARE = ROOT / "ansible/tasks/proxmox/resolve-native-placement.yml"
+PROVISION = ROOT / "ansible/tasks/proxmox/provision-native-guest.yml"
 RESOLVER = ROOT / "ansible/tasks/proxmox/resolve-guest-placement.yml"
 ENGINES = ("postgresql", "redis", "mariadb", "mysql", "influxdb")
 
@@ -65,6 +65,7 @@ def prepare_vars(instance_config, app_proxmox, existing_hosts=None, placement=No
     proxmox.update(placement or {})
     return {
         "instance": "database-test",
+        "native_guest_database": True,
         "_instance_config": instance_config,
         "app_config": {"proxmox": app_proxmox},
         "homelabinfra_config": {"proxmox": proxmox},
@@ -83,9 +84,9 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_guest_type == 'vm'",
-                    "_database_backend_node == 'node-2'",
-                    "_database_backend_storage == 'vm-store'",
+                    "_native_guest_guest_type == 'vm'",
+                    "_native_guest_node == 'node-2'",
+                    "_native_guest_storage == 'vm-store'",
                     "app_config.proxmox.guest_type == 'vm'",
                 ]}},
             ],
@@ -99,9 +100,9 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_guest_type == 'vm'",
-                    "_database_backend_node == 'control-node'",
-                    "_database_backend_storage == 'global-store'",
+                    "_native_guest_guest_type == 'vm'",
+                    "_native_guest_node == 'control-node'",
+                    "_native_guest_storage == 'global-store'",
                 ]}},
             ],
         ),
@@ -125,8 +126,8 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_node == 'node-lxc'",
-                    "_database_backend_storage == 'lxc-store'",
+                    "_native_guest_node == 'node-lxc'",
+                    "_native_guest_storage == 'lxc-store'",
                 ]}},
             ],
         ),
@@ -136,9 +137,9 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_guest_type == 'lxc'",
-                    "_database_backend_node == 'control-node'",
-                    "_database_backend_storage == 'global-store'",
+                    "_native_guest_guest_type == 'lxc'",
+                    "_native_guest_node == 'control-node'",
+                    "_native_guest_storage == 'global-store'",
                 ]}},
             ],
         ),
@@ -158,9 +159,9 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_classed_placement | bool",
-                    "_database_backend_node == 'node-2'",
-                    "_database_backend_storage == 'database-vm-store'",
+                    "_native_guest_classed_placement | bool",
+                    "_native_guest_node == 'node-2'",
+                    "_native_guest_storage == 'database-vm-store'",
                 ]}},
             ],
         ),
@@ -180,14 +181,30 @@ def check_prepare_task():
             [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
                 {"ansible.builtin.assert": {"that": [
-                    "_database_backend_classed_placement | bool",
-                    "_database_backend_node == ''",
-                    "_database_backend_storage == 'floating-lxc-store'",
-                    "_database_backend_nodes_to_validate == ['node-lxc']",
+                    "_native_guest_classed_placement | bool",
+                    "_native_guest_node == ''",
+                    "_native_guest_storage == 'floating-lxc-store'",
+                    "_native_guest_nodes_to_validate == ['node-lxc']",
                 ]}},
             ],
         ),
     ]
+
+    native = prepare_vars(
+        {}, {"guest_type": "vm"}, placement={
+            "node_roles": {"storage": "node-2", "compute": ["node-lxc"]},
+            "storage_ids": {"floating_vm": "native-vm-store"},
+        },
+    )
+    native["native_guest_database"] = False
+    cases.append(("native VM floats on compute", native, [
+        {"ansible.builtin.include_tasks": str(PREPARE)},
+        {"ansible.builtin.assert": {"that": [
+            "_native_guest_node == ''",
+            "_native_guest_storage == 'native-vm-store'",
+            "_native_guest_nodes_to_validate == ['node-lxc']",
+        ]}},
+    ]))
 
     for name, variables, tasks in cases:
         result = run_playbook(
@@ -218,7 +235,7 @@ def check_prepare_task():
             "vars": existing_vars,
             "tasks": [
                 {"ansible.builtin.include_tasks": str(PREPARE)},
-                {"ansible.builtin.assert": {"that": "_database_backend_node == 'unregistered-node'"}},
+                {"ansible.builtin.assert": {"that": "_native_guest_node == 'unregistered-node'"}},
             ],
         }],
         "[local]\nlocalhost ansible_connection=local\n"
@@ -368,26 +385,28 @@ def check_all_engines_share_placement():
         assert includes.index(prepare_path) < includes.index(provision_path)
 
     prepare_text = PREPARE.read_text(encoding="utf-8")
-    assert "guest_type" in prepare_text and "'type'" in prepare_text
+    assert "resolve-native-type.yml" in prepare_text
+    type_text = (PREPARE.parent / "resolve-native-type.yml").read_text()
+    assert "guest_type" in type_text and "'type'" in type_text
     assert "homelabinfra_config.proxmox.get('node', '')" in prepare_text
     assert "homelabinfra_config.proxmox.get('storage', '')" in prepare_text
     mismatch = next(
         task for task in yaml.safe_load(prepare_text)
-        if task.get("name") == "Database backend | Refuse a guest type change for an existing instance"
+        if task.get("name") == "Native guest | Refuse a guest type change for an existing instance"
     )
     assert "proxmox_vmtype" in str(mismatch["ansible.builtin.assert"])
     assert "will not convert" in mismatch["ansible.builtin.assert"]["fail_msg"]
 
     provision_text = PROVISION.read_text(encoding="utf-8")
-    assert "_database_backend_guest_type == 'lxc'" in provision_text
-    assert "_database_backend_guest_type == 'vm'" in provision_text
+    assert "_native_guest_guest_type == 'lxc'" in provision_text
+    assert "_native_guest_guest_type == 'vm'" in provision_text
     assert provision_text.count("proxmox_placement_database_backend:") == 3
-    assert "{{ not (_database_backend_classed_placement | bool) }}" in provision_text
+    assert "{{ not (_native_guest_classed_placement | bool) }}" in provision_text
 
     provision_tasks = list(iter_tasks(yaml.safe_load(provision_text)))
     lxc_identity = next(
         task for task in provision_tasks
-        if task.get("name") == "Database backend | Set LXC identity and sizing"
+        if task.get("name") == "Native guest | Set LXC identity and sizing"
     )
     lxc_create = yaml.safe_load(
         (ROOT / "ansible/tasks/proxmox/lxc-create.yml").read_text(encoding="utf-8")
@@ -412,8 +431,9 @@ def check_all_engines_share_placement():
             "gather_facts": False,
             "vars": {
                 "instance": "database-test",
-                "_database_backend_memory_mib": 2048,
-                "_database_backend_storage": "instance-store",
+        "native_guest_database": True,
+                "_native_guest_memory_mib": 2048,
+                "_native_guest_storage": "instance-store",
                 "app_config": {"proxmox": {
                     "guest_type": "lxc",
                     "node": "node-2",

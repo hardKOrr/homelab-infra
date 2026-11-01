@@ -1,6 +1,6 @@
 ---
 # Deploy Ntfy — the platform notification hub (bootstrap step 2).
-# Defaults to a native LXC with the official .deb; config may select the Kubernetes path.
+# Defaults to a native LXC with the official .deb; config may select a VM or Kubernetes.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/ntfy.yml -e instance=ntfy
@@ -16,7 +16,7 @@
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
-# pct waits inside lxc-create.yml delegate to homelabinfra_config.proxmox.node.
+# Shared creation tasks delegate node-local operations to the selected Proxmox node.
 # Adds the target host to a group for Play 2 to use.
 - name: "Ntfy | Provision"
   hosts: localhost
@@ -61,114 +61,13 @@
       vars:
         hosting_app_slug: ntfy
   tasks:
-    # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
-    # find-or-create-host.yml: an existing `_<instance>` host is reused so
-    # re-runs are idempotent (a fresh generate-ip would otherwise allocate a
-    # second IP/VMID and provision a duplicate guest).
-    - name: Refresh inventory to get current Proxmox state
-      ansible.builtin.meta: refresh_inventory
-      when: app_config.hosting.method == 'native'
-
-    - name: Resolve this instance's guest, reusing one Remove kept
-      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
       vars:
-        resolve_guest_instance: "{{ instance }}"
-        resolve_guest_type: lxc
+        native_guest_network_app: ntfy
       when: app_config.hosting.method == 'native'
-
-    - name: Check for existing instance host
-      ansible.builtin.set_fact:
-        _existing_hosts: "{{ resolve_guest_hosts }}"
-      when: app_config.hosting.method == 'native'
-
-    - name: Add existing instance host to deploy group
-      ansible.builtin.add_host:
-        name: "{{ _existing_hosts[0] }}"
-        groups: "deploy_{{ instance }}"
-        ansible_host: >-
-          {{ hostvars[_existing_hosts[0]].ansible_host
-             | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
-        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-        app_config: "{{ app_config }}"
-        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
-      when:
-        - app_config.hosting.method == 'native'
-        - _existing_hosts | default([]) | length > 0
-      # Inventory bookkeeping, not a lab change: add_host always reports changed,
-      # which alone keeps a fully converged re-run off changed=0.
-      changed_when: false
-
-    # A reused guest is not necessarily a RUNNING guest — this branch skips
-    # lxc-create.yml/vm-create.yml, which is where starting lives. See the header of
-    # tasks/proxmox/ensure-guest-running.yml for the failure this prevents.
-    - name: Ensure the existing instance host is running
-      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
-      vars:
-        ensure_guest_host: "{{ _existing_hosts[0] }}"
-      when:
-        - app_config.hosting.method == 'native'
-        - _existing_hosts | default([]) | length > 0
-
-    - name: Provision new LXC
-      when:
-        - app_config.hosting.method == 'native'
-        - _existing_hosts | default([]) | length == 0
-      block:
-        # Stamp the application tag `_<instance>` so the reuse check above (and
-        # remove.yml) find this guest. The app's defaults carry ownership and the
-        # machine facts; only the instance tag is appended here, because only this
-        # play knows what the instance is actually called.
-        - name: Set LXC identity from app config
-          ansible.builtin.set_fact:
-            homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'lxc':
-                   app_config.proxmox | combine({
-                     'hostname': instance,
-                     'tags': ((app_config.proxmox.tags | default(['_+lab', '_-debian']))
-                               + ['_' ~ instance]) | unique
-                   }, recursive=True)
-                 }}, recursive=True) }}
-
-        # Which network this guest is addressed on follows from its SCOPE — `scope: lab`
-        # in catalog/applications.yml puts it on the shared network, an estate-scoped app
-        # on its estate's. Advisory: a lab that declares no such network is unaffected.
-        - name: Resolve the network this guest belongs on
-          ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
-          vars:
-            resolve_network_app: "ntfy"
-            resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
-
-        - name: Generate IP address
-          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
-          vars:
-            network_name: "{{ app_config.proxmox.network | default('', true) }}"
-            pool_name: "{{ app_config.proxmox.pool | default('') }}"
-            pool_hint: "{{ app_config.stack | default('') }}"
-            requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
-
-        - name: Set instance IP in config
-          ansible.builtin.set_fact:
-            homelabinfra_config: >-
-              {{ homelabinfra_config | combine({
-                'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}
-              }, recursive=True) }}
-
-        - name: Derive VMID from IP
-          ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
-
-        - name: Create LXC container
-          ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
-
-        # ansible_host here is the app LXC's own IP — Play 3 reads it as the wiring upstream.
-        - name: Add LXC to deploy group
-          # Play 3 reads ansible_host and app_config back from this hostvars handoff.
-          ansible.builtin.add_host:
-            name: "{{ homelabinfra_instance.lxc.hostname }}"
-            groups: "deploy_{{ instance }}"
-            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
-            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-            app_config: "{{ app_config }}"
-            homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
 
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
@@ -214,29 +113,6 @@
       ansible.builtin.include_role:
         name: ntfy
 
-    # A recreated guest may need a new token, so the registry loaded above can still
-    # name the previous guest's credential. Merge the role's live token before writing
-    # this guest's OS-update hook; the next Deploy then writes the same content.
-    - name: Merge the current Ntfy credentials into guest infrastructure facts
-      ansible.builtin.set_fact:
-        homelabinfra_infra: >-
-          {{ (homelabinfra_infra | default({}))
-             | combine({
-                 'notifications': ((homelabinfra_infra | default({})).get('notifications', {})
-                   | combine({
-                       'provider': 'ntfy',
-                       'instance': instance,
-                       'host': 'http://' ~ (ansible_host | default(ansible_default_ipv4.address))
-                               ~ ':' ~ (app_config.app.port | string),
-                       'topic': app_config.app.topic,
-                       'token': ntfy_publish_token
-                     }, recursive=True))
-               }, recursive=True) }}
-
-    # Unconditional, unlike guest bootstrap: every deploy gives this guest the current
-    # notification hook. The role above exports the token just verified against Ntfy.
-    - name: Configure OS update notifications
-      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
 
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
@@ -257,7 +133,7 @@
         name: homelabinfra_infra
       failed_when: false
 
-    # Native instances publish directly to their LXC. Kubernetes instances use the
+    # Native instances publish directly to their guest. Kubernetes instances use the
     # routed HTTPS hostname because their service is inside the cluster network.
     - name: Record Ntfy facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml

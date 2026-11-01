@@ -12,6 +12,9 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 PROVISION = yaml.safe_load((REPO / "ansible/roles/ntfy/tasks/credentials-provision.yml").read_text())
+NATIVE = yaml.safe_load((REPO / "ansible/roles/ntfy/tasks/credentials-native.yml").read_text())
+MERGE = copy.deepcopy(next(task for task in NATIVE if task.get("name") ==
+                           "Merge the current Ntfy credentials into guest infrastructure facts"))
 CREATE = copy.deepcopy(next(task for task in PROVISION if task.get("name") == "Create access token"))
 SELECT = copy.deepcopy(next(task for task in PROVISION if task.get("name") == "Select the effective access token"))
 
@@ -28,13 +31,20 @@ def run_case(name, recorded_token, guest_token, expected_token, should_create):
         }
         select = copy.deepcopy(SELECT)
         select.pop("no_log", None)
+        merge = copy.deepcopy(MERGE)
+        merge.pop("no_log", None)
         tasks = [
             create,
             select,
+            {"ansible.builtin.set_fact": {"ntfy_publish_token": "{{ _ntfy_token }}"}},
+            merge,
             {
                 "ansible.builtin.assert": {
                     "that": [
                         "_ntfy_token == fixture_expected_token",
+                        "homelabinfra_infra.notifications.token == fixture_expected_token",
+                        "homelabinfra_infra.notifications.retained.nested == 'keep'",
+                        "homelabinfra_infra.retained.nested == 'keep'",
                         "ntfy_test_created | default(false) == fixture_should_create",
                     ]
                 }
@@ -49,9 +59,13 @@ def run_case(name, recorded_token, guest_token, expected_token, should_create):
                         "gather_facts": False,
                         "vars": {
                             "homelabinfra_infra": {
-                                "notifications": {"token": recorded_token}
+                                "notifications": {"token": recorded_token, "retained": {"nested": "keep"}},
+                                "retained": {"nested": "keep"},
                             },
                             "ntfy_cli_delegate": "localhost",
+                            "instance": "ntfy",
+                            "ansible_host": "192.0.2.45",
+                            "app_config": {"app": {"port": 80, "topic": "homelab"}},
                             "_ntfy_existing_token": guest_token,
                             "fixture_minted_token": "tk_fixtureNew",
                             "fixture_expected_token": expected_token,

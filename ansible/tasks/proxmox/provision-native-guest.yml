@@ -1,0 +1,150 @@
+---
+# Shared LXC/cloud-init VM provisioning. Application roles install the software.
+- name: Native guest | Resolve selected guest memory
+  ansible.builtin.import_tasks: resolve-native-memory.yml
+
+- name: Native guest | Provision an LXC
+  when:
+    - _existing_hosts | length == 0
+    - _native_guest_guest_type == 'lxc'
+  block:
+    - name: Native guest | Set LXC identity and sizing
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'lxc':
+               (app_config.proxmox | dict2items
+                | rejectattr('key', 'equalto', 'storage') | items2dict | combine({
+               'hostname': instance,
+               'cores': app_config.proxmox.cores
+                 | default(app_config.proxmox.lxc.cores | default(2)) | int,
+               'memory': _native_guest_memory_mib | int,
+               'disk_volume': app_config.proxmox.disk_volume
+                 | default(app_config.proxmox.lxc.disk_volume | default({'size': 32})),
+               'tags': ((app_config.proxmox.tags | default(['_+lab', '_-debian']))
+                 + ['_' ~ instance]) | unique
+             }, recursive=True))}}, recursive=True) }}
+
+    - name: Native guest | Resolve the guest network
+      ansible.builtin.include_tasks: ../network/resolve-network.yml
+      vars:
+        resolve_network_app: "{{ native_guest_network_app }}"
+        resolve_network_estate: "{{ '' if native_guest_database | default(false) | bool else app_config.routing.estate | default('', true) }}"
+
+    - name: Native guest | Allocate an LXC address
+      ansible.builtin.import_tasks: ../network/generate-ip.yml
+      vars:
+        network_name: "{{ app_config.proxmox.network | default('', true) }}"
+        pool_name: "{{ app_config.proxmox.pool | default('') }}"
+        requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+    - name: Native guest | Set the LXC address
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'lxc': {
+               'ip_address': homelabinfra_instance.network.ip_address
+             }}}, recursive=True) }}
+
+    - name: Native guest | Derive the LXC VMID
+      ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Native guest | Create the LXC
+      ansible.builtin.include_tasks: ../proxmox/lxc-create.yml
+      vars:
+        proxmox_placement_class: floating_lxc
+        proxmox_placement_database_backend: "{{ not (_native_guest_classed_placement | bool) }}"
+
+    - name: Native guest | Add the LXC to its deploy group
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.lxc.hostname }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        _native_guest_guest_type: "{{ _native_guest_guest_type }}"
+        _database_backend_guest_type: "{{ _native_guest_guest_type }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+- name: Native guest | Provision a VM
+  when:
+    - _existing_hosts | length == 0
+    - _native_guest_guest_type == 'vm'
+  block:
+    - name: Native guest | Set VM identity and sizing
+      ansible.builtin.set_fact:
+        _native_guest_vm_config: >-
+          {{ (app_config.proxmox.vm | default({})) | combine({
+               'name': instance,
+               'cores': app_config.proxmox.cores
+                 | default(app_config.proxmox.vm.cores | default(2)) | int,
+               'memory': _native_guest_memory_mib | int,
+               'disk_size': app_config.proxmox.disk_size
+                 | default(app_config.proxmox.vm.disk_size
+                   | default(app_config.proxmox.disk_volume.size
+                     | default(app_config.proxmox.vm.disk_volume.size | default(32)))) | int,
+               'boot_order': app_config.proxmox.boot_order
+                 | default(app_config.proxmox.vm.boot_order | default(40)) | int,
+               'tags': ((app_config.proxmox.vm.tags
+                 | default(app_config.proxmox.tags | default(['_+lab', '_-debian'])))
+                 + ['_' ~ instance]) | unique
+             }, recursive=True) }}
+    - name: Native guest | Apply VM identity and sizing
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'vm': _native_guest_vm_config}}, recursive=True) }}
+
+    - name: Native guest | Resolve the guest network
+      ansible.builtin.include_tasks: ../network/resolve-network.yml
+      vars:
+        resolve_network_app: "{{ native_guest_network_app }}"
+        resolve_network_estate: "{{ '' if native_guest_database | default(false) | bool else app_config.routing.estate | default('', true) }}"
+
+    - name: Native guest | Allocate a VM address
+      ansible.builtin.import_tasks: ../network/generate-ip.yml
+      vars:
+        network_name: "{{ app_config.proxmox.network | default('', true) }}"
+        pool_name: "{{ app_config.proxmox.pool | default('') }}"
+        requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+    - name: Native guest | Set the VM address
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'vm': {
+               'ip_address': homelabinfra_instance.network.ip_address
+             }}}, recursive=True) }}
+
+    - name: Native guest | Derive the VMID
+      ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Native guest | Ensure the Debian cloud-init template exists
+      ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
+      vars:
+        proxmox_placement_class: "{{ 'database_vm' if native_guest_database | default(false) | bool else 'floating_vm' }}"
+        proxmox_placement_database_backend: "{{ not (_native_guest_classed_placement | bool) }}"
+        proxmox_placement_node: "{{ _native_guest_node }}"
+        proxmox_placement_storage: "{{ _native_guest_storage }}"
+        cloud_template_name: "{{ app_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
+        cloud_template_image_url: >-
+          {{ app_config.proxmox.cloud_template.image_url
+             | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
+        cloud_template_storage: >-
+          {{ app_config.proxmox.cloud_template.storage
+             | default(_native_guest_storage, true) }}
+        cloud_template_bridge: "{{ network_effective.bridge }}"
+
+    - name: Native guest | Clone the VM
+      ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+      vars:
+        proxmox_placement_class: "{{ 'database_vm' if native_guest_database | default(false) | bool else 'floating_vm' }}"
+        proxmox_placement_database_backend: "{{ not (_native_guest_classed_placement | bool) }}"
+        proxmox_placement_node: "{{ _native_guest_node }}"
+        proxmox_placement_storage: "{{ _native_guest_storage }}"
+
+    - name: Native guest | Add the VM to its deploy group
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.vm.name }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        _native_guest_guest_type: "{{ _native_guest_guest_type }}"
+        _database_backend_guest_type: "{{ _native_guest_guest_type }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"

@@ -1,0 +1,136 @@
+---
+# Normalize placement without changing an existing guest type.
+- name: Native guest | Resolve selected type
+  ansible.builtin.import_tasks: resolve-native-type.yml
+
+- name: Native guest | Normalize classed placement maps
+  ansible.builtin.set_fact:
+    _native_guest_classed_placement: >-
+      {{ 'node_roles' in homelabinfra_config.proxmox
+         or 'storage_ids' in homelabinfra_config.proxmox }}
+    _native_guest_node_roles: >-
+      {{ homelabinfra_config.proxmox.get('node_roles', {})
+         if homelabinfra_config.proxmox.get('node_roles', {}) is mapping else {} }}
+    _native_guest_storage_ids: >-
+      {{ homelabinfra_config.proxmox.get('storage_ids', {})
+         if homelabinfra_config.proxmox.get('storage_ids', {}) is mapping else {} }}
+
+- name: Native guest | Resolve the node and storage
+  ansible.builtin.set_fact:
+    _native_guest_node: >-
+      {{ ((app_config.proxmox.get('lxc', {}).get('node', '')
+           if _native_guest_guest_type == 'lxc'
+           else app_config.proxmox.get('vm', {}).get('node', ''))
+          or app_config.proxmox.get('node', '')
+          or ((_native_guest_node_roles.get('storage', '') if native_guest_database | default(false) | bool else '')
+              if _native_guest_guest_type == 'vm'
+                 and ('node_roles' in homelabinfra_config.proxmox
+                      or 'storage_ids' in homelabinfra_config.proxmox)
+              else ''
+              if (_native_guest_guest_type == 'lxc' or not (native_guest_database | default(false) | bool))
+                 and ('node_roles' in homelabinfra_config.proxmox
+                      or 'storage_ids' in homelabinfra_config.proxmox)
+              else homelabinfra_config.proxmox.get('node', ''))) | string | trim }}
+    _native_guest_storage: >-
+      {{ (((app_config.proxmox.get('disk_volume', {}).get('storage', '')
+            or app_config.proxmox.get('lxc', {}).get('disk_volume', {}).get('storage', ''))
+           if _native_guest_guest_type == 'lxc'
+           else app_config.proxmox.get('vm', {}).get('storage', ''))
+          or app_config.proxmox.get('storage', '')
+          or (_native_guest_storage_ids.get(
+                'floating_lxc' if _native_guest_guest_type == 'lxc' else ('database_vm' if native_guest_database | default(false) | bool else 'floating_vm'), '')
+              if ('node_roles' in homelabinfra_config.proxmox
+                  or 'storage_ids' in homelabinfra_config.proxmox)
+              else homelabinfra_config.proxmox.get('storage', ''))) | string | trim }}
+
+- name: Native guest | Validate classed placement configuration
+  ansible.builtin.assert:
+    that:
+      - _native_guest_node_roles.storage | default('') | string | trim | length > 0
+      - _native_guest_node_roles.compute is sequence
+      - _native_guest_node_roles.compute is not string
+      - _native_guest_node_roles.compute | length > 0
+      - >-
+        (_native_guest_node_roles.compute | select('string') | list | length)
+        == (_native_guest_node_roles.compute | length)
+      - >-
+        (_native_guest_node_roles.compute | unique | list | length)
+        == (_native_guest_node_roles.compute | length)
+      - >-
+        _native_guest_node_roles.storage not in _native_guest_node_roles.compute
+      - _native_guest_storage_ids is mapping
+      - >-
+        _native_guest_storage_ids.get(
+          'floating_lxc' if _native_guest_guest_type == 'lxc' else ('database_vm' if native_guest_database | default(false) | bool else 'floating_vm'), '')
+        | string | trim | length > 0
+    fail_msg: >-
+      Classed database placement requires valid proxmox.node_roles.storage,
+      proxmox.node_roles.compute and proxmox.storage_ids.{floating_lxc,database_vm}
+      values in config/proxmox.yml.
+  when:
+    - _existing_hosts | length == 0
+    - _native_guest_classed_placement | bool
+
+- name: Native guest | Resolve nodes whose addresses are needed for creation
+  ansible.builtin.set_fact:
+    _native_guest_nodes_to_validate: >-
+      {{ [_native_guest_node]
+         if _native_guest_node | length > 0
+         else (_native_guest_node_roles.get('compute', []) | list) }}
+
+- name: Native guest | Require a node and storage
+  ansible.builtin.assert:
+    that:
+      - >-
+        _native_guest_node | length > 0
+        or (_native_guest_classed_placement | bool
+            and (_native_guest_guest_type == 'lxc' or not (native_guest_database | default(false) | bool))
+            and _native_guest_nodes_to_validate | length > 0)
+      - _native_guest_storage | length > 0
+    fail_msg: >-
+      Native guest instance {{ instance }} needs a Proxmox node and storage. Set
+      proxmox.node and proxmox.storage in config/apps/{{ instance }}.yml, or configure
+      the lab-wide proxmox.node and proxmox.storage.
+  when: _existing_hosts | length == 0
+
+- name: Native guest | Validate the selected node address map
+  ansible.builtin.assert:
+    that: homelabinfra_config.proxmox.get('nodes', {}) is mapping
+    fail_msg: >-
+      Native guest instance {{ instance }} requires proxmox.nodes to be a mapping
+      from Proxmox node names to addresses.
+  when: _existing_hosts | length == 0
+
+- name: Native guest | Require addresses for every configured target node
+  ansible.builtin.assert:
+    that: >-
+      item == homelabinfra_config.proxmox.get('node', '')
+      or homelabinfra_config.proxmox.get('nodes', {}).get(item, '')
+         | string | trim | length > 0
+    fail_msg: >-
+      Native guest instance {{ instance }} targets node {{ item }}, which has no
+      address in proxmox.nodes. Add proxmox.nodes.{{ item }} to config/proxmox.yml.
+  loop: "{{ _native_guest_nodes_to_validate }}"
+  when: _existing_hosts | length == 0
+
+- name: Native guest | Publish normalized placement to the guest resolver
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'proxmox': {
+           'guest_type': _native_guest_guest_type,
+           'node': _native_guest_node,
+           'storage': _native_guest_storage
+         }}, recursive=True) }}
+  no_log: true
+
+- name: Native guest | Refuse a guest type change for an existing instance
+  ansible.builtin.assert:
+    that: >-
+      hostvars[_existing_hosts[0]].proxmox_vmtype | default('') ==
+      ('qemu' if _native_guest_guest_type == 'vm' else 'lxc')
+    fail_msg: >-
+      Existing native instance {{ instance }} is a
+      {{ hostvars[_existing_hosts[0]].proxmox_vmtype | default('unknown') }} guest, but
+      config selects proxmox.guest_type={{ _native_guest_guest_type }}. Deploy will
+      not convert or modify a guest whose type differs from the instance config.
+  when: _existing_hosts | length > 0

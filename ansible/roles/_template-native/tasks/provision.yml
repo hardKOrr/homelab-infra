@@ -1,0 +1,51 @@
+---
+# Localhost provisioning entry point for native applications. Install tasks run on
+# deploy_<instance> afterward; both LXC and cloud-init VM use the same app role.
+- name: Native guest | Resolve selected type
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/resolve-native-type.yml
+
+- name: Native guest | Refresh inventory
+  ansible.builtin.meta: refresh_inventory
+
+- name: Native guest | Resolve the existing instance of the selected type
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/resolve-instance-guest.yml
+  vars:
+    resolve_guest_instance: "{{ instance }}"
+    resolve_guest_type: "{{ _native_guest_guest_type }}"
+
+- name: Native guest | Save existing hosts
+  ansible.builtin.set_fact:
+    _existing_hosts: "{{ resolve_guest_hosts }}"
+
+- name: Native guest | Resolve placement and reject an existing type mismatch
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/resolve-native-placement.yml
+
+- name: Native guest | Refuse a shared or template guest
+  ansible.builtin.assert:
+    that: >-
+      hostvars[item].proxmox_tags_parsed | default([])
+      | select('match', '^_[.]') | list | length == 0
+    fail_msg: Native applications require a dedicated owned guest, not a shared guest or template.
+  loop: "{{ _existing_hosts }}"
+
+- name: Native guest | Reuse the existing host
+  ansible.builtin.add_host:
+    name: "{{ _existing_hosts[0] }}"
+    groups: "deploy_{{ instance }}"
+    ansible_host: >-
+      {{ hostvars[_existing_hosts[0]].ansible_host
+         | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    app_config: "{{ app_config }}"
+    homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+  changed_when: false
+  when: _existing_hosts | length > 0
+
+- name: Native guest | Start the existing host when needed
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/ensure-guest-running.yml
+  vars:
+    ensure_guest_host: "{{ _existing_hosts[0] }}"
+  when: _existing_hosts | length > 0
+
+- name: Native guest | Provision the selected guest type
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/provision-native-guest.yml

@@ -134,16 +134,8 @@
   changed_when: false
 
 # ── Publish account ───────────────────────────────────────────────────────────
-- name: Set native credential command inputs
-  ansible.builtin.set_fact:
-    ntfy_cli_prefix: [ntfy]
-    ntfy_cli_delegate: "{{ inventory_hostname }}"
-    ntfy_publish_host_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
-    ntfy_http_base_url: "http://localhost:{{ app_config.app.port }}"
-    ntfy_http_host_header: ""
-
-- name: Provision the publish account and token
-  ansible.builtin.include_tasks: credentials.yml
+- name: Reconcile native publish credentials
+  ansible.builtin.include_tasks: credentials-native.yml
 
 # ── Lab maintenance scripts ───────────────────────────────────────────────────
 - name: Install lab maintenance scripts
