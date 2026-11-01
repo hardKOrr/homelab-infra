@@ -314,6 +314,35 @@ def test_shared_recovery_contract():
     assert swap["recovery_swap_database"]["dump"] == "database/plane.dump"
 
 
+def test_shared_redis_backend_include():
+    hooks = load_tasks("tasks/restore-kubernetes-redis.yml")[0]["block"]
+    replace = next(t for t in hooks if "Replace the registered Redis" in t.get("name", ""))
+    install = replace["block"][0]
+    shared_register = load_tasks("tasks/restore-redis-install.yml")[0]
+    with tempfile.TemporaryDirectory(prefix="plane-k8s-redis-") as directory:
+        root = Path(directory)
+        stub = root / "install.yml"
+        stub.write_text(yaml.safe_dump([shared_register, {
+            "ansible.builtin.assert": {
+                "that": ["hostvars['plane_redis_restore_target'].ansible_host == 'redis.example.test'"]
+            }
+        }]))
+        install["ansible.builtin.include_tasks"] = str(stub)
+        play = root / "redis-regression.yml"
+        play.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False,
+            "vars": {"_plane_redis_backend": {"host": "redis.example.test"},
+                     "homelabinfra_config": {}},
+            "tasks": [install],
+        }]))
+        result = subprocess.run(
+            [str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"),
+             "-i", "localhost,", "-c", "local", str(play)],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_recovery_client_packages():
     tasks = load_tasks("tasks/kubernetes-database-step.yml")
     task = next(t for t in tasks if "Add Plane's release" in t.get("name", ""))
@@ -345,6 +374,7 @@ def test_recovery_client_packages():
 
 
 def main():
+    test_shared_redis_backend_include()
     test_recovery_client_packages()
     test_runtime_environment_include()
     test_defaults_and_dispatch()

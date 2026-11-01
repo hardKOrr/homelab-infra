@@ -87,6 +87,7 @@
         - name: Plane Kubernetes restore | Install the point's registered Redis dataset
           ansible.builtin.include_tasks: restore-redis-install.yml
           vars:
+            _plane_restore_redis_backend: "{{ _plane_redis_backend }}"
             plane_restore_redis_ready_tasks: restore-kubernetes-redis-ready.yml
 
         - name: Plane Kubernetes restore | Mark source Plane keys as a possible replacement
