@@ -176,6 +176,30 @@ def check_engine_memory():
                 )
             )
 
+    for invalid_memory in ("invalid", ["invalid"]):
+        plays.append({
+            "name": "invalid engine memory is refused before provisioning",
+            "hosts": "localhost",
+            "connection": "local",
+            "gather_facts": False,
+            "vars": {
+                "instance": "memory-invalid",
+                "_database_backend_guest_type": "lxc",
+                "app_config": {"proxmox": {"memory": 512}, "app": {"memory": invalid_memory}},
+            },
+            "tasks": [{
+                "block": [
+                    {"ansible.builtin.include_tasks": str(
+                        ROOT / "ansible/tasks/database/provision-backend-guest.yml"
+                    )},
+                    {"ansible.builtin.fail": {"msg": "Invalid memory reached guest provisioning"}},
+                ],
+                "rescue": [{"ansible.builtin.assert": {"that":
+                    "ansible_failed_task.name == 'Database backend | Validate engine memory inputs'"
+                }}],
+            }],
+        })
+
     with tempfile.TemporaryDirectory() as directory:
         playbook = Path(directory) / "database-memory.yml"
         playbook.write_text(yaml.safe_dump(plays, sort_keys=False), encoding="utf-8")

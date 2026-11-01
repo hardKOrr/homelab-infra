@@ -1,4 +1,8 @@
 ---
+# Preserve engine validation before any guest creation.
+- name: Database backend | Validate engine memory before provisioning
+  ansible.builtin.import_tasks: resolve-guest-memory.yml
+
 - name: Database backend | Provision through the shared native guest tasks
   ansible.builtin.include_tasks: ../proxmox/provision-native-guest.yml
   vars:
