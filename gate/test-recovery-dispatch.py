@@ -462,6 +462,10 @@ def main():
         index for index, task in enumerate(compose_block)
         if task.get("name") == "Stop and remove the containers"
     )
+    removal = compose_block[stop_compose]["community.docker.docker_compose_v2"]
+    assert removal["profiles"] == ["*"], "Remove must include exited init/profile services"
+    assert removal["state"] == "absent"
+    assert removal["project_src"] == "{{ _rm_project_dir }}"
     assert immich_include[0] > stop_compose
     assert immich_include[1]["ansible.builtin.include_tasks"] == "../../roles/immich/tasks/remove.yml"
     assert "_rm_delete_data | bool" in immich_include[1]["when"]
