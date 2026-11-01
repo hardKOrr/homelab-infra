@@ -1,0 +1,141 @@
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+      annotations:
+        checksum/env: {{ _authentik_k8s_env | to_json | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: prepare-data
+          image: {{ app_config.app.redis_image }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              for dir in media certs custom-templates; do
+                mkdir -p "/data/$dir"
+                chown 1000:1000 "/data/$dir"
+                chmod 0750 "/data/$dir"
+              done
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      containers:
+{% for component in ['server', 'worker'] %}
+        - name: {{ component }}
+          image: ghcr.io/goauthentik/server:{{ _authentik_tag }}
+          args: [{{ component }}]
+          securityContext:
+            runAsUser: {{ 1000 if component == 'server' else 0 }}
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+{% if component == 'worker' %}
+          # Server and worker share a pod network, so their listeners must differ.
+          env:
+            - {name: AUTHENTIK_LISTEN__HTTP, value: "0.0.0.0:9100"}
+            - {name: AUTHENTIK_LISTEN__HTTPS, value: "0.0.0.0:9543"}
+            - {name: AUTHENTIK_LISTEN__METRICS, value: "0.0.0.0:9301"}
+          startupProbe:
+            exec:
+              command: [ak, healthcheck]
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            exec:
+              command: [ak, healthcheck]
+            periodSeconds: 10
+            timeoutSeconds: 10
+{% endif %}
+          volumeMounts:
+            - {name: data, mountPath: /media, subPath: media}
+            - {name: data, mountPath: /certs, subPath: certs}
+            - {name: data, mountPath: /templates, subPath: custom-templates}
+{% if component == 'server' %}
+          ports:
+            - {name: http, containerPort: 9000}
+          startupProbe:
+            httpGet: {path: /-/health/ready/, port: http}
+            periodSeconds: 5
+            failureThreshold: 180
+          readinessProbe:
+            httpGet: {path: /-/health/ready/, port: http}
+            periodSeconds: 5
+{% endif %}
+{% endfor %}
+        - name: redis
+          image: {{ app_config.app.redis_image }}
+          args: [redis-server, --save, "", --appendonly, "no"]
+          readinessProbe:
+            exec:
+              command: [redis-cli, ping]
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+  ports:
+    - {name: http, port: 9000, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  rules:
+    - host: {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port: {number: 9000}

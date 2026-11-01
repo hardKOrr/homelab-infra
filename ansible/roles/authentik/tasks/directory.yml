@@ -58,8 +58,9 @@
 - name: Directory | Apply the declared directory
   when: (_ak_dir_groups | length + _ak_dir_users | length) > 0
   vars:
-    _ak_dir_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_dir_api: "{{ _authentik_local_url | default('http://localhost:' ~ app_config.app.port | string) }}/api/v3"
     _ak_dir_headers:
+      Host: "{{ (_authentik_request_headers | default({'Host': 'localhost'})).Host }}"
       Authorization: "Bearer {{ _authentik_api_token }}"
       Accept: "application/json"
   block:

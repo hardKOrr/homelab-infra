@@ -294,7 +294,15 @@ def check_remove_wiring():
             if not isinstance(database, dict):
                 continue
             drops = str(render(expression, {"delete_data": True, "app_config": {"app": {"database": database}}, "instance": path.stem})).strip()
-            assert drops == str("provider" in database and "instance" in database), path.name
+            expected_drop = (database.get("provider") in {"postgresql", "mariadb", "mysql"}
+                             and bool(database.get("instance")))
+            assert drops == str(expected_drop), path.name
+            if path.stem == "authentik":
+                assert drops == "False", "default Authentik has embedded PostgreSQL"
+                configured = database | {"instance": "postgresql"}
+                assert str(render(expression, {"delete_data": True,
+                           "app_config": {"app": {"database": configured}},
+                           "instance": "authentik"})).strip() == "True"
             if drops == "True":
                 registered.append(path.stem)
             kept = str(render(expression, {"delete_data": False, "app_config": {"app": {"database": database}}, "instance": path.stem})).strip()

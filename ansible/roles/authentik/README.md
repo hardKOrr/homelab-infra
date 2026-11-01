@@ -112,3 +112,35 @@ The role ships no lab-specific accounts, groups, sources, flows, authenticators,
 as defaults. It creates and manages only objects declared by the operator. Undeclared
 objects remain outside role authority except when an explicitly destructive option such as
 `stages_exact: true` says otherwise.
+
+## Kubernetes
+
+Select `hosting.method: kubernetes` to deploy server, worker and an ephemeral Redis
+cache in one pod. One ReadWriteOnce claim on the cluster's default StorageClass holds
+`media`, `certs` and `custom-templates`. The worker can run embedded outposts; it does
+not mount a Docker socket to manage external Docker outposts.
+
+PostgreSQL remains on the registered backend. Set `app.database.instance` to its
+registered instance name when selecting Kubernetes. `app.database` defaults to provider
+`postgresql` and a database and role named after the application instance (hyphens and
+dots become underscores). Override those fields to select another database and role. Database egress uses the cluster node firewall alias.
+The estate's canonical SSO item retains the signing key, API token and administrator
+password; the Kubernetes Secret is only a runtime copy. If the registered database
+already contains the Authentik schema, Deploy requires the signing key, administrator
+password and API token from that estate's SSO item before generating any credentials.
+Restore an incomplete or missing item first; a local marker is not required for this guard.
+Identity declarations and the
+DNS, Caddy and monitoring wiring follow the same configuration as Docker.
+
+Kubernetes backup stops the pod's writers and pairs a logical database dump in
+`database.pxar` with the file volume in `data.pxar`, through the shared recovery Jobs.
+Restore requires an already deployed target and a separate recent pre-restore point.
+Verify the administrator login, records and media after restoring.
+
+To return to Docker with that recovery point, keep an explicit `app.database` mapping
+(provider, backend instance, name and role) and set `hosting.method: docker`. Deploy the
+fresh Docker target, take its safety backup, then restore the selected Kubernetes point.
+Docker uses the shared database client and restore swap for that same paired layout.
+An existing Docker configuration without a registered database continues to use its
+embedded PostgreSQL and its original physical `data.pxar` recovery format. Those older
+physical points must be restored on that original method; they are not logical dumps.

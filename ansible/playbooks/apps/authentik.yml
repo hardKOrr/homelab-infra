@@ -67,6 +67,37 @@
       vars:
         hosting_app_slug: authentik
   tasks:
+    - name: Resolve the estate for database and ingress
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Require a registered backend for Kubernetes
+      ansible.builtin.assert:
+        that:
+          - app_config.app.database.provider == 'postgresql'
+          - app_config.app.database.instance | default('') | length > 0
+        fail_msg: Set app.database.instance to the registered PostgreSQL backend for Kubernetes.
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Provision the registered PostgreSQL database
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+      when: app_config.app.database.instance | default('') | length > 0
+
+    - name: Add the registered database connection
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+               'database_host': database_provision_connection.host,
+               'database_port': database_provision_connection.port,
+               'database_user': database_provision_connection.user,
+               'database_password': database_provision_connection.password}}, recursive=True) }}
+      when: app_config.app.database.instance | default('') | length > 0
+      no_log: true
+
     # PATH A: DOCKER APP — app runs as containers on a shared stack host.
     # The stack host is found (or created) by tag. App is deployed in Play 2.
     - name: Find or create stack host
@@ -79,7 +110,27 @@
         # Per-instance group: add_host groups persist for the whole run, and
         # bootstrap.yml chains app playbooks via import_playbook.
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
+
+- name: "Authentik | Open registered database access on Docker"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Open access from the Docker stack to the registered database
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        wiring_app_name: "{{ instance }}"
+        wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+        wiring_firewall:
+          egress:
+            - name: authentik-database
+              protocol: TCP
+              port: "{{ app_config.app.database_port | string }}"
+              destination: "{{ app_config.app.database_host }}"
+      when:
+        - app_config.hosting.method == 'docker'
+        - app_config.app.database.instance | default('') | length > 0
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure Authentik.
@@ -138,6 +189,16 @@
         name: authentik
 
 
+- name: "Authentik | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy Authentik to its namespace
+      ansible.builtin.include_role:
+        name: authentik
+      when: app_config.hosting.method == 'kubernetes'
+
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
 # Registers Authentik in the service registry, then registers the app with platform
 # services. Runs on localhost (API calls). All wiring tasks are idempotent.
@@ -193,14 +254,21 @@
         resolve_estate_name: "{{ _authentik_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _authentik_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _authentik_deploy_host: >-
+      {{ hostvars['localhost'] if hostvars['localhost'].app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _authentik_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _authentik_deploy_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if _authentik_deploy_host.app_config.hosting.method == 'kubernetes'
+         else _authentik_deploy_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if _authentik_deploy_host.app_config.hosting.method == 'kubernetes'
+         else _authentik_deploy_host.app_config.app.port }}
     # Hostname comes from routing.subdomain (default `auth` in app-defaults,
     # overridable per instance), falling back to the instance name.
     wiring_subdomain: "{{ _authentik_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
@@ -253,6 +321,7 @@
     # shows what each host actually runs. Defaults cover every input - see the task file.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: _authentik_deploy_host.app_config.hosting.method == 'docker'
 
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml

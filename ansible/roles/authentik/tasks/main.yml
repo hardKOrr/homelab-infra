@@ -1,5 +1,5 @@
 ---
-# authentik role — Docker Compose deployment on a stack host.
+# Authentik: Docker Compose on a stack host or Kubernetes with registered PostgreSQL.
 # Called from Play 2 of playbooks/apps/authentik.yml. Target: the sso host,
 # which already has Docker installed (playbooks/apps/authentik.yml Play 2).
 #
@@ -40,8 +40,28 @@
 # Exports (read by Play 3 to write the sso registry key):
 #   authentik_api_url, authentik_api_token
 
+- name: Resolve Authentik request headers
+  ansible.builtin.set_fact:
+    _authentik_request_headers:
+      Host: >-
+        {{ (app_config.routing.subdomain | default(instance, true)) ~ '.' ~ homelabinfra_infra.domain
+           if app_config.hosting.method | default('docker') == 'kubernetes' else 'localhost' }}
+
+- name: Resolve Authentik transport and database mode
+  ansible.builtin.set_fact:
+    _authentik_external_database: "{{ app_config.app.database.instance | default('') | length > 0 }}"
+    _authentik_local_url: >-
+      {{ 'http://' ~ homelabinfra_infra.kubernetes.ingress_vip
+         if app_config.hosting.method | default('docker') == 'kubernetes'
+         else 'http://localhost:' ~ app_config.app.port | string }}
+    _authentik_public_api_url: >-
+      {{ 'https://' ~ (app_config.routing.subdomain | default(instance, true)) ~ '.' ~ homelabinfra_infra.domain
+         if app_config.hosting.method | default('docker') == 'kubernetes'
+         else 'http://' ~ (ansible_host | default(ansible_default_ipv4.address)) ~ ':' ~ app_config.app.port | string }}
+
 # ── Resolve the image tag ─────────────────────────────────────────────────────
 - name: Install the pinned PBS client for Authentik recovery
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
 
 - name: Get latest Authentik release
@@ -76,6 +96,7 @@
 
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.file:
     path: "{{ authentik_project_dir }}"
     state: directory
@@ -88,7 +109,9 @@
 # directory is how you break an instance that was working. PostgreSQL also enforces 0700
 # when it starts; declaring 0750 made the next deploy change it back after every container
 # recreate, so each directory carries its runtime-stable mode explicitly.
+
 - name: Create data directories owned by their own container
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item.name }}"
     state: directory
@@ -105,7 +128,9 @@
 # can sign in to Authentik at all, and every forward_auth app behind it is sealed
 # shut. certs and media only escaped it here because their containers wrote content
 # and took ownership on the way. Cost a live run to find, 2026-08-13.
+
 - name: Create data directories read by authentik-server
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item }}"
     state: directory
@@ -133,6 +158,7 @@
 # credential. `resolve-estate.yml` then found no token under estates.<name>.sso and
 # the estate app's wiring failed its contract assert (execution 152). The name that
 # `write-generated-facts.yml` already scopes by estate has to be scoped here too.
+
 - name: Resolve the estate this instance belongs to
   ansible.builtin.set_fact:
     _authentik_estate: "{{ app_config.routing.estate | default('', true) }}"
@@ -151,6 +177,7 @@
                | default({})).sso | default({}) }}
 
 - name: Read the existing compose environment (secret continuity across re-runs)
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.slurp:
     src: "{{ authentik_env_file }}"
   register: _authentik_env_current
@@ -158,6 +185,7 @@
   no_log: true
 
 - name: Parse the existing compose environment
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.set_fact:
     _authentik_env_existing: >-
       {{ dict((_authentik_env_current.content | b64decode).splitlines()
@@ -167,6 +195,7 @@
   no_log: true
 
 - name: Check whether this instance already has a PostgreSQL database
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.stat:
     path: "{{ app_config.app.data_path }}/database/PG_VERSION"
   register: _authentik_database_marker
@@ -176,46 +205,96 @@
 # environment. A later Deploy must therefore recover every database and signing
 # credential from this estate's canonical Vaultwarden SSO item. If both copies of an
 # initialized instance's credentials are missing, fail before writing new ones.
+
 - name: Refuse to replace credentials for an initialized database
   ansible.builtin.assert:
     that:
       - >-
-        (_authentik_env_existing.PG_PASS | default('', true) | length > 0)
+        ((_authentik_env_existing | default({})).PG_PASS | default('', true) | length > 0)
         or (_authentik_recorded_sso.postgres_password | default('', true) | length > 0)
       - >-
-        (_authentik_env_existing.AUTHENTIK_SECRET_KEY | default('', true) | length > 0)
+        ((_authentik_env_existing | default({})).AUTHENTIK_SECRET_KEY | default('', true) | length > 0)
         or (_authentik_recorded_sso.secret_key | default('', true) | length > 0)
       - >-
-        (_authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD | default('', true) | length > 0)
+        ((_authentik_env_existing | default({})).AUTHENTIK_BOOTSTRAP_PASSWORD | default('', true) | length > 0)
         or (_authentik_recorded_sso.admin_password | default('', true) | length > 0)
       - >-
-        (_authentik_env_existing.AUTHENTIK_BOOTSTRAP_TOKEN | default('', true) | length > 0)
+        ((_authentik_env_existing | default({})).AUTHENTIK_BOOTSTRAP_TOKEN | default('', true) | length > 0)
         or (_authentik_recorded_sso.token | default('', true) | length > 0)
     fail_msg: >-
       Authentik {{ instance }} already has a PostgreSQL database but one or more
       credentials are missing from both its compose environment and its estate-scoped
       Vaultwarden SSO item. Restore that item before deploying; generating replacements
       would strand the database and every credential-dependent client.
-  when: _authentik_database_marker.stat.exists
+  when: _authentik_database_marker.stat.exists | default(false)
+  no_log: true
+
+# Registered PostgreSQL has no local PG_VERSION marker. Inspect the backend before
+# generating anything: bootstrap variables never replace credentials in an existing schema.
+- name: Resolve the registered database for credential continuity
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+  when: _authentik_external_database | bool
+
+- name: Check the registered database for the Authentik schema
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - "--dbname={{ database_app_target.name }}"
+      - "--port={{ database_app_target.port }}"
+      - "--command=SELECT to_regclass('public.authentik_core_user') IS NOT NULL"
+  delegate_to: database_app_target
+  become: true
+  become_user: postgres
+  register: _authentik_registered_schema
+  changed_when: false
+  when: _authentik_external_database | bool
+
+- name: Require a definitive registered database schema check
+  ansible.builtin.assert:
+    that: _authentik_registered_schema.stdout | trim in ['t', 'f']
+    fail_msg: Could not determine whether the registered Authentik database is initialized.
+  when: _authentik_external_database | bool
+
+- name: Refuse to replace credentials for an initialized registered database
+  ansible.builtin.assert:
+    that:
+      - _authentik_recorded_sso.secret_key | default('', true) | length > 0
+      - _authentik_recorded_sso.admin_password | default('', true) | length > 0
+      - _authentik_recorded_sso.token | default('', true) | length > 0
+    fail_msg: >-
+      Authentik {{ instance }} already has a schema on its registered PostgreSQL backend
+      but its estate-scoped Vaultwarden SSO credentials are incomplete. Restore that
+      item before deploying; generating replacements would strand encrypted data and
+      credential-dependent clients. The database login is managed separately.
+  when:
+    - _authentik_external_database | bool
+    - _authentik_registered_schema.stdout | trim == 't'
   no_log: true
 
 - name: Resolve secrets (reuse what exists, generate only what is missing)
   ansible.builtin.set_fact:
     _authentik_pg_pass: >-
-      {{ _authentik_env_existing.PG_PASS
+      {{ (app_config.app.database_password if _authentik_external_database
+          else (_authentik_env_existing | default({})).PG_PASS)
          | default(_authentik_recorded_sso.postgres_password | default(''), true)
          | default(lookup('password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
     _authentik_secret_key: >-
-      {{ _authentik_env_existing.AUTHENTIK_SECRET_KEY
+      {{ (_authentik_env_existing | default({})).AUTHENTIK_SECRET_KEY
          | default(_authentik_recorded_sso.secret_key | default(''), true)
          | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true) }}
     _authentik_admin_password: >-
-      {{ _authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD
+      {{ (_authentik_env_existing | default({})).AUTHENTIK_BOOTSTRAP_PASSWORD
          | default(_authentik_recorded_sso.admin_password | default(''), true)
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
     _authentik_api_token: >-
       {{ _authentik_recorded_sso.token
-         | default(_authentik_env_existing.AUTHENTIK_BOOTSTRAP_TOKEN
+         | default((_authentik_env_existing | default({})).AUTHENTIK_BOOTSTRAP_TOKEN
                    | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true),
                    true) }}
   no_log: true
@@ -229,7 +308,7 @@
     vault_item_fields:
       provider: authentik
       instance: "{{ instance }}"
-      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      host: "{{ _authentik_public_api_url if _authentik_public_api_url is defined else 'http://' ~ (ansible_host | default(ansible_default_ipv4.address)) ~ ':' ~ app_config.app.port | string }}"
       token: "{{ _authentik_api_token }}"
       admin_user: "{{ authentik_admin_user }}"
       admin_password: "{{ _authentik_admin_password }}"
@@ -241,45 +320,53 @@
       - postgres_password
       - secret_key
 
-# ── Compose ───────────────────────────────────────────────────────────────────
-- name: Write the compose environment file
-  ansible.builtin.template:
-    src: env.j2
-    dest: "{{ authentik_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart authentik
+- name: Deploy the Kubernetes workload
+  ansible.builtin.include_tasks: kubernetes.yml
+  when: app_config.hosting.method | default('docker') == 'kubernetes'
 
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ authentik_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart authentik
+- name: Deploy the Compose workload
+  when: app_config.hosting.method | default('docker') == 'docker'
+  block:
+    - name: Write the compose environment file
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ authentik_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart authentik
 
-- name: Pull images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ authentik_project_dir }}"
+    - name: Write docker-compose.yml
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ authentik_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart authentik
 
-- name: Start Authentik
-  community.docker.docker_compose_v2:
-    project_src: "{{ authentik_project_dir }}"
-    state: present
-    remove_orphans: true
+    - name: Pull images
+      community.docker.docker_compose_v2_pull:
+        project_src: "{{ authentik_project_dir }}"
 
-- name: Apply pending restarts before the health check
-  ansible.builtin.meta: flush_handlers
+    - name: Start Authentik
+      community.docker.docker_compose_v2:
+        project_src: "{{ authentik_project_dir }}"
+        state: present
+        remove_orphans: true
+
+    - name: Apply pending restarts before the health check
+      ansible.builtin.meta: flush_handlers
+
 
 # Authentik answers 204 on ready; migrations on a first start or an upgrade can
 # take a while, hence the long ceiling.
 - name: Wait for Authentik to be ready
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
+    url: "{{ _authentik_local_url }}/-/health/ready/"
     status_code: [200, 204]
+    headers: "{{ _authentik_request_headers }}"
   register: _authentik_health
   until: _authentik_health.status in [200, 204]
   retries: 60
@@ -291,8 +378,9 @@
 # wiring step, far from the cause. Fail here instead.
 - name: Verify the API token authenticates
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/v3/core/users/me/"
+    url: "{{ _authentik_local_url }}/api/v3/core/users/me/"
     headers:
+      Host: "{{ _authentik_request_headers.Host }}"
       Authorization: "Bearer {{ _authentik_api_token }}"
       Accept: "application/json"
     status_code: 200
@@ -354,7 +442,7 @@
     # Direct LAN URL, not https://<instance>.<domain>: during bootstrap neither DNS
     # nor a certificate exists for the public name yet, and the wiring tasks call
     # this API from the controller on every subsequent app deploy.
-    authentik_api_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    authentik_api_url: "{{ _authentik_public_api_url }}"
     authentik_api_token: "{{ _authentik_api_token }}"
     # Deliberately not named authentik_admin_user — a set_fact that reuses the
     # role default's own name is a recursive reference and fails at runtime.
@@ -364,12 +452,14 @@
 
 # ── Record the deployed version ───────────────────────────────────────────────
 - name: Ensure facts.d directory exists
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.file:
     path: /etc/ansible/facts.d
     state: directory
     mode: "0755"
 
 - name: Record deployed version
+  when: app_config.hosting.method | default('docker') == 'docker'
   ansible.builtin.copy:
     content: '{"version": "{{ _authentik_tag }}"}'
     dest: /etc/ansible/facts.d/authentik.fact

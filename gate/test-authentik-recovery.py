@@ -257,7 +257,7 @@ def check_directory_password_continuity():
 
 
 def check_backup_and_restore_contract():
-    backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
+    backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup-docker.yml")
     backup_tasks = list(tasks_recursive(backup))
     assert "data.pxar" in str(backup)
     assert "state: stopped" in yaml.safe_dump(backup)
@@ -270,7 +270,7 @@ def check_backup_and_restore_contract():
         {"name": "data.pxar", "path": "{{ _authentik_backup_data_path }}"}
     ]
 
-    swap = swap_inputs("authentik")
+    swap = swap_inputs("authentik", "restore-docker.yml")
     assert swap["recovery_swap_runtime"] == "docker" and swap["recovery_swap_pbs_runtime"] == "native"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_backup_id"] == "{{ _authentik_restore_source_backup_id }}"
@@ -289,7 +289,7 @@ def check_backup_and_restore_contract():
         assert (paths[source]["owner"], paths[source]["group"]) == (1000, 1000), source
     assert swap["recovery_swap_stop_services"] == _authentik_services()
     assert swap["recovery_swap_health_url"].endswith("/-/health/ready/")
-    restore = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
+    restore = list(tasks_recursive(read_yaml(ROOT / "ansible/roles/authentik/tasks/restore-docker.yml")))
     assert task_named(restore, "Authentik restore | Validate the independent pre-restore group")["when"] \
         == "restore_overwrite | bool"
 
@@ -314,7 +314,7 @@ def check_backup_and_restore_contract():
 
 
 def _authentik_services():
-    backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
+    backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup-docker.yml")
     return task_named(backup, "Authentik backup | Resolve the instance paths and recovery identity")[
         "ansible.builtin.set_fact"]["_authentik_backup_expected_services"]
 
@@ -331,7 +331,7 @@ def check_staged_hook():
 
 
 def check_backup_restarts_the_instance():
-    backup_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
+    backup_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup-docker.yml")
     for case in ["success", "backup-failure"]:
         with tempfile.TemporaryDirectory(prefix="authentik-backup-") as tmp:
             root = Path(tmp)
