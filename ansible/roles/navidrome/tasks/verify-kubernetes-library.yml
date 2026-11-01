@@ -1,0 +1,148 @@
+---
+# Kubelet mounts an NFS volume on whichever node schedules the pod. Probe that
+# exact read-only export on every eligible node before creating the workload, so
+# an unreachable share fails promptly instead of leaving a pod in ContainerCreating.
+- name: Verify the NFS music export from one cluster node
+  block:
+    - name: Reset per-node NFS probe results
+      ansible.builtin.set_fact:
+        _navidrome_nfs_probe_dir: {}
+        _navidrome_nfs_probe_mount: {}
+      changed_when: false
+
+    - name: Check for a route to the NFS server from the cluster node
+      ansible.builtin.command:
+        argv:
+          - ip
+          - route
+          - get
+          - "{{ _navidrome_nfs_server_ip }}"
+      register: _navidrome_nfs_route_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report NFS route presence without private endpoints
+      ansible.builtin.debug:
+        msg: >-
+          A route to the NFS server is
+          {{ 'present' if _navidrome_nfs_route_probe.rc | default(1) == 0 else 'absent' }}
+          from this Kubernetes node.
+      changed_when: false
+
+    - name: Require a route to the NFS server from this cluster node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_route_probe.rc | default(1) == 0
+        fail_msg: >-
+          This Kubernetes node has no route to Navidrome's existing music NFS server.
+          Check the cluster network and its route to the media network.
+
+    - name: Check NFS TCP reachability from the cluster node
+      ansible.builtin.wait_for:
+        host: "{{ _navidrome_nfs_server_ip }}"
+        port: 2049
+        state: started
+        connect_timeout: 3
+        timeout: 5
+      register: _navidrome_nfs_tcp_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report NFS network reachability without private endpoints
+      ansible.builtin.debug:
+        msg: >-
+          NFS TCP/2049 is
+          {{ 'reachable' if _navidrome_nfs_tcp_probe.state | default('') == 'started'
+             else 'unreachable' }} from this Kubernetes node.
+      changed_when: false
+
+    - name: Require the NFS service to be reachable from this cluster node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_tcp_probe.state | default('') == 'started'
+        fail_msg: >-
+          Navidrome's existing music share is unreachable on NFS TCP/2049 from this
+          Kubernetes node. Check the NFS service and cluster-node firewall access.
+
+    - name: Create a temporary NFS probe directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /run
+        prefix: navidrome-nfs-
+      register: _navidrome_nfs_probe_dir
+      changed_when: false
+
+    - name: Mount the NFS music export read-only for the probe
+      ansible.builtin.command:
+        argv:
+          - timeout
+          - --kill-after=2s
+          - 20s
+          - mount
+          - -t
+          - nfs4
+          - -o
+          - ro,soft,timeo=20,retrans=1
+          - "{{ _navidrome_nfs_server_ip }}:{{ _navidrome_nfs_path }}"
+          - "{{ _navidrome_nfs_probe_dir.path }}"
+      register: _navidrome_nfs_probe_mount
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report an NFS probe failure without private endpoints
+      ansible.builtin.debug:
+        msg: >-
+          NFS mount probe exited {{ _navidrome_nfs_probe_mount.rc }}:
+          {{ _navidrome_nfs_probe_mount.stderr | default('no stderr', true)
+             | replace(_navidrome_nfs_server_ip, '<NFS server>')
+             | replace(_navidrome_nfs_path, '<music export>')
+             | replace(_navidrome_nfs_probe_dir.path, '<probe directory>')
+             | regex_replace('(?:[0-9]{1,3}[.]){3}[0-9]{1,3}', '<IP>') }}
+      changed_when: false
+      when: _navidrome_nfs_probe_mount.rc | default(0) != 0
+
+    - name: Require the temporary NFS mount to be a readable directory
+      ansible.builtin.stat:
+        path: "{{ _navidrome_nfs_probe_dir.path }}"
+      register: _navidrome_nfs_probe_stat
+      become: true
+      changed_when: false
+      when: _navidrome_nfs_probe_mount.rc == 0
+
+    - name: Assert the existing music export is reachable from this node
+      ansible.builtin.assert:
+        that:
+          - _navidrome_nfs_probe_mount.rc == 0
+          - _navidrome_nfs_probe_stat.stat.isdir | default(false)
+          - _navidrome_nfs_probe_stat.stat.readable | default(false)
+        fail_msg: >-
+          The existing Navidrome music NFS export is not readable from every Kubernetes
+          node. Check the NFS service and the cluster-node firewall access, then redeploy.
+  always:
+    - name: Unmount the temporary NFS probe
+      ansible.builtin.command:
+        argv:
+          - umount
+          - "{{ _navidrome_nfs_probe_dir.path }}"
+      become: true
+      register: _navidrome_nfs_probe_unmount
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - _navidrome_nfs_probe_dir.path is defined
+        - _navidrome_nfs_probe_mount.rc | default(1) == 0
+
+    - name: Remove the temporary NFS probe directory
+      ansible.builtin.file:
+        path: "{{ _navidrome_nfs_probe_dir.path }}"
+        state: absent
+      become: true
+      changed_when: false
+      no_log: true
+      when: _navidrome_nfs_probe_dir.path is defined
+  delegate_to: "{{ navidrome_k8s_node.name }}"
+  become: true

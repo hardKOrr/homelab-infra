@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Check Navidrome Restore's inputs to the shared restore swap."""
+"""Check Navidrome Docker Restore's inputs to the shared restore swap."""
 
 from restore_swap_inputs import swap_inputs
 
 
 def main():
-    swap = swap_inputs("navidrome")
+    swap = swap_inputs("navidrome", "restore-docker.yml")
     # The stack host is an unprivileged LXC's nested Docker: the archive's modes cannot be
     # applied there, so the swap assigns the container user and the directory mode.
     assert swap["recovery_swap_ignore_permissions"] is True

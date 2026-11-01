@@ -33,6 +33,17 @@ The Kubernetes API, node addresses, and ingress virtual IP remain private. The p
 Caddy is the public TLS edge and proxies a routed application to the stable internal
 MetalLB virtual IP. The cluster does not create a second public edge.
 
+### External media NFS mounts
+
+`prepare-media-volumes.yml` validates `k8s_media_shares` and returns Kubernetes volume
+definitions in `k8s_media_volumes` and matching container mounts in
+`k8s_media_volume_mounts`. Each entry supplies a unique Kubernetes volume `name`, NFS
+`server` and absolute export `path`, unique absolute container `mount_path`, and boolean
+`read_only`. Paths cannot contain traversal components, control characters, duplicate
+separators, or trailing separators. Workload templates render both returned lists. The
+task only describes mounts to Kubernetes; the NFS export and its contents remain external
+to homelab-infra and are not included in an application's recovery archives.
+
 ### Firewall access
 
 When `firewall.provider: opnsense` is configured, cluster Deploy keeps one host alias named

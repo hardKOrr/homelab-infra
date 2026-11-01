@@ -1,0 +1,174 @@
+---
+# Proxmox already mounts the configured media share. Resolve that mount's NFS
+# source and give Kubernetes only the music subdirectory, read-only. The cluster
+# nodes need network access to the same NFS server; they do not need a duplicate
+# node-local mount.
+- name: Resolve Navidrome's declared media paths
+  ansible.builtin.import_tasks: resolve-library.yml
+
+- name: Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: Read the existing media mount source from the configured Proxmox node
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --json
+      - --target
+      - "{{ _navidrome_library_mount.host }}"
+      - --output
+      - SOURCE,FSTYPE,TARGET,OPTIONS
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  register: _navidrome_findmnt_result
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Resolve the existing NFS mount details
+  ansible.builtin.set_fact:
+    _navidrome_source_mount: >-
+      {{ (_navidrome_findmnt_result.stdout | default('{"filesystems":[]}', true) | from_json)
+         .filesystems | default([]) | first | default({}) }}
+  no_log: true
+
+- name: Require the declared media path to use an existing NFS share
+  ansible.builtin.assert:
+    that:
+      - _navidrome_findmnt_result.rc == 0
+      - _navidrome_source_mount.fstype | default('') in ['nfs', 'nfs4']
+      - _navidrome_source_mount.source | default('') is match('^[^:]+:/.*$')
+      - _navidrome_source_mount.target | default('') is match('^/')
+      - _navidrome_source_mount.options | default('') is search('(^|,)vers=4(\.|,|$)')
+    fail_msg: >-
+      Navidrome Kubernetes requires the declared media mount to resolve to an existing
+      NFSv4 share on the configured Proxmox node.
+
+- name: Resolve the NFS source and the music subdirectory
+  ansible.builtin.set_fact:
+    _navidrome_nfs_server: "{{ _navidrome_source_mount.source.split(':', 1)[0] }}"
+    _navidrome_nfs_export: "{{ _navidrome_source_mount.source.split(':', 1)[1] }}"
+    _navidrome_nfs_host_subpath: >-
+      {{ _navidrome_library_mount.host
+         | regex_replace('^' ~ (_navidrome_source_mount.target | regex_escape) ~ '/?', '') }}
+    _navidrome_nfs_music_subpath: >-
+      {{ _navidrome_music_path
+         | regex_replace('^' ~ (_navidrome_library_mount.path | regex_escape) ~ '/?', '') }}
+  no_log: true
+
+- name: Resolve the NFS export path for Navidrome's music subdirectory
+  ansible.builtin.set_fact:
+    _navidrome_nfs_path: >-
+      {{ _navidrome_nfs_export.rstrip('/')
+         ~ (('/' ~ _navidrome_nfs_host_subpath.lstrip('/'))
+            if _navidrome_nfs_host_subpath | length > 0 else '')
+         ~ (('/' ~ _navidrome_nfs_music_subpath.lstrip('/'))
+            if _navidrome_nfs_music_subpath | length > 0 else '') }}
+  no_log: true
+
+- name: Resolve the NFS server IPv4 address for the cluster firewall rule
+  ansible.builtin.command:
+    argv:
+      - getent
+      - ahostsv4
+      - "{{ _navidrome_nfs_server }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  register: _navidrome_nfs_getent
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _navidrome_nfs_server is not ansible.utils.ipv4_address
+
+- name: Publish the NFS server address without exposing mount details
+  ansible.builtin.set_fact:
+    _navidrome_nfs_server_ip: >-
+      {{ _navidrome_nfs_server
+         if _navidrome_nfs_server is ansible.utils.ipv4_address
+         else ((_navidrome_nfs_getent.stdout_lines | default([]) | first | default('')).split() | first | default('')) }}
+  no_log: true
+
+- name: Check NFS service reachability from the existing media mount host
+  ansible.builtin.wait_for:
+    host: "{{ _navidrome_nfs_server_ip }}"
+    port: 2049
+    state: started
+    connect_timeout: 3
+    timeout: 5
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  register: _navidrome_nfs_source_tcp_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Report NFS service reachability from the existing media mount host
+  ansible.builtin.debug:
+    msg: >-
+      NFS TCP/2049 is
+      {{ 'reachable' if _navidrome_nfs_source_tcp_probe.state | default('') == 'started'
+         else 'unreachable' }} from the configured media mount host.
+  changed_when: false
+
+- name: Require the existing media mount host to reach its NFS service
+  ansible.builtin.assert:
+    that:
+      - _navidrome_nfs_source_tcp_probe.state | default('') == 'started'
+    fail_msg: >-
+      The configured Navidrome media mount host cannot reach the existing NFS service on
+      TCP/2049. Check the NFS service before deploying the Kubernetes workload.
+
+- name: Require an IPv4 NFS endpoint for the Kubernetes node firewall alias
+  ansible.builtin.assert:
+    that:
+      - _navidrome_nfs_server_ip is ansible.utils.ipv4_address
+      - _navidrome_nfs_path | length > 0
+      - _navidrome_nfs_path is match('^/')
+    fail_msg: >-
+      Navidrome Kubernetes could not resolve the existing media NFS endpoint and music path.
+
+- name: Collect configured NFS-blocking firewall sequence numbers
+  ansible.builtin.set_fact:
+    _navidrome_nfs_block_sequences: >-
+      {{ (homelabinfra_infra.firewall.base.rules | default([])
+          | selectattr('action', 'equalto', 'block')
+          | selectattr('sequence', 'defined')
+          | map(attribute='sequence') | map('int') | list)
+         if homelabinfra_infra.firewall.base.enabled | default(false) | bool else [] }}
+  no_log: true
+
+- name: Resolve the NFS egress rule sequence before the base policy
+  ansible.builtin.set_fact:
+    _navidrome_nfs_firewall_sequence: >-
+      {{ (_navidrome_nfs_block_sequences | min - 1)
+         if _navidrome_nfs_block_sequences | length > 0
+         else (homelabinfra_infra.firewall.sequence | default(1000) | int) }}
+  no_log: true
+
+- name: Require a positive NFS exception sequence before the base policy
+  ansible.builtin.assert:
+    that:
+      - _navidrome_nfs_firewall_sequence | int > 0
+    fail_msg: >-
+      Navidrome's narrow NFS exception needs a positive firewall sequence before the
+      configured block policy. Adjust that policy's sequence and redeploy.
+
+- name: Report the NFS firewall exception priority
+  ansible.builtin.debug:
+    msg: >-
+      Navidrome's NFS exception uses sequence {{ _navidrome_nfs_firewall_sequence }}
+      before {{ _navidrome_nfs_block_sequences | length }} configured base block rule(s).
+  changed_when: false
+
+- name: Add read-only NFS access for Kubernetes nodes to Navidrome's app firewall rules
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {'egress': _navidrome_k8s_egress}}, recursive=True) }}
+  vars:
+    _navidrome_k8s_egress: >-
+      {{ (app_config.firewall.egress | default([], true)
+          | rejectattr('name', 'equalto', 'navidrome-music-library') | list)
+         + [{'name': 'navidrome-music-library', 'protocol': 'TCP',
+             'port': '2049', 'destination': _navidrome_nfs_server_ip,
+             'sequence': _navidrome_nfs_firewall_sequence | int}] }}
+  no_log: true

@@ -1,0 +1,62 @@
+---
+# Shared by the Docker and Kubernetes adapters. The container always sees the
+# same existing library path, even though each backend supplies that mount.
+- name: Resolve Navidrome storage paths
+  ansible.builtin.set_fact:
+    _navidrome_mounts: "{{ (app_config.media_storage | default({})).mounts | default([], true) }}"
+    _navidrome_library_root: >-
+      {{ ((app_config.media_storage | default({})).library | default('', true))
+         | regex_replace('/+$', '') }}
+    _navidrome_library_subpath: "{{ app_config.app.library_subpath | default('music', true) }}"
+    _navidrome_uid: "{{ app_config.app.puid | default(1313) | int }}"
+    _navidrome_gid: "{{ app_config.app.pgid | default(1313) | int }}"
+
+- name: Resolve Navidrome music path
+  ansible.builtin.set_fact:
+    _navidrome_music_path: "{{ _navidrome_library_root }}/{{ _navidrome_library_subpath }}"
+
+- name: Assert Navidrome has a safe, non-empty music subpath
+  ansible.builtin.assert:
+    that:
+      - _navidrome_library_root | length > 0
+      - _navidrome_library_subpath | length > 0
+      - _navidrome_library_subpath is not match('^/')
+      - _navidrome_library_subpath is not match('.*/$')
+      - _navidrome_library_subpath is not search('(^|/)\.\.?(/|$)')
+    fail_msg: >-
+      Navidrome requires media_storage.library and a relative library_subpath without
+      dot-directory traversal; the music mount is not created or inferred.
+
+- name: Assert Navidrome storage owner matches its container user
+  ansible.builtin.assert:
+    that:
+      - ((app_config.media_storage | default({})).owner.uid | default(-1) | int) == (_navidrome_uid | int)
+      - ((app_config.media_storage | default({})).owner.gid | default(-1) | int) == (_navidrome_gid | int)
+    fail_msg: >-
+      Navidrome runs as {{ _navidrome_uid }}:{{ _navidrome_gid }}, which must match
+      media_storage.owner.uid/gid so it can read the existing music library.
+
+- name: Initialize the Navidrome library's declared mount
+  ansible.builtin.set_fact:
+    _navidrome_library_mount: {}
+  changed_when: false
+
+- name: Find the declared media mount containing the Navidrome library
+  ansible.builtin.set_fact:
+    _navidrome_library_mount: "{{ item }}"
+  loop: "{{ _navidrome_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    _navidrome_music_path == item.path.rstrip('/')
+    or _navidrome_music_path.startswith(item.path.rstrip('/') ~ '/')
+  changed_when: false
+
+- name: Assert Navidrome music path is inside a declared media mount
+  ansible.builtin.assert:
+    that:
+      - _navidrome_library_mount.path is defined
+      - _navidrome_library_mount.path is match('^/')
+    fail_msg: >-
+      Navidrome music path {{ _navidrome_music_path }} is not under a declared
+      media_storage.mounts path. Refusing to expose an arbitrary host directory.

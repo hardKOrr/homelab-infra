@@ -1,5 +1,6 @@
 ---
-# Deploy Navidrome — the media stack's music server. Docker on LXC (PATH A).
+# Deploy Navidrome — the media stack's music server. Docker remains the default;
+# `hosting.method: kubernetes` selects the cluster adapter.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/navidrome.yml -e instance=navidrome
@@ -55,12 +56,18 @@
       vars:
         hosting_app_slug: navidrome
   tasks:
+    - name: Derive the published Navidrome hostname
+      ansible.builtin.set_fact:
+        navidrome_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        navidrome_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+
     - name: Find or create media stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
     # Attach the existing storage roots to the stack host. The role narrows the
     # container bind to the one library_subpath below; no storage is created here.
@@ -75,9 +82,29 @@
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ _navidrome_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
-      when: _navidrome_host_mounts | length > 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - _navidrome_host_mounts | length > 0
 
-# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# ── Play 2: Prepare Kubernetes access ──────────────────────────────────────────
+- name: "Navidrome | Prepare Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Resolve Navidrome's existing library share for Kubernetes
+      ansible.builtin.include_tasks: ../../roles/navidrome/tasks/resolve-kubernetes-library.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Refresh inventory for cluster access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Open Navidrome's declared access from the Kubernetes node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+# ── Play 3: Deploy on Docker ───────────────────────────────────────────────────
 - name: "Navidrome | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -108,8 +135,23 @@
     - name: Deploy Navidrome
       ansible.builtin.include_role:
         name: navidrome
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-# ── Play 3: Wire ───────────────────────────────────────────────────────────────
+# ── Play 4: Deploy on Kubernetes ───────────────────────────────────────────────
+- name: "Navidrome | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy Navidrome into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: navidrome
+        tasks_from: kubernetes
+      vars:
+        navidrome_fqdn: "{{ hostvars['localhost'].navidrome_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
+
+# ── Play 5: Wire ───────────────────────────────────────────────────────────────
 - name: "Navidrome | Wire"
   hosts: localhost
   become: false
@@ -125,20 +167,27 @@
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: "{{ _navidrome_deploy_host.app_config.routing.estate | default('') }}"
+        resolve_estate_name: "{{ hostvars['localhost'].app_config.routing.estate | default('') }}"
 
   vars:
-    _navidrome_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _navidrome_deploy_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _navidrome_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _navidrome_deploy_host.app_config.app.port }}"
-    wiring_subdomain: "{{ _navidrome_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
-    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if hostvars['localhost'].app_config.hosting.method == 'kubernetes'
+         else _navidrome_deploy_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if hostvars['localhost'].app_config.hosting.method == 'kubernetes'
+         else _navidrome_deploy_host.app_config.app.port }}
+    wiring_subdomain: "{{ hostvars['localhost'].navidrome_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].navidrome_fqdn }}"
     wiring_app_display: "Navidrome ({{ instance }})"
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/ping"
     wiring_auth_group: "homelab-users"
-    wiring_identity_mode: "{{ _navidrome_deploy_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _navidrome_deploy_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('internal') }}"
 
   tasks:
     # A new restore target must be verified before it publishes a route or alters
@@ -181,6 +230,17 @@
         record_guest_names: ["{{ _navidrome_deploy_host.inventory_hostname }}"]
         record_guest_kind: docker
         record_guest_url: "https://{{ wiring_domain }}/"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+    - name: Record Navidrome on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ wiring_domain }}/"
+      when: hostvars['localhost'].app_config.hosting.method == 'kubernetes'
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

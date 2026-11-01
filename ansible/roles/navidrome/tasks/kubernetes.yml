@@ -1,0 +1,71 @@
+---
+# The Kubernetes adapter mounts the existing NFS music share read-only and persists
+# only application-owned state in a default-StorageClass PVC.
+- name: Navidrome Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Navidrome Kubernetes | Require the resolved read-only NFS library
+  ansible.builtin.assert:
+    that:
+      - _navidrome_nfs_server_ip is ansible.utils.ipv4_address
+      - _navidrome_nfs_path is match('^/')
+    fail_msg: >-
+      Navidrome Kubernetes requires the existing music share to be resolved before
+      preparing the cluster workload.
+
+- name: Navidrome Kubernetes | Prepare the read-only music volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares:
+      - name: music
+        server: "{{ _navidrome_nfs_server_ip }}"
+        path: "{{ _navidrome_nfs_path }}"
+        mount_path: /music
+        read_only: true
+
+- name: Navidrome Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ navidrome_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: navidrome_k8s_node
+    label: Kubernetes node
+
+- name: Navidrome Kubernetes | Verify the music export from every cluster node
+  ansible.builtin.include_tasks: verify-kubernetes-library.yml
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: navidrome_k8s_node
+    label: Kubernetes node
+
+- name: Navidrome Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Navidrome Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _navidrome_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: Navidrome Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _navidrome_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Navidrome Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+          owner: "{{ _navidrome_uid }}:{{ _navidrome_gid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Navidrome's SQLite database, users, playlists and generated state from its data
+        volume; the shared music library is not included

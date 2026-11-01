@@ -6,7 +6,7 @@
 navidrome_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: media
   media_storage: {}
@@ -22,6 +22,9 @@ navidrome_defaults:
     port: 4533
     container_port: 4533
     data_path: "/opt/{{ instance }}/data"
+    # Used by the Kubernetes PVC. Omitting storageClassName selects the cluster's
+    # default StorageClass, as for other Kubernetes application data.
+    storage: 5
 
     # This is deliberately a subpath, not the media-storage mount root. The
     # role maps only media_storage.library/<library_subpath> into /music:ro.
@@ -51,3 +54,9 @@ navidrome_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

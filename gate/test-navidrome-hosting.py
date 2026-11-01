@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Check Navidrome's Docker-default and Kubernetes hosting contract."""
+
+from pathlib import Path
+
+import yaml
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def read_yaml(path):
+    return yaml.safe_load((REPO / path).read_text())
+
+
+def main():
+    defaults = read_yaml("ansible/vars/app-defaults/navidrome.yml")["navidrome_defaults"]
+    assert defaults["hosting"]["method"] == "docker"
+    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["impossible"] == {}
+
+    playbook = read_yaml("ansible/playbooks/apps/navidrome.yml")
+    docker_hosts = [play for play in playbook if play["name"] == "Navidrome | Deploy"]
+    assert len(docker_hosts) == 1
+    assert any(
+        task.get("ansible.builtin.include_role", {}).get("name") == "navidrome"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        for task in docker_hosts[0]["tasks"]
+    )
+    assert any(
+        play["name"] == "Navidrome | Deploy on Kubernetes"
+        and any(
+            task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
+            and task.get("when") == "app_config.hosting.method == 'kubernetes'"
+            for task in play["tasks"]
+        )
+        for play in playbook
+    )
+    assert "tasks/kubernetes/open-app-access.yml" in str(playbook)
+    assert any(
+        task.get("ansible.builtin.include_tasks")
+        == "../../roles/navidrome/tasks/resolve-kubernetes-library.yml"
+        for play in playbook
+        if play["name"] == "Navidrome | Prepare Kubernetes"
+        for task in play["tasks"]
+    )
+    library = read_yaml("ansible/roles/navidrome/tasks/resolve-kubernetes-library.yml")
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "findmnt"
+        and task.get("delegate_to") == "{{ homelabinfra_config.proxmox.node }}"
+        and task.get("no_log") is True
+        for task in library
+    )
+    source_probe = next(
+        task for task in library
+        if task.get("name") == "Check NFS service reachability from the existing media mount host"
+    )
+    assert source_probe.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
+    assert source_probe.get("ansible.builtin.wait_for", {}).get("port") == 2049
+    assert source_probe.get("delegate_to") == "{{ homelabinfra_config.proxmox.node }}"
+    assert source_probe.get("no_log") is True
+    assert any(
+        task.get("name") == "Report NFS service reachability from the existing media mount host"
+        and "NFS TCP/2049 is" in str(task)
+        for task in library
+    )
+    assert any(
+        task.get("ansible.builtin.set_fact", {}).get("app_config")
+        and task.get("no_log") is True
+        and "navidrome-music-library" in str(task.get("vars", {}))
+        and "_navidrome_nfs_firewall_sequence" in str(task.get("vars", {}))
+        for task in library
+    )
+    assert any(
+        task.get("name") == "Collect configured NFS-blocking firewall sequence numbers"
+        and "homelabinfra_infra.firewall.base.rules" in str(task)
+        and "homelabinfra_infra.firewall.base.enabled" in str(task)
+        and task.get("no_log") is True
+        for task in library
+    )
+    assert any(
+        task.get("name") == "Resolve the NFS egress rule sequence before the base policy"
+        and "_navidrome_nfs_block_sequences | min - 1" in str(task)
+        for task in library
+    )
+    assert any(
+        task.get("name") == "Report the NFS firewall exception priority"
+        and "_navidrome_nfs_firewall_sequence" in str(task)
+        and "_navidrome_nfs_block_sequences | length" in str(task)
+        for task in library
+    )
+
+    kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
+    includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
+    assert "../../../tasks/kubernetes/prepare-media-volumes.yml" in includes
+    assert "../../../tasks/kubernetes/ensure-nfs-client.yml" in includes
+    assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
+    assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
+    assert "verify-kubernetes-library.yml" in includes
+    assert not any("recovery" in include and "kubernetes/" not in include for include in includes)
+    prepare_media = next(
+        task for task in kubernetes_tasks
+        if task.get("ansible.builtin.include_tasks")
+        == "../../../tasks/kubernetes/prepare-media-volumes.yml"
+    )
+    assert prepare_media["vars"]["k8s_media_shares"] == [
+        {
+            "name": "music",
+            "server": "{{ _navidrome_nfs_server_ip }}",
+            "path": "{{ _navidrome_nfs_path }}",
+            "mount_path": "/music",
+            "read_only": True,
+        }
+    ]
+    cluster_tasks = read_yaml("ansible/roles/k3s_cluster/tasks/main.yml")
+    assert any(
+        task.get("ansible.builtin.import_tasks") == "../../../tasks/kubernetes/ensure-nfs-client.yml"
+        for task in cluster_tasks
+    )
+
+    nfs_probe = read_yaml("ansible/roles/navidrome/tasks/verify-kubernetes-library.yml")
+    assert nfs_probe[0]["block"][0].get("ansible.builtin.set_fact") == {
+        "_navidrome_nfs_probe_dir": {},
+        "_navidrome_nfs_probe_mount": {},
+    }
+    assert nfs_probe[0]["block"][0].get("changed_when") is False
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [])[:3]
+        == ["ip", "route", "get"]
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("name") == "Report NFS route presence without private endpoints"
+        and "route to the NFS server is" in str(task)
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
+        and task.get("ansible.builtin.wait_for", {}).get("port") == 2049
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("name") == "Report NFS network reachability without private endpoints"
+        and "reachable' if _navidrome_nfs_tcp_probe.state" in str(task)
+        for task in nfs_probe[0]["block"]
+    )
+    assert any(
+        task.get("ansible.builtin.command", {}).get("argv", [])[:4]
+        == ["timeout", "--kill-after=2s", "20s", "mount"]
+        and task.get("no_log") is True
+        for task in nfs_probe[0]["block"]
+    )
+    probe_diagnostic = next(
+        task
+        for task in nfs_probe[0]["block"]
+        if task.get("name") == "Report an NFS probe failure without private endpoints"
+    )
+    assert "_navidrome_nfs_server_ip" in str(probe_diagnostic)
+    assert "_navidrome_nfs_path" in str(probe_diagnostic)
+    assert "<NFS server>" in str(probe_diagnostic)
+    assert "<music export>" in str(probe_diagnostic)
+    assert nfs_probe[0]["always"][-1].get("ansible.builtin.file", {}).get("state") == "absent"
+
+    manifest = (REPO / "ansible/roles/navidrome/templates/manifest.yaml.j2").read_text()
+    assert "name: {{ instance }}-data" in manifest
+    assert "storageClassName:" not in manifest
+    assert "for volume in k8s_media_volumes" in manifest
+    assert "for mount in k8s_media_volume_mounts" in manifest
+    assert "server: {{ volume.nfs.server | to_json }}" in manifest
+    assert "path: {{ volume.nfs.path | to_json }}" in manifest
+    assert "hostPath:" not in manifest
+    assert "runAsUser: {{ _navidrome_uid }}" in manifest
+    assert "ND_DATAFOLDER" in manifest and "ND_MUSICFOLDER" in manifest
+    assert "kind: Ingress" in manifest
+
+    restore = read_yaml("ansible/roles/navidrome/tasks/restore-kubernetes.yml")
+    assert any(
+        task.get("ansible.builtin.include_tasks") == "../../../tasks/kubernetes/recovery-restore.yml"
+        and task.get("vars", {}).get("k8s_recovery", {}).get("archives") == [
+            {
+                "name": "data",
+                "claim": "{{ restore_target }}-data",
+                "owner": "{{ restore_target_config.app.puid | default(1313) }}:{{ restore_target_config.app.pgid | default(1313) }}",
+            }
+        ]
+        for task in restore
+    )
+
+    wrapper = read_yaml("ansible/roles/navidrome/tasks/restore.yml")
+    assert len(wrapper) == 3
+    assert "restore-kubernetes.yml" in wrapper[0]["ansible.builtin.include_tasks"]
+    assert "restore-docker.yml" in wrapper[1]["ansible.builtin.include_tasks"]
+    print("Navidrome hosting: Docker default and shared Kubernetes recovery passed")
+
+
+if __name__ == "__main__":
+    main()
