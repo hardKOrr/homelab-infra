@@ -113,7 +113,7 @@ app.kubernetes.io/component: restore
 {{ body | trim | indent(6, true) }}
   env:
     - name: DUMP_DIR
-      value: /recovery/database
+      value: /recovery/database{{ "/" ~ db.archive_path if db.archive_path | default('') | length > 0 else "" }}
 {% for env_name, value in (db.env | default({})).items() %}
     - name: {{ env_name }}
       value: {{ value | string | to_json }}
@@ -174,7 +174,7 @@ echo "=== staging ${SNAPSHOT} ==="
 {% if db %}
 # Into scratch. Nothing in the target has changed yet, so an unreadable snapshot costs
 # nothing.
-proxmox-backup-client restore "${SNAPSHOT}" database.pxar /recovery/database
+proxmox-backup-client restore "${SNAPSHOT}" {{ db.archive | default('database') }}.pxar /recovery/database
 echo "database archive: $(volume_state /recovery/database)"
 {% endif %}
 {% for archive in staged %}

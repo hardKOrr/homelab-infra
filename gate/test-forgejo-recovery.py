@@ -24,7 +24,7 @@ catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
 hook_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup-quiesced.yml").read_text())
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
-forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/main.yml").read_text()
+forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/docker.yml").read_text()
 
 
 def fixture_tasks(tasks, root):
@@ -181,6 +181,7 @@ def static_contract():
         loader=DataLoader(),
         variables={
             "instance": "forgejo-test",
+            "app_config": {"hosting": {"method": "docker"}, "app": {"port": 3000, "ssh_port": 2222}},
             "_forgejo_host": {
                 "ansible_host": "192.0.2.45",
                 "app_config": {"app": {"port": 3000, "ssh_port": 2222}},
@@ -264,7 +265,7 @@ def check_hook():
 
 
 def check_restore_swap():
-    swap = swap_inputs("forgejo")
+    swap = swap_inputs("forgejo", "restore-docker.yml")
     assert swap["recovery_swap_runtime"] == "docker"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{

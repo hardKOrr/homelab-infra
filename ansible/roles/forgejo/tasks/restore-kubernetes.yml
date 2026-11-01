@@ -1,0 +1,27 @@
+---
+- name: Forgejo Kubernetes restore | Configure the recovery client
+  ansible.builtin.include_tasks: kubernetes-client.yml
+
+- name: Forgejo Kubernetes restore | Require a recent target safety point
+  ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: "{{ restore_target_config.backup.backup_id | default('', true) or restore_target }}"
+  when: restore_overwrite | bool
+
+- name: Forgejo Kubernetes restore | Resolve the recovery inputs
+  ansible.builtin.include_tasks: recovery-inputs.yml
+
+- name: Forgejo Kubernetes restore | Restore the paired data and database
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Forgejo
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+          owner: "1000:1000"
+      database: "{{ _forgejo_k8s_database }}"
+      stop: ["{{ restore_target }}"]
+      describe: Forgejo repositories, LFS, attachments, configuration and PostgreSQL database
+      verify:
+        - Sign in to Forgejo and verify the restored repository and issue canaries.

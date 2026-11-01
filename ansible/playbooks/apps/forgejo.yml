@@ -65,6 +65,7 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
 - name: "Forgejo | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -88,6 +89,16 @@
       vars:
         forgejo_fqdn: "{{ hostvars['localhost'].forgejo_fqdn }}"
 
+- name: "Forgejo | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy Forgejo into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: forgejo
+      when: app_config.hosting.method == 'kubernetes'
+
 - name: "Forgejo | Open the app's network access"
   hosts: localhost
   gather_facts: false
@@ -102,22 +113,25 @@
       vars:
         firewall_inbound_ports:
           forgejo-ssh: "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "Forgejo | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _forgejo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _forgejo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method == 'docker' else {} }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _forgejo_host.ansible_host }}"
-    wiring_upstream_port: "{{ _forgejo_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if app_config.hosting.method == 'kubernetes'
+         else _forgejo_host.ansible_host }}
+    wiring_upstream_port: "{{ 80 if app_config.hosting.method == 'kubernetes' else app_config.app.port }}"
     wiring_subdomain: "{{ hostvars['localhost'].forgejo_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].forgejo_fqdn }}"
     wiring_app_display: "Forgejo ({{ instance }})"
     wiring_monitor_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}/api/healthz"
     wiring_auth_group: homelab-users
-    wiring_identity_mode: "{{ _forgejo_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _forgejo_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
   tasks:
     - name: Record Forgejo endpoint for app-to-app consumers
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
@@ -130,10 +144,10 @@
           {{ {instance: {
                'provider': 'forgejo',
                'instance': instance,
-               'host': 'http://' ~ _forgejo_host.ansible_host,
-               'port': _forgejo_host.app_config.app.port,
-               'url': 'http://' ~ _forgejo_host.ansible_host ~ ':' ~ (_forgejo_host.app_config.app.port | string) ~ '/',
-               'ssh_port': _forgejo_host.app_config.app.ssh_port
+               'host': 'https://' ~ forgejo_fqdn if app_config.hosting.method == 'kubernetes' else 'http://' ~ _forgejo_host.ansible_host,
+               'port': 443 if app_config.hosting.method == 'kubernetes' else app_config.app.port,
+               'url': 'https://' ~ forgejo_fqdn ~ '/' if app_config.hosting.method == 'kubernetes' else 'http://' ~ _forgejo_host.ansible_host ~ ':' ~ (app_config.app.port | string) ~ '/',
+               'ssh_port': app_config.app.ssh_node_port if app_config.hosting.method == 'kubernetes' else app_config.app.ssh_port
              }} }}
     - name: Wire reverse proxy (HTTP only)
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
@@ -155,13 +169,22 @@
         record_guest_names: ["{{ _forgejo_host.inventory_hostname }}"]
         record_guest_kind: docker
         record_guest_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}"
+      when: app_config.hosting.method == 'docker'
+    - name: Record Forgejo on each Kubernetes node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ forgejo_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: "Forgejo deployed"
         notify_message: >-
           {{ instance }} is running at https://{{ hostvars['localhost'].forgejo_fqdn }}.
-          Git-over-SSH is published directly at port {{ _forgejo_host.app_config.app.ssh_port }};
+          Git-over-SSH is published directly at port
+          {{ app_config.app.ssh_node_port if app_config.hosting.method == 'kubernetes' else app_config.app.ssh_port }};
           it is not routed through Caddy.
     - name: Fail on wiring degradations
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

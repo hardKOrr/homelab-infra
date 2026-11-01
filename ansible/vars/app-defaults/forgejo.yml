@@ -2,7 +2,7 @@
 forgejo_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -14,8 +14,11 @@ forgejo_defaults:
 
   app:
     image: codeberg.org/forgejo/forgejo:16
+    storage: 10
     port: 3000
     ssh_port: 2222
+    # Kubernetes Git SSH uses a node address and this cluster-wide port.
+    ssh_node_port: 30222
     # Forgejo reserves `admin`; Deploy creates this administrator with the generated
     # password in homelab-infra/apps/<instance>.
     admin_user: homelab

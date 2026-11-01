@@ -2,7 +2,8 @@
 # Open a Kubernetes app's declared OPNsense access through the alias for every node in
 # its cluster. The ingress VIP remains the inbound NAT target; egress rules use the
 # cluster-node alias as their source, and select the firewall interface from a node
-# address on that same network.
+# address on that same network. NodePort consumers may set k8s_firewall_upstream_host
+# to a registered node address for their inbound NAT target.
 
 - name: k8s firewall | Open declared cluster access
   when:
@@ -38,7 +39,7 @@
       ansible.builtin.include_tasks: ../firewall/open-app-access.yml
       vars:
         wiring_app_name: "{{ instance }}"
-        wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+        wiring_upstream_host: "{{ k8s_firewall_upstream_host | default(homelabinfra_infra.kubernetes.ingress_vip) }}"
         wiring_firewall_interface_host: "{{ homelabinfra_infra.kubernetes.nodes[0].ip_address }}"
         wiring_firewall_source: "{{ homelabinfra_infra.kubernetes.firewall_alias }}"
         wiring_firewall: "{{ app_config.firewall | default({}) }}"
