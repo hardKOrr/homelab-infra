@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-restore-ready
+  labels:
+    app.kubernetes.io/instance: {{ restore_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: recovery
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ restore_target }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: recovery
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: redis-ready
+          image: {{ restore_target_config.backup.redis_client_image | default(app_config.backup.redis_client_image) }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -ceu]
+          args:
+            - |
+              test "$(redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" ping)" = PONG
+          env:
+            - name: REDIS_HOST
+              value: {{ _plane_redis_backend.host | string | to_json }}
+            - name: REDIS_PORT
+              value: {{ _plane_redis_backend.port | string | to_json }}
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ restore_target }}-restore
+                  key: redis-password

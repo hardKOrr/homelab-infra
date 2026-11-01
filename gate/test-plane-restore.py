@@ -15,12 +15,12 @@ import yaml
 from restore_swap_inputs import repo, run_hook, swap_inputs
 
 compose = (repo / "ansible/roles/plane/templates/docker-compose.yml.j2").read_text()
-restore = yaml.safe_load((repo / "ansible/roles/plane/tasks/restore.yml").read_text())
-deploy = yaml.safe_load((repo / "ansible/roles/plane/tasks/main.yml").read_text())
+restore = yaml.safe_load((repo / "ansible/roles/plane/tasks/restore-docker.yml").read_text())
+deploy = yaml.safe_load((repo / "ansible/roles/plane/tasks/docker.yml").read_text())
 
 
 def check_swap_inputs():
-    swap = swap_inputs("plane")
+    swap = swap_inputs("plane", "restore-docker.yml")
     assert swap["recovery_swap_archives"] == [
         "database.pxar", "redis.pxar", "data.pxar", "object-storage.pxar"]
     assert swap["recovery_swap_database"] == {
@@ -112,40 +112,46 @@ def check_redis_hooks():
         (root / "redis").mkdir()
         (root / "redis/dump.rdb").write_text("live rdb")
         (root / "controller").mkdir()
+        (root / "controller/restored.rdb").write_text("restored rdb")
         log = root / "events.log"
         variables = {
-            "recovery_swap_stage": str(root / "stage"),
             "_plane_restore_controller": {"path": str(root / "controller")},
             "_plane_restore_redis_backend": {"host": "redis.invalid"},
             "_plane_restore_redis_data_path": str(root / "redis"),
             "_plane_restore_redis_service_name": "redis-server",
-            "restore_source_plane_secrets": {"secret_key": "source"},
-            "_plane_restore_target_secrets": {"secret_key": "target"},
+            "restore_target_config": {"app": {"redis": {}}},
+            "app_config": {"backup": {"redis_client_image": "redis:7-alpine"}},
         }
-        result = run_hook("plane", "replaced", variables, stub_remote(log))
+        result = run_hook("plane", "redis-install", variables, stub_remote(log))
         assert result.returncode == 0, result.stdout + result.stderr
         assert (root / "redis/dump.rdb").read_text() == "restored rdb"
         assert (root / "controller/live.rdb").read_text() == "live rdb"
-        assert log.read_text().splitlines() == ["redis-stopped", "redis-started", "ping", "keys source"]
+        assert log.read_text().splitlines() == ["redis-stopped", "redis-started", "ping"]
 
         log.unlink()
-        result = run_hook("plane", "rollback", variables | {
-            "_plane_restore_redis_replaced": True, "_plane_restore_keys_replaced": True,
+        result = run_hook("plane", "redis-rollback", variables | {
+            "_plane_restore_redis_replaced": True,
             "_plane_restore_live_rdb": {"stat": {"exists": True}}}, stub_remote(log))
         assert result.returncode == 0, result.stdout + result.stderr
         assert (root / "redis/dump.rdb").read_text() == "live rdb"
-        assert log.read_text().splitlines() == ["redis-stopped", "redis-started", "ping", "keys target"]
+        assert log.read_text().splitlines() == ["redis-stopped", "redis-started", "ping"]
 
         # A Redis that had no RDB gets none back; a hook that never replaced anything is a no-op.
         log.unlink()
-        result = run_hook("plane", "rollback", variables | {
+        result = run_hook("plane", "redis-rollback", variables | {
             "_plane_restore_redis_replaced": True,
             "_plane_restore_live_rdb": {"stat": {"exists": False}}}, stub_remote(log))
         assert result.returncode == 0, result.stdout + result.stderr
         assert not (root / "redis/dump.rdb").exists()
         log.unlink()
-        assert run_hook("plane", "rollback", variables, stub_remote(log)).returncode == 0
+        assert run_hook("plane", "redis-rollback", variables, stub_remote(log)).returncode == 0
         assert not log.exists()
+
+    replaced = yaml.safe_load((repo / "ansible/roles/plane/tasks/restore-replaced.yml").read_text())
+    rollback = yaml.safe_load((repo / "ansible/roles/plane/tasks/restore-rollback.yml").read_text())
+    assert any(task.get("ansible.builtin.include_tasks") == "restore-redis-install.yml" for task in replaced)
+    assert any(task.get("ansible.builtin.include_tasks") == "restore-keys.yml" for task in replaced)
+    assert any(task.get("ansible.builtin.include_tasks") == "restore-redis-rollback.yml" for task in rollback)
 
 
 if __name__ == "__main__":

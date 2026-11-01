@@ -1,0 +1,55 @@
+---
+# Shared by the Docker swap and the Kubernetes after-restore hook. The caller first puts
+# the selected `dump.rdb` at _plane_restore_controller.path/restored.rdb and chooses a
+# method-appropriate readiness task.
+- name: Plane restore | Register the target Redis backend
+  ansible.builtin.add_host:
+    name: plane_redis_restore_target
+    groups: plane_redis_restore
+    ansible_host: "{{ _plane_restore_redis_backend.host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+  changed_when: false
+
+- name: Plane restore | Record that the Redis dataset is being replaced
+  ansible.builtin.set_fact:
+    _plane_restore_redis_replaced: true
+
+- name: Plane restore | Stop the target Redis service
+  ansible.builtin.systemd_service:
+    name: "{{ _plane_restore_redis_service_name | default(restore_target_config.app.redis.service_name | default('redis-server', true)) }}"
+    state: stopped
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Look for the live Redis RDB
+  ansible.builtin.stat:
+    path: "{{ _plane_restore_redis_data_path | default(restore_target_config.app.redis.data_path | default('/var/lib/redis', true)) }}/dump.rdb"
+  delegate_to: plane_redis_restore_target
+  register: _plane_restore_live_rdb
+
+- name: Plane restore | Keep the live Redis RDB for a rollback
+  ansible.builtin.fetch:
+    src: "{{ _plane_restore_redis_data_path | default(restore_target_config.app.redis.data_path | default('/var/lib/redis', true)) }}/dump.rdb"
+    dest: "{{ _plane_restore_controller.path }}/live.rdb"
+    flat: true
+  delegate_to: plane_redis_restore_target
+  when: _plane_restore_live_rdb.stat.exists
+  no_log: true
+
+- name: Plane restore | Install the point's Redis RDB
+  ansible.builtin.copy:
+    src: "{{ _plane_restore_controller.path }}/restored.rdb"
+    dest: "{{ _plane_restore_redis_data_path | default(restore_target_config.app.redis.data_path | default('/var/lib/redis', true)) }}/dump.rdb"
+    owner: redis
+    group: redis
+    mode: "0640"
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Start the target Redis service
+  ansible.builtin.systemd_service:
+    name: "{{ _plane_restore_redis_service_name | default(restore_target_config.app.redis.service_name | default('redis-server', true)) }}"
+    state: started
+  delegate_to: plane_redis_restore_target
+
+- name: Plane restore | Verify authenticated target Redis readiness
+  ansible.builtin.include_tasks: >-
+    {{ role_path }}/tasks/{{ plane_restore_redis_ready_tasks | default('restore-redis-ready.yml') }}

@@ -1,6 +1,6 @@
 ---
-# Deploy Plane with named PostgreSQL and Redis backends and a named local MinIO
-# object-storage service inside the Plane Compose recovery unit.
+# Deploy Plane with named PostgreSQL and Redis backends using the selected hosting method.
+# Docker on the services stack remains the default.
 - name: "Plane | Provision"
   hosts: localhost
   become: false
@@ -66,6 +66,15 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
+- name: "Plane | Open Kubernetes network access"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Open the app's declared access from the cluster node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Plane | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -89,21 +98,36 @@
       vars:
         plane_fqdn: "{{ hostvars['localhost'].plane_fqdn }}"
 
+- name: "Plane | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Deploy Plane into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: plane
+      vars:
+        plane_fqdn: "{{ hostvars['localhost'].plane_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
+
 - name: "Plane | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _plane_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    app_config: "{{ hostvars['localhost'].app_config }}"
+    _plane_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method == 'docker' else {} }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _plane_host.ansible_host }}"
-    wiring_upstream_port: "{{ _plane_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if app_config.hosting.method == 'kubernetes' else _plane_host.ansible_host }}
+    wiring_upstream_port: "{{ 80 if app_config.hosting.method == 'kubernetes' else app_config.app.port }}"
     wiring_subdomain: "{{ hostvars['localhost'].plane_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].plane_fqdn }}"
     wiring_app_display: "Plane ({{ instance }})"
     wiring_monitor_url: "https://{{ hostvars['localhost'].plane_fqdn }}/"
     wiring_auth_group: homelab-users
-    wiring_identity_mode: "{{ _plane_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _plane_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
   tasks:
     # New-instance recovery provisions the workload without allowing it to publish
     # the target route or modify shared wiring before the selected artifact verifies.
@@ -131,6 +155,16 @@
         record_guest_names: ["{{ _plane_host.inventory_hostname }}"]
         record_guest_kind: docker
         record_guest_url: "https://{{ hostvars['localhost'].plane_fqdn }}"
+      when: app_config.hosting.method == 'docker'
+    - name: Record Plane on every Kubernetes node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].plane_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:

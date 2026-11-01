@@ -680,6 +680,9 @@
         - name: Stop and remove the containers
           community.docker.docker_compose_v2:
             project_src: "{{ _rm_project_dir }}"
+            # Exited init services still belong to the project. Without their profiles,
+            # down can leave containers referencing the network it just removed.
+            profiles: ["*"]
             state: absent
             remove_volumes: "{{ _rm_delete_data | bool }}"
             remove_orphans: true

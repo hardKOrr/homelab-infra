@@ -1,0 +1,13 @@
+---
+- name: Plane Kubernetes restore | Render the registered Redis ping Job
+  ansible.builtin.set_fact:
+    _plane_k8s_redis_ready_manifest: >-
+      {{ lookup('ansible.builtin.template', role_path ~ '/templates/redis-ready-job.yaml.j2') }}
+
+- name: Plane Kubernetes restore | Run the authenticated registered Redis ping
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: redis-restore-ready
+    k8s_job_manifest: "{{ _plane_k8s_redis_ready_manifest }}"
+    k8s_job_timeout: 120
+    k8s_job_report_changed: false

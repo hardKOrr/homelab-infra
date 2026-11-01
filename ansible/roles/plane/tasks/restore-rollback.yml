@@ -1,42 +1,9 @@
 ---
-# restore-swap.yml rollback hook: the original paths and database are back. Put back the
-# Redis dataset the replaced hook saved and the target's own keys.
-- name: Plane restore | Put the original Redis dataset back
-  when: _plane_restore_redis_replaced | default(false) | bool
-  block:
-    - name: Plane restore | Stop the target Redis service
-      ansible.builtin.systemd_service:
-        name: "{{ _plane_restore_redis_service_name }}"
-        state: stopped
-      delegate_to: plane_redis_restore_target
+# The original database and paths are back. Restore the external Redis data and keys too.
+- name: Plane restore | Restore the original Redis dataset
+  ansible.builtin.include_tasks: restore-redis-rollback.yml
 
-    - name: Plane restore | Put the live Redis RDB back
-      ansible.builtin.copy:
-        src: "{{ _plane_restore_controller.path }}/live.rdb"
-        dest: "{{ _plane_restore_redis_data_path }}/dump.rdb"
-        owner: redis
-        group: redis
-        mode: "0640"
-      delegate_to: plane_redis_restore_target
-      when: _plane_restore_live_rdb.stat.exists | default(false)
-
-    - name: Plane restore | Remove the point's RDB from a Redis that had none
-      ansible.builtin.file:
-        path: "{{ _plane_restore_redis_data_path }}/dump.rdb"
-        state: absent
-      delegate_to: plane_redis_restore_target
-      when: not (_plane_restore_live_rdb.stat.exists | default(false))
-
-    - name: Plane restore | Start the target Redis service
-      ansible.builtin.systemd_service:
-        name: "{{ _plane_restore_redis_service_name }}"
-        state: started
-      delegate_to: plane_redis_restore_target
-
-    - name: Plane restore | Verify authenticated target Redis readiness
-      ansible.builtin.include_tasks: restore-redis-ready.yml
-
-- name: Plane restore | Give the target its own keys back
+- name: Plane restore | Give the target its own Plane keys back
   ansible.builtin.include_tasks: restore-keys.yml
   vars:
     _plane_restore_keys: "{{ _plane_restore_target_secrets }}"

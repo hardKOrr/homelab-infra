@@ -1,0 +1,27 @@
+---
+- name: Plane Kubernetes restore | Store the selected Plane keys on the target
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+    vault_item_merge: true
+    vault_item_fields:
+      secret_key: "{{ plane_k8s_restore_keys.secret_key }}"
+      live_server_secret_key: "{{ plane_k8s_restore_keys.live_server_secret_key }}"
+      rabbitmq_password: "{{ plane_k8s_restore_keys.rabbitmq_password }}"
+      object_storage_access_key: "{{ plane_k8s_restore_keys.object_storage_access_key }}"
+      object_storage_secret_key: "{{ plane_k8s_restore_keys.object_storage_secret_key }}"
+    vault_item_secret_fields:
+      - secret_key
+      - live_server_secret_key
+      - rabbitmq_password
+      - object_storage_access_key
+      - object_storage_secret_key
+  no_log: true
+
+- name: Plane Kubernetes restore | Sync the selected keys into the target environment Secret
+  ansible.builtin.include_tasks: kubernetes-env.yml
+  vars:
+    plane_k8s_env_instance: "{{ restore_target }}"
+    plane_k8s_env_config: "{{ restore_target_config }}"
+    plane_k8s_env_fqdn: "{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
+    plane_k8s_env_secrets: "{{ plane_k8s_restore_keys }}"

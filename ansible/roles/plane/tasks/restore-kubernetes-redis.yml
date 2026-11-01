@@ -1,0 +1,145 @@
+---
+# The shared restore Job has replaced the redis-recovery claim. Read its RDB through a
+# short-lived, tokenless pod on that claim's pinned node, stage it privately, then use the
+# same stop/save/install/start sequence as the Docker restore. Plane remains scaled to zero
+# until the external Redis dataset and source keys are ready.
+- name: Plane Kubernetes restore | Stage and import the external Redis RDB
+  block:
+    - name: Plane Kubernetes restore | Allocate private RDB staging on the controller
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: plane-k8s-restore-
+      delegate_to: localhost
+      become: false
+      register: _plane_restore_controller
+
+    - name: Plane Kubernetes restore | Allocate private RDB staging on the cluster API node
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: plane-k8s-restore-
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _plane_restore_remote
+
+    - name: Plane Kubernetes restore | Render the read-only RDB reader pod
+      ansible.builtin.set_fact:
+        _plane_restore_reader_manifest: >-
+          {{ lookup('ansible.builtin.template', role_path ~ '/templates/redis-reader-pod.yaml.j2') }}
+
+    - name: Plane Kubernetes restore | Apply the read-only RDB reader pod
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ _plane_restore_reader_manifest }}"
+        k8s_wait_for: []
+
+    - name: Plane Kubernetes restore | Wait for the Redis RDB reader pod
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - wait
+          - --for=condition=Ready
+          - pod/redis-restore-reader
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    - name: Plane Kubernetes restore | Validate the restored Redis RDB
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - exec
+          - redis-restore-reader
+          - --
+          - redis-check-rdb
+          - /redis/dump.rdb
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    - name: Plane Kubernetes restore | Stream the point's RDB to private node staging
+      ansible.builtin.shell: >-
+        umask 077;
+        k3s kubectl --namespace {{ k8s_namespace | quote }} exec redis-restore-reader
+        -- cat /redis/dump.rdb > {{ (_plane_restore_remote.path ~ '/restored.rdb') | quote }}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+      no_log: true
+
+    - name: Plane Kubernetes restore | Fetch the point's RDB to private controller staging
+      ansible.builtin.fetch:
+        src: "{{ _plane_restore_remote.path }}/restored.rdb"
+        dest: "{{ _plane_restore_controller.path }}/restored.rdb"
+        flat: true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      no_log: true
+
+    - name: Plane Kubernetes restore | Replace the registered Redis RDB
+      block:
+        - name: Plane Kubernetes restore | Install the point's registered Redis dataset
+          ansible.builtin.include_tasks: restore-redis-install.yml
+          vars:
+            _plane_restore_redis_backend: "{{ _plane_redis_backend }}"
+            plane_restore_redis_ready_tasks: restore-kubernetes-redis-ready.yml
+
+        - name: Plane Kubernetes restore | Mark source Plane keys as a possible replacement
+          ansible.builtin.set_fact:
+            _plane_restore_keys_replaced: true
+
+        - name: Plane Kubernetes restore | Store source keys and sync the target Secret
+          ansible.builtin.include_tasks: restore-kubernetes-keys.yml
+          vars:
+            plane_k8s_restore_keys: "{{ restore_source_plane_secrets }}"
+
+      rescue:
+        - name: Plane Kubernetes restore | Roll the registered Redis RDB and keys back
+          ansible.builtin.include_tasks: restore-kubernetes-rollback.yml
+
+        - name: Plane Kubernetes restore | Report that the external Redis replacement failed
+          ansible.builtin.fail:
+            msg: >-
+              Plane's Kubernetes restore could not replace the registered Redis dataset. The
+              target's Plane Deployments remain stopped; the error above is the cause.
+
+  always:
+    - name: Plane Kubernetes restore | Remove the temporary reader pod
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - pod
+          - redis-restore-reader
+          - --ignore-not-found=true
+          - --wait=true
+          - --timeout=120s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      failed_when: false
+      changed_when: false
+
+    - name: Plane Kubernetes restore | Remove private node RDB staging
+      ansible.builtin.file:
+        path: "{{ _plane_restore_remote.path }}"
+        state: absent
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      when: _plane_restore_remote is defined and _plane_restore_remote.path is defined
+
+    - name: Plane Kubernetes restore | Remove private controller RDB staging
+      ansible.builtin.file:
+        path: "{{ _plane_restore_controller.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: _plane_restore_controller is defined and _plane_restore_controller.path is defined

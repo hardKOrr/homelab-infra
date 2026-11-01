@@ -1,0 +1,174 @@
+---
+# Deploy Plane into its owned namespace. PostgreSQL and Redis remain the named registered
+# services; Kubernetes owns the Plane processes, RabbitMQ and Silo object storage.
+- name: Plane Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Plane Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Plane Kubernetes | Resolve the named Redis backend
+  ansible.builtin.set_fact:
+    _plane_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.redis.instance, {}) }}
+  no_log: true
+
+- name: Plane Kubernetes | Assert the named Redis backend is deployed
+  ansible.builtin.assert:
+    that:
+      - _plane_redis_backend.provider | default('') == 'redis'
+      - _plane_redis_backend.host | default('') | length > 0
+      - _plane_redis_backend.port | default(0) | int > 0
+    fail_msg: >-
+      Redis backend {{ app_config.app.redis.instance }} is not registered. Deploy that
+      named Redis instance before deploying {{ instance }}.
+
+- name: Plane Kubernetes | Resolve the Redis password from Vaultwarden
+  ansible.builtin.set_fact:
+    _plane_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.redis.instance, {}).password
+         | default('', true) }}
+  no_log: true
+
+- name: Plane Kubernetes | Require the registered Redis credential
+  ansible.builtin.assert:
+    that: _plane_redis_password | length > 0
+    fail_msg: >-
+      Redis credential for {{ app_config.app.redis.instance }} is unavailable. Read it
+      from Vaultwarden; do not add it to config/apps/{{ instance }}.yml.
+  no_log: true
+
+- name: Plane Kubernetes | Generate or reuse application and storage secrets
+  ansible.builtin.set_fact:
+    _plane_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _plane_live_server_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).live_server_secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _plane_rabbitmq_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).rabbitmq_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _plane_object_storage_access_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).object_storage_access_key
+         | default('plane-' ~ instance | regex_replace('[^A-Za-z0-9]', ''), true) }}
+    _plane_object_storage_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).object_storage_secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Plane Kubernetes | Store application secrets in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: plane
+      instance: "{{ instance }}"
+      secret_key: "{{ _plane_secret_key }}"
+      live_server_secret_key: "{{ _plane_live_server_secret_key }}"
+      rabbitmq_password: "{{ _plane_rabbitmq_password }}"
+      object_storage_access_key: "{{ _plane_object_storage_access_key }}"
+      object_storage_secret_key: "{{ _plane_object_storage_secret_key }}"
+      database_provider: "{{ app_config.app.database.provider }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      redis_instance: "{{ app_config.app.redis.instance }}"
+      redis_host: "{{ _plane_redis_backend.host }}"
+      redis_port: "{{ _plane_redis_backend.port }}"
+    vault_item_secret_fields:
+      - secret_key
+      - live_server_secret_key
+      - rabbitmq_password
+      - object_storage_access_key
+      - object_storage_secret_key
+      - database_password
+  no_log: true
+
+- name: Plane Kubernetes | Sync the runtime environment into its namespace
+  ansible.builtin.include_tasks: kubernetes-env.yml
+  vars:
+    plane_k8s_env_instance: "{{ instance }}"
+    plane_k8s_env_fqdn: "{{ plane_fqdn }}"
+
+- name: Plane Kubernetes | Render the namespace workload
+  ansible.builtin.set_fact:
+    _plane_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Plane Kubernetes | Apply the workload and wait for local dependencies
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _plane_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-mq"
+      - "deployment/{{ instance }}-minio"
+    k8s_wait_timeout: 600
+
+- name: Plane Kubernetes | Render the database migration Job
+  ansible.builtin.set_fact:
+    _plane_k8s_migrator_manifest: "{{ lookup('ansible.builtin.template', 'migrator-job.yaml.j2') }}"
+
+- name: Plane Kubernetes | Apply the database migrations
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: "{{ instance }}-migrator"
+    k8s_job_manifest: "{{ _plane_k8s_migrator_manifest }}"
+    k8s_job_timeout: 900
+    # The helper removes the one-shot Job on success. Re-running it is part of Deploy's
+    # convergence check, so its temporary create/delete is not persistent change.
+    k8s_job_report_changed: false
+
+- name: Plane Kubernetes | Wait for all Plane services
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _plane_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-web"
+      - "deployment/{{ instance }}-space"
+      - "deployment/{{ instance }}-admin"
+      - "deployment/{{ instance }}-api"
+      - "deployment/{{ instance }}-worker"
+      - "deployment/{{ instance }}-beat"
+      - "deployment/{{ instance }}-live"
+      - "deployment/{{ instance }}-proxy"
+      - "deployment/{{ instance }}-mq"
+      - "deployment/{{ instance }}-minio"
+    k8s_wait_timeout: 900
+
+- name: Plane Kubernetes | Describe the database and Redis recovery inputs
+  ansible.builtin.include_tasks: kubernetes-database-step.yml
+  vars:
+    plane_k8s_database_config: "{{ app_config }}"
+    plane_k8s_database_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Plane Kubernetes | Schedule the shared application recovery CronJob
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: redis
+          claim: "{{ instance }}-redis-recovery"
+          dump_writable: "{{ app_config.backup.enabled | default(false) | bool }}"
+        - name: data
+          claim: "{{ instance }}-data"
+        - name: object-storage
+          claim: "{{ instance }}-object-storage"
+      database: "{{ _plane_k8s_database_step | default({}) }}"
+      stop:
+        - "{{ instance }}-web"
+        - "{{ instance }}-space"
+        - "{{ instance }}-admin"
+        - "{{ instance }}-api"
+        - "{{ instance }}-worker"
+        - "{{ instance }}-beat"
+        - "{{ instance }}-live"
+        - "{{ instance }}-proxy"
+        - "{{ instance }}-mq"
+        - "{{ instance }}-minio"
+      describe: >-
+        the registered PostgreSQL dump and Redis RDB, Plane release identity, service data
+        and object-storage volume as one application-consistent recovery point

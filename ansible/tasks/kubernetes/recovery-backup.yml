@@ -14,6 +14,8 @@
 #   k8s_recovery:
 #     archives    [{name, claim} | {name, config_map}] — each becomes <name>.pxar. Names are
 #                 part of existing recovery points; keep them when changing a role.
+#                 A PVC archive may set boolean dump_writable: true only when a database
+#                 step can prepare that volume before the push container archives it.
 #     database    optional k8s_database_step from tasks/database/kubernetes-recovery-step.yml
 #     stop        optional Deployment names to quiesce while the recovery point is made;
 #                 with a database step, the dump container stops them before its dump and
@@ -47,6 +49,26 @@
       Deployment names, and stop_replicas must be positive. When a database and stop list
       are both supplied, the Job quiesces the Deployments before dumping the database and
       keeps them stopped until the volume archive is pushed.
+
+- name: k8s backup | Validate writable dump archive declarations
+  ansible.builtin.assert:
+    that:
+      - item.dump_writable is boolean
+      - >-
+        not (item.dump_writable | bool)
+        or (item.claim is defined
+            and item.claim is string
+            and item.claim | length > 0
+            and item.config_map is not defined
+            and k8s_recovery.database is defined
+            and k8s_recovery.database is mapping
+            and k8s_recovery.database.dump is defined)
+    fail_msg: >-
+      archive {{ item.name }} may set dump_writable only to a boolean. When true,
+      it needs a non-empty PVC claim, no config_map, and a database recovery step.
+  loop: "{{ k8s_recovery.archives | selectattr('dump_writable', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: k8s backup | Resolve the lab's PBS target
   ansible.builtin.include_tasks: ../backup/resolve-pbs-target.yml

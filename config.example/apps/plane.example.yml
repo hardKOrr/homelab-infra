@@ -1,5 +1,9 @@
 ---
 # Plane planning and collaboration. Deploy postgresql-plane and redis-plane first.
+# Omit hosting to keep Docker on the services VM. To use the deployed Kubernetes
+# cluster and its default StorageClass, select:
+# hosting:
+#   method: kubernetes
 app:
   database:
     instance: postgresql-plane
@@ -16,7 +20,9 @@ backup:
   application_consistent: true
   schedule: "0 3 * * *"
 
-# Recovery boundary: Plane's PostgreSQL database, named Redis data, server/worker Compose
-# state and the named local MinIO object-storage path are captured as one native PBS point.
+# Recovery boundary: Plane's registered PostgreSQL database, named Redis data,
+# server/worker state and object storage are captured as one native PBS point.
+# Kubernetes runs each service separately and persists its volumes on the cluster's
+# default StorageClass. Backup App and Restore App use the selected hosting method.
 # Plane application keys and backend credentials remain in Vaultwarden and are required
 # independently during restore; this example deliberately contains no secret values.

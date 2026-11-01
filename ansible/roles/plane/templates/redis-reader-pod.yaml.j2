@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-restore-reader
+  labels:
+    app.kubernetes.io/instance: {{ restore_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: recovery
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: reader
+      image: {{ restore_target_config.backup.redis_client_image | default(app_config.backup.redis_client_image) }}
+      imagePullPolicy: IfNotPresent
+      command: [/bin/sh, -c]
+      args: ["sleep 600"]
+      volumeMounts:
+        - name: redis
+          mountPath: /redis
+          readOnly: true
+  volumes:
+    - name: redis
+      persistentVolumeClaim:
+        claimName: {{ restore_target }}-redis-recovery

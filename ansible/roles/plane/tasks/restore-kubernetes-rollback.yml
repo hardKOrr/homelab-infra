@@ -1,0 +1,11 @@
+---
+- name: Plane Kubernetes restore | Restore the prior external Redis dataset
+  ansible.builtin.include_tasks: restore-redis-rollback.yml
+  vars:
+    plane_restore_redis_ready_tasks: restore-kubernetes-redis-ready.yml
+
+- name: Plane Kubernetes restore | Restore the target's original Plane keys
+  ansible.builtin.include_tasks: restore-kubernetes-keys.yml
+  vars:
+    plane_k8s_restore_keys: "{{ _plane_restore_target_secrets }}"
+  when: _plane_restore_keys_replaced | default(false) | bool

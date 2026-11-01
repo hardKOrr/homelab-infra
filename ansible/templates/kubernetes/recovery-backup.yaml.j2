@@ -10,8 +10,9 @@
   Context (from recovery-backup.yml):
     instance, k8s_namespace, k8s_pbs_fingerprint
     _kr  — backup_id, repository, datastore, schedule, timezone, timeout, retention_days,
-           scratch_gi, secret, ntfy_url, ntfy_token, client (backup.client: image, key_url, repository, suite, component),
-           archives[{name, claim|config_map}], optional stop Deployment names, database (tasks/database/
+           scratch_gi, secret, ntfy_url, ntfy_token, client (backup.client: image, key_url,
+           repository, suite, component), archives[{name, claim|config_map, optional
+           dump_writable}], optional stop Deployment names, database (tasks/database/
            kubernetes-recovery-step.yml) or none
 
   No credential appears here or on a command line. The PBS token and database secrets are
@@ -212,6 +213,12 @@ spec:
                   mountPath: /etc/recovery-credentials
                   readOnly: true
 {% endif %}
+{% for archive in _kr.archives if archive.dump_writable | default(false) | bool %}
+                # The dump hook may stage app-specific data here. The push container
+                # keeps the same claim read-only while it creates the archive.
+                - name: volume-{{ archive.name }}
+                  mountPath: /volumes/{{ archive.name }}
+{% endfor %}
               resources:
                 requests:
                   cpu: 100m
@@ -413,6 +420,8 @@ spec:
 {% else %}
               persistentVolumeClaim:
                 claimName: {{ archive.claim }}
+{% if not (archive.dump_writable | default(false) | bool) %}
                 readOnly: true
+{% endif %}
 {% endif %}
 {% endfor %}
