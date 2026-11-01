@@ -24,7 +24,11 @@ Both commands always check the applicable tree and accept and ignore arguments.
 They close stdin and select a local inventory so no live Proxmox inventory is invoked.
 
 Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jinja,
-checks repository links and fixture secrets, and enforces GitHub workflow policy.
+checks repository links and fixture secrets ([fixtures](fixtures/README.md)), enforces
+GitHub workflow policy, and runs `check-structure.py`. That script enforces the structure
+rules in [`AGENTS.md`](../AGENTS.md#keeping-the-repository-small) against the exceptions
+recorded in `structure.yml`. An exception may not grow, and one that no longer applies must
+be deleted. `python gate/check-structure.py --update` prints the current values.
 
 Test syntax-checks every playbook, then runs every `gate/test-*.py` and `gate/test-*.sh`
 suite. Both phases run in parallel and replay each item's diagnostics in order. Set
