@@ -82,6 +82,12 @@ def main():
                          "app_config.app.database.instance == ''",
                          "app_config.app.database.name == 'authentik_second'",
                          "app_config.app.database.role == 'authentik_second'",
+                         "app_config.backup.schedule == '0 3 * * *'",
+                         "app_config.backup.client.image == 'python:3.12-bookworm'",
+                         "app_config.backup.client.key_url | length > 0",
+                         "app_config.backup.client.repository | length > 0",
+                         "app_config.backup.client.suite == 'bookworm'",
+                         "app_config.backup.client.component == 'main'",
                      ]}},
                  ]}]
         path = Path(temporary) / "defaults.yml"

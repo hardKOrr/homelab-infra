@@ -17,6 +17,13 @@ authentik_defaults:
   backup:
     enabled: true
     application_consistent: true
+    schedule: "0 3 * * *"
+    client:
+      image: "python:3.12-bookworm"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
     retention_days: 14
     datastore: ""
     backup_id: ""
