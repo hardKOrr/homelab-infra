@@ -67,6 +67,15 @@ def check_restore():
     assert cache["allow_empty"] is True and not data.get("allow_empty", False)
     staged = (ROOT / "ansible/roles/ntfy/tasks/restore-staged.yml").read_text()
     assert "{{ recovery_swap_stage }}/data/{{ _ntfy_restore_auth_relative }}" in staged
+    restore_native = yaml.safe_load((ROOT / "ansible/roles/ntfy/tasks/restore-native.yml").read_text())
+    reconcile = next(task for task in restore_native
+                     if task.get("ansible.builtin.include_tasks") == "credentials-native.yml")
+    swap_task = next(task for task in restore_native
+                     if task.get("ansible.builtin.include_tasks", "").endswith("tasks/recovery/restore-swap.yml"))
+    assert restore_native.index(reconcile) > restore_native.index(swap_task)
+    assert reconcile["when"] == "restore_overwrite | bool"
+    native_deploy = (ROOT / "ansible/roles/ntfy/tasks/main.yml").read_text()
+    assert "ansible.builtin.include_tasks: credentials-native.yml" in native_deploy
     verified = (ROOT / "ansible/roles/ntfy/tasks/restore-verified.yml").read_text()
     assert "argv: [ntfy, user, list]" in verified
     assert swap["recovery_swap_health_url"].endswith("/v1/health")

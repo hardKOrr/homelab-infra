@@ -45,3 +45,10 @@
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/v1/health"
     recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
+
+# A fresh guest minted its own token before Restore. Publish the restored database's
+# effective token only after the swap commits, so a rolled-back swap never changes
+# the canonical credential. Preview must remain read-only.
+- name: Ntfy restore | Reconcile the restored native publish credential
+  ansible.builtin.include_tasks: credentials-native.yml
+  when: restore_overwrite | bool
