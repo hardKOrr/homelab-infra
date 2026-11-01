@@ -280,7 +280,8 @@
 - name: Resolve secrets (reuse what exists, generate only what is missing)
   ansible.builtin.set_fact:
     _authentik_pg_pass: >-
-      {{ (_authentik_env_existing | default({})).PG_PASS
+      {{ (app_config.app.database_password if _authentik_external_database
+          else (_authentik_env_existing | default({})).PG_PASS)
          | default(_authentik_recorded_sso.postgres_password | default(''), true)
          | default(lookup('password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
     _authentik_secret_key: >-

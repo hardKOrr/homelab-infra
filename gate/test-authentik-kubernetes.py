@@ -65,7 +65,36 @@ def check_registered_credential_guard():
                 assert marker.exists() == passes
 
 
+def check_database_password_resolution():
+    """The first external deploy must store the same password it writes to .env."""
+    resolve = next(task for task in tasks("main.yml")
+                   if task["name"] == "Resolve secrets (reuse what exists, generate only what is missing)")
+    with tempfile.TemporaryDirectory(prefix="authentik-password-resolution-") as temporary:
+        plays = []
+        for external, expected in [(True, "registered-password"), (False, "embedded-password")]:
+            plays.append({"hosts": "localhost", "gather_facts": False,
+                          "vars": {"_authentik_external_database": external,
+                                   "app_config": {"app": {"database_password": "registered-password"}},
+                                   "_authentik_env_existing": {"PG_PASS": "embedded-password"},
+                                   "_authentik_recorded_sso": {"postgres_password": "previous-password",
+                                                               "secret_key": "retained-key",
+                                                               "admin_password": "retained-admin", "token": "retained-token"}},
+                          "tasks": [resolve, {"ansible.builtin.assert": {"that": [
+                              "_authentik_pg_pass == '" + expected + "'",
+                              "_authentik_secret_key == 'retained-key'",
+                              "_authentik_admin_password == 'retained-admin'",
+                              "_authentik_api_token == 'retained-token'",
+                          ]}}]})
+        path = Path(temporary) / "resolution.yml"
+        path.write_text(yaml.safe_dump(plays))
+        result = subprocess.run([str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"),
+                                 "-i", "localhost,", "-c", "local", str(path)],
+                                capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 def main():
+    check_database_password_resolution()
     check_registered_credential_guard()
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/authentik.yml").read_text())["authentik_defaults"]
     assert defaults["hosting"]["method"] == "docker"
