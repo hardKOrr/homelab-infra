@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise selected-client wiring and removal against authenticated local APIs."""
+"""Exercise selected-client wiring and removal against authenticated local APIs.
+
+Checks: unique client wiring, convergence and selected-client removal.
+"""
 import copy
 import http.server
 import json

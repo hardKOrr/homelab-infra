@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render production templates with Ansible's templar."""
+"""Render app templates and defaults (Caddy, media apps, Kubernetes manifests) via the templar."""
 
 import json
 import os

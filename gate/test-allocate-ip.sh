@@ -3,6 +3,7 @@
 # Every case here is a decision slice 011 makes, including the ones that must FAIL:
 # an allocator that quietly hands back a plausible address is how a lab's addressing
 # scheme decays one deploy at a time.
+# Checks: address allocation, exclusions and exhaustion.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"

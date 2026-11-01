@@ -4,6 +4,10 @@
 Runs tasks/proxmox/resolve-instance-guest.yml against inventory fixtures, then checks that
 each playbook that deploys onto the instance's own guest selects it through that file
 instead of an inline tag-group lookup, which cannot see a guest Remove kept.
+
+Checks: `resolve-instance-guest.yml` reuses the one unclaimed same-name guest Remove kept,
+refuses ambiguous, wrong-type or claimed guests, and every own-guest playbook selects its
+guest through it.
 """
 
 import os

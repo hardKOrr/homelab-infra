@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configuration precedence, estate isolation, public DNS, providers and networks."""
+"""Config Doctor, precedence, estates, mail, public DNS validation, provider gates, networks."""
 
 import importlib.util
 import json

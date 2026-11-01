@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check Mautic's Kubernetes workload, config convergence and shared recovery inputs."""
+"""Check Mautic's Kubernetes workload, config convergence and shared recovery inputs.
+
+Checks: Mautic's Docker default, opt-in Kubernetes web/cron/worker workloads, cluster
+database firewall input, and shared backup and restore recovery contracts.
+"""
 
 import json
 import os

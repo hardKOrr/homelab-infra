@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise DNS-name renames against fake OPNsense, Caddy, and Pi-hole APIs."""
+"""Exercise DNS-name renames against fake OPNsense, Caddy, and Pi-hole APIs.
+
+Checks: DNS-name renames remove only the instance-owned OPNsense override or the former
+Caddy route hostname in Pi-hole, while preserving foreign and sibling records.
+"""
 
 import base64
 import http.server

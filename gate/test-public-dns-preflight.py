@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise public DNS lookup, ownership checks, and Cloudflare reads with fakes."""
+"""Exercise public DNS lookup, ownership checks, and Cloudflare reads with fakes.
+
+Checks: public address lookup agreement, unsafe address refusal, Cloudflare record ownership
+preflight, adoption, safe API failures, delayed record marking and its bounded timeout.
+"""
 
 import importlib.util
 import json

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the shared storage check against read-only pvesh fixtures."""
+"""Run the shared storage check against read-only pvesh fixtures.
+
+Checks: runs the read-only shared storage tasks against fake pvesh responses; all-active,
+absent, inactive and query-error cases check exit status, every node report, repeat output
+and zero changes.
+"""
 import json
 import os
 from pathlib import Path

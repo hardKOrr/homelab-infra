@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check WordPress's Kubernetes hosting and shared recovery wiring."""
+"""Check WordPress's Kubernetes hosting and shared recovery wiring.
+
+Checks: WordPress keeps Docker as its default, dispatches Deploy, Backup and Restore by
+`hosting.method`, and renders its default-class content claim, WP-CLI jobs and shared,
+database-consistent Kubernetes recovery inputs.
+"""
 
 import os
 import subprocess

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Emby's device-driven hardware transcoding settings and convergence."""
+"""Exercise Emby's device-driven hardware transcoding settings and convergence.
+
+Checks: Emby's VA-API settings and DRI group access follow the declared device, converge on
+repeat runs, and turn hardware encoding off when no device is declared.
+"""
 
 import json
 import os

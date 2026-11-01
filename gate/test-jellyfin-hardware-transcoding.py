@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Jellyfin's device-driven hardware transcoding settings and convergence."""
+"""Exercise Jellyfin's device-driven hardware transcoding settings and convergence.
+
+Checks: Jellyfin's VA-API settings and DRI group access follow the declared device, converge
+on repeat runs, and turn hardware encoding off when no device is declared.
+"""
 
 import json
 import os

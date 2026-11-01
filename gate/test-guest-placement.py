@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the guest placement resolver with a local pvesh fixture."""
+"""Placement on a pvesh fixture: database pinning, floating node order, class storage, refusals."""
 
 import json
 import hashlib

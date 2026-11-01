@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Plex's device-driven hardware transcoding settings and convergence."""
+"""Exercise Plex's device-driven hardware transcoding settings and convergence.
+
+Checks: Plex hardware decoding/encoding preferences follow the declared `/dev/dri` device
+and converge on repeat runs.
+"""
 
 import base64
 import os

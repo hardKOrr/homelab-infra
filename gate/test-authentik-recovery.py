@@ -3,6 +3,10 @@
 
 gate/test-restore-swap.py proves the swap itself, including `live` owners and the native
 PBS client under Compose services.
+
+Checks: Authentik's quiesced one-archive backup and its restart, and its restore swap
+inputs: the native PBS client, one path per owner (PostgreSQL and Redis keep their live
+owner), and the staged hook refusing a point without a PostgreSQL cluster.
 """
 
 import copy

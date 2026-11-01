@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render and compare the documented Proxmox host-firewall baseline."""
+"""Render and compare the documented Proxmox host-firewall baseline.
+
+Checks: Proxmox datacenter and node rules render from the documented example, migrate only
+the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a
+configured joining node as a peer.
+"""
 
 import copy
 import contextlib

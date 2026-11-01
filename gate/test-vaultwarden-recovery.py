@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Guard Vaultwarden's native recovery and additional-instance isolation contract."""
+"""Guard Vaultwarden's native recovery and additional-instance isolation contract.
+
+Checks: Vaultwarden's native recovery contract, additional-instance isolation, Remove with
+an absent database backend, and the restore swap inputs with the `db.sqlite3` staged hook
+and the web vault check.
+"""
 
 from pathlib import Path
 import copy

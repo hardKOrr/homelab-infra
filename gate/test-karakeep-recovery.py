@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Karakeep's single-archive backup and check its two-directory restore swap inputs."""
+"""Exercise Karakeep's single-archive backup and check its two-directory restore swap inputs.
+
+Checks: one-archive backup of both persistent volumes, and the two restore swap paths from
+that archive with the owner Deploy also applies.
+"""
 
 import copy
 import os

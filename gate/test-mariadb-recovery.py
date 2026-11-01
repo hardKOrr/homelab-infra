@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check MariaDB's native PBS contract and the shared server recovery script's rebuild restore."""
+"""Check MariaDB's native PBS contract and the shared server recovery script's rebuild restore.
+
+Checks: the shared `server-recovery.py` for MariaDB: root-socket export, global consistency
+lock, PBS dispatch, manifest integrity, version guard, and same-filesystem rebuild with
+rollback.
+"""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import json

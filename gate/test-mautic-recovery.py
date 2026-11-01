@@ -3,6 +3,10 @@
 
 gate/test-restore-swap.py proves the swap, the database dump, load and rollback; the
 replaced hook here points the restored local.php at the target's database and URL.
+
+Checks: Mautic's one-archive backup, its restore swap inputs, the staged hook refusing a
+point without `local.php` or media, and the replaced hook pointing the restored `local.php`
+at the target in a real play, with the same PHP escaping as Deploy.
 """
 
 import tempfile

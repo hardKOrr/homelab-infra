@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise production recovery input publication through two real Ansible plays."""
+"""Exercise production recovery input publication through two real Ansible plays.
+
+Checks: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane
+and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
+"""
 
 import json
 import os

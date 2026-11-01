@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check shared database guest selection and pinned placement defaults."""
+"""Check shared database guest selection and pinned placement defaults.
+
+Checks: shared backend placement for all five engines, per-instance node/storage defaults,
+legacy type compatibility, mismatch refusal and single-node LXC/VM placement.
+"""
 
 import json
 import os

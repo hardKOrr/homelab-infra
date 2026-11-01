@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Guard Uptime Kuma's PBS backup and its inputs to the shared restore swap."""
+"""Guard Uptime Kuma's PBS backup and its inputs to the shared restore swap.
+
+Checks: quiesced PBS snapshots, destination guards, and the restore swap inputs with the
+`kuma.db` and initialized-server hooks.
+"""
 
 from pathlib import Path
 

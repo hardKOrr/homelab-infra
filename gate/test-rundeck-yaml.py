@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Rendered Rundeck jobs and instance option publishing."""
+"""Rendered Rundeck jobs and instance option publishing.
+
+Checks: rendered jobs, YAML aliases, estate options and instance publishing.
+"""
 
 import re
 import subprocess

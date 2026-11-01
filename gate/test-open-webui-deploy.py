@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check Open WebUI deployment bootstrap and native recovery wiring."""
+"""Check Open WebUI deployment bootstrap and native recovery wiring.
+
+Checks: Open WebUI's default Docker bootstrap, Kubernetes PVC/workload/Ingress, cluster
+firewall inputs, and shared backup wiring.
+"""
 
 from pathlib import Path
 

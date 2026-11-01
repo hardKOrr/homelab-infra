@@ -5,6 +5,9 @@ gate/test-restore-swap.py proves the swap. Here: the restore holds the lock the 
 backup timer takes for the whole swap, the staged hook checks webui.db with the pinned
 image, the replaced hook gives the target the source's application key, and the rollback
 hook gives it its own key back.
+
+Checks: Open WebUI's Docker restore swap inputs and key hooks, plus Kubernetes recovery Job
+inputs and the key hook that updates Vaultwarden and the target Secret before startup.
 """
 
 import tempfile

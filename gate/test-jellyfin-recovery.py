@@ -2,6 +2,10 @@
 """Exercise Jellyfin's PBS backup, its restore contract and its restore-swap hooks.
 
 gate/test-restore-swap.py proves the swap and rollback themselves.
+
+Checks: Jellyfin's PBS backup, the pre-restore point requirement, and the restore swap
+inputs with the single intact `jellyfin.db` staged hook and the configured-server, source-
+account and library checks.
 """
 
 import copy

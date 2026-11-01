@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise PostgreSQL orphan-tag repair against socket-free PVE fixtures."""
+"""Exercise PostgreSQL orphan-tag repair against socket-free PVE fixtures.
+
+Checks: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
+"""
 
 import copy
 import json

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise the VM HA reconciler with isolated Proxmox command fixtures."""
+"""Exercise the VM HA reconciler with isolated Proxmox command fixtures.
+
+Checks: opt-in HA resource creation, idempotence, owned-resource removal, shared-storage
+refusal and Remove ordering.
+"""
 
 import json
 import os

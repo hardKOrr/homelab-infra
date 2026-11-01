@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check BookStack's Kubernetes hosting and recovery templates and dispatch."""
+"""Check BookStack's Kubernetes hosting and recovery templates and dispatch.
+
+Checks: BookStack keeps Docker as its default, dispatches the Kubernetes method to an owned
+namespace, and renders a default-class PVC, restricted recovery access, application-
+consistent backup CronJob and rollback-capable restore Job.
+"""
 
 import os
 from datetime import datetime, timedelta, timezone

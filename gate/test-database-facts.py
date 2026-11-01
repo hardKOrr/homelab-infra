@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check database facts and provisioning contracts remain safe and resolvable."""
+"""Check database facts and provisioning contracts remain safe and resolvable.
+
+Checks: generated database registry cleanup, PostgreSQL privilege/extension setup and
+delete/redeploy cluster lifecycle.
+"""
 
 import os
 from pathlib import Path

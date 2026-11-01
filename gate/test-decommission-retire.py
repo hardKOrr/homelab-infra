@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise PBS stamp retirement through execute() without node or private-file access."""
+"""Exercise PBS stamp retirement through execute() without node or private-file access.
+
+Checks: PBS stamp retirement, credential provenance checks and repeat execution.
+"""
 
 import copy
 import importlib.util

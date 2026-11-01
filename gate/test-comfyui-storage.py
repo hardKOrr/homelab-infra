@@ -3,6 +3,9 @@
 
 The ai-dock image runs ComfyUI as uid 1000, gid 1111. Root-owned 0750 mounts left it unable
 to save anything; a restore that copies the archive back as root must hand them back too.
+
+Checks: every directory ComfyUI's Compose file mounts belongs to its runtime user after
+deploy, and the restore swap hands them back through the same task file.
 """
 
 from pathlib import Path

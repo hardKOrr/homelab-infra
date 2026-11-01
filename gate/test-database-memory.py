@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check database memory ratios, guest types and per-instance overrides."""
+"""Check database memory ratios, guest types and per-instance overrides.
+
+Checks: database memory ratios, LXC/VM guest inputs, per-instance overrides and rendered or
+managed engine settings.
+"""
 
 import os
 import subprocess

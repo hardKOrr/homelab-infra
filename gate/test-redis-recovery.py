@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Keep Redis's native PBS recovery and dedicated LXC removal contract in sync."""
+"""Keep Redis's native PBS recovery and dedicated LXC removal contract in sync.
+
+Checks: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL
+SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, the restore swap
+inputs with the RDB and ACL staged hook, Deploy's file modes and the target-password ACL
+reconciliation, and scoped guest removal.
+"""
 
 import hashlib
 import re

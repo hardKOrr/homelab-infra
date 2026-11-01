@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise exact owned stack guest starts against socket-free PVE fixtures."""
+"""Exercise exact owned stack guest starts against socket-free PVE fixtures.
+
+Checks: exact owned stack guest start, readiness, repeat and refusal cases.
+"""
 import json,os,subprocess,tempfile
 from pathlib import Path
 import yaml

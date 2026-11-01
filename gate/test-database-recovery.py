@@ -6,6 +6,10 @@
 - guard-app-database.yml's real assert conditions are rendered against fixture facts.
 - remove.yml checks ownership before unwiring and drops through drop.yml for every app
   whose database lives on a registered backend.
+
+Checks: shared database client dump and restore per engine (PostgreSQL, MariaDB, MySQL)
+against command shims, the ownership guard before drop or restore, the version-matched
+client image, and Remove dropping every registered-backend database from the controller.
 """
 
 import os

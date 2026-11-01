@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise the native terminal prompt contract and its failure boundary."""
+"""Exercise the native terminal prompt contract and its failure boundary.
+
+Checks: Actual Budget's Docker and Kubernetes terminal password exchanges and failure
+handling.
+"""
 
 import importlib.util
 import sys

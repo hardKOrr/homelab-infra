@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check InfluxDB's declared recovery path, its restore swap inputs and its restore hooks."""
+"""Check InfluxDB's declared recovery path, its restore swap inputs and its restore hooks.
+
+Checks: native data archive, restore credential checks, and the restore swap inputs with the
+Bolt and engine staged hook, the operator-token check, and a new target's Vaultwarden
+credentials written on success and put back on rollback.
+"""
 from __future__ import annotations
 
 import copy
