@@ -1,0 +1,128 @@
+---
+- name: Forgejo Kubernetes | Resolve the cluster
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Forgejo Kubernetes | Ensure the owned namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Forgejo Kubernetes | Require an IPv4 database firewall destination
+  ansible.builtin.assert:
+    that: app_config.app.database_host is ansible.utils.ipv4_address
+  when: homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+
+- name: Forgejo Kubernetes | Add the registered database destination
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {'egress':
+        ((app_config.firewall | default({})).egress | default([])
+         | rejectattr('name', 'equalto', 'forgejo-database') | list)
+        + [{'name': 'forgejo-database', 'protocol': 'TCP',
+            'port': app_config.app.database_port | string,
+            'destination': app_config.app.database_host}]}}, recursive=True) }}
+  no_log: true
+  when: homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+
+- name: Forgejo Kubernetes | Open access through the cluster node alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+  vars:
+    k8s_firewall_upstream_host: "{{ homelabinfra_infra.kubernetes.nodes[0].ip_address }}"
+    firewall_inbound_ports:
+      forgejo-ssh: "{{ app_config.app.ssh_node_port }}"
+
+- name: Forgejo Kubernetes | Resolve and store application credentials
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Forgejo Kubernetes | Render application environment
+  ansible.builtin.set_fact:
+    _forgejo_k8s_env: "{{ dict(lookup('ansible.builtin.template', 'forgejo.env.j2').splitlines() | reject('match', '^#|^$') | map('split', '=', 1)) }}"
+  no_log: true
+
+- name: Forgejo Kubernetes | Sync application environment
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data: "{{ _forgejo_k8s_env }}"
+  no_log: true
+
+- name: Forgejo Kubernetes | Validate the SSH node port
+  ansible.builtin.assert:
+    that:
+      - app_config.app.ssh_node_port | int >= 30000
+      - app_config.app.ssh_node_port | int <= 32767
+
+- name: Forgejo Kubernetes | Check the SSH node port claim
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/claim-node-port.yml
+  vars:
+    k8s_node_port: "{{ app_config.app.ssh_node_port }}"
+
+- name: Forgejo Kubernetes | Configure the recovery client
+  ansible.builtin.include_tasks: kubernetes-client.yml
+
+- name: Forgejo Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 600
+
+- name: Forgejo Kubernetes | List the administrators
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, "deployment/{{ instance }}",
+           --, su, -s, /bin/sh, git, -c, 'forgejo admin user list --admin']
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _forgejo_admins
+  changed_when: false
+
+- name: Forgejo Kubernetes | Create the administrator on a fresh install
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - git
+      - -c
+      - >-
+        forgejo admin user create --admin --username {{ app_config.app.admin_user | quote }}
+        --email {{ app_config.app.admin_email | quote }} --password {{ _forgejo_admin_password | quote }}
+        --must-change-password=false
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: true
+  no_log: true
+  when: >-
+    _forgejo_admins.stdout is not search('(?m)^\d+\s+' ~ (app_config.app.admin_user | regex_escape) ~ '\s')
+
+- name: Forgejo Kubernetes | Verify the administrator login
+  ansible.builtin.uri:
+    url: "http://{{ homelabinfra_infra.kubernetes.ingress_vip }}/api/v1/user"
+    headers:
+      Host: "{{ forgejo_fqdn }}"
+    url_username: "{{ app_config.app.admin_user }}"
+    url_password: "{{ _forgejo_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  changed_when: false
+  no_log: true
+
+- name: Forgejo Kubernetes | Describe the recovery inputs
+  ansible.builtin.include_tasks: recovery-inputs.yml
+
+- name: Forgejo Kubernetes | Schedule the paired recovery point
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+          dump_writable: true
+      database: "{{ _forgejo_k8s_database }}"
+      stop: ["{{ instance }}"]
+      describe: Forgejo repositories, LFS, attachments, configuration and PostgreSQL database

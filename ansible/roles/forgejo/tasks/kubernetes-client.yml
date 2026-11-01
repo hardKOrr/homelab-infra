@@ -1,0 +1,14 @@
+---
+- name: Forgejo Kubernetes | Load the shared PBS client defaults
+  ansible.builtin.include_vars: ../../../vars/pbs-client.yml
+
+- name: Forgejo Kubernetes | Supply the recovery client configuration
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'backup': {'client': {
+        'image': 'python:3.12-bookworm',
+        'key_url': pbs_client_defaults.suites.bookworm.key_url,
+        'repository': pbs_client_defaults.repository,
+        'suite': 'bookworm', 'component': pbs_client_defaults.component
+      } | combine(app_config.backup.client | default({}), recursive=True)}}, recursive=True) }}
+  no_log: true

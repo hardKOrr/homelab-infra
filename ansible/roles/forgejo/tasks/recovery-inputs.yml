@@ -1,0 +1,29 @@
+---
+- name: Forgejo Kubernetes | Describe the registered database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config | default(app_config) }}"
+    k8s_database_step_instance: "{{ restore_target | default(instance) }}"
+
+# Keep data.pxar compatible with Docker's paired forgejo/ and database/ archive.
+# The shared database client does the dump; this hook only places it in that layout.
+- name: Forgejo Kubernetes | Describe the portable recovery unit
+  ansible.builtin.set_fact:
+    _forgejo_k8s_database: >-
+      {{ k8s_database_step | combine({
+        'archive': 'data', 'archive_path': 'database',
+        'dump': _forgejo_k8s_dump, 'load': _forgejo_k8s_load
+      }) }}
+  no_log: true
+  vars:
+    _forgejo_k8s_dump: |
+      {{ k8s_database_step.dump }}
+      install -d -m 0700 /volumes/data/database
+      cp "${DUMP_DIR}/${DB_NAME}.dump" /volumes/data/database/forgejo.dump
+    _forgejo_k8s_load: |
+      if [ ! -s "${DUMP_DIR}/../forgejo/gitea/conf/app.ini" ]; then
+        echo 'Forgejo recovery point lacks its application configuration; refusing replacement.' >&2
+        exit 1
+      fi
+      {{ k8s_database_step.load }}

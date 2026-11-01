@@ -24,7 +24,8 @@
 #     archives     the target's [{name, claim, owner?} | {name, config_map}], names as
 #                  backed up. A claim is emptied and refilled; `owner` (uid:gid) is applied
 #                  after. A config_map archive is applied as that ConfigMap in the target.
-#     database     optional k8s_database_step for the TARGET database
+#     database     optional k8s_database_step for the TARGET database; archive (default
+#                  database) and archive_path (default empty) select a nested dump directory
 #     stop         Deployments scaled to 0 before the Job and back to 1 after it
 #     restart      Deployments restarted after the Job (disposable caches)
 #     after_restore_tasks  optional task file run after the Job, before the target starts
@@ -48,6 +49,15 @@
       A restore needs a target instance and, to actually run, a snapshot to restore from.
       Run it once without `snapshot` to list what PBS holds for this application, then
       again naming one of the identifiers it printed.
+
+# A database may live inside an application's portable archive rather than database.pxar.
+- name: k8s restore | Validate the database archive location
+  ansible.builtin.assert:
+    that:
+      - k8s_recovery.database.archive | default('database') is match('^[a-z][a-z0-9-]*$')
+      - k8s_recovery.database.archive_path | default('') is match('^([A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*)?$')
+    fail_msg: Database recovery needs a safe archive name and relative directory without traversal.
+  when: k8s_recovery.database | default({}) | length > 0
 
 - name: k8s restore | Resolve the cluster and its API host
   ansible.builtin.include_tasks: resolve-cluster.yml

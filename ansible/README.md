@@ -397,7 +397,22 @@ that ownership boundary and leave untagged guests alone.
 - `callback_plugins/` defines the common job and terminal output.
 - `files/` contains controller-side helper programs installed or called by tasks.
 
-### Shared operations
+#Forgejo defaults to Docker on its services VM. Set `hosting.method: kubernetes` in the
+instance config to use the cluster, retaining its registered PostgreSQL backend. Its
+`app.storage` GiB claim uses the cluster's default StorageClass. HTTP uses the instance's
+usual hostname through the ingress; Git SSH advertises the first cluster node's address
+and `app.ssh_node_port` (default 30222). A second instance needs an unused SSH NodePort;
+Deploy checks the cluster-wide claim before applying it. An enabled SSH forward targets
+that node and must set `local_port` to `app.ssh_node_port`. SSH is separate from the HTTP route.
+
+Both Forgejo methods keep the same `data.pxar` layout: `forgejo/` contains the complete
+application data and `database/forgejo.dump` contains its registered PostgreSQL database.
+Kubernetes quiesces Forgejo through the shared backup Job, dumps the database through the
+shared client, and copies that dump into the archive layout before upload. Restore reads
+that nested dump through the shared recovery Job, allowing recovery points to move between
+Docker and Kubernetes without regenerating Forgejo's application secret key.
+
+## Shared operations
 
 A role uses the shared file for any operation listed here and supplies its per-app
 behavior through that file's inputs or hook. When the shared file lacks a needed seam, add
@@ -420,7 +435,7 @@ the shared files, so its allowlists are empty.
 | Application database provisioning | `tasks/database/provision.yml` | `database_provision_app_instance`, `database_provision_config` |
 | PBS client install, backup, verify, restore | `tasks/backup/pbs-client-install.yml`, `pbs-client-backup.yml`, `pbs-client-restore.yml`, all running `scripts/pbs-client.sh`; pins in `vars/pbs-client.yml` | `pbs_client_runtime` (`docker` or `native`), `pbs_client_archives`, optional `pbs_client_stop_services` with `pbs_client_compose_project`, `pbs_client_backup_args`, `pbs_client_backup_mounts` (more host directories inside one archive), `pbs_client_keep_last`, `pbs_client_prune`, `pbs_client_restore_args`, `pbs_client_quiesced_hook` |
 | PBS client on the guest, for a recovery script that runs without Ansible (cron) | `tasks/backup/pbs-client-script.yml`, installing `scripts/pbs-client.sh` and the instance's root-only client settings | `pbs_client_runtime`, `pbs_client_config_state` (`present` or `absent`); the script then runs `backup`, `list`, `verify` or `extract` with `PBS_CLIENT_CONFIG` set |
-| Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`); a PVC may set `dump_writable: true` to give the database dump init container a writable `/volumes/<name>` mount (requires a database step and no `config_map`; the PBS push mount stays read-only); optional `database` step, backup `stop` list and positive `stop_replicas` fallback, restore `stop` and `restart` Deployments, optional `after_restore_tasks` hook. When a backup has both `database` and `stop`, its database image needs a package manager that can install Python, and its client image needs Python so failure traps can resume the app after the database dump and volume archive. |
+| Kubernetes backup CronJob and restore Job | `tasks/kubernetes/recovery-backup.yml` and `recovery-restore.yml`, rendering `templates/kubernetes/recovery-*.yaml.j2` | `k8s_recovery`: `archives` (PVC `claim` with optional `owner`, or `config_map`); a PVC may set `dump_writable: true` to give the database dump init container a writable `/volumes/<name>` mount (requires a database step and no `config_map`; the PBS push mount stays read-only); optional `database` step (restore may set `archive` and `archive_path` to read a nested dump from an application archive; defaults to `database.pxar`), backup `stop` list and positive `stop_replicas` fallback, restore `stop` and `restart` Deployments, optional `after_restore_tasks` hook. When a backup has both `database` and `stop`, its database image needs a package manager that can install Python, and its client image needs Python so failure traps can resume the app after the database dump and volume archive. |
 | Kubernetes database dump, load and inspect step | `tasks/database/kubernetes-recovery-step.yml` | `k8s_database_step_source` (`registered` or `namespace-mysql`), the instance and its config |
 | Database dump, restore and drop | `tasks/database/dump.yml`, `restore.yml`, `drop.yml`, running `scripts/database-client.sh`; Remove drops any registered-backend database | `database_app_instance`, `database_app_config` (`app.database`), `database_dump_file` or `database_restore_file`; extensions that need a superuser and privileges stay `provision.yml` inputs; a restore recreates the extensions the application's login created |
 | Whole MariaDB/MySQL backend guest export and restore | `tasks/database/install-server-recovery.yml`, installing `scripts/server-recovery.py` | the engine (`mariadb` or `mysql`) as its first argument; MariaDB's restore takes `--data-dir` and `--service` |
