@@ -20,16 +20,38 @@ def tasks(name):
     return yaml.safe_load((ROLE / "tasks" / name).read_text())
 
 
+def stub_database(root):
+    (root / "psycopg2.py").write_text('''import os
+class Connection:
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def cursor(self): return self
+    def execute(self, sql, args=None):
+        if args is not None: assert isinstance(args[0], list)
+    def fetchone(self): return (None if os.environ['PROBE_STATE'] == 'absent' else 'ir_module_module',)
+    def fetchall(self): return [(name,) for name in os.environ['PROBE_STATE'].split(',')]
+def connect(**kwargs):
+    assert kwargs['dbname'] == 'odoo'
+    if os.environ['PROBE_STATE'] == 'error': raise RuntimeError('connection failed')
+    return Connection()
+''')
+
+
 def exercise_initializer(script):
     with tempfile.TemporaryDirectory(prefix="odoo-init-") as directory:
         root = Path(directory)
         stub = root / "odoo"
         stub.write_text('#!/bin/sh\nexit "${ODOO_TEST_EXIT:-0}"\n')
         stub.chmod(0o700)
+        stub_database(root)
+        config = root / "odoo.conf"
+        config.write_text("[options]\ndb_host=localhost\ndb_port=5432\ndb_user=odoo\ndb_password=test\n")
+        script = script.replace('/etc/odoo/odoo.conf', str(config))
         marker = root / ".crm-modules"
         script = script.replace("/var/lib/odoo", directory)
         environment = os.environ | {"PATH": directory + ":" + os.environ["PATH"],
-                                    "ODOO_MODULES": "crm", "ODOO_DATABASE": "odoo"}
+                                    "ODOO_MODULES": "crm", "ODOO_DATABASE": "odoo",
+                                    "PYTHONPATH": directory, "PROBE_STATE": "crm"}
         def run(extra=None):
             return subprocess.run(["sh", "-ec", script], env=environment | (extra or {}),
                                   capture_output=True, text=True, check=False)
@@ -42,6 +64,14 @@ def exercise_initializer(script):
         assert marker.read_text() == "crm\n"
         assert run().returncode == 0
         assert marker.read_text() == "crm,sale\n"
+        # Matching filestore markers must not hide a dropped or partial database.
+        for state in ['absent', 'crm']:
+            assert run({"PROBE_STATE": state, "ODOO_TEST_EXIT": "7"}).returncode == 7
+            assert marker.read_text() == "crm,sale\n"
+            assert run({"PROBE_STATE": state}).returncode == 0
+        assert run({"PROBE_STATE": "error"}).returncode != 0
+        assert marker.read_text() == "crm,sale\n"
+        assert run({"PROBE_STATE": "crm,sale", "ODOO_TEST_EXIT": "7"}).returncode == 0
         marker.unlink()
         assert run({"ODOO_TEST_EXIT": "7"}).returncode == 7
         assert not marker.exists()
@@ -53,25 +83,13 @@ def main():
     initialize = next(t for t in docker if t["name"] == "Odoo | Initialize or extend the CRM module set")
     assert "_odoo_database_modules.stdout | trim != 'ready'" in initialize["when"]
     assert probe["changed_when"] is False and probe["no_log"] is True
-    script = probe["ansible.builtin.command"]["argv"][-3]
+    assert "database-module-readiness.py" in probe["ansible.builtin.command"]["argv"][-3]
+    script = (ROLE / "files/database-module-readiness.py").read_text()
     with tempfile.TemporaryDirectory(prefix="odoo-database-probe-") as directory:
         root = Path(directory)
         config = root / "odoo.conf"
         config.write_text("[options]\ndb_host=localhost\ndb_port=5432\ndb_user=odoo\ndb_password=test\n")
-        (root / "psycopg2.py").write_text('''import os
-class Connection:
-    def __enter__(self): return self
-    def __exit__(self, *args): pass
-    def cursor(self): return self
-    def execute(self, sql, args=None):
-        if args is not None: assert args == (['crm', 'sale'],)
-    def fetchone(self): return (None if os.environ['PROBE_STATE'] == 'absent' else 'ir_module_module',)
-    def fetchall(self): return [(name,) for name in os.environ['PROBE_STATE'].split(',')]
-def connect(**kwargs):
-    assert kwargs['dbname'] == 'odoo'
-    if os.environ['PROBE_STATE'] == 'error': raise RuntimeError('connection failed')
-    return Connection()
-''')
+        stub_database(root)
         for state, expected in [("absent", "initialize"), ("crm", "initialize"),
                                 ("crm,sale", "ready"), ("error", None)]:
             result = subprocess.run(
@@ -94,12 +112,13 @@ def connect(**kwargs):
     environment = Environment(trim_blocks=True, lstrip_blocks=True)
     environment.filters["to_json"] = json.dumps
     environment.filters["hash"] = lambda value, algorithm: hashlib.new(algorithm, value.encode()).hexdigest()
+    environment.globals["lookup"] = lambda plugin, path: Path(path).read_text()
     source = (ROLE / "templates/manifest.yaml.j2").read_text()
     # Both default and estate-style names must render isolated objects and safe shell args.
     for instance, modules in [("odoo", "crm"), ("odoo-second", "crm,sale")]:
         config = defaults | {"routing": {"subdomain": instance}}
         documents = list(yaml.safe_load_all(environment.from_string(source).render(
-            instance=instance, app_config=config, homelabinfra_infra={"domain": "example.invalid"},
+            role_path=str(ROLE), instance=instance, app_config=config, homelabinfra_infra={"domain": "example.invalid"},
             _odoo_k8s_config="private test configuration", _odoo_modules=modules,
         )))
         objects = {d["kind"]: d for d in documents}

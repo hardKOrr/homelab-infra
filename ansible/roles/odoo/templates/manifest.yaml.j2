@@ -56,7 +56,11 @@ spec:
           command: [/bin/sh, -ec]
           args:
             - |
-              if [ "$(cat /var/lib/odoo/.crm-modules 2>/dev/null || true)" != "$ODOO_MODULES" ]; then
+              database_ready="$(python3 - "$ODOO_DATABASE" "$ODOO_MODULES" <<'PY'
+{{ lookup('ansible.builtin.file', role_path ~ '/files/database-module-readiness.py') | indent(14, true) }}
+              PY
+              )"
+              if [ "$database_ready" != ready ] || [ "$(cat /var/lib/odoo/.crm-modules 2>/dev/null || true)" != "$ODOO_MODULES" ]; then
                 odoo --config=/etc/odoo/odoo.conf --database="$ODOO_DATABASE" \
                   --init="$ODOO_MODULES" --without-demo=all --stop-after-init
                 printf '%s\n' "$ODOO_MODULES" > /var/lib/odoo/.crm-modules
