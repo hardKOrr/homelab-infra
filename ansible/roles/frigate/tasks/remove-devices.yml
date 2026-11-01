@@ -1,0 +1,14 @@
+---
+# Remove App hook, run after the app's data is removed. Frigate's iGPU is detached only when
+# no other app remains on the stack; its Coral USB mapping is its own.
+- name: Detach Frigate's project-owned PCI iGPU
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/detach-app-gpu.yml
+  when: not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
+
+- name: Detach Frigate's project-owned Coral USB mapping
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/detach-usb-passthrough.yml
+  vars:
+    usb_passthrough_guest: "{{ inventory_hostname }}"
+    usb_passthrough_device:
+      mapping: "{{ app_config.app.coral_usb_mapping }}"
+  when: app_config.app.coral_usb_mapping | default('') | length > 0

@@ -14,7 +14,7 @@ ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/main.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
 INSTANCE_EXAMPLE = ROOT / "config.example/apps/home-assistant.example.yml"
-REMOVE_PLAYBOOK = ROOT / "ansible/playbooks/apps/remove.yml"
+REMOVE_HOOK = ROOT / "ansible/roles/home-assistant/tasks/remove-devices.yml"
 MISSING = object()
 
 
@@ -144,16 +144,16 @@ def main():
         "/dev/ttyUSB0:/dev/ttyUSB0"
     ]
 
-    remove_tasks = load_yaml(REMOVE_PLAYBOOK)
+    # Remove App runs this hook for Home Assistant only (gate/test-remove-hooks.py).
+    remove_tasks = load_yaml(REMOVE_HOOK)
     detach = find_task(remove_tasks, "Detach Home Assistant's project-owned Zigbee USB mapping")
-    assert detach["ansible.builtin.include_tasks"] == "../../tasks/proxmox/detach-usb-passthrough.yml"
+    assert detach["ansible.builtin.include_tasks"] == "../../../tasks/proxmox/detach-usb-passthrough.yml"
     remove_null_mapping = {
         "remove_kind": "docker",
-        "remove_app": "home-assistant",
         "instance": "home-assistant",
         "app_config": {"app": {"usb_mapping": None}},
     }
-    assert condition_result(detach["when"][-1], remove_null_mapping) is False
+    assert condition_result(detach["when"], remove_null_mapping) is False
     assert render(detach["vars"]["usb_passthrough_device"]["mapping"], remove_null_mapping) == ""
 
     usb_tasks = load_yaml(USB_TASKS)[0]

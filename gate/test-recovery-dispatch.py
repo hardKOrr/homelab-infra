@@ -406,13 +406,9 @@ def main():
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
-    compose_remove = next(
-        task["block"]
-        for task in remove_playbook[1]["tasks"]
-        if task.get("name") == "Remove the Compose project"
-    )
+    plane_hook = yaml.safe_load((repo / "ansible/roles/plane/tasks/remove.yml").read_text())
     plane_schedule = next(
-        task for task in compose_remove
+        task for task in plane_hook
         if task.get("name") == "Remove Plane recovery schedule"
     )
     assert plane_schedule["ansible.builtin.cron"]["name"] == (
@@ -422,17 +418,17 @@ def main():
         "homelab-infra-plane-{{ instance }}"
     )
     assert plane_schedule["ansible.builtin.cron"]["state"] == "absent"
-    assert plane_schedule["when"] == "hostvars['localhost']._rm_app_name == 'plane'"
+    assert "when" not in plane_schedule  # Remove App runs Plane's hook only for Plane
 
     plane_config = next(
-        task for task in compose_remove
+        task for task in plane_hook
         if task.get("name") == "Remove Plane recovery configuration"
     )
     assert plane_config["ansible.builtin.file"]["path"] == (
         "/etc/homelab-infra/plane/{{ instance }}.env"
     )
     assert plane_config["ansible.builtin.file"]["state"] == "absent"
-    assert plane_config["when"] == "hostvars['localhost']._rm_app_name == 'plane'"
+    assert "when" not in plane_config
 
     immich_remove_inputs = next(
         task for task in unwire_play["pre_tasks"]
@@ -454,8 +450,12 @@ def main():
         task["block"] for task in remove_playbook[1]["tasks"]
         if task.get("name") == "Remove the Compose project"
     )
-    immich_include = next(
+    hook_include = next(
         (index, task) for index, task in enumerate(compose_block)
+        if task.get("name") == "Run the app's removal hook"
+    )
+    immich_include = next(
+        task for task in yaml.safe_load((repo / "ansible/roles/immich/tasks/remove.yml").read_text())
         if task.get("name") == "Remove Immich's durable media"
     )
     stop_compose = next(
@@ -466,12 +466,13 @@ def main():
     assert removal["profiles"] == ["*"], "Remove must include exited init/profile services"
     assert removal["state"] == "absent"
     assert removal["project_src"] == "{{ _rm_project_dir }}"
-    assert immich_include[0] > stop_compose
-    assert immich_include[1]["ansible.builtin.include_tasks"] == "../../roles/immich/tasks/remove.yml"
-    assert "_rm_delete_data | bool" in immich_include[1]["when"]
+    assert hook_include[0] > stop_compose
+    assert hook_include[1]["ansible.builtin.include_tasks"] == "{{ _rm_hooks }}/remove.yml"
+    assert immich_include["ansible.builtin.include_tasks"] == "remove-media.yml"
+    assert "_rm_delete_data | bool" in immich_include["when"]
 
     immich_remove_tasks = yaml.safe_load(
-        (repo / "ansible/roles/immich/tasks/remove.yml").read_text()
+        (repo / "ansible/roles/immich/tasks/remove-media.yml").read_text()
     )
     exact_mount = next(
         task for task in immich_remove_tasks

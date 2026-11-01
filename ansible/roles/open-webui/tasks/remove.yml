@@ -1,0 +1,15 @@
+---
+# Remove App hook, run after the Compose project stops. Open WebUI's backup schedule and root-only
+# recovery configuration live outside /opt/<instance>. Remove both on every removal, even
+# when delete_data is false, so an unwired application cannot keep stopping the stack host
+# and writing snapshots after it was removed.
+- name: Remove Open WebUI recovery schedule
+  ansible.builtin.cron:
+    name: "homelab-infra Open WebUI backup {{ instance }}"
+    cron_file: "homelab-infra-open-webui-{{ instance }}"
+    state: absent
+
+- name: Remove Open WebUI recovery configuration
+  ansible.builtin.file:
+    path: "/etc/homelab-infra/open-webui/{{ instance }}.env"
+    state: absent

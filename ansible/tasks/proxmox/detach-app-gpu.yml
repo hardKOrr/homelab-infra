@@ -1,0 +1,20 @@
+---
+# Detach the dedicated PCI GPU an app declares as `app.gpu_device` from the current
+# guest (inventory_hostname), through detach-pci-passthrough.yml. Only an assignment that
+# seam can prove this platform made is removed. Call it from a role's remove-devices.yml
+# hook after the app's containers have stopped.
+#
+# Inputs: app_config (the instance's merged config), homelabinfra_config.proxmox.devices.
+- name: Detach the app's project-owned PCI GPU
+  ansible.builtin.include_tasks: detach-pci-passthrough.yml
+  vars:
+    pci_passthrough_guest: "{{ inventory_hostname }}"
+    pci_passthrough_device:
+      id: >-
+        {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+           | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+           | list | first }}
+      mapping: >-
+        {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+           | default(app_config.app.gpu_device) }}
+  when: app_config.app.gpu_device | default('') | length > 0

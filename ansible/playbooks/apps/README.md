@@ -172,6 +172,12 @@ ansible/playbooks/stacks/wire-media-stack.yml
 
 Make each integration idempotent by reading current state before creating or changing it.
 
+Per-app removal state that `playbooks/apps/remove.yml` cannot know about, such as a
+backup schedule, files outside `/opt/<instance>` or a dedicated device, goes in role
+hooks. Remove runs `roles/<app>/tasks/remove.yml` after the Compose project stops, and
+`roles/<app>/tasks/remove-devices.yml` after the data paths are gone. A GPU hook calls
+`tasks/proxmox/detach-app-gpu.yml`. Never add an `app == '<app>'` branch to Remove.
+
 ---
 
 ## Step 6 — Test

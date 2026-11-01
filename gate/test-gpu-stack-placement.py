@@ -113,9 +113,10 @@ def test_removal_keeps_a_gpu_used_by_sibling_apps():
     assert has_sibling(["_+lab", "_-docker", "_.stack+media", "_immich", "_plex"])
     assert not has_sibling(["_+lab", "_-docker", "_.stack+photos", "_immich"])
 
-    tasks = remove
-    detach_immich = named(tasks, "Detach Immich's project-owned PCI iGPU")
-    detach_frigate = named(tasks, "Detach Frigate's project-owned PCI iGPU")
+    detach_immich = named(read_yaml("ansible/roles/immich/tasks/remove-devices.yml"),
+                          "Detach Immich's project-owned PCI iGPU")
+    detach_frigate = named(read_yaml("ansible/roles/frigate/tasks/remove-devices.yml"),
+                           "Detach Frigate's project-owned PCI iGPU")
     for task in (detach_immich, detach_frigate):
         conditions = task["when"] if isinstance(task["when"], list) else [task["when"]]
         assert any("_rm_stack_has_other_apps" in condition for condition in conditions)
