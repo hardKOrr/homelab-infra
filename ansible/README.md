@@ -95,6 +95,22 @@ missing even when a storage's node allowlist excludes that node. It prints all n
 reports before exiting non-zero for missing storage or a failed node status query.
 No shared definitions produces an explicit empty report and succeeds.
 
+## Docker stack hosts
+
+Docker apps select a shared host with `stack`. Host type and sizing come from
+`vars/stack-defaults.yml`, overridden by `stacks.<stack>` in `config/infrastructure.yml`.
+`guest_type` defaults to `vm`; `lxc` creates an unprivileged container through the same
+Debian template and provisioning tasks as native LXCs, with `nesting=1,keyctl=1`.
+Both types use the Docker role to install and configure Docker.
+
+For example, set `stack: services-lxc` in `config/apps/actual-budget.yml` to select the
+provided LXC stack. Every tenant must declare `docker-lxc` in `hosting.supported`.
+Applications requiring a privileged container declare `docker-lxc` under
+`hosting.impossible` with the technical reason; privileged stack LXCs are not supported.
+PCI/device passthrough stacks require a VM. Changing `guest_type` never converts an
+existing host: select a new stack name and move the app using its backup/restore path.
+Sizing and placement apply at creation; other tenants stay on their existing stacks.
+
 ## Live operations
 
 Live runs may overlap; there is no lab lock. Ordinary runs use the on-disk checkout, so a

@@ -9,7 +9,7 @@
 #      homelabinfra_instance.network.*
 #   3. set proxmox.vm.ip_address from homelabinfra_instance.network.ip_address
 #   4. ip-to-vmid.yml — derives proxmox.vm.vmid from that IP (static IPs only)
-#   5. ensure-cloud-template.yml and vm-clone.yml create the VM
+#   5. VM: ensure-cloud-template.yml and vm-clone.yml; LXC: lxc-create.yml
 #
 # Inputs (required before calling):
 #   stack_name                          — the logical stack, a bare concept: media, sso,
@@ -45,7 +45,7 @@
 # Mutates (create path only, except .stack):
 #   homelabinfra_config.proxmox.vm.{name,tags,stack_tag,stack_id,ip_address,vmid,
 #                                  vmid_source_ip,node,storage}
-#   homelabinfra_instance.{network,vm}                  — via generate-ip / vm-clone
+#   homelabinfra_instance.{network,vm,lxc}              — via shared guest provisioning
 #   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
 # Output (for Play 2 to consume):
@@ -116,6 +116,15 @@
     _defaults: "{{ _stack_defaults_file.stack_defaults | default({}) }}"
     _overrides: "{{ homelabinfra_config.infrastructure.stacks | default({}) }}"
 
+- name: Validate stack guest type and device compatibility
+  ansible.builtin.assert:
+    that:
+      - _stack_sizing.guest_type in ['vm', 'lxc']
+      - _stack_sizing.guest_type == 'vm' or _stack_resolution_device | length == 0
+      - _stack_sizing.guest_type == 'vm' or stack_placement_devices | default([]) | length == 0
+    fail_msg: >-
+      A stack guest_type must be vm or lxc. PCI/device passthrough stacks require vm.
+
 # ── Which host this app is allowed to land on ─────────────────────────────────
 #
 # ESTATE ISOLATION. An ordinary hosting unit hosts applications from exactly ONE estate.
@@ -155,7 +164,7 @@
 
 - name: Resolve the stack host's placement class
   ansible.builtin.set_fact:
-    _stack_placement_class: "{{ 'gpu_vm' if _stack_gpu_device | length > 0 else 'floating_vm' }}"
+    _stack_placement_class: "{{ 'gpu_vm' if _stack_gpu_device | length > 0 else ('floating_lxc' if _stack_sizing.guest_type == 'lxc' else 'floating_vm') }}"
     _stack_placement_devices: >-
       {{ ((stack_placement_devices | default([]) | list)
           + ([_stack_gpu_device] if _stack_gpu_device | length > 0 else [])) | unique }}
@@ -211,10 +220,10 @@
   ansible.builtin.assert:
     that:
       - _stack_existing_node | length > 0
-      - hostvars[_stack_hosts[0]].proxmox_vmtype | default('') == 'qemu'
+      - hostvars[_stack_hosts[0]].proxmox_vmtype | default('') == ('qemu' if _stack_sizing.guest_type == 'vm' else 'lxc')
     fail_msg: >-
-      Existing stack host {{ _stack_hosts[0] }} must be a VM with a known Proxmox node.
-      Stack guests are now VMs; this playbook does not convert an existing LXC in place.
+      Existing stack host {{ _stack_hosts[0] }} must have a known Proxmox node and match
+      guest_type={{ _stack_sizing.guest_type }}. Changing guest_type does not convert a host in place.
   when: _stack_hosts | length > 0
 
 - name: Use the existing stack host's node for its operations
@@ -255,6 +264,7 @@
     # guest_type selects the hosting combination during app preflight; it is not a
     # Proxmox VM parameter and must stay out of the generated proxmox.vm mapping.
     - name: Set stack VM identity and sizing
+      when: _stack_sizing.guest_type == 'vm'
       ansible.builtin.set_fact:
         homelabinfra_config: >-
           {{
@@ -294,6 +304,29 @@
           {{ (_stack_base_tags + ['_-docker', _stack_tag]
               + (['_.shared'] if _stack_shared | bool else [])) | unique }}
 
+    - name: Set stack LXC identity and sizing
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'lxc': {
+            'hostname': 'stack-' ~ _stack_id,
+            'cores': _stack_sizing.cores,
+            'memory': _stack_sizing.memory,
+            'disk_volume': {'size': _stack_sizing.disk_size},
+            'unprivileged': true,
+            'features': ['nesting=1', 'keyctl=1'],
+            'boot_order': _stack_sizing.boot_order | default(50),
+            'tags': (_stack_base_tags + ['_-docker', '_.stack+' ~ _stack_id]
+                     + (['_.shared'] if _stack_shared | bool else [])) | unique,
+            'stack_tag': '_.stack+' ~ _stack_id,
+            'stack_id': _stack_id
+          }}}, recursive=True) }}
+      vars:
+        _stack_base_tags: >-
+          {{ (_config_proxmox | default({})).get('proxmox', {}).get('lxc', {}).get('tags',
+               (homelabinfra_defaults | default({})).get('proxmox', {}).get('lxc', {}).get(
+                 'tags', ['_+lab', '_-debian'])) | reject('eq', '_.shared') | list }}
+      when: _stack_sizing.guest_type == 'lxc'
+
     # A stack host sits on ONE estate's network, or on the shared one when the stack
     # declares `shared: true` — the same boundary its hostname and its `_.stack+<id>` tag
     # already carry. Advisory: a lab that has not declared those networks is unaffected.
@@ -325,13 +358,14 @@
       ansible.builtin.set_fact:
         homelabinfra_config: >-
           {{ homelabinfra_config | combine({
-            'proxmox': { 'vm': { 'ip_address': homelabinfra_instance.network.ip_address } }
+            'proxmox': { _stack_sizing.guest_type: { 'ip_address': homelabinfra_instance.network.ip_address } }
           }, recursive=True) }}
 
     - name: Derive VMID from IP
       ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
 
     - name: Ensure the Debian cloud-init template exists for the stack VM
+      when: _stack_sizing.guest_type == 'vm'
       ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
       vars:
         proxmox_placement_class: "{{ _stack_placement_class }}"
@@ -351,6 +385,7 @@
         cloud_template_bridge: "{{ network_effective.bridge }}"
 
     - name: Clone the stack host VM
+      when: _stack_sizing.guest_type == 'vm'
       ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
       vars:
         proxmox_placement_class: "{{ _stack_placement_class }}"
@@ -363,12 +398,26 @@
                        | default(homelabinfra_config.proxmox.storage_ids.floating_vm, true), true) }}
         proxmox_placement_use_app_config: false
 
+    - name: Create the stack host LXC
+      ansible.builtin.include_tasks: ../proxmox/lxc-create.yml
+      vars:
+        proxmox_placement_class: floating_lxc
+        proxmox_placement_node: "{{ _stack_sizing.node | default('') }}"
+        proxmox_placement_storage: "{{ _stack_sizing.storage | default('') }}"
+        proxmox_placement_use_app_config: false
+      when: _stack_sizing.guest_type == 'lxc'
+
     - name: Set facts from new stack host
       ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'node':
+               (_guest_placement.node if _stack_sizing.guest_type == 'lxc'
+                else homelabinfra_config.proxmox.node)}}, recursive=True) }}
         homelabinfra_instance: >-
           {{ homelabinfra_instance | combine({
             'stack': {
-              'hostname': homelabinfra_instance.vm.name,
+              'hostname': (homelabinfra_instance.vm.name if _stack_sizing.guest_type == 'vm'
+                           else homelabinfra_instance.lxc.hostname),
               'ip_address': homelabinfra_instance.network.ip_address
             }
           }, recursive=True) }}
@@ -379,9 +428,9 @@
         groups: "{{ deploy_group | default('app_deploy') }}"
         ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-        proxmox_vmtype: qemu
+        proxmox_vmtype: "{{ 'qemu' if _stack_sizing.guest_type == 'vm' else 'lxc' }}"
         proxmox_node: "{{ homelabinfra_config.proxmox.node }}"
-        proxmox_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+        proxmox_vmid: "{{ homelabinfra_instance[_stack_sizing.guest_type].vmid }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
         homelabinfra_stack_host_created: true
