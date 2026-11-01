@@ -4,6 +4,14 @@
     that: ansible_architecture == 'x86_64'
     fail_msg: The pinned native Node runtime currently requires an x86_64 guest.
 
+- name: Actual Budget | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
 - name: Actual Budget | Install native prerequisites
   ansible.builtin.apt:
     name: [ca-certificates, xz-utils, python3, build-essential]
