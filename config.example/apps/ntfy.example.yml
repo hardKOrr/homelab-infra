@@ -16,12 +16,13 @@
 
 # ── Proxmox resource overrides ─────────────────────────────────────────────────
 # proxmox:
+#   guest_type: vm # lxc (default) or vm; VM uses the shared Debian cloud template
 #   cores: 2
 #   memory: 1024    # MB — default 512 is plenty; raise only for heavy attachment use
 
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:
-#   port: 80                          # port Ntfy listens on inside the LXC
+#   port: 80                          # port Ntfy listens on inside the guest
 #   topic: homelab                    # topic every homelab-infra tool publishes to
 #   user: homelab                     # publish account name
 #   message_retention: 12h            # how long cached messages stay fetchable

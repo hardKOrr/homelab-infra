@@ -1,20 +1,16 @@
 ---
-# Match provisioning: the selected guest block wins, then shared memory, then 2048 MiB.
-- name: Database backend | Resolve the guest memory from instance config
-  ansible.builtin.set_fact:
-    _database_backend_memory_mib: >-
-      {{ app_config.proxmox.get(
-           _database_backend_guest_type, {}).get(
-             'memory', app_config.proxmox.get('memory', 2048))
-         | int }}
+- name: Database backend | Resolve shared guest memory
+  ansible.builtin.include_tasks: ../proxmox/resolve-native-memory.yml
+  vars:
+    _native_guest_guest_type: "{{ _database_backend_guest_type }}"
 
-- name: Database backend | Validate the configured guest and engine memory maps
+- name: Database backend | Validate engine memory inputs
   ansible.builtin.assert:
     that:
-      - app_config.proxmox is mapping
       - app_config.app is mapping
       - app_config.app.get('memory', {}) is mapping
-      - _database_backend_memory_mib | int > 0
-    fail_msg: >-
-      Database backend instance {{ instance }} needs a positive configured guest memory
-      size and an app.memory mapping.
+    fail_msg: Database backend needs an app.memory mapping.
+
+- name: Database backend | Publish guest memory for engine tuning
+  ansible.builtin.set_fact:
+    _database_backend_memory_mib: "{{ _native_guest_memory_mib }}"

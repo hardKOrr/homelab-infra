@@ -1,0 +1,18 @@
+---
+# Match provisioning: the selected guest block wins, then shared memory, then 2048 MiB.
+- name: Native guest | Resolve the guest memory from instance config
+  ansible.builtin.set_fact:
+    _native_guest_memory_mib: >-
+      {{ app_config.proxmox.get(
+           _native_guest_guest_type, {}).get(
+             'memory', app_config.proxmox.get('memory', 2048))
+         | int }}
+
+- name: Native guest | Validate the configured guest and engine memory maps
+  ansible.builtin.assert:
+    that:
+      - app_config.proxmox is mapping
+      - _native_guest_memory_mib | int > 0
+    fail_msg: >-
+      Native guest instance {{ instance }} needs a positive configured guest memory
+      size.

@@ -26,7 +26,7 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/ntfy.yml"))["ntfy_defaults"]
 assert defaults["hosting"] == {
-    "method": "native", "supported": ["native-lxc", "kubernetes"], "impossible": {}
+    "method": "native", "supported": ["native-lxc", "native-vm", "kubernetes"], "impossible": {}
 }
 assert defaults["recovery"]["methods"] == ["native"]
 assert defaults["backup"]["schedule"]
@@ -41,9 +41,13 @@ kubernetes = next(task for task in provision["tasks"]
                   if task.get("name") == "Deploy Ntfy on Kubernetes")
 assert kubernetes["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
 assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
-resolve = next(task for task in provision["tasks"]
-               if task.get("name") == "Resolve this instance's guest, reusing one Remove kept")
-assert resolve["vars"]["resolve_guest_type"] == "lxc"
+native = next(task for task in provision["tasks"]
+              if task.get("name") == "Provision or reuse the native guest")
+assert native["ansible.builtin.include_role"] == {"name": "_template-native", "tasks_from": "provision"}
+assert native["when"] == "app_config.hosting.method == 'native'"
+shared = read("ansible/roles/_template-native/tasks/provision.yml")
+assert 'resolve_guest_type: "{{ _native_guest_guest_type }}"' in shared
+assert "resolve-native-type.yml" in shared
 record_facts = next(task for task in playbook[2]["pre_tasks"]
                     if task.get("ansible.builtin.import_tasks", "").endswith(
                         "tasks/bootstrap/write-generated-facts.yml"))

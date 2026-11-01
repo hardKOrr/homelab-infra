@@ -63,6 +63,7 @@ def current_combination(slug, defaults):
         if any(path in source for path in (
             "tasks/proxmox/lxc-create.yml",
             "tasks/proxmox/vm-create.yml",
+            "name: _template-native",
         )):
             method = "native"
             proxmox = defaults.get("proxmox", {})
@@ -99,7 +100,8 @@ def implemented_combinations(expected, source):
     if "tasks/kubernetes/open-app-access.yml" in source or "kubernetes.core." in source:
         implemented.add("kubernetes")
     # Database backends take their guest type per instance (proxmox.guest_type).
-    if "tasks/database/resolve-backend-placement.yml" in source:
+    if ("tasks/database/resolve-backend-placement.yml" in source
+            or "name: _template-native" in source):
         implemented |= {"native-lxc", "native-vm"}
     return implemented
 

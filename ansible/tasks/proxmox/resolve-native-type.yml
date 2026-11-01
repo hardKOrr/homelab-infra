@@ -1,0 +1,20 @@
+---
+# Read the authored instance override before defaults, including the legacy type key.
+- name: Native guest | Resolve the configured guest type
+  ansible.builtin.set_fact:
+    _native_guest_guest_type: >-
+      {{ (_native_guest_instance_proxmox.get(
+           'guest_type',
+           _native_guest_instance_proxmox.get(
+             'type', app_config.proxmox.guest_type
+               | default(app_config.proxmox.type | default('lxc')))))
+         | string | trim }}
+  vars:
+    _native_guest_instance_proxmox: "{{ (_instance_config | default({})).get('proxmox', {}) }}"
+
+- name: Native guest | Validate the configured guest type
+  ansible.builtin.assert:
+    that: _native_guest_guest_type in ['lxc', 'vm']
+    fail_msg: >-
+      Native guest instance {{ instance }} has an unsupported proxmox.guest_type
+      '{{ _native_guest_guest_type }}'; choose lxc or vm.

@@ -196,12 +196,12 @@ def check_engine_memory():
 
 
 def check_config_wiring():
-    provision_path = ROOT / "ansible/tasks/database/provision-backend-guest.yml"
+    provision_path = ROOT / "ansible/tasks/proxmox/provision-native-guest.yml"
     provision_text = provision_path.read_text(encoding="utf-8")
-    assert "ansible.builtin.import_tasks: resolve-guest-memory.yml" in provision_text
-    assert provision_text.count("'memory': _database_backend_memory_mib | int") == 2
+    assert "ansible.builtin.import_tasks: resolve-native-memory.yml" in provision_text
+    assert provision_text.count("'memory': _native_guest_memory_mib | int") == 2
     assert provision_text.count(
-        '_database_backend_guest_type: "{{ _database_backend_guest_type }}"'
+        '_database_backend_guest_type: "{{ _native_guest_guest_type }}"'
     ) == 2
 
     for engine in ("postgresql", "redis", "mariadb", "mysql", "influxdb"):

@@ -273,3 +273,21 @@ unstamped PBS registrations and independent data remain explicit plan exclusions
 
 See the [maintenance entry point](../../playbooks/maintenance/README.md#whole-lab-decommission)
 for operator handoff, volume checks and interrupted-execution recovery.
+
+## Native application guests
+
+Native apps include role `_template-native` with `tasks_from: provision` on
+localhost, setting `native_guest_network_app` to the catalog slug. Run their
+installation role on `deploy_<instance>` afterward. `proxmox.guest_type: lxc`
+(the default) or `vm` selects the guest; ntfy supports both. Changing the type of
+an existing instance is refused: back up, remove the owned guest, then redeploy
+and restore to move between types.
+
+`resolve-native-placement.yml`, `resolve-native-memory.yml` and
+`provision-native-guest.yml` normalize per-instance placement, sizing, network,
+identity and tags. VMs use `ensure-cloud-template.yml` then `vm-clone.yml`;
+LXCs use `lxc-create.yml`. Native VMs use floating placement. Database engines
+call these same tasks through the adapters under `tasks/database/`, preserving
+their storage-node VM placement, legacy `proxmox.type`, memory tuning and network
+scope. The selected guest memory block overrides shared memory, then 2048 MiB.
+An existing guest is reused and started only if needed; Deploy never converts it.
