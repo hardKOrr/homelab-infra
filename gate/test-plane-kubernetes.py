@@ -314,7 +314,38 @@ def test_shared_recovery_contract():
     assert swap["recovery_swap_database"]["dump"] == "database/plane.dump"
 
 
+def test_recovery_client_packages():
+    tasks = load_tasks("tasks/kubernetes-database-step.yml")
+    task = next(t for t in tasks if "Add Plane's release" in t.get("name", ""))
+    dump = task["vars"]["_plane_k8s_plane_dump"]
+    install = dump[dump.index("if ! command -v redis-cli"):dump.index("mkdir -p /volumes/redis")]
+    for available, expected in [
+        (["apk"], ["add --no-cache redis"]),
+        (["apt-get"], ["update -qq", "install -y -qq --no-install-recommends redis-tools"]),
+        (["redis-cli", "redis-check-rdb"], []),
+        ([], None),
+    ]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "packages.log"
+            for command in available:
+                executable = root / command
+                executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$PLANE_TOOL_LOG"\n')
+                executable.chmod(0o755)
+            result = subprocess.run(
+                ["/bin/sh", "-eu", "-c", install], capture_output=True, text=True,
+                env={**os.environ, "PATH": directory, "PLANE_TOOL_LOG": str(log)},
+            )
+            if expected is None:
+                assert result.returncode != 0
+                assert "no supported package manager" in result.stdout
+            else:
+                assert result.returncode == 0, result.stderr
+                assert (log.read_text().splitlines() if log.exists() else []) == expected
+
+
 def main():
+    test_recovery_client_packages()
     test_runtime_environment_include()
     test_defaults_and_dispatch()
     test_workload_manifest()
