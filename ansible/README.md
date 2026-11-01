@@ -403,15 +403,27 @@ that ownership boundary and leave untagged guests alone.
 ## Areas
 
 - `playbooks/` contains orchestration entry points for deployment, removal, maintenance,
-  provisioning, stacks, and bootstrap.
-- `tasks/` contains reusable flows and integration seams shared by playbooks and roles.
-- `roles/` configures applications and platform components. The `_template-*` roles are
-  the starting points for new applications.
-- `vars/` contains Git-managed defaults and the authoritative configuration contract.
-- `inventory/` resolves the managed Proxmox estate into Ansible hosts and groups.
+  provisioning, stacks, and bootstrap ([README](playbooks/README.md)).
+- `tasks/` contains reusable flows and integration seams shared by playbooks and roles
+  ([README](tasks/README.md)).
+- `roles/` configures applications and platform components, one role per catalog app
+  (`roles/<app>/`; the exceptions are `role_aliases` in
+  [`gate/structure.yml`](../gate/structure.yml)). The `_template-*` roles are the starting
+  points for new applications. Roles with a README: [authentik](roles/authentik/README.md),
+  [caddy](roles/caddy/README.md), [comfyui](roles/comfyui/README.md),
+  [frigate](roles/frigate/README.md), [home-assistant](roles/home-assistant/README.md),
+  [navidrome](roles/navidrome/README.md), [ollama](roles/ollama/README.md),
+  [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md).
+- `vars/` contains Git-managed defaults (`vars/app-defaults/<app>.yml`) and the
+  authoritative configuration [contract](vars/CONTRACT.md).
+- `inventory/` and `inventory_plugins/` resolve the managed Proxmox estate into Ansible
+  hosts and groups.
 - `scripts/` contains runner entry points and committed helpers used by jobs and tasks.
-- `callback_plugins/` defines the common job and terminal output.
-- `files/` contains controller-side helper programs installed or called by tasks.
+- `callback_plugins/` defines the common job and terminal output; `library/` holds
+  controller-side modules.
+- `files/` contains controller-side helper programs installed or called by tasks, grouped
+  as `files/decommission/`, `files/pbs/`, `files/proxmox/` and `files/recovery/`.
+- `templates/kubernetes/` holds the shared Kubernetes recovery CronJob and Job.
 
 #Forgejo defaults to Docker on its services VM. Set `hosting.method: kubernetes` in the
 instance config to use the cluster, retaining its registered PostgreSQL backend. Its

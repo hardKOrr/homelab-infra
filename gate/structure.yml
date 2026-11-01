@@ -1,0 +1,108 @@
+# Exceptions to the structure rules in AGENTS.md ("Keeping the repository small"), checked
+# by gate/check-structure.py. Every list here only shrinks: a value may not grow, and an
+# entry that meets its rule must be deleted. Raising a ceiling needs a reason in the PR.
+
+# Catalog apps whose role is not roles/<app>/. null: the app has no role.
+role_aliases:
+  k3s-cluster: k3s_cluster
+  lidarr: servarr
+  opnsense: null
+  prowlarr: servarr
+  proxmox-datacenter-manager: pdm
+  radarr: servarr
+  sonarr: servarr
+
+# Expected per-app paths that do not exist yet.
+missing_paths:
+  - config.example/apps/lidarr.example.yml
+  - config.example/apps/prowlarr.example.yml
+
+# Literal app-name comparisons per playbook (rule 5).
+literal:
+  ansible/playbooks/apps/remove.yml: 25
+  ansible/playbooks/maintenance/restore-app.yml: 17
+
+# Shared 12-word runs per pair of docs (rule 1).
+shared:
+  ansible/playbooks/maintenance/README.md ansible/vars/CONTRACT.md: 4
+  ansible/roles/comfyui/README.md ansible/roles/ollama/README.md: 49
+  ansible/vars/CONTRACT.md config.example/README.md: 34
+  ansible/vars/CONTRACT.md rundeck/README.md: 2
+
+# Files over their line budget, with their ceiling (rule 2).
+size:
+  ansible/README.md: 502
+  ansible/playbooks/apps/authentik.yml: 350
+  ansible/playbooks/apps/caddy.yml: 358
+  ansible/playbooks/apps/comfyui.yml: 339
+  ansible/playbooks/apps/home-assistant.yml: 309
+  ansible/playbooks/apps/k3s-cluster.yml: 486
+  ansible/playbooks/apps/migrate-servarr.yml: 395
+  ansible/playbooks/apps/ollama.yml: 349
+  ansible/playbooks/apps/pbs.yml: 667
+  ansible/playbooks/apps/remove.yml: 1080
+  ansible/playbooks/apps/slskd.yml: 304
+  ansible/playbooks/apps/uptime-kuma.yml: 316
+  ansible/playbooks/apps/vaultwarden.yml: 343
+  ansible/playbooks/maintenance/guest-maintenance.yml: 393
+  ansible/playbooks/maintenance/reclaim-volume.yml: 441
+  ansible/playbooks/maintenance/restore-app.yml: 933
+  ansible/playbooks/maintenance/restore-guest.yml: 793
+  ansible/playbooks/maintenance/restore-pdm.yml: 360
+  ansible/playbooks/maintenance/status.yml: 558
+  ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367
+  ansible/roles/authentik/tasks/directory.yml: 346
+  ansible/roles/authentik/tasks/main.yml: 466
+  ansible/roles/caddy/tasks/main.yml: 775
+  ansible/roles/deemix/tasks/main.yml: 353
+  ansible/roles/emby/tasks/main.yml: 334
+  ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 360
+  ansible/roles/jellyfin/tasks/main.yml: 383
+  ansible/roles/k3s_cluster/tasks/storage.yml: 365
+  ansible/roles/mautic/tasks/docker.yml: 352
+  ansible/roles/observability/tasks/main.yml: 371
+  ansible/roles/pbs/tasks/datastore-disk.yml: 424
+  ansible/roles/pbs/tasks/main.yml: 456
+  ansible/roles/plane/tasks/docker.yml: 327
+  ansible/roles/plane/templates/manifest.yaml.j2: 703
+  ansible/roles/qbittorrent/tasks/main.yml: 439
+  ansible/roles/sabnzbd/tasks/main.yml: 463
+  ansible/roles/servarr/tasks/main.yml: 513
+  ansible/roles/slskd/tasks/main.yml: 366
+  ansible/roles/uptime-kuma/tasks/configure.yml: 484
+  ansible/roles/vaultwarden/tasks/main.yml: 341
+  ansible/roles/wordpress/tasks/main.yml: 377
+  ansible/scripts/config-doctor.sh: 848
+  ansible/tasks/bitwarden/upsert-item.yml: 617
+  ansible/tasks/bootstrap/configure-pbs-second-copy.yml: 480
+  ansible/tasks/bootstrap/configure-pbs.yml: 670
+  ansible/tasks/database/provision.yml: 356
+  ansible/tasks/firewall/opnsense-apply-base.yml: 354
+  ansible/tasks/firewall/opnsense-base.yml: 357
+  ansible/tasks/kubernetes/recovery-restore.yml: 458
+  ansible/tasks/proxmox/attach-host-mounts-lxc.yml: 378
+  ansible/tasks/proxmox/attach-host-mounts-vm.yml: 435
+  ansible/tasks/proxmox/attach-pci-passthrough.yml: 308
+  ansible/tasks/proxmox/ensure-cloud-template.yml: 479
+  ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml: 329
+  ansible/tasks/proxmox/lxc-create.yml: 477
+  ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml: 472
+  ansible/tasks/proxmox/resolve-guest-placement.yml: 565
+  ansible/tasks/proxmox/vm-clone.yml: 566
+  ansible/tasks/proxmox/vm-create.yml: 389
+  ansible/tasks/recovery/restore-swap.yml: 607
+  ansible/tasks/stack/find-or-create-host.yml: 457
+  ansible/tasks/wiring/authentik.yml: 787
+  ansible/tasks/wiring/caddy.yml: 321
+  ansible/tasks/wiring/opnsense-dns-account.yml: 601
+  ansible/tasks/wiring/opnsense.yml: 365
+  ansible/templates/kubernetes/recovery-backup.yaml.j2: 427
+  ansible/vars/CONTRACT.md: 995
+  gate/test-config.py: 1469
+  gate/test-guest-placement.py: 1154
+  gate/test-k8s-recovery-jobs.py: 747
+  gate/test-opnsense-dns-account.py: 629
+  gate/test-pbs-recovery.py: 759
+  gate/test-template-rendering.py: 2138
+  rundeck/README.md: 460
+  rundeck/bootstrap-rundeck.sh: 2604

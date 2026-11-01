@@ -1,7 +1,7 @@
 #!/bin/bash
 # Lint gate. Run from anywhere: bash gate/lint.sh
 # ansible-lint over ansible/{playbooks,roles,tasks,vars}, Jinja parsing, repository links,
-# fixture secrets and GitHub workflow policy. Arguments are accepted and ignored.
+# fixture secrets, GitHub workflow policy and repository structure. Arguments are ignored.
 set -euo pipefail
 
 # Stdin is closed on purpose: ansible-lint executes scripts it finds under roles/*/files/
@@ -46,3 +46,4 @@ cd "$repo"
 "$py" gate/check-links.py
 "$py" gate/check-fixture-secrets.py
 "$py" gate/check-workflow-policy.py
+"$py" gate/check-structure.py
