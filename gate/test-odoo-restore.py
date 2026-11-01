@@ -10,7 +10,7 @@ from restore_swap_inputs import swap_inputs
 
 
 def main():
-    swap = swap_inputs("odoo")
+    swap = swap_inputs("odoo", "restore-docker.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "filestore.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _odoo_restore_filestore_path }}", "source": "filestore",

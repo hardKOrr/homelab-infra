@@ -1,0 +1,135 @@
+{# The claim is the same data_dir archived as filestore.pxar on Docker. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-filestore
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+      annotations:
+        checksum/config: {{ _odoo_k8s_config | hash('sha256') | to_json }}
+        homelab-infra/modules: {{ _odoo_modules | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: {{ app_config.app.pgid }}
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: prepare-data
+          image: {{ app_config.app.image }}
+          command: [/bin/sh, -ec]
+          args:
+            - chown {{ app_config.app.puid }}:{{ app_config.app.pgid }} /var/lib/odoo
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - {name: filestore, mountPath: /var/lib/odoo}
+        - name: initialize-modules
+          image: {{ app_config.app.image }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              if [ "$(cat /var/lib/odoo/.crm-modules 2>/dev/null || true)" != "$ODOO_MODULES" ]; then
+                odoo --config=/etc/odoo/odoo.conf --database="$ODOO_DATABASE" \
+                  --init="$ODOO_MODULES" --without-demo=all --stop-after-init
+                printf '%s\n' "$ODOO_MODULES" > /var/lib/odoo/.crm-modules
+              fi
+          env:
+            - name: ODOO_MODULES
+              value: {{ _odoo_modules | to_json }}
+            - name: ODOO_DATABASE
+              value: {{ app_config.app.database.name | to_json }}
+          securityContext:
+            runAsUser: {{ app_config.app.puid }}
+            runAsGroup: {{ app_config.app.pgid }}
+          volumeMounts:
+            - {name: filestore, mountPath: /var/lib/odoo}
+            - {name: config, mountPath: /etc/odoo/odoo.conf, subPath: odoo.conf, readOnly: true}
+      containers:
+        - name: odoo
+          image: {{ app_config.app.image }}
+          command: [odoo, --config=/etc/odoo/odoo.conf]
+          securityContext:
+            runAsUser: {{ app_config.app.puid }}
+            runAsGroup: {{ app_config.app.pgid }}
+          ports:
+            - {name: http, containerPort: 8069}
+          startupProbe:
+            httpGet: {path: /web/health, port: http}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: /web/health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /web/health, port: http}
+            periodSeconds: 30
+          volumeMounts:
+            - {name: filestore, mountPath: /var/lib/odoo}
+            - {name: config, mountPath: /etc/odoo/odoo.conf, subPath: odoo.conf, readOnly: true}
+      volumes:
+        - name: filestore
+          persistentVolumeClaim:
+            claimName: {{ instance }}-filestore
+        - name: config
+          secret:
+            secretName: {{ instance }}-config
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+  ports:
+    - {name: http, port: 8069, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port: {number: 8069}

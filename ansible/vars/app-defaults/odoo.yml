@@ -2,7 +2,7 @@
 odoo_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
 
@@ -15,6 +15,7 @@ odoo_defaults:
   app:
     image: docker.io/odoo:18.0
     port: 8069
+    storage: 10
     # The official Odoo 18 image runs as uid 100, gid 101. Keep its filestore and
     # private configuration owned by that container account.
     puid: 100
@@ -43,5 +44,11 @@ odoo_defaults:
     timeout_seconds: 3600
     scratch_size: 2
     encryption: none
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
+      repository: http://download.proxmox.com/debian/pbs-client
+      suite: bookworm
+      component: main
   crm:
     modules: [crm]
