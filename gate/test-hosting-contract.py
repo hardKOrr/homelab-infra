@@ -21,7 +21,10 @@ COMBINATIONS = {"docker-lxc", "docker-vm", "kubernetes", "native-lxc", "native-v
 METHODS = {"docker", "kubernetes", "native"}
 # The lab's named MariaDB backends can be configured as VMs by the database placement
 # policy; its apt/systemd role supports that instance override as well as the LXC default.
-EXTRA_IMPLEMENTED = {"mariadb": {"native-vm"}}
+EXTRA_IMPLEMENTED = {
+    "actual-budget": {"docker-lxc"},
+    "mariadb": {"native-vm"},
+}
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
 
 

@@ -31,7 +31,9 @@
   vars:
     guest_placement_class: "{{ proxmox_placement_class | default('floating_lxc') }}"
     guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
-    guest_placement_node: "{{ _existing_guest_current_node | default('') }}"
+    guest_placement_node: "{{ _existing_guest_current_node | default('', true) or proxmox_placement_node | default('') }}"
+    guest_placement_storage: "{{ proxmox_placement_storage | default('') }}"
+    guest_placement_use_app_config: "{{ proxmox_placement_use_app_config | default(true) | bool }}"
     guest_placement_database_backend: "{{ proxmox_placement_database_backend | default(false) | bool }}"
 
 - name: Assert homelabinfra instance data is provided

@@ -465,7 +465,15 @@ vaultwarden:
 # serve the whole lab and are none of them `_.shared` — the tag means cross-estate
 # HOSTING, not importance.
 #
+# Docker stacks use VMs by default. An opt-in unprivileged LXC uses the native Debian
+# template with nesting/keyctl enabled; every tenant must support docker-lxc.
+# Changing guest_type does not convert an existing host. Use a new stack name.
+# In config/apps/actual-budget.yml select it with: stack: services-lxc
 # stacks:
+#   services-lxc:
+#     guest_type: lxc
+#     memory: 4096
+#     disk_size: 32
 #   monitoring:
 #     memory: 8192
 #   media:
