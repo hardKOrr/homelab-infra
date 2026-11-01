@@ -76,6 +76,9 @@ def check_restore():
     assert reconcile["when"] == "restore_overwrite | bool"
     native_deploy = (ROOT / "ansible/roles/ntfy/tasks/main.yml").read_text()
     assert "ansible.builtin.include_tasks: credentials-native.yml" in native_deploy
+    native_credentials = yaml.safe_load((ROOT / "ansible/roles/ntfy/tasks/credentials-native.yml").read_text())
+    assert any(task.get("ansible.builtin.import_tasks", "").endswith(
+        "tasks/bootstrap/configure-unattended-upgrades.yml") for task in native_credentials)
     verified = (ROOT / "ansible/roles/ntfy/tasks/restore-verified.yml").read_text()
     assert "argv: [ntfy, user, list]" in verified
     assert swap["recovery_swap_health_url"].endswith("/v1/health")
