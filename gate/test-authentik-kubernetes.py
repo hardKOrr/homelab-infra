@@ -170,6 +170,12 @@ def main():
     registered = includes("restore-registered.yml")["../../../tasks/recovery/restore-swap.yml"]["vars"]
     assert registered["recovery_swap_archives"] == ["data.pxar", "database.pxar"]
     assert registered["recovery_swap_database"]["config"] == "{{ app_config.app.database }}"
+    paired_backup = next(
+        inner["vars"] for task in tasks("backup-registered.yml") for inner in task.get("block", [])
+        if inner.get("ansible.builtin.include_tasks") == "../../../tasks/backup/pbs-client-backup.yml")
+    assert paired_backup["pbs_client_runtime"] == "docker"
+    assert paired_backup["pbs_client_compose_project"] == "{{ authentik_project_dir }}"
+    assert paired_backup["pbs_client_stop_services"] == ["server", "worker", "redis"]
     assert {p["source"] for p in registered["recovery_swap_paths"]} == {"data/media", "data/certs", "data/custom-templates"}
     backup_dispatch = includes("backup.yml")
     assert "database.instance" in backup_dispatch["backup-docker.yml"]["when"]

@@ -20,7 +20,7 @@
     - name: Authentik backup | Quiesce writers and push the paired archives
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: docker
         pbs_client_compose_project: "{{ authentik_project_dir }}"
         pbs_client_stop_services: [server, worker, redis]
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
