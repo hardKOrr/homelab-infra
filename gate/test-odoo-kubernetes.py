@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -47,6 +48,42 @@ def exercise_initializer(script):
 
 
 def main():
+    docker = tasks("docker.yml")
+    probe = next(t for t in docker if t["name"] == "Odoo | Read database module readiness")
+    initialize = next(t for t in docker if t["name"] == "Odoo | Initialize or extend the CRM module set")
+    assert "_odoo_database_modules.stdout | trim != 'ready'" in initialize["when"]
+    assert probe["changed_when"] is False and probe["no_log"] is True
+    script = probe["ansible.builtin.command"]["argv"][-3]
+    with tempfile.TemporaryDirectory(prefix="odoo-database-probe-") as directory:
+        root = Path(directory)
+        config = root / "odoo.conf"
+        config.write_text("[options]\ndb_host=localhost\ndb_port=5432\ndb_user=odoo\ndb_password=test\n")
+        (root / "psycopg2.py").write_text('''import os
+class Connection:
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def cursor(self): return self
+    def execute(self, sql, args=None):
+        if args is not None: assert args == (['crm', 'sale'],)
+    def fetchone(self): return (None if os.environ['PROBE_STATE'] == 'absent' else 'ir_module_module',)
+    def fetchall(self): return [(name,) for name in os.environ['PROBE_STATE'].split(',')]
+def connect(**kwargs):
+    assert kwargs['dbname'] == 'odoo'
+    if os.environ['PROBE_STATE'] == 'error': raise RuntimeError('connection failed')
+    return Connection()
+''')
+        for state, expected in [("absent", "initialize"), ("crm", "initialize"),
+                                ("crm,sale", "ready"), ("error", None)]:
+            result = subprocess.run(
+                [sys.executable, "-c", script.replace('/etc/odoo/odoo.conf', str(config)), "odoo", "crm,sale"],
+                env=os.environ | {"PYTHONPATH": directory, "PROBE_STATE": state},
+                capture_output=True, text=True, check=False,
+            )
+            if expected is None:
+                assert result.returncode != 0
+            else:
+                assert result.returncode == 0, result.stderr
+                assert result.stdout.strip() == expected
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/odoo.yml").read_text())["odoo_defaults"]
     assert defaults["hosting"]["method"] == "docker"
     assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]

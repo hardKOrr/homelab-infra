@@ -109,6 +109,44 @@
   failed_when: false
   changed_when: false
 
+# A prior Docker deployment can leave its marker behind while another hosting method
+# removes the registered database. Check the database before trusting that marker.
+- name: Odoo | Read database module readiness
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ odoo_project_dir }}"
+      - exec
+      - -T
+      - odoo
+      - python3
+      - -c
+      - |
+        import configparser
+        import sys
+        import psycopg2
+        config = configparser.ConfigParser(interpolation=None)
+        config.read('/etc/odoo/odoo.conf')
+        options = config['options']
+        with psycopg2.connect(host=options['db_host'], port=options['db_port'],
+                              user=options['db_user'], password=options['db_password'],
+                              dbname=sys.argv[1]) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT to_regclass('public.ir_module_module')")
+                ready = False
+                if cursor.fetchone()[0] is not None:
+                    modules = sys.argv[2].split(',')
+                    cursor.execute("SELECT name FROM ir_module_module WHERE name = ANY(%s) AND state = 'installed'", (modules,))
+                    ready = set(modules) <= {row[0] for row in cursor.fetchall()}
+                print('ready' if ready else 'initialize')
+      - "{{ app_config.app.database.name }}"
+      - "{{ _odoo_modules }}"
+  register: _odoo_database_modules
+  changed_when: false
+  no_log: true
+
 - name: Odoo | Initialize or extend the CRM module set
   ansible.builtin.command:
     argv:
@@ -126,7 +164,8 @@
       - --without-demo=all
       - --stop-after-init
   when: >-
-    _odoo_modules_current.content is not defined
+    _odoo_database_modules.stdout | trim != 'ready'
+    or _odoo_modules_current.content is not defined
     or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
   no_log: true
 
