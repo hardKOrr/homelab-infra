@@ -23,6 +23,7 @@ METHODS = {"docker", "kubernetes", "native"}
 # policy; its apt/systemd role supports that instance override as well as the LXC default.
 EXTRA_IMPLEMENTED = {
     "actual-budget": {"docker-lxc"},
+    "authentik": {"docker-lxc"},
     "mariadb": {"native-vm"},
 }
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")

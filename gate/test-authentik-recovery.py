@@ -210,6 +210,52 @@ def check_contract_and_secret_continuity():
     assert "_authentik_recorded_sso.admin_password" in secret_text
 
 
+def check_directory_password_continuity():
+    main = read_yaml(ROOT / "ansible/roles/authentik/tasks/main.yml")
+    store = task_named(main, "Store Authentik secrets before applying them")
+    shared = read_yaml(ROOT / "ansible/tasks/bitwarden/upsert-item.yml")
+    comparison = [task_named(shared, name) for name in [
+        "Vault | Resolve the stored and effective field sets",
+        "Vault | Compare the stored item with the effective one",
+    ]]
+    values = {
+        "provider": "authentik", "instance": "authentik",
+        "host": "http://127.0.0.1:9000", "token": "api-token",
+        "admin_user": "akadmin", "admin_password": "admin-password",
+        "postgres_password": "postgres-password", "secret_key": "secret-key",
+        "user_alice_password": "directory-password",
+    }
+    hidden = {"token", "admin_password", "postgres_password", "secret_key",
+              "user_alice_password"}
+    variables = {
+        **store["vars"],
+        "_authentik_vault_item": "homelab-infra/sso",
+        "instance": "authentik", "ansible_host": "127.0.0.1",
+        "app_config": {"app": {"port": 9000}},
+        "authentik_admin_user": "akadmin", "_authentik_api_token": "api-token",
+        "_authentik_admin_password": "admin-password",
+        "_authentik_pg_pass": "postgres-password", "_authentik_secret_key": "secret-key",
+        "_vault_collection_id": "collection",
+        "_vault_existing_items": [{
+            "name": "homelab-infra/sso", "collectionIds": ["collection"],
+            "fields": [{"name": k, "value": v, "type": int(k in hidden)}
+                       for k, v in values.items()],
+        }],
+    }
+    with tempfile.TemporaryDirectory(prefix="authentik-directory-") as temporary:
+        root = Path(temporary)
+        for password, matches in [("admin-password", True), ("rotated-password", False)]:
+            variables["_authentik_admin_password"] = password
+            tasks = comparison + [{"ansible.builtin.assert": {"that": [
+                f"_vault_item_matches == {matches}",
+                "_vault_effective_values.user_alice_password == 'directory-password'",
+                "'user_alice_password' in _vault_effective_hidden",
+                f"_vault_effective_values.admin_password == '{password}'",
+            ]}}]
+            result = run_tasks(root, tasks, variables, "directory-passwords")
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
 def check_backup_and_restore_contract():
     backup = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
     backup_tasks = list(tasks_recursive(backup))
@@ -317,6 +363,7 @@ def check_backup_restarts_the_instance():
 
 def main():
     check_contract_and_secret_continuity()
+    check_directory_password_continuity()
     check_backup_and_restore_contract()
     check_backup_restarts_the_instance()
     check_staged_hook()

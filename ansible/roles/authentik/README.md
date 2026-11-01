@@ -1,7 +1,12 @@
 # authentik role
 
 Docker Compose deployment of Authentik (server + worker + PostgreSQL + Redis) on a
-stack host.
+stack host. The default `sso` stack runs on a VM. To select Docker on an
+unprivileged LXC, set `stack: sso-lxc` and `hosting.method: docker` in the instance
+config, then declare `stacks.sso-lxc.guest_type: lxc` in
+`config/infrastructure.yml`. Size that stack for all four services (at least 4 GB
+RAM). Deployment and native application recovery use the same shared operations on
+both guest types.
 
 ## Scope
 

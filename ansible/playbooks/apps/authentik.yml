@@ -1,7 +1,8 @@
 ---
 # Deploy Authentik — SSO for every app with a routing.identity mode other than
 # none (bootstrap step 4).
-# Docker on LXC (PATH A): server + worker + PostgreSQL + Redis on the sso host.
+# Docker (PATH A): server + worker + PostgreSQL + Redis on the sso stack host.
+# The stack defaults to a VM; its guest_type can select an unprivileged LXC.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/authentik.yml -e instance=authentik

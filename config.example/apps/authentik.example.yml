@@ -17,6 +17,15 @@
 # Which stack host these containers run on. Authentik gets its own by default
 # because it carries a database and every login in the lab depends on it.
 # stack: sso
+#
+# Docker on an unprivileged LXC: set stack: sso-lxc here and declare the stack
+# in config/infrastructure.yml (the default sso stack stays a VM):
+# stacks:
+#   sso-lxc:
+#     guest_type: lxc
+#     memory: 4096
+# hosting:
+#   method: docker
 
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:
