@@ -1,0 +1,11 @@
+---
+# Remove App hook, run after the app's data is removed. Home Assistant's USB coordinator is
+# a dedicated VM mapping. The USB seam detaches it only when it can prove this platform
+# created the mapping; an untagged operator assignment remains in place for manual recovery.
+- name: Detach Home Assistant's project-owned Zigbee USB mapping
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/detach-usb-passthrough.yml
+  vars:
+    usb_passthrough_guest: "{{ inventory_hostname }}"
+    usb_passthrough_device:
+      mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+  when: app_config.app.usb_mapping | default('', true) | length > 0

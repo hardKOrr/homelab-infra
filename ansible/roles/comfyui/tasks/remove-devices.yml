@@ -1,0 +1,6 @@
+---
+# Remove App hook, run after the app's data is removed. ComfyUI's GPU is a dedicated PCI
+# assignment on its one-app GPU stack; the shared seam removes it only when this platform
+# created the exact hostpciN entry.
+- name: Detach ComfyUI's project-owned PCI GPU
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/detach-app-gpu.yml

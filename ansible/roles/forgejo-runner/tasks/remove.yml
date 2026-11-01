@@ -1,0 +1,13 @@
+---
+# Remove App hook, run after the Compose project stops. A stopped runner must not leave a
+# registration token or the local registration marker behind. Removing these files even
+# when delete_data is false makes a later deploy perform a fresh, token-backed
+# registration after the API deregistration.
+- name: Remove Forgejo Runner registration state
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ app_config.app.registration_config_path | default(_rm_project_dir ~ '/data/runner-config.yml') }}"
+    - "{{ app_config.app.registration_marker_path | default(_rm_project_dir ~ '/data/.homelab-infra-registered') }}"
+    - "{{ app_config.app.registration_env_path | default(_rm_project_dir ~ '/runner.env') }}"

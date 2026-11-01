@@ -1,0 +1,6 @@
+---
+# Remove App hook, run after the app's data is removed. A media stack iGPU may still serve
+# another app on the shared VM, so it is detached only when no other app remains.
+- name: Detach Immich's project-owned PCI iGPU
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/detach-app-gpu.yml
+  when: not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)

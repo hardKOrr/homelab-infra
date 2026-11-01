@@ -1,0 +1,88 @@
+---
+# Remove only the media owned by this Immich instance. Its remove.yml hook includes this after
+# stopping Compose when delete_data=true; the media mount itself remains in place for a
+# later deployment. Remove App drops the named database through tasks/database/drop.yml.
+- name: Immich remove | Revalidate its declared media mount and owner
+  ansible.builtin.assert:
+    that:
+      - hostvars['localhost']._rm_immich_media_mounts | length == 1
+      - hostvars['localhost']._rm_immich_media_path is match('^/')
+      - hostvars['localhost']._rm_immich_media_path | length > 1
+      - hostvars['localhost']._rm_immich_media_path.split('/') | select('equalto', '..') | list | length == 0
+      - hostvars['localhost'].app_config.media_storage.owner.uid | default(0) | int > 0
+      - hostvars['localhost'].app_config.media_storage.owner.gid | default(0) | int > 0
+    fail_msg: "Refusing to remove Immich data without its validated mount and owner."
+  no_log: true
+
+- name: Immich remove | Require the declared media path to be an exact mount point
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - TARGET
+      - --mountpoint
+      - "{{ hostvars['localhost']._rm_immich_media_path }}"
+  register: _rm_immich_media_mountpoint
+  changed_when: false
+  no_log: true
+
+- name: Immich remove | Refuse to clear a missing or different media mount
+  ansible.builtin.assert:
+    that:
+      - _rm_immich_media_mountpoint.rc == 0
+      - _rm_immich_media_mountpoint.stdout | trim == hostvars['localhost']._rm_immich_media_path
+    fail_msg: "Refusing to clear Immich data because its declared media path is not mounted here."
+  no_log: true
+
+- name: Immich remove | Find existing media contents as the declared owner
+  ansible.builtin.command:
+    argv:
+      - setpriv
+      - --reuid
+      - "{{ hostvars['localhost'].app_config.media_storage.owner.uid | int }}"
+      - --regid
+      - "{{ hostvars['localhost'].app_config.media_storage.owner.gid | int }}"
+      - --clear-groups
+      - find
+      - .
+      - -mindepth
+      - "1"
+      - -maxdepth
+      - "1"
+      - -print
+      - -quit
+  # Ansible enters the verified mount as root before setpriv changes identity. The owner
+  # then scans from that directory without needing search permission on its ancestors.
+  args:
+    chdir: "{{ hostvars['localhost']._rm_immich_media_path }}"
+  register: _rm_immich_media_contents
+  changed_when: false
+  no_log: true
+
+- name: Immich remove | Empty its durable media mount as the declared owner
+  ansible.builtin.command:
+    argv:
+      - setpriv
+      - --reuid
+      - "{{ hostvars['localhost'].app_config.media_storage.owner.uid | int }}"
+      - --regid
+      - "{{ hostvars['localhost'].app_config.media_storage.owner.gid | int }}"
+      - --clear-groups
+      - find
+      - .
+      - -mindepth
+      - "1"
+      - -maxdepth
+      - "1"
+      - -exec
+      - rm
+      - -rf
+      - --
+      - "{}"
+      - +
+  args:
+    chdir: "{{ hostvars['localhost']._rm_immich_media_path }}"
+  changed_when: true
+  no_log: true
+  when: _rm_immich_media_contents.stdout | length > 0

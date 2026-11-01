@@ -38,7 +38,8 @@
 #      it is a PostgreSQL guest that this playbook leaves in place for redeployment
 #      (a kept guest's next Deploy finds it again by exact name through
 #      tasks/proxmox/resolve-instance-guest.yml)
-#   4. Stop and remove the app on its host (compose down, or stop+disable the service)
+#   4. Stop and remove the app on its host (compose down, or stop+disable the service),
+#      running the app role's remove.yml and remove-devices.yml hooks when it has them
 #   5. Notify via Ntfy: "<instance> removed"
 #
 # Traffic is drained before the backend disappears, and the uptime monitor is gone
@@ -615,6 +616,8 @@
     _rm_destroy_guest: "{{ remove_destroy_guest | default(false) | bool }}"
     _rm_project_dir: "/opt/{{ instance }}"
     _rm_is_postgresql: "{{ (app | default(instance)) == 'postgresql' }}"
+    # Per-app removal hooks: remove.yml after the stop, remove-devices.yml after the data.
+    _rm_hooks: "{{ playbook_dir }}/../../roles/{{ hostvars['localhost']._rm_app_name }}/tasks"
 
   pre_tasks:
     # PostgreSQL's instantiated unit is derived from the cluster configuration
@@ -688,90 +691,11 @@
             remove_orphans: true
           when: _rm_compose_stat.stat.exists
 
-        # Immich's library lives outside Compose. Its dedicated removal tasks run only
-        # after the app containers have stopped; Play 4 drops its named database.
-        - name: Remove Immich's durable media
-          ansible.builtin.include_tasks: ../../roles/immich/tasks/remove.yml
-          when:
-            - hostvars['localhost']._rm_app_name == 'immich'
-            - _rm_delete_data | bool
-
-        # A stopped runner must not leave a registration token or the local registration
-        # marker behind. Removing these files even when delete_data is false makes a later
-        # deploy perform a fresh, token-backed registration after the API deregistration.
-        - name: Remove Forgejo Runner registration state
-          ansible.builtin.file:
-            path: "{{ item }}"
-            state: absent
-          loop:
-            - "{{ app_config.app.registration_config_path | default(_rm_project_dir ~ '/data/runner-config.yml') }}"
-            - "{{ app_config.app.registration_marker_path | default(_rm_project_dir ~ '/data/.homelab-infra-registered') }}"
-            - "{{ app_config.app.registration_env_path | default(_rm_project_dir ~ '/runner.env') }}"
-          when: hostvars['localhost']._rm_app_name == 'forgejo-runner'
-
-        # BookStack's application-consistent backup timer and its root-only runtime
-        # credential copy live outside /opt/<instance>. Remove both on every BookStack
-        # removal, even when delete_data is false, so an unwired application cannot keep
-        # stopping the shared stack host and writing snapshots after it was removed.
-        - name: Remove BookStack recovery schedule
-          ansible.builtin.cron:
-            name: "homelab-infra BookStack backup {{ instance }}"
-            cron_file: "homelab-infra-bookstack-{{ instance }}"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'bookstack'
-
-        - name: Remove BookStack recovery configuration
-          ansible.builtin.file:
-            path: "/etc/homelab-infra/bookstack/{{ instance }}.env"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'bookstack'
-
-        # WordPress's application-consistent backup timer and root-only runtime
-        # credential copy live outside /opt/<instance>. Remove both on every WordPress
-        # removal, even when delete_data is false, so an unwired application cannot keep
-        # stopping the shared stack host and writing snapshots after it was removed.
-        - name: Remove WordPress recovery schedule
-          ansible.builtin.cron:
-            name: "homelab-infra WordPress backup {{ instance }}"
-            cron_file: "homelab-infra-wordpress-{{ instance }}"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'wordpress'
-
-        - name: Remove WordPress recovery configuration
-          ansible.builtin.file:
-            path: "/etc/homelab-infra/wordpress/{{ instance }}.env"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'wordpress'
-
-        # Plane's native backup timer and root-only configuration also live outside
-        # /opt/<instance>. Remove the per-instance state while retaining its shared helper.
-        - name: Remove Plane recovery schedule
-          ansible.builtin.cron:
-            name: "homelab-infra Plane backup {{ instance }}"
-            cron_file: "homelab-infra-plane-{{ instance }}"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'plane'
-
-        - name: Remove Plane recovery configuration
-          ansible.builtin.file:
-            path: "/etc/homelab-infra/plane/{{ instance }}.env"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'plane'
-
-        # Open WebUI's backup timer and root-only configuration live outside /opt/<instance>
-        # in the same way.
-        - name: Remove Open WebUI recovery schedule
-          ansible.builtin.cron:
-            name: "homelab-infra Open WebUI backup {{ instance }}"
-            cron_file: "homelab-infra-open-webui-{{ instance }}"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'open-webui'
-
-        - name: Remove Open WebUI recovery configuration
-          ansible.builtin.file:
-            path: "/etc/homelab-infra/open-webui/{{ instance }}.env"
-            state: absent
-          when: hostvars['localhost']._rm_app_name == 'open-webui'
+        # Per-app cleanup once the containers stop, before the shared files go:
+        # roles/<app>/tasks/remove.yml, when the app's role has one.
+        - name: Run the app's removal hook
+          ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove.yml"
+          when: (_rm_hooks ~ '/remove.yml') is file
 
         # The shared PBS client's root-only settings (tasks/backup/pbs-client-script.yml)
         # hold the PBS credentials for this instance's recovery script; they go with it.
@@ -806,106 +730,14 @@
             - _rm_delete_data | bool
             - item | length > 0
 
-    # Home Assistant's USB coordinator is a dedicated VM mapping. Detach it only after
-    # Compose has stopped and only when the USB seam can prove this platform created the
-    # mapping; an untagged operator assignment remains in place for manual recovery.
-    - name: Detach Home Assistant's project-owned Zigbee USB mapping
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
-      vars:
-        usb_passthrough_guest: "{{ inventory_hostname }}"
-        usb_passthrough_device:
-          mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+    # Dedicated devices are released only after the app's containers stop and its data is
+    # gone: roles/<app>/tasks/remove-devices.yml, when the app's role has one. A media
+    # stack GPU stays while another app still uses the shared VM.
+    - name: Release the app's project-owned devices
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-devices.yml"
       when:
         - remove_kind == 'docker'
-        - hostvars['localhost']._rm_app_name == 'home-assistant'
-        - app_config.app.usb_mapping | default('', true) | length > 0
-
-    # These dedicated assignments are detached only after their app's containers stop.
-    # Stack devices are detached only for the two one-app GPU stacks; media stack GPUs may
-    # still be used by another app on the shared VM.
-    - name: Detach ComfyUI's project-owned PCI GPU
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
-      vars:
-        pci_passthrough_guest: "{{ inventory_hostname }}"
-        pci_passthrough_device:
-          id: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
-               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
-               | list | first }}
-          mapping: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
-               | default(app_config.app.gpu_device) }}
-      when:
-        - remove_kind == 'docker'
-        - hostvars['localhost']._rm_app_name == 'comfyui'
-        - app_config.app.gpu_device | default('') | length > 0
-
-    # Ollama's GPU is a dedicated PCI assignment. Detach it only after the Compose
-    # service has stopped, and only when the passthrough seam can prove this platform
-    # created the exact hostpciN entry. An untagged operator assignment remains in place.
-    - name: Detach Ollama's project-owned PCI GPU
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
-      vars:
-        pci_passthrough_guest: "{{ inventory_hostname }}"
-        pci_passthrough_device:
-          id: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
-               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
-               | list | first }}
-          mapping: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
-               | default(app_config.app.gpu_device) }}
-      when:
-        - remove_kind == 'docker'
-        - hostvars['localhost']._rm_app_name == 'ollama'
-        - app_config.app.gpu_device | default('') | length > 0
-
-    - name: Detach Frigate's project-owned PCI iGPU
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
-      vars:
-        pci_passthrough_guest: "{{ inventory_hostname }}"
-        pci_passthrough_device:
-          id: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
-               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
-               | list | first }}
-          mapping: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
-               | default(app_config.app.gpu_device) }}
-      when:
-        - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'frigate'
-        - app_config.app.gpu_device | default('') | length > 0
-        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
-
-    - name: Detach Frigate's project-owned Coral USB mapping
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
-      vars:
-        usb_passthrough_guest: "{{ inventory_hostname }}"
-        usb_passthrough_device:
-          mapping: "{{ app_config.app.coral_usb_mapping }}"
-      when:
-        - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'frigate'
-        - app_config.app.coral_usb_mapping | default('') | length > 0
-
-    - name: Detach Immich's project-owned PCI iGPU
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
-      vars:
-        pci_passthrough_guest: "{{ inventory_hostname }}"
-        pci_passthrough_device:
-          id: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
-               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
-               | list | first }}
-          mapping: >-
-            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
-               | default(app_config.app.gpu_device) }}
-      when:
-        - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'immich'
-        - app_config.app.gpu_device | default('') | length > 0
-        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
+        - (_rm_hooks ~ '/remove-devices.yml') is file
 
     # Legacy shared device declarations remain accepted for non-GPU users. GPU-capable
     # apps no longer call this LXC bind seam.
