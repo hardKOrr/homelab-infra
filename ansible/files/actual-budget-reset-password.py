@@ -86,12 +86,17 @@ def build_command(runtime, arguments):
         return ["k3s", "kubectl", "--namespace", namespace, "exec", "--stdin", "--tty",
                 pod, "--container", container, "--", "node",
                 "/app/src/scripts/reset-password.js"]
+    if runtime == "native" and len(arguments) == 4:
+        user, node_dir, cli, data_dir = arguments
+        return ["runuser", "--user", user, "--", "env",
+                "PATH=" + node_dir + "/bin:/usr/bin:/bin", "ACTUAL_DATA_DIR=" + data_dir,
+                cli, "--reset-password"]
     raise ValueError("unsupported password reset target")
 
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: actual-budget-reset-password.py <docker|kubernetes> <target...>",
+        print("usage: actual-budget-reset-password.py <docker|kubernetes|native> <target...>",
               file=sys.stderr)
         return 1
     password = sys.stdin.readline().rstrip("\r\n")

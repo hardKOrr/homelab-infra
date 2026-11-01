@@ -44,6 +44,13 @@ def main():
         "actual-budget-pod", "--container", "actual-budget", "--", "node",
         "/app/src/scripts/reset-password.js",
     ]
+    assert helper.build_command("native", [
+        "actual-budget", "/opt/node", "/opt/server/bin/actual-server", "/opt/actual/data",
+    ]) == [
+        "runuser", "--user", "actual-budget", "--", "env",
+        "PATH=/opt/node/bin:/usr/bin:/bin", "ACTUAL_DATA_DIR=/opt/actual/data",
+        "/opt/server/bin/actual-server", "--reset-password",
+    ]
     try:
         helper.build_command("kubernetes", ["app-actual-budget"])
     except ValueError:

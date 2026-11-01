@@ -1,5 +1,12 @@
 ---
-# Actual Budget — local-first personal finance and budgeting on the services stack.
+# Actual Budget — local-first personal finance and budgeting.
+# Docker on the services VM remains the default. To select a dedicated native guest:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc     # or vm; both use the same native install and systemd service
+# Native installation uses the upstream Server CLI:
+# https://actualbudget.org/docs/install/cli-tool/
 #
 # Actual uses its own server account and file storage. The role generates the server
 # password, stores it in Vaultwarden at homelab-infra/apps/<instance>, and initializes
@@ -8,6 +15,9 @@
 app:
   # The upstream stable image. Override only when deliberately pinning or testing a tag.
   image: docker.io/actualbudget/actual-server:latest
+  # Native hosting uses these independent pins rather than the Docker image tag.
+  # native_version: "26.10.0"
+  # node_version: "24.21.0"
   # Host path containing account.sqlite, server-files, and user-files. This entire
   # directory is the application's persistent recovery unit.
   data_path: /opt/actual-budget/data

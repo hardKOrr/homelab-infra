@@ -1,0 +1,181 @@
+---
+- name: Actual Budget | Require the native Linux architecture
+  ansible.builtin.assert:
+    that: ansible_architecture == 'x86_64'
+    fail_msg: The pinned native Node runtime currently requires an x86_64 guest.
+
+- name: Actual Budget | Install native prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, xz-utils, python3, build-essential]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Actual Budget | Create the native system group
+  ansible.builtin.group:
+    name: "{{ actual_budget_native_user }}"
+    system: true
+
+- name: Actual Budget | Create the native system account
+  ansible.builtin.user:
+    name: "{{ actual_budget_native_user }}"
+    group: "{{ actual_budget_native_user }}"
+    home: "{{ app_config.app.data_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Actual Budget | Create native project directory
+  ansible.builtin.file:
+    path: "{{ actual_budget_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Actual Budget | Create native data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "{{ actual_budget_native_user }}"
+    group: "{{ actual_budget_native_user }}"
+    mode: "0750"
+
+- name: Actual Budget | Download the pinned Node runtime
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.node_version }}/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:https://nodejs.org/dist/v{{ app_config.app.node_version }}/SHASUMS256.txt"
+    dest: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Actual Budget | Unpack the pinned Node runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "{{ actual_budget_node_dir }}/bin/node"
+  notify: Restart native Actual Budget
+
+# A separate prefix for each server/runtime pair preserves the previous install if an
+# upgrade fails. npm's exit status is the install boundary; the marker is written last.
+- name: Actual Budget | Check the native install marker
+  ansible.builtin.stat:
+    path: "{{ actual_budget_native_prefix }}/.installed"
+  register: _actual_budget_native_installed
+
+- name: Actual Budget | Install the pinned upstream Server CLI
+  ansible.builtin.command:
+    argv:
+      - "{{ actual_budget_node_dir }}/bin/npm"
+      - install
+      - --global
+      - --prefix
+      - "{{ actual_budget_native_prefix }}"
+      - "@actual-app/sync-server@{{ app_config.app.native_version }}"
+  environment:
+    PATH: "{{ actual_budget_node_dir }}/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  when: not _actual_budget_native_installed.stat.exists
+  changed_when: true
+  notify: Restart native Actual Budget
+
+- name: Actual Budget | Record the completed native install
+  ansible.builtin.copy:
+    content: "{{ app_config.app.native_version }}\n"
+    dest: "{{ actual_budget_native_prefix }}/.installed"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Actual Budget | Check the password initialization marker
+  ansible.builtin.stat:
+    path: "{{ actual_budget_password_marker }}"
+  register: _actual_budget_password_marker
+  changed_when: false
+
+- name: Actual Budget | Resolve and store the native application credential
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Actual Budget | Render the native service
+  ansible.builtin.template:
+    src: actual-budget.service.j2
+    dest: "/etc/systemd/system/{{ app_config.app.service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart native Actual Budget
+
+- name: Actual Budget | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Actual Budget | Apply pending native restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Actual Budget | Wait for the native server
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _actual_budget_native_health
+  until: _actual_budget_native_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Actual Budget | Initialize the native server password
+  ansible.builtin.include_tasks: reset-password.yml
+  vars:
+    actual_budget_reset_password: "{{ _actual_budget_server_password }}"
+  when: not _actual_budget_password_marker.stat.exists
+  no_log: true
+
+- name: Actual Budget | Verify the provisioned native login
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/account/login"
+    method: POST
+    body_format: json
+    body:
+      password: "{{ _actual_budget_server_password }}"
+    status_code: 200
+  register: _actual_budget_native_login
+  failed_when: >-
+    _actual_budget_native_login.status | default(0) != 200
+    or _actual_budget_native_login.json.status | default('') != 'ok'
+    or _actual_budget_native_login.json.data.token | default('') | length == 0
+  changed_when: false
+  no_log: true
+
+- name: Actual Budget | Record native password initialization
+  ansible.builtin.copy:
+    dest: "{{ actual_budget_password_marker }}"
+    content: "Managed by homelab-infra; the password is stored in Vaultwarden.\n"
+    owner: "{{ actual_budget_native_user }}"
+    group: "{{ actual_budget_native_user }}"
+    mode: "0600"
+  when: not _actual_budget_password_marker.stat.exists
+
+- name: Actual Budget | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ app_config.app.service_name | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Actual Budget | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ app_config.app.service_name | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

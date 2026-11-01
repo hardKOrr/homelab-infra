@@ -5,8 +5,8 @@
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Actual Budget restore | Use the Docker guest restore path
+- name: Actual Budget restore | Use the guest restore path
   ansible.builtin.include_tasks: restore-docker.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('docker')) == 'docker'
+    | default(app_config.hosting.method | default('docker')) in ['docker', 'native']

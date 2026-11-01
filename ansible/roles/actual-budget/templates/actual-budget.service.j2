@@ -1,0 +1,26 @@
+[Unit]
+Description=Actual Budget ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ actual_budget_native_user }}
+Group={{ actual_budget_native_user }}
+WorkingDirectory={{ app_config.app.data_path }}
+Environment="PATH={{ actual_budget_node_dir }}/bin:/usr/bin:/bin"
+Environment="NODE_ENV=production"
+Environment="ACTUAL_DATA_DIR={{ app_config.app.data_path }}"
+Environment="ACTUAL_PORT={{ app_config.app.port }}"
+ExecStart={{ actual_budget_node_dir }}/bin/node {{ actual_budget_native_cli }}
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ app_config.app.data_path }}
+
+[Install]
+WantedBy=multi-user.target

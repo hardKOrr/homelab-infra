@@ -35,7 +35,7 @@
 - name: Actual Budget backup | Quiesce Actual Budget and archive its data to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method }}"
     pbs_client_compose_project: "{{ actual_budget_project_dir }}"
     pbs_client_stop_services: ["{{ app_config.app.service_name }}"]
     pbs_client_archives:
