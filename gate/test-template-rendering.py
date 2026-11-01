@@ -2073,7 +2073,7 @@ def plane_health_probes_do_not_follow_the_unwired_https_hostname():
                     return found
         return None
 
-    path = "ansible/roles/plane/tasks/main.yml"
+    path = "ansible/roles/plane/tasks/docker.yml"
     task = find_task(yaml.safe_load(read(path)), "Plane | Wait for the recovery unit health endpoint")
     assert task is not None, f"{path} has no recovery unit health task"
     request = task["ansible.builtin.uri"]
@@ -2082,7 +2082,7 @@ def plane_health_probes_do_not_follow_the_unwired_https_hostname():
     assert task["until"] == "_plane_health.status | default(0) in [200, 301, 302, 303, 307, 308]"
 
     # The restore waits through the shared swap with the same request.
-    swap = swap_inputs("plane")
+    swap = swap_inputs("plane", "restore-docker.yml")
     assert swap["recovery_swap_health_follow_redirects"] == "none"
     assert swap["recovery_swap_health_status"] == accepted_statuses
 

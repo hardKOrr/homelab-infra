@@ -1,0 +1,36 @@
+---
+- name: Plane restore | Put the original Redis dataset back
+  when: _plane_restore_redis_replaced | default(false) | bool
+  block:
+    - name: Plane restore | Stop Redis before rollback
+      ansible.builtin.systemd_service:
+        name: "{{ _plane_restore_redis_service_name | default(restore_target_config.app.redis.service_name | default('redis-server', true)) }}"
+        state: stopped
+      delegate_to: plane_redis_restore_target
+
+    - name: Plane restore | Put the live Redis RDB back
+      ansible.builtin.copy:
+        src: "{{ _plane_restore_controller.path }}/live.rdb"
+        dest: "{{ _plane_restore_redis_data_path | default(restore_target_config.app.redis.data_path | default('/var/lib/redis', true)) }}/dump.rdb"
+        owner: redis
+        group: redis
+        mode: "0640"
+      delegate_to: plane_redis_restore_target
+      when: _plane_restore_live_rdb.stat.exists | default(false)
+
+    - name: Plane restore | Remove the point RDB when Redis had no prior dump
+      ansible.builtin.file:
+        path: "{{ _plane_restore_redis_data_path | default(restore_target_config.app.redis.data_path | default('/var/lib/redis', true)) }}/dump.rdb"
+        state: absent
+      delegate_to: plane_redis_restore_target
+      when: not (_plane_restore_live_rdb.stat.exists | default(false))
+
+    - name: Plane restore | Start Redis after rollback
+      ansible.builtin.systemd_service:
+        name: "{{ _plane_restore_redis_service_name | default(restore_target_config.app.redis.service_name | default('redis-server', true)) }}"
+        state: started
+      delegate_to: plane_redis_restore_target
+
+    - name: Plane restore | Verify Redis after rollback
+      ansible.builtin.include_tasks: >-
+        {{ role_path }}/tasks/{{ plane_restore_redis_ready_tasks | default('restore-redis-ready.yml') }}

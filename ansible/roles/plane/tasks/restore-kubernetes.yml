@@ -1,0 +1,113 @@
+---
+# A Plane Kubernetes restore uses the same database, Redis, data and object-storage archive
+# names as the Docker restore. The shared Job owns PBS extraction, database load and PVC
+# replacement; the hook imports the external Redis RDB and source Plane keys before pods
+# are brought back.
+- name: Plane Kubernetes restore | Resolve target Redis backend and credentials
+  ansible.builtin.set_fact:
+    _plane_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           restore_target_config.app.redis.instance | default(''), {}) }}
+    _plane_restore_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           restore_target_config.app.database.instance | default(''), {}) }}
+    _plane_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           restore_target_config.app.redis.instance | default(''), {}).password | default('', true) }}
+    _plane_restore_target_secrets: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {})
+         | dict2items
+         | selectattr('key', 'in', ['secret_key', 'live_server_secret_key', 'rabbitmq_password',
+                                    'object_storage_access_key', 'object_storage_secret_key'])
+         | items2dict }}
+  no_log: true
+
+- name: Plane Kubernetes restore | Require the target backends and source Plane keys
+  ansible.builtin.assert:
+    that:
+      - _plane_redis_backend.provider | default('') == 'redis'
+      - _plane_redis_backend.host | default('') | length > 0
+      - _plane_redis_backend.port | default(0) | int > 0
+      - _plane_restore_database_backend.provider | default('') == 'postgresql'
+      - _plane_restore_database_backend.host | default('') | length > 0
+      - _plane_restore_database_backend.port | default(0) | int > 0
+      - _plane_redis_password | length > 0
+      - restore_source_plane_secrets is mapping
+      - restore_source_plane_secrets.secret_key | default('') | length > 0
+      - restore_source_plane_secrets.live_server_secret_key | default('') | length > 0
+      - restore_source_plane_secrets.rabbitmq_password | default('') | length > 0
+      - restore_source_plane_secrets.object_storage_access_key | default('') | length > 0
+      - restore_source_plane_secrets.object_storage_secret_key | default('') | length > 0
+      - >-
+        not (restore_overwrite | bool)
+        or _plane_restore_target_secrets | dict2items | selectattr('value') | list | length == 5
+    fail_msg: >-
+      Plane Kubernetes restore needs the target's registered Redis credentials, all five
+      Plane keys from the selected source, and the existing target keys for rollback.
+  no_log: true
+
+- name: Plane Kubernetes restore | Require a recent target safety point
+  ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: >-
+      {{ restore_target_config.backup.backup_id | default('', true) or restore_target }}
+  when: restore_overwrite | bool
+
+- name: Plane Kubernetes restore | Require distinct database and Redis targets for a new destination
+  ansible.builtin.assert:
+    that:
+      - not (
+          restore_source_database.name == restore_target_config.app.database.name
+          and restore_source_database.provider == _plane_restore_database_backend.provider
+          and _plane_restore_database_backend.host == restore_source_database.host
+          and (_plane_restore_database_backend.port | int) == (restore_source_database.port | int)
+        )
+      - not (
+          restore_source_redis.host == _plane_redis_backend.host
+          and (restore_source_redis.port | int) == (_plane_redis_backend.port | int)
+        )
+    fail_msg: >-
+      A new Plane restore must use target-owned PostgreSQL and Redis backends distinct from
+      the source. Never let an isolated target overwrite the source database or Redis data.
+  when: restore_destination | default('existing') == 'new'
+  no_log: true
+
+- name: Plane Kubernetes restore | Describe the registered database recovery step
+  ansible.builtin.include_tasks: kubernetes-database-step.yml
+  vars:
+    plane_k8s_database_config: "{{ restore_target_config }}"
+    plane_k8s_database_instance: "{{ restore_target }}"
+
+- name: Plane Kubernetes restore | Restore through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Plane
+      archives:
+        - name: redis
+          claim: "{{ restore_target }}-redis-recovery"
+        - name: data
+          claim: "{{ restore_target }}-data"
+        - name: object-storage
+          claim: "{{ restore_target }}-object-storage"
+      database: "{{ _plane_k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}-web"
+        - "{{ restore_target }}-space"
+        - "{{ restore_target }}-admin"
+        - "{{ restore_target }}-api"
+        - "{{ restore_target }}-worker"
+        - "{{ restore_target }}-beat"
+        - "{{ restore_target }}-live"
+        - "{{ restore_target }}-proxy"
+        - "{{ restore_target }}-mq"
+        - "{{ restore_target }}-minio"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-redis.yml"
+      describe: >-
+        the registered PostgreSQL dump and Redis RDB, Plane release identity, service data
+        and object-storage volume
+      verify:
+        - >-
+          Open https://{{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}/
+          and sign in with the Plane owner account from {{ instance }}.
+          Confirm its projects, issues, uploads and public-share pages are present.

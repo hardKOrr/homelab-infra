@@ -1,0 +1,64 @@
+---
+# The shared database step owns PostgreSQL dump, restore and inspection. Plane only adds
+# the release identity and the registered Redis RDB that its existing cross-method
+# recovery contract requires.
+- name: Plane Kubernetes | Describe the registered database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ plane_k8s_database_config | default(app_config) }}"
+    k8s_database_step_instance: "{{ plane_k8s_database_instance | default(instance) }}"
+
+- name: Plane Kubernetes | Add Plane's release and Redis archive to the shared dump step
+  ansible.builtin.set_fact:
+    _plane_k8s_database_step: >-
+      {{ k8s_database_step | combine({
+           'env': (k8s_database_step.env | default({})) | combine({
+             'REDIS_HOST': _plane_k8s_redis_backend.host,
+             'REDIS_PORT': _plane_k8s_redis_backend.port | string
+           }),
+           'secret_env': (k8s_database_step.secret_env | default({})) | combine({
+             'REDISCLI_AUTH': 'redis-password'
+           }),
+           'secret_data': (k8s_database_step.secret_data | default({})) | combine({
+             'redis-password': _plane_k8s_redis_password
+           }),
+           'dump': _plane_k8s_plane_dump,
+           'load': _plane_k8s_plane_load
+         }, recursive=True) }}
+  vars:
+    _plane_k8s_database_config: "{{ plane_k8s_database_config | default(app_config) }}"
+    _plane_k8s_database_release: "{{ _plane_k8s_database_config.app.release }}"
+    _plane_k8s_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           _plane_k8s_database_config.app.redis.instance, {}) }}
+    _plane_k8s_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           _plane_k8s_database_config.app.redis.instance, {}).password | default('', true) }}
+    _plane_k8s_shared_dump: "{{ k8s_database_step.dump | replace('${DB_NAME}.dump', 'plane.dump') | trim }}"
+    _plane_k8s_plane_dump: |
+      set -eu
+      mkdir -p "${DUMP_DIR}"
+      {{ _plane_k8s_shared_dump }}
+      sh /etc/recovery-credentials/database-client.sh verify "${DUMP_DIR}/plane.dump"
+      printf '%s\n' '{{ _plane_k8s_database_release }}' > "${DUMP_DIR}/plane-release.txt"
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends redis-tools >/dev/null
+      mkdir -p /volumes/redis
+      redis-cli --no-auth-warning -h "${REDIS_HOST}" -p "${REDIS_PORT}" \
+        --rdb /volumes/redis/dump.rdb
+      test -s /volumes/redis/dump.rdb
+      redis-check-rdb /volumes/redis/dump.rdb >/dev/null
+    _plane_k8s_plane_load: |
+      set -eu
+      if [ ! -s "${DUMP_DIR}/plane-release.txt" ]; then
+        echo "the selected Plane point has no release identity"
+        exit 1
+      fi
+      if [ "$(cat "${DUMP_DIR}/plane-release.txt")" != '{{ _plane_k8s_database_release }}' ]; then
+        echo "the selected Plane point was captured by a different declared release"
+        exit 1
+      fi
+      {{ k8s_database_step.load | trim | indent(2) }}
+  no_log: true

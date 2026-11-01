@@ -5,7 +5,7 @@
 plane_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, kubernetes]
     impossible: {}
   stack: services
   recovery:
@@ -18,6 +18,11 @@ plane_defaults:
     port: 8093
     data_path: "/opt/{{ instance }}/data"
     object_storage_path: "/opt/{{ instance }}/object-storage"
+    # Kubernetes volumes use the cluster's default StorageClass. These requests keep
+    # server data, object storage and the registered Redis recovery staging volume apart.
+    data_storage: 10
+    object_storage_storage: 20
+    redis_recovery_storage: 2
     object_storage:
       provider: minio
       instance: plane-minio
@@ -38,6 +43,22 @@ plane_defaults:
       port: 5672
       user: plane
       vhost: plane
+  # Kubernetes pods reach both registered data backends through the cluster-node alias.
+  # Docker deployments keep their existing guest access path.
+  firewall:
+    egress:
+      - name: postgresql
+        protocol: TCP
+        port: "{{ app_config.app.database_port | default(5432) }}"
+        destination: "{{ app_config.app.database_host | default('') }}"
+      - name: redis
+        protocol: TCP
+        port: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.redis.instance | default(''), {}).port | default(6379) }}
+        destination: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.redis.instance | default(''), {}).host | default('') }}
   routing:
     subdomain: plane
     proxy: internal
@@ -47,6 +68,15 @@ plane_defaults:
     enabled: true
     application_consistent: true
     schedule: "0 3 * * *"
+    retention_days: 14
     datastore: ""
     backup_id: ""
+    timeout_seconds: 3600
+    scratch_size: 10
+    client:
+      image: python:3.12-bookworm
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
     redis_client_image: "redis:7-alpine"
