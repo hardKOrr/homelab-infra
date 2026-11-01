@@ -26,7 +26,9 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/actual-budget.yml"))[
     "actual_budget_defaults"
 ]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+assert defaults["hosting"]["supported"] == [
+    "docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm",
+]
 assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"]
@@ -47,7 +49,7 @@ assert any(
 docker_deploy = playbook[1]["tasks"]
 assert any(
     task.get("ansible.builtin.include_role", {}).get("name") == "actual-budget"
-    and task.get("when") == "app_config.hosting.method == 'docker'"
+    and task.get("when") == "app_config.hosting.method in ['docker', 'native']"
     for task in docker_deploy
 )
 assert "../../tasks/kubernetes/open-app-access.yml" in read(

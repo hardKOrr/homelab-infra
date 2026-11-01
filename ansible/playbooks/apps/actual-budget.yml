@@ -1,5 +1,5 @@
 ---
-# Deploy an instanced Actual Budget server on the services Docker stack or Kubernetes.
+# Deploy Actual Budget on the services Docker stack, a native guest, or Kubernetes.
 #
 # Actual is intentionally self-contained: its account.sqlite, server files, and budget
 # blobs live in one durable /data mount, and its native server password is generated once
@@ -51,6 +51,14 @@
         actual_budget_fqdn: >-
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: actual-budget
+      when: app_config.hosting.method == 'native'
+
     - name: Find or create services stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -88,17 +96,16 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap application guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when:
-        - app_config.hosting.method == 'docker'
         - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Deploy Actual Budget
       ansible.builtin.include_role:
         name: actual-budget
       vars:
         actual_budget_fqdn: "{{ hostvars['localhost'].actual_budget_fqdn }}"
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
 
 - name: "Actual Budget | Wire"
   hosts: localhost
@@ -111,11 +118,11 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ _actual_budget_host.ansible_host
-         if _actual_budget_host.app_config.hosting.method == 'docker'
+         if _actual_budget_host.app_config.hosting.method in ['docker', 'native']
          else homelabinfra_infra.kubernetes.ingress_vip }}
     wiring_upstream_port: >-
       {{ _actual_budget_host.app_config.app.port
-         if _actual_budget_host.app_config.hosting.method == 'docker'
+         if _actual_budget_host.app_config.hosting.method in ['docker', 'native']
          else 80 }}
     wiring_subdomain: "{{ hostvars['localhost'].actual_budget_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].actual_budget_fqdn }}"
@@ -150,11 +157,10 @@
       vars:
         record_guest_names: >-
           {{ groups['deploy_' ~ instance]
-             if _actual_budget_host.app_config.hosting.method == 'docker'
+             if _actual_budget_host.app_config.hosting.method in ['docker', 'native']
              else (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list) }}
         record_guest_kind: >-
-          {{ 'docker' if _actual_budget_host.app_config.hosting.method == 'docker'
-             else 'kubernetes' }}
+          {{ _actual_budget_host.app_config.hosting.method }}
         record_guest_url: "https://{{ hostvars['localhost'].actual_budget_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

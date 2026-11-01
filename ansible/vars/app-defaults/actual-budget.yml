@@ -1,6 +1,7 @@
 ---
 # Default configuration for Actual Budget — a local-first personal finance application
-# on the services Docker stack. Users override specific values in
+# on the services Docker stack by default, with native and Kubernetes alternatives.
+# Users override specific values in
 # config/apps/<instance>.yml.
 #
 # Actual keeps both its server account database and its budget blobs below /data. There is
@@ -10,7 +11,7 @@
 actual_budget_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
 
@@ -21,6 +22,8 @@ actual_budget_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    native_version: "26.10.0"
+    node_version: "24.21.0"
     image: docker.io/actualbudget/actual-server:latest
     port: 5006
     container_port: 5006
@@ -30,6 +33,13 @@ actual_budget_defaults:
     # cluster's default StorageClass, whose volumes are node-pinned and retained.
     storage: 5
 
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+
   routing:
     subdomain: actual-budget
     proxy: internal
@@ -37,7 +47,7 @@ actual_budget_defaults:
     identity: catalog
 
   # Actual's server password and all budget files are application-native state. The role
-  # stops the one Compose service before archiving /data, so account.sqlite and the budget
+  # stops its Compose or systemd service before archiving the data path, so account.sqlite and the budget
   # blobs are captured as one recovery unit rather than as a live filesystem copy.
   backup:
     enabled: true

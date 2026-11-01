@@ -18,12 +18,12 @@
 - name: Actual Budget restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.data_path }}"
-        owner: 1001
-        group: 1001
+        owner: "{{ actual_budget_native_user if app_config.hosting.method == 'native' else 1001 }}"
+        group: "{{ actual_budget_native_user if app_config.hosting.method == 'native' else 1001 }}"
         mode: "0750"
     recovery_swap_stop_services: ["{{ app_config.app.service_name }}"]
     recovery_swap_compose_project: "{{ actual_budget_project_dir }}"

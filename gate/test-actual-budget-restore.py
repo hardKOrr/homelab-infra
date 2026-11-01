@@ -22,7 +22,31 @@ role = repo / "ansible/roles/actual-budget"
 def main():
     swap = swap_inputs("actual-budget", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
-    assert path == {"path": "{{ app_config.app.data_path }}", "owner": 1001, "group": 1001, "mode": "0750"}
+    assert path["path"] == "{{ app_config.app.data_path }}"
+    assert path["mode"] == "0750"
+    for method, owner in [("docker", "1001"), ("native", "actual-budget")]:
+        # Execute Ansible's rendering of the real swap inputs at the shared boundary.
+        with tempfile.TemporaryDirectory() as directory:
+            play = Path(directory) / "inputs.yml"
+            play.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {
+                    "app_config": {"hosting": {"method": method},
+                                   "app": {"data_path": "/opt/actual/data", "port": 5006,
+                                           "service_name": "actual_server"}},
+                    "actual_budget_native_user": "actual-budget",
+                    "actual_budget_project_dir": "/opt/actual",
+                    "role_path": str(role),
+                },
+                "tasks": [{"ansible.builtin.assert": {"that": [
+                    "recovery_swap_runtime == '" + method + "'",
+                    "recovery_swap_paths[0].owner | string == '" + owner + "'",
+                    "recovery_swap_paths[0].group | string == '" + owner + "'",
+                ]}, "vars": swap}],
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
+                                    text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
     assert swap["recovery_swap_stop_services"] == ["{{ app_config.app.service_name }}"]
     assert swap["recovery_swap_compose_project"] == "{{ actual_budget_project_dir }}"
     assert swap["recovery_swap_health_url"] == "http://localhost:{{ app_config.app.port }}"

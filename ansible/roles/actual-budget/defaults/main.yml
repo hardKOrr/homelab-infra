@@ -2,3 +2,7 @@
 actual_budget_project_dir: "/opt/{{ instance }}"
 actual_budget_compose_file: "{{ actual_budget_project_dir }}/docker-compose.yml"
 actual_budget_password_marker: "{{ app_config.app.data_path }}/.homelab-infra-password-initialized"
+actual_budget_native_prefix: "{{ actual_budget_project_dir }}/server-{{ app_config.app.native_version }}-node-{{ app_config.app.node_version }}"
+actual_budget_node_dir: "/opt/node-v{{ app_config.app.node_version }}-linux-x64"
+actual_budget_native_cli: "{{ actual_budget_native_prefix }}/bin/actual-server"
+actual_budget_native_user: actual-budget
