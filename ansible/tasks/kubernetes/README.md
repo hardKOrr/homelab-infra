@@ -84,6 +84,10 @@ a successful dump: if the Job pod is evicted or lost, or the push image cannot s
 container remains to resume the Deployments. They stay at zero with the
 `backup-quiesced` recovery marker until a later backup attempt reaches its push container
 and runs its restart trap. The dump container resumes them itself only when the dump fails.
+An archive may opt into `dump_writable: true` when its database dump hook must prepare
+staging data on that PVC. The flag requires a database step and a PVC `claim` (no
+`config_map`); only the dump init container receives a writable mount at
+`/volumes/<archive-name>`. The push container still mounts every archive read-only.
 The database image must support installing Python, and the client image must include Python
 for its restart trap. For a filesystem-only archive that
 needs quiescing, the push container scales the listed Deployments to zero, waits for their

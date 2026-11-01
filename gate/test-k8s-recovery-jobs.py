@@ -196,6 +196,23 @@ def backup_documents(archives, database, instance="app", stop=None, stop_replica
             next(d for d in documents if d["kind"] == "CronJob"))
 
 
+def dump_archive_input_is_valid(archive, database):
+    """Evaluate the shared task's Jinja assertions for one declared opt-in archive."""
+    task = task_named(tasks_of("ansible/tasks/kubernetes/recovery-backup.yml"),
+                      "k8s backup | Validate writable dump archive declarations")
+    recovery = {"archives": [archive]}
+    if database is not None:
+        recovery["database"] = database
+    items = render(task["loop"], {"k8s_recovery": recovery})
+    if not items:
+        return True
+    assert len(items) == 1
+    context = {"item": items[0], "k8s_recovery": recovery}
+    checks = [render("{{ " + expression + " }}", context)
+              for expression in task["ansible.builtin.assert"]["that"]]
+    return all(checks)
+
+
 def restore_pod(mode, archives, database, target="app", backup_config=None):
     kr = {
         "mode": mode, "job_name": f"{target}-restore-{mode}", "target": target,
@@ -266,6 +283,8 @@ def shared_pair(steps):
     assert '--keep-last 2 --keep-daily "${RETENTION_DAYS}"' in script
     assert all(m.get("readOnly") for m in push["volumeMounts"]
                if m["name"].startswith("volume-"))
+    dump = pod["initContainers"][0]
+    assert not any(m["name"].startswith("volume-") for m in dump["volumeMounts"])
     volumes = {v["name"]: v for v in pod["volumes"]}
     assert volumes["volume-data"]["persistentVolumeClaim"] == {
         "claimName": "app-storage", "readOnly": True}
@@ -276,6 +295,38 @@ def shared_pair(steps):
     assert "initContainers" not in ordinary_pod
     assert ordinary_pod["automountServiceAccountToken"] is False
     assert "serviceAccountName" not in ordinary_pod
+    assert ordinary_pod["volumes"][-1]["persistentVolumeClaim"] == {
+        "claimName": "app-data", "readOnly": True}
+
+    # Only the database dump container can prepare an explicitly selected PVC. Its
+    # volume-level read-only flag is omitted, while the PBS push mount stays read-only.
+    dump_archive = {"name": "redis", "claim": "app-redis-recovery",
+                    "dump_writable": True}
+    _, cronjob = backup_documents([dump_archive], steps["postgresql"])
+    pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    dump = pod["initContainers"][0]
+    push = pod["containers"][0]
+    dump_mount = next(m for m in dump["volumeMounts"] if m["name"] == "volume-redis")
+    push_mount = next(m for m in push["volumeMounts"] if m["name"] == "volume-redis")
+    assert dump_mount == {"name": "volume-redis", "mountPath": "/volumes/redis"}
+    assert push_mount == {"name": "volume-redis", "mountPath": "/volumes/redis",
+                         "readOnly": True}
+    assert {v["name"]: v for v in pod["volumes"]}["volume-redis"][
+        "persistentVolumeClaim"] == {"claimName": "app-redis-recovery"}
+
+    assert dump_archive_input_is_valid(dump_archive, steps["postgresql"])
+    assert dump_archive_input_is_valid({"name": "redis", "claim": "app-redis",
+                                        "dump_writable": False}, None)
+    assert not dump_archive_input_is_valid({"name": "redis", "dump_writable": True},
+                                           steps["postgresql"])
+    assert not dump_archive_input_is_valid({"name": "redis", "claim": "",
+                                           "dump_writable": True}, steps["postgresql"])
+    assert not dump_archive_input_is_valid({"name": "redis", "claim": "app-redis",
+                                           "config_map": "redis-config",
+                                           "dump_writable": True}, steps["postgresql"])
+    assert not dump_archive_input_is_valid(dump_archive, None)
+    assert not dump_archive_input_is_valid({"name": "redis", "claim": "app-redis",
+                                           "dump_writable": "true"}, steps["postgresql"])
 
     quiesced = backup_all_documents([{"name": "data", "claim": "app-storage"}], {},
                                     "app", ["app"], stop_replicas=3)
