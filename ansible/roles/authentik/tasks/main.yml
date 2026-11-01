@@ -224,6 +224,8 @@
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: "{{ _authentik_vault_item }}"
+    # directory.yml stores generated account passwords in this same item.
+    vault_item_merge: true
     vault_item_fields:
       provider: authentik
       instance: "{{ instance }}"
