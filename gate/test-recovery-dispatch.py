@@ -40,6 +40,20 @@ def check_native_restore_storage_scopes():
     ]
     assert (repo / "ansible/playbooks/maintenance/../../inventory").is_dir()
     assert (repo / "ansible/playbooks/maintenance/../apps/mariadb.yml").is_file()
+    # The second child deploy after a new-target restore must resolve the same way: a
+    # relative path depends on the command's working directory, not the playbook's.
+    plays = load_playbook(repo / "ansible/playbooks/maintenance/restore-app.yml")
+    reconcile_task = next(task for play in plays for task in play.get("tasks", [])
+                          if task.get("name") == "Reconcile the restored target's intended connections")
+    reconcile_argv = reconcile_task["ansible.builtin.command"]["argv"]
+    assert reconcile_argv[0] == nested_ansible
+    assert reconcile_task["environment"]["ANSIBLE_CONFIG"] == (
+        "{{ playbook_dir }}/../../ansible.cfg"
+    )
+    assert reconcile_argv[1:4] == [
+        "-i", "{{ playbook_dir }}/../../inventory/",
+        "{{ playbook_dir }}/../apps/{{ hostvars['localhost']._ra_app }}.yml",
+    ]
     cases = [
         # The same guest-local path belongs to separate root filesystems when a native
         # database is staged as another Proxmox guest.

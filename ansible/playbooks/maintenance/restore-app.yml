@@ -276,8 +276,8 @@
         argv:
           - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
           - -i
-          - inventory/
-          - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"
+          - "{{ playbook_dir }}/../../inventory/"
+          - "{{ playbook_dir }}/../apps/{{ hostvars['localhost']._ra_app }}.yml"
           - -e
           - "instance={{ hostvars['localhost']._ra_target }}"
           - -e
@@ -288,6 +288,8 @@
           # ignore the app-specific recovery hint.
           - -e
           - recovery_restore_config=true
+      environment:
+        ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
       changed_when: true
       when:
         - hostvars['localhost'].recovery_destination_resolved == 'new'
