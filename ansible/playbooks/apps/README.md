@@ -174,9 +174,18 @@ Make each integration idempotent by reading current state before creating or cha
 
 Per-app removal state that `playbooks/apps/remove.yml` cannot know about, such as a
 backup schedule, files outside `/opt/<instance>` or a dedicated device, goes in role
-hooks. Remove runs `roles/<app>/tasks/remove.yml` after the Compose project stops, and
-`roles/<app>/tasks/remove-devices.yml` after the data paths are gone. A GPU hook calls
-`tasks/proxmox/detach-app-gpu.yml`. Never add an `app == '<app>'` branch to Remove.
+hooks under `roles/<app>/tasks/`, each run only when the file exists:
+
+| Hook | Remove runs it |
+| --- | --- |
+| `remove-inputs.yml` | on localhost before unwiring: validate delete targets, declare `_rm_database_backend` or `_rm_keeps_guest_record` |
+| `remove-unwire.yml` | on localhost after provider unwiring, before the registry prune: withdraw the app from other apps |
+| `remove-units.yml` | on a native guest: set `_rm_service_names` instead of `app.service_name` |
+| `remove-native-data.yml` | on a native guest after the service stops, before the data paths go |
+| `remove.yml` | after the Compose project stops |
+| `remove-devices.yml` | after the data paths are gone; a GPU hook calls `tasks/proxmox/detach-app-gpu.yml` |
+
+Never add an `app == '<app>'` branch to Remove.
 
 ---
 

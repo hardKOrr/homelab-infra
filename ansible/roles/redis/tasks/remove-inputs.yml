@@ -1,0 +1,7 @@
+---
+# Remove App hook, run on localhost before any unwiring. This app is a database backend:
+# destroy_guest=true may forget its generated registry entry when its guest is already
+# gone, and Play 3 forgets that entry after Remove destroys the guest.
+- name: Declare a database backend for Remove
+  ansible.builtin.set_fact:
+    _rm_database_backend: true

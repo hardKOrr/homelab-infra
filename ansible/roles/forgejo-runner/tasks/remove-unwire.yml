@@ -1,0 +1,13 @@
+---
+# Remove App hook, run on localhost after the provider unwiring and before the service
+# registry prune. The runner is an app-to-app registration, not a proxy route. Remove
+# exactly this named registration while its Forgejo API credential still exists; the
+# shared Forgejo instance and all other runners are left untouched.
+- name: Deregister Forgejo Runner
+  ansible.builtin.include_tasks: ../../../tasks/app-wiring/forgejo-runner-remove.yml
+  vars:
+    runner_remove_instance: "{{ instance }}"
+    runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.apps is defined

@@ -434,12 +434,19 @@ def main():
     assert plane_config["ansible.builtin.file"]["state"] == "absent"
     assert "when" not in plane_config
 
-    immich_remove_inputs = next(
+    immich_inputs_hook = yaml.safe_load(
+        (repo / "ansible/roles/immich/tasks/remove-inputs.yml").read_text())
+    run_inputs_hook = next(
         task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve the app's removal inputs"
+    )
+    assert run_inputs_hook["ansible.builtin.include_tasks"] == "{{ _rm_hooks }}/remove-inputs.yml"
+    immich_remove_inputs = next(
+        task for task in immich_inputs_hook
         if task.get("name") == "Resolve Immich's media removal inputs"
     )
     immich_validate = next(
-        task for task in unwire_play["pre_tasks"]
+        task for task in immich_inputs_hook
         if task.get("name") == "Validate Immich's dedicated media mount"
     )
     assert "_rm_immich_media_mounts | length == 1" in immich_validate[

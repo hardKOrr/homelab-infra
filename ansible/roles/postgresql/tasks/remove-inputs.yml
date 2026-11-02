@@ -1,0 +1,10 @@
+---
+# Remove App hook, run on localhost before any unwiring. PostgreSQL is a database backend:
+# destroy_guest=true may forget its generated registry entry when its guest is already
+# gone, and Play 3 forgets that entry after Remove destroys the guest. Remove stops
+# PostgreSQL and may drop its cluster but keeps the guest, so a native guest keeps its app
+# row and tag; the next Deploy reuses that LXC instead of refusing it as unrecorded.
+- name: Declare a database backend that keeps its guest record
+  ansible.builtin.set_fact:
+    _rm_database_backend: true
+    _rm_keeps_guest_record: true

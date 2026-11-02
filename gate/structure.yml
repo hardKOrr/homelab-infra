@@ -19,7 +19,6 @@ missing_paths:
 
 # Literal app-name comparisons per playbook (rule 5).
 literal:
-  ansible/playbooks/apps/remove.yml: 9
   ansible/playbooks/maintenance/restore-app.yml: 17
 
 # Shared 12-word runs per pair of docs (rule 1).
@@ -35,7 +34,7 @@ size:
   ansible/playbooks/apps/migrate-servarr.yml: 395
   ansible/playbooks/apps/ollama.yml: 349
   ansible/playbooks/apps/pbs.yml: 667
-  ansible/playbooks/apps/remove.yml: 912
+  ansible/playbooks/apps/remove.yml: 819
   ansible/playbooks/apps/slskd.yml: 304
   ansible/playbooks/apps/uptime-kuma.yml: 316
   ansible/playbooks/apps/vaultwarden.yml: 343

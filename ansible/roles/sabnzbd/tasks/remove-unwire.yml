@@ -1,0 +1,5 @@
+---
+# Remove App hook, run on localhost after the provider unwiring and before the service
+# registry prune, which the consumer lookup still reads.
+- name: Withdraw SABnzbd from deployed Usenet consumers
+  ansible.builtin.include_tasks: ../../../tasks/unwiring/sabnzbd-clients.yml

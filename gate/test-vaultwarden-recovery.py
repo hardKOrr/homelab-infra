@@ -251,6 +251,15 @@ def check_remove_absent_database_backend_cleanup():
 
             playbook = root / "remove-guard.yml"
             databases = {name: {"provider": app} for name in database_instances}
+            # The facts the app's remove-inputs.yml hook declares, such as
+            # _rm_database_backend, set as Remove's hook would set them.
+            hook = ROOT / f"ansible/roles/{app}/tasks/remove-inputs.yml"
+            declared = {
+                name: value
+                for task in (read_yaml(hook) if hook.is_file() else [])
+                for name, value in (task.get("ansible.builtin.set_fact") or {}).items()
+                if name.startswith("_rm_") and isinstance(value, bool)
+            }
             playbook.write_text(yaml.safe_dump([{
                 "hosts": "localhost",
                 "gather_facts": False,
@@ -272,6 +281,8 @@ def check_remove_absent_database_backend_cleanup():
                     "expected_missing_backend": expected_missing,
                 },
                 "tasks": [
+                    *([{"name": "Declare the app's removal facts",
+                        "ansible.builtin.set_fact": declared}] if declared else []),
                     copy.deepcopy(resolve),
                     copy.deepcopy(absence_candidate),
                     {
