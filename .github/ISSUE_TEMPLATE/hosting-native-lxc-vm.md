@@ -25,7 +25,7 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 
 - R1: Where the config selects `hosting.method: native` with `proxmox.guest_type: lxc`, Deploy shall run <App> natively on an LXC.
 - R2: Where the config selects `hosting.method: native` with `proxmox.guest_type: vm`, Deploy shall run <App> natively on a VM.
-- R3: Where the config does not select the native method, Deploy shall run <App> on <default method>, unchanged.
+- R3: Where the config does not select the native method, Deploy shall keep <App> on its default method, <default method>, unchanged.
 - R4: The <app> role shall install <App> natively from <install>, pinned to <version>.
 - R5: The native method shall do backup, restore and database dump/drop through the shared operations files, with <App>'s own behavior in their inputs and hooks and no role-local copy (`gate/test-shared-standards.py` fails on one).
 - R6: The repository shall pass `bash gate/lint.sh` and `bash gate/test.sh` at the candidate SHA.

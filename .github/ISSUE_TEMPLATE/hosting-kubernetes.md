@@ -35,7 +35,7 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 ## Requirements
 
 - R1: Where the config selects `hosting.method: kubernetes`, Deploy shall run <App> on Kubernetes.
-- R2: Where the config does not select Kubernetes, Deploy shall run <App> on <default method>, unchanged.
+- R2: Where the config does not select Kubernetes, Deploy shall keep <App> on its default method, <default method>, unchanged.
 - R3: The Kubernetes method shall give <App>'s volumes the cluster's default StorageClass, as `roles/hi-events` does.
 - R4: The Kubernetes method shall mount <App>'s media and download shares in the pod from the NFS shares it uses today, at the same container paths as its Docker stack, through the shared media-share seam `tasks/kubernetes/prepare-media-volumes.yml` and no role-local copy.
 - R5: The Kubernetes method shall give <App>'s pod access to <device> on the node that runs it.

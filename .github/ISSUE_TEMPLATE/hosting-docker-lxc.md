@@ -8,6 +8,8 @@ title: "feat(<app>): <App> runs on Docker on an LXC"
 Fill in <app> (catalog ID), <App> (display name) and <default method> (the old Outcome's
 "Its default stays …"). Keep the issue's ao-dependencies line unchanged as the last line.
 Public text uses the placeholders in docs/lab-placeholders.md.
+An app-specific Pass bullet becomes one extra R right after R6 (the last drill), before
+the DNS/Caddy/Kuma R, in the last execution set; renumber the Rs after it.
 -->
 
 **Lab work:** yes. Read `$HOMELAB_LAB_DIR/README.md` for access. Follow `ansible/README.md` → Live operations: Running directly, Fixing and testing a change, and Application recovery drill.
@@ -22,7 +24,7 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 
 - R1: Where the config selects `hosting.method: docker` on a stack with `guest_type: lxc`, Deploy shall run <App> on Docker on an LXC.
 - R2: The drill config shall use a stack named after the app's current stack with `-lxc` appended (`<app>-lxc` for an app with no `stack:`), created with `guest_type: lxc`.
-- R3: Where the config does not select Docker on an LXC, Deploy shall run <App> on <default method>, unchanged.
+- R3: Where the config does not select Docker on an LXC, Deploy shall keep <App> on its default method, <default method>, unchanged.
 - R4: The Docker-on-LXC method shall do backup, restore and database dump/drop through the shared operations files, with <App>'s own behavior in their inputs and hooks and no role-local copy (`gate/test-shared-standards.py` fails on one).
 - R5: The repository shall pass `bash gate/lint.sh` and `bash gate/test.sh` at the candidate SHA.
 - R6: When the recovery drill runs on Docker on an LXC at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
