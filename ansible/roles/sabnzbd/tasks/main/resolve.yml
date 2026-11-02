@@ -1,0 +1,48 @@
+---
+# Phase of main.yml: load the media wiring table and resolve the app kind, mounts and
+# download directories. Imported in place; inputs are listed in main.yml.
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _sab_kind: "{{ app_config.app.media_kind }}"
+    _sab_base: "http://localhost:{{ app_config.app.port }}"
+    _sab_ini: "{{ app_config.app.config_path }}/sabnzbd.ini"
+
+# The kind is not decoration: wire-media-stack.yml refuses to wire an app whose
+# kind is not in the table, so a typo here would deploy a download client that
+# silently never joins the stack. Failing at deploy time names the problem where
+# it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that:
+      - _sab_kind in media_wiring.kinds
+      - media_wiring.kinds[_sab_kind].role == 'download_client'
+    fail_msg: >-
+      app.media_kind is "{{ _sab_kind }}", which ansible/vars/media-wiring.yml does
+      not define as a download client. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+# A download client sees the whole of the lab's media storage by default, which is
+# more than an *arr gets: it writes the downloads directory AND the library has to
+# be on the same mount namespace, or every completed import is a copy instead of a
+# hardlink. An app that owns no library subpath still needs all of it.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _sab_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+# SABnzbd keeps incomplete and completed downloads in two directories, and both are
+# derived from the one path the platform declares. They are siblings under
+# app.download_path deliberately: a completed download that has to cross a
+# filesystem to reach the *arr import is copied twice instead of moved once.
+- name: Resolve the download directories
+  ansible.builtin.set_fact:
+    _sab_download_root: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+    _sab_incomplete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/incomplete"
+    _sab_complete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/complete"

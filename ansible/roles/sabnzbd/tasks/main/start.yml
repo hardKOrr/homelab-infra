@@ -1,0 +1,107 @@
+---
+# Phase of main.yml: resolve the API key, seed sabnzbd.ini, write Compose, start the app
+# and wait for it. Imported in place; inputs are listed in main.yml.
+
+# ── API key continuity ────────────────────────────────────────────────────────
+# THE HAZARD THIS TASK EXISTS FOR. SABnzbd mints an api_key of its own on first
+# start if sabnzbd.ini does not name one, and that key is what every *arr in the
+# lab authenticates to this client with (tasks/app-wiring/arr-download-client.yml
+# reads it from homelab-infra/media/<instance>). A deploy that let a new key be
+# minted on every run would stale every download-client entry the platform itself
+# created — measured on the *arr apps as executions 114-116, three consecutive
+# Deploy Prowlarr runs producing three different keys (fixed in 726f947).
+#
+# APPROACH CHOSEN: the platform AUTHORS the key into sabnzbd.ini before the
+# container's first start, resolved from three sources in the order of what the
+# app actually answers to. Authoring rather than reading-back is what makes the key
+# knowable on a first deploy and restorable after a wiped config directory; the
+# read-back is still first in the chain so an app that minted or was given a key of
+# its own is ADOPTED rather than overwritten.
+#
+#   1. sabnzbd.ini on this host — unlike a Servarr config.xml, this file is where
+#      SABnzbd's key genuinely lives, so it is the app's own answer and it wins.
+#   2. the vault item — the platform's record of the key it issued last time. It
+#      survives container recreation AND a wiped /config, which is the case source
+#      1 cannot cover and the case that would otherwise mint a new key.
+#   3. generate — only when neither source has one, i.e. a genuinely first deploy.
+#
+# RE-DEPLOY BEHAVIOUR: run two reads the same key out of the ini seeded by run one,
+# writes nothing (the template below is force: false), and stores the identical
+# value back into the vault, which the upsert then recognises as unchanged.
+#
+# homelabinfra_vault, not homelabinfra_infra: the play reloads homelabinfra_infra
+# from config/.generated/facts.yml, which holds topology and never credentials.
+- name: Read the existing sabnzbd.ini (key continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ _sab_ini }}"
+  register: _sab_ini_existing
+  failed_when: false
+  no_log: true
+
+- name: Resolve the API key
+  ansible.builtin.set_fact:
+    _sab_api_key: >-
+      {{ _sab_ini_key
+         | default(_sab_vault_key, true)
+         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  vars:
+    _sab_ini_key: >-
+      {{ (_sab_ini_existing.content | default('') | b64decode
+          | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
+          | default([], true) | join('')) }}
+    _sab_vault_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true) }}
+  no_log: true
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+# force: false — seeded once, then SABnzbd's. See the template's header for why
+# this file is not managed on every run.
+- name: Seed sabnzbd.ini on first deploy
+  ansible.builtin.template:
+    src: sabnzbd.ini.j2
+    dest: "{{ _sab_ini }}"
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0640"
+    force: false
+  no_log: true      # the file carries the API key
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sabnzbd_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart sabnzbd
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/servarr and roles/qbittorrent — a deploy ensures
+# the image is present, Watchtower is what moves it forward and reports it.
+# Re-pulling :latest on every deploy would make each run a silent, unreviewed
+# upgrade.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ sabnzbd_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ sabnzbd_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json"
+    status_code: [200, 401, 403]
+  register: _sab_up
+  until: _sab_up.status | default(0) in [200, 401, 403]
+  retries: "{{ sabnzbd_webui_retries }}"
+  delay: "{{ sabnzbd_webui_delay }}"
+  changed_when: false

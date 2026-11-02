@@ -1,0 +1,94 @@
+---
+# Phase of datastore-disk.yml: resolve the declared device by serial, check its
+# signatures, initialise it in create mode only and read its UUID. Imported in place;
+# inputs are listed in datastore-disk.yml.
+
+- name: PBS datastore disk | Validate the path and mode
+  ansible.builtin.assert:
+    that:
+      - pbs_datastore_disk_mode in ['create', 'reuse', 'attach']
+      - pbs_datastore_disk_path is defined
+      - pbs_datastore_disk_path is match('^/')
+      - pbs_datastore_disk_path != '/'
+      - "'..' not in pbs_datastore_disk_path.split('/')"
+      - pbs_datastore_disk_serial | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - pbs_datastore_disk_label | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+    fail_msg: >-
+      PBS datastore_disk requires an absolute, non-root datastore path and a create, reuse
+      or attach mode. Refusing to mount or initialise an ambiguous location.
+
+- name: PBS datastore disk | Read block devices and serials
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - --json
+      - --paths
+      - --output
+      - "NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS"
+  register: _pbs_lsblk
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Require block-device inspection to succeed
+  ansible.builtin.assert:
+    that:
+      - _pbs_lsblk.rc == 0
+    fail_msg: >-
+      lsblk could not inspect PBS block devices (exit {{ _pbs_lsblk.rc }}):
+      {{ _pbs_lsblk.stderr | default('') }}
+
+- name: PBS datastore disk | Resolve the unique data device
+  ansible.builtin.set_fact:
+    _pbs_data_devices: >-
+      {{ (_pbs_lsblk.stdout | from_json).blockdevices
+         | selectattr('serial', 'equalto', pbs_datastore_disk_serial) | list }}
+
+- name: PBS datastore disk | Require one whole disk with the expected serial
+  ansible.builtin.assert:
+    that:
+      - _pbs_data_devices | length == 1
+      - (_pbs_data_devices | first).type == 'disk'
+      - (_pbs_data_devices | first).children | default([]) | length == 0
+    fail_msg: >-
+      Expected exactly one whole PBS datastore disk with serial {{ pbs_datastore_disk_serial }} and no
+      partitions. Refusing to format or mount an ambiguous device.
+
+- name: PBS datastore disk | Resolve the target device
+  ansible.builtin.set_fact:
+    _pbs_data_device: "{{ (_pbs_data_devices | first).name }}"
+
+- name: PBS datastore disk | Read existing disk signatures
+  ansible.builtin.command:
+    argv: [wipefs, --no-act, --noheadings, --output, TYPE, "{{ _pbs_data_device }}"]
+  register: _pbs_data_signatures
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Refuse unsupported or uninitialised reuse media
+  ansible.builtin.assert:
+    that:
+      - _pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list in [[], ['ext4']]
+      - >-
+        pbs_datastore_disk_mode not in ['reuse', 'attach']
+        or (_pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list) == ['ext4']
+    fail_msg: >-
+      Reuse and attach require an existing ext4 filesystem. Create mode can format only
+      the exact declared PBS datastore disk when it has no filesystem signature.
+
+- name: PBS datastore disk | Initialise a blank declared disk
+  ansible.builtin.command:
+    argv: [mkfs.ext4, -F, -m, '0', -L, "{{ pbs_datastore_disk_label }}", "{{ _pbs_data_device }}"]
+  register: _pbs_data_format
+  changed_when: _pbs_data_format.rc == 0
+  when:
+    - pbs_datastore_disk_mode == 'create'
+    - (_pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list) == []
+  no_log: true
+
+- name: PBS datastore disk | Read the filesystem UUID
+  ansible.builtin.command:
+    argv: [blkid, --output, value, --match-tag, UUID, "{{ _pbs_data_device }}"]
+  register: _pbs_data_uuid
+  changed_when: false
+  no_log: true

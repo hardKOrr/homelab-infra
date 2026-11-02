@@ -8,6 +8,12 @@ The role installs PBS packages and verifies its API token. An optional
 datastore path. This gives the datastore a storage identity independent of the replaceable
 PBS OS disk.
 
+Role layout: `tasks/main.yml` imports `tasks/main/install.yml` (repositories, datastore
+disks, packages, services, API liveness) and `tasks/main/token.yml` (token reuse or
+recreation, vault write, ACL, proof), then exports the endpoint. `tasks/datastore-disk.yml`
+mounts one declared disk through `tasks/datastore-disk/`: `device.yml`, `stage.yml`,
+`copy.yml` and `mount.yml`.
+
 ## Optional second copy
 
 `second_copy` is disabled by default. When enabled, it attaches a second retained disk on

@@ -1,0 +1,186 @@
+---
+# Phase of main.yml: reuse or recreate the API token, store it in Vaultwarden, grant it
+# Admin and prove it authenticates. Imported in place; inputs are listed in main.yml.
+
+# ── API token ─────────────────────────────────────────────────────────────────
+- name: Resolve the API token identity
+  ansible.builtin.set_fact:
+    _pbs_token_id: "{{ pbs_auth_id }}!{{ app_config.app.api_token_name | default('ansible') }}"
+    _pbs_recorded_secret: "{{ homelabinfra_infra.backups.api_token_secret | default('') }}"
+  no_log: true
+
+- name: List existing API tokens
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager user list-tokens {{ pbs_auth_id }} --output-format json"
+  register: _pbs_tokens
+  changed_when: false
+  failed_when: false
+
+- name: Determine whether the token exists
+  ansible.builtin.set_fact:
+    _pbs_token_exists: >-
+      {{ (_pbs_tokens.stdout | default('[]') | from_json)
+         | selectattr('tokenid', 'defined')
+         | selectattr('tokenid', 'equalto', _pbs_token_id)
+         | list | length > 0 }}
+
+# The recorded secret is only trustworthy if it still authenticates — a restored
+# VM or a hand-deleted token would otherwise leave configure-pbs.yml failing later
+# with an opaque 401.
+- name: Verify the recorded token still authenticates
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    headers:
+      Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_recorded_secret }}"
+    validate_certs: false
+    status_code: [200, 401, 403]
+  register: _pbs_token_check
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - _pbs_token_exists | bool
+    - _pbs_recorded_secret | length > 0
+
+- name: Decide whether the token must be recreated
+  ansible.builtin.set_fact:
+    _pbs_token_usable: >-
+      {{ (_pbs_token_exists | bool)
+         and (_pbs_recorded_secret | length > 0)
+         and ((_pbs_token_check.status | default(0)) == 200) }}
+
+# PBS reveals a token secret only at creation, so a token whose secret we cannot
+# verify is useless to us and has to be replaced.
+- name: Remove the unusable API token
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager user delete-token {{ pbs_auth_id }} {{ app_config.app.api_token_name | default('ansible') }}"
+  when:
+    - _pbs_token_exists | bool
+    - not (_pbs_token_usable | bool)
+  changed_when: true
+
+# No --output-format here, unlike every other proxmox-backup-manager call in this role.
+# generate-token does not accept it and rejects the whole command:
+#
+#   Error: parameter verification failed - 'output-format': schema does not allow
+#   additional properties.
+#
+# Its only options are --comment, --digest, --enable and --expire (verified against
+# 3.4.8-3). It always prints the same shape instead, which is JSON behind a literal
+# "Result: " prefix and therefore is NOT parseable as-is:
+#
+#   Result: {
+#     "tokenid": "root@pam!ansible",
+#     "value": "de3980f1-b781-4de3-b671-6ccbf8a0685e"
+#   }
+#
+# The prefix is stripped below before from_json. list-tokens DOES take
+# --output-format json, which is why the neighbouring calls look different.
+- name: Create the API token
+  ansible.builtin.command:
+    cmd: >-
+      proxmox-backup-manager user generate-token {{ pbs_auth_id }}
+      {{ app_config.app.api_token_name | default('ansible') }}
+  register: _pbs_token_create
+  when: not (_pbs_token_usable | bool)
+  changed_when: true
+  no_log: true
+
+- name: Select the effective token secret
+  ansible.builtin.set_fact:
+    # regex_replace strips the "Result: " prefix generate-token puts in front of its JSON
+    # (see the note on that task). Anchored and non-greedy so it only removes the prefix.
+    _pbs_token_secret: >-
+      {{ _pbs_recorded_secret
+         if _pbs_token_usable | bool
+         else ((_pbs_token_create.stdout | regex_replace('^\s*Result:\s*', '')) | from_json).value }}
+  no_log: true
+
+- name: Assert a token secret is available
+  ansible.builtin.assert:
+    that: _pbs_token_secret | length > 0
+    fail_msg: >-
+      Could not obtain a PBS API token secret for {{ _pbs_token_id }}. Check
+      `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` on the PBS VM.
+
+- name: Store and verify the PBS token immediately
+  block:
+    - name: Store the PBS token in Vaultwarden
+      ansible.builtin.include_tasks: ../../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/backups
+        vault_item_fields:
+          instance: "{{ instance }}"
+          host: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+          api_token_id: "{{ _pbs_token_id }}"
+          api_token_secret: "{{ _pbs_token_secret }}"
+        vault_item_secret_fields: [api_token_secret]
+  rescue:
+    - name: Revoke a newly created token whose vault write failed
+      ansible.builtin.command:
+        cmd: >-
+          proxmox-backup-manager user delete-token {{ pbs_auth_id }}
+          {{ app_config.app.api_token_name | default('ansible') }}
+      when: not (_pbs_token_usable | bool)
+      changed_when: true
+      no_log: true
+
+    - name: Fail after PBS token compensation
+      ansible.builtin.fail:
+        msg: >-
+          Vaultwarden storage or readback failed for homelab-infra/backups.
+          A token created by this run was revoked; an existing token was left intact.
+
+# Datastore creation, backup jobs and notification routing all need write access
+# across the tree, so the token is granted Admin at the root path. The ACL is
+# declarative, so it is read first and updated only when the grant is absent —
+# re-applying it otherwise reports `changed` on every re-run.
+- name: Read the current PBS ACL
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager acl list --output-format json"
+  register: _pbs_acl_list
+  changed_when: false
+
+- name: Grant the token Admin on the datastore tree
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager acl update / Admin --auth-id '{{ _pbs_token_id }}'"
+  when: >-
+    (_pbs_acl_list.stdout | from_json)
+    | selectattr('path', 'equalto', '/')
+    | selectattr('roleid', 'equalto', 'Admin')
+    | selectattr('ugid', 'equalto', _pbs_token_id)
+    | list | length == 0
+  changed_when: true
+
+# ── Prove the token the platform will actually use ────────────────────────────
+# "Verify the recorded token still authenticates" above exercises only a secret this
+# run inherited; a token this run CREATED reaches the vault, the registry and Play 3
+# without ever being used once. /api2/json/ping answers 200 long before any of that,
+# so a deploy that stops at liveness reports success on a PBS the platform cannot
+# authenticate to, and the failure surfaces later as a lab with no backups.
+#
+# Placed after the ACL grant so the token is tested in the state Play 3 will find it.
+- name: Verify the effective API token authenticates
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    headers:
+      Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_token_secret }}"
+    validate_certs: false   # self-signed until a certificate is installed
+    status_code: 200
+  register: _pbs_token_final
+  until: _pbs_token_final.status | default(0) == 200
+  retries: 5
+  delay: 3
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Assert the effective API token authenticates
+  ansible.builtin.assert:
+    that: _pbs_token_final.status | default(0) == 200
+    fail_msg: >-
+      The PBS API token {{ _pbs_token_id }} does not authenticate
+      (HTTP {{ _pbs_token_final.status | default('no response') }}). Datastore
+      creation, the backup job and notification routing all use this token. Check
+      `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` and
+      `proxmox-backup-manager acl list` on the PBS VM.

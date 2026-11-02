@@ -1,0 +1,53 @@
+---
+# Phase of main.yml: load the media wiring table and resolve the app kind, API version,
+# mounts and root folders. Imported in place; inputs are listed in main.yml.
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _servarr_kind: "{{ app_config.app.media_kind }}"
+    # Servarr reads configuration overrides from <APPNAME>__SECTION__KEY.
+    _servarr_prefix: "{{ app_config.app.media_kind | upper }}"
+
+# The kind is not decoration: slice 504 refuses to wire an app whose kind is not
+# in this table, so a typo here would deploy an app that silently never joins the
+# media stack. Failing at deploy time names the problem where it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that: _servarr_kind in media_wiring.kinds
+    fail_msg: >-
+      app.media_kind is "{{ _servarr_kind }}", which ansible/vars/media-wiring.yml
+      does not define. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+- name: Resolve the app's API version from the wiring table
+  ansible.builtin.set_fact:
+    _servarr_api: "{{ media_wiring.kinds[_servarr_kind].api }}"
+    _servarr_rootfolder_needs_profiles: >-
+      {{ media_wiring.kinds[_servarr_kind].rootfolder_needs_profiles
+         | default(false) | bool }}
+
+# Storage is configured once for the lab in config/infrastructure.yml under
+# media_storage, not restated by every app. An app contributes one thing: which
+# subdirectory of the library it owns.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    # An app that owns no part of the library has no reason to see it: Prowlarr
+    # declares no library_subpath and therefore gets no mounts at all. app.mounts
+    # overrides both ways, which is how an app that needs the downloads directory
+    # without owning a library subpath would ask for it.
+    _servarr_mounts: >-
+      {{ app_config.app.mounts
+         | default([] if (app_config.app.library_subpath | default('') | length == 0)
+                   else ((app_config.media_storage | default({})).mounts | default([])),
+                   true) }}
+    _servarr_root_folders: >-
+      {{ [((app_config.media_storage | default({})).library | default('') ~ '/'
+           ~ (app_config.app.library_subpath | default('')))]
+         if ((app_config.media_storage | default({})).library | default('') | length > 0
+             and app_config.app.library_subpath | default('') | length > 0)
+         else (app_config.app.root_folders | default([])) }}

@@ -1,5 +1,10 @@
 # Servarr (Prowlarr, Sonarr, Radarr, Lidarr)
 
+Deploy runs `tasks/main.yml`, whose phases sit in `tasks/main/`: `resolve.yml` (kind, API
+version, storage), `start.yml` (directories, mounts, API key, Compose), `verify.yml`
+(authenticated status, refused anonymous call, chosen auth method) and `root-folder.yml`
+(library root folder). Plugins, the vault write and the registry export stay in `main.yml`.
+
 ## Native recovery
 
 Prowlarr, Sonarr, Radarr and Lidarr share Servarr native recovery. Backup stops only the

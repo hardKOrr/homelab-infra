@@ -48,13 +48,8 @@ size:
   ansible/roles/k3s_cluster/tasks/storage.yml: 365
   ansible/roles/mautic/tasks/docker.yml: 352
   ansible/roles/observability/tasks/main.yml: 371
-  ansible/roles/pbs/tasks/datastore-disk.yml: 424
-  ansible/roles/pbs/tasks/main.yml: 456
   ansible/roles/plane/tasks/docker.yml: 327
   ansible/roles/plane/templates/manifest.yaml.j2: 703
-  ansible/roles/qbittorrent/tasks/main.yml: 439
-  ansible/roles/sabnzbd/tasks/main.yml: 463
-  ansible/roles/servarr/tasks/main.yml: 513
   ansible/roles/slskd/tasks/main.yml: 366
   ansible/roles/uptime-kuma/tasks/configure.yml: 484
   ansible/roles/vaultwarden/tasks/main.yml: 341

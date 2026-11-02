@@ -1,5 +1,10 @@
 # qBittorrent
 
+`tasks/main.yml` is Deploy's entry; its phases live in `tasks/main/`: `resolve.yml` (kind,
+mounts), `storage.yml` (directories, download path), `start.yml` (WebUI credential, seeded
+config, peer port settings, Compose) and `verify.yml` (login and password repair, identity,
+refused session-less call). `main.yml` then stores the credential and exports the endpoint.
+
 ## Native recovery
 
 qBittorrent native recovery stops only the selected service and archives its config,

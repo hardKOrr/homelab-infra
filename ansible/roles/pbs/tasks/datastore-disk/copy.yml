@@ -1,0 +1,98 @@
+---
+# Phase of datastore-disk.yml: stop PBS, copy and verify the existing datastore onto the
+# staged disk, then unmount the staging path. Imported in place; inputs are listed in
+# datastore-disk.yml.
+
+- name: PBS datastore disk | Read PBS service state before copying data
+  ansible.builtin.service_facts:
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+
+- name: PBS datastore disk | Stop proxy before copying the old datastore
+  ansible.builtin.systemd:
+    name: proxmox-backup-proxy
+    state: stopped
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - "'proxmox-backup-proxy.service' in ansible_facts.services | default({})"
+    - ansible_facts.services['proxmox-backup-proxy.service'].state == 'running'
+
+- name: PBS datastore disk | Stop datastore service before copying the old datastore
+  ansible.builtin.systemd:
+    name: proxmox-backup
+    state: stopped
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - "'proxmox-backup.service' in ansible_facts.services | default({})"
+    - ansible_facts.services['proxmox-backup.service'].state == 'running'
+
+- name: PBS datastore disk | Copy existing data to retained storage
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - --exclude=lost+found
+      - "{{ pbs_datastore_disk_path }}/"
+      - /var/lib/homelab-infra/pbs-datastore-stage/
+  register: _pbs_datastore_copy
+  changed_when: _pbs_datastore_copy.rc == 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - pbs_datastore_disk_mode == 'create'
+  no_log: true
+
+- name: PBS datastore disk | Preserve datastore root ownership and mode
+  ansible.builtin.file:
+    path: /var/lib/homelab-infra/pbs-datastore-stage
+    owner: "{{ _pbs_datastore_path_before.stat.uid }}"
+    group: "{{ _pbs_datastore_path_before.stat.gid }}"
+    mode: "{{ _pbs_datastore_path_before.stat.mode }}"
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - pbs_datastore_disk_mode == 'create'
+
+- name: PBS datastore disk | Verify the copied data byte-for-byte
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - --exclude=lost+found
+      - --checksum
+      - --delete
+      - --dry-run
+      - --itemize-changes
+      - "{{ pbs_datastore_disk_path }}/"
+      - /var/lib/homelab-infra/pbs-datastore-stage/
+  register: _pbs_datastore_verify_copy
+  changed_when: false
+  failed_when: >-
+    _pbs_datastore_verify_copy.rc != 0
+    or _pbs_datastore_verify_copy.stdout | trim | length > 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - pbs_datastore_disk_mode == 'create'
+  no_log: true
+
+- name: PBS datastore disk | Unmount the staging path after verification
+  ansible.builtin.command:
+    argv: [umount, /var/lib/homelab-infra/pbs-datastore-stage]
+  register: _pbs_stage_unmount
+  changed_when: _pbs_stage_unmount.rc == 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_stage_mount.rc == 0 or _pbs_stage_mount_command.changed | default(false)
+  no_log: true

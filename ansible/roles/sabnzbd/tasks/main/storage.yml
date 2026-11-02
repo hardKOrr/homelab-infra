@@ -1,0 +1,135 @@
+---
+# Phase of main.yml: create the directories, check the lab's mounts, own the download
+# directories and resolve the host whitelist. Imported in place; inputs are listed in
+# main.yml.
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ sabnzbd_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: SABnzbd writes sabnzbd.ini, its history database
+# and its logs here, and the seeded configuration file below has to be readable and
+# rewritable by the same account.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/servarr and roles/qbittorrent: the mounts are the lab's,
+# attached to the stack host by Play 1, and only ever asserted here. A container
+# started against a missing bind source gets an empty directory, and SABnzbd then
+# unpacks into the stack host's own root disk until it fills.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _sab_mount_check
+  loop: "{{ _sab_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _sab_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# The download directory is this app's own, the way an *arr's library_subpath is:
+# the platform declares it, so creating it and owning it is this deploy finishing
+# its own job. It must live under one of the mounts above — a path outside them is
+# the stack host's root disk, which is what this check is really for.
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _sab_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _sab_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not inside
+      any media_storage mount
+      ({{ _sab_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Completed downloads would land on the stack host's own disk and never
+      hardlink into the library. Point app.download_path at a directory under one
+      of the mounts, or declare the mount that holds it in
+      config/infrastructure.yml.
+  vars:
+    # The download path's own ancestors, so the comparison lands on a path
+    # component rather than a string prefix — /mnt/data2 is not inside /mnt/data.
+    # Serialized through JSON because a template carrying {% %} statement blocks
+    # renders to a STRING; see the same construction in tasks/load-user-vars.yml.
+    _sab_download_ancestors_json: >-
+      {%- set parts = _sab_download_root.split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _sab_download_ancestors: "{{ _sab_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _sab_download_dirs
+  loop:
+    - "{{ _sab_download_root }}"
+    - "{{ _sab_incomplete_dir }}"
+    - "{{ _sab_complete_dir }}"
+  failed_when: false
+
+- name: Assert the download directories are usable
+  ansible.builtin.assert:
+    that: not (item.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}). On
+      an unprivileged stack host this is what an unmapped owner looks like: a
+      directory whose host uid falls outside the guest's id range appears as
+      nobody:nogroup and not even root inside the guest can chown it. Check that
+      the mount and everything under it belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+  loop: "{{ _sab_download_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# ── The name the proxy publishes this app under ───────────────────────────────
+# SABnzbd validates the Host header of every request and refuses one naming a host
+# it does not know, which is what a reverse proxy sends. Requests by IP address —
+# the *arr apps, and the deploy's own checks below — are unaffected, so a missing
+# entry here breaks only the human's browser, and breaks it completely.
+#
+# The estate's domain, not the lab's, when the app declares one: routing.estate
+# picks a domain from the `domains:` map in config/infrastructure.yml
+# (ansible/vars/CONTRACT.md §5). tasks/resolve-estate.yml does this in Play 3 and
+# does not run here, so the estate is resolved from the authored config directly.
+- name: Resolve the hostname the reverse proxy publishes
+  ansible.builtin.set_fact:
+    _sab_host_whitelist: >-
+      {{ app_config.app.host_whitelist
+         | default(([_sab_fqdn] if _sab_domain | length > 0 else [])
+                   + [instance, ansible_hostname | default(instance)]
+                   | unique, true) }}
+  vars:
+    _sab_estate: "{{ app_config.routing.estate | default('') }}"
+    _sab_infra_cfg: "{{ homelabinfra_config.infrastructure | default({}) }}"
+    _sab_domain: >-
+      {{ ((_sab_infra_cfg.domains | default({}))[_sab_estate] | default({})).domain
+         | default(_sab_infra_cfg.domain | default(''), true) }}
+    _sab_fqdn: >-
+      {{ (app_config.routing.subdomain | default(instance, true)) ~ '.' ~ _sab_domain }}

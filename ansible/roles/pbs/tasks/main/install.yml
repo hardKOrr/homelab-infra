@@ -1,0 +1,212 @@
+---
+# Phase of main.yml: clear the enterprise repository, mount the declared datastore
+# disks, install PBS, start its services and wait for the API. Imported in place; inputs
+# are listed in main.yml.
+
+# ── Repository ────────────────────────────────────────────────────────────────
+# FIRST, before any apt operation in this role.
+#
+# The proxmox-backup-server package installs its own
+# /etc/apt/sources.list.d/pbs-enterprise.list pointing at the subscription-only enterprise
+# repository, which answers 401 for a lab without a subscription. Once that file exists —
+# which it does from the moment PBS is first installed — EVERY apt call on this guest
+# fails, including the very first task of this role:
+#
+#   TASK [pbs : Install apt repository prerequisites]
+#   E:Failed to fetch https://enterprise.proxmox.com/debian/pbs/dists/bookworm/InRelease
+#   401 Unauthorized
+#
+# so the removal has to precede the first `update_cache`, not merely the install. It is
+# repeated after the install below, because that is when a FIRST deploy creates the file.
+- name: Disable the subscription-only enterprise repository before any apt call
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
+- name: Install apt repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Install rsync for PBS datastore migration
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Configure the persistent PBS datastore disk
+  ansible.builtin.include_tasks: ../datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-store
+    pbs_datastore_disk_label: pbs-datastore
+    pbs_datastore_required_mounts: >-
+      {{ [homelabinfra_config.infrastructure.backups.datastore_path]
+         + ([app_config.second_copy.datastore_path]
+            if app_config.second_copy.enabled | default(false) | bool else []) }}
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Configure the optional PBS second-copy datastore disk
+  ansible.builtin.include_tasks: ../datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ app_config.second_copy.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ pbs_second_copy_mount_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-copy
+    pbs_datastore_disk_label: pbs-copy
+    pbs_datastore_required_mounts: >-
+      {{ [homelabinfra_config.infrastructure.backups.datastore_path,
+          app_config.second_copy.datastore_path] }}
+  when: app_config.second_copy.enabled | default(false) | bool
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# Proxmox publishes this key already dearmored, so it is used as-is.
+- name: Install the Proxmox release key
+  ansible.builtin.get_url:
+    url: "{{ pbs_apt_key_url }}"
+    dest: "{{ pbs_apt_keyring }}"
+    mode: "0644"
+
+- name: Add the Proxmox Backup Server apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ pbs_apt_keyring }}] {{ pbs_apt_repo_url }}
+      {{ ansible_distribution_release }}
+      {{ app_config.app.apt_repo_component | default('pbs-no-subscription') }}
+    filename: pbs
+    state: present
+    update_cache: true
+
+- name: Install Proxmox Backup Server
+  ansible.builtin.apt:
+    name: proxmox-backup-server
+    state: present
+  notify: Restart pbs
+
+- name: Install util-linux for datastore trimming
+  ansible.builtin.apt:
+    name: util-linux
+    state: present
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Disable the subscription-only enterprise repository (installed by the package)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
+- name: Read the new PBS datastore directory marker
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    follow: false
+  register: _pbs_new_datastore_chunks
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'create'
+
+- name: Give PBS ownership of an empty datastore directory
+  ansible.builtin.file:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    owner: backup
+    group: backup
+    mode: "0750"
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'create'
+    - not (_pbs_new_datastore_chunks.stat.isdir | default(false))
+
+- name: Read the new PBS second-copy directory marker
+  ansible.builtin.stat:
+    path: "{{ app_config.second_copy.datastore_path }}/.chunks"
+    follow: false
+  register: _pbs_new_second_copy_chunks
+  when:
+    - app_config.second_copy.enabled | default(false) | bool
+    - pbs_second_copy_mount_mode | default('create') == 'create'
+
+- name: Give PBS ownership of an empty second-copy directory
+  ansible.builtin.file:
+    path: "{{ app_config.second_copy.datastore_path }}"
+    owner: backup
+    group: backup
+    mode: "0750"
+  when:
+    - app_config.second_copy.enabled | default(false) | bool
+    - pbs_second_copy_mount_mode | default('create') == 'create'
+    - not (_pbs_new_second_copy_chunks.stat.isdir | default(false))
+
+- name: Enable and start the PBS services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+
+- name: Enable and start periodic trimming of the PBS datastore
+  ansible.builtin.systemd:
+    name: fstrim.timer
+    state: started
+    enabled: true
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the active PBS datastore disk configuration
+  ansible.builtin.command:
+    argv:
+      - qm
+      - config
+      - "{{ hostvars['localhost']._pbs_disk_vmid }}"
+      - --current
+  delegate_to: "{{ hostvars['localhost']._pbs_disk_node }}"
+  register: _pbs_disk_active_config_after
+  changed_when: false
+  no_log: true
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+
+- name: Confirm discard is active on the retained PBS datastore disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_disk_active_config_after.stdout is search(
+          '(?m)^scsi1:\s*[^\n]*,discard=on(,|$)')
+    fail_msg: >-
+      The retained PBS datastore disk is configured with discard but its active QEMU
+      device did not apply the option after restart.
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+
+- name: Confirm discard is active on the retained PBS second-copy disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_disk_active_config_after.stdout is search(
+          '(?m)^scsi2:\s*[^\n]*,discard=on(,|$)')
+    fail_msg: >-
+      The retained PBS second-copy disk is configured with discard but its active QEMU
+      device did not apply the option after restart.
+  when: app_config.second_copy.enabled | default(false) | bool
+
+- name: Wait for the PBS API to answer
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"
+    validate_certs: false   # PBS serves a self-signed certificate until one is installed
+    status_code: [200, 401]
+  register: _pbs_health
+  until: _pbs_health.status | default(0) in [200, 401]
+  retries: 30
+  delay: 5
+  changed_when: false

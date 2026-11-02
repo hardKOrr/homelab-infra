@@ -1,0 +1,144 @@
+---
+# Phase of main.yml: prove the key in force authenticates, the API refuses an unkeyed
+# caller and an authentication method is chosen. Imported in place; inputs are listed in
+# main.yml.
+
+# ── Prove the app is USABLE, not merely alive ─────────────────────────────────
+# A Servarr container opens its port well before it is configured, and a v4 app
+# that never had an authentication method chosen serves its setup screen on every
+# UI path while looking perfectly healthy from outside.
+#
+# THE APP IS ASKED, NOT ITS CONFIG FILE. Measured live 2026-08-09 against
+# lscr.io/linuxserver/prowlarr:latest: the `<APP>__AUTH__APIKEY` and
+# `<APP>__AUTH__METHOD` overrides are honoured — the declared key authenticates
+# and an unkeyed call is refused — and yet config.xml contains NEITHER element.
+# Servarr treats environment overrides as runtime configuration and persists only
+# what its own setup writes, so "config.xml has no ApiKey" does not mean "the app
+# has no API key". Asserting on the file failed a deploy of an app that was
+# working correctly.
+#
+# config.xml keeps exactly one job, above: key continuity. An app with a key of
+# its own — migrated, or set up by hand — is adopted rather than overwritten,
+# because that key is what every Prowlarr Application and Bazarr connection in
+# the lab was wired with.
+#
+# Three checks, each failing a state the port alone cannot distinguish:
+#
+#   1. /api/<v>/system/status answers with the app's own name, authenticated with
+#      the key that is in force. That proves the key is live, which is the one
+#      thing every piece of media wiring depends on — and a first-run app with no
+#      key configured fails it, because nothing authenticates.
+#   2. the same call WITHOUT the key is refused. Without this, an app configured
+#      DisabledForLocalAddresses looks identical to a secured one from the stack
+#      host, and the lab ships an unauthenticated API on the LAN.
+#   3. the app reports an authentication method it actually chose, read from
+#      /api/<v>/config/host — the setup-page state that config.xml used to be
+#      asked about, asked of the running app instead.
+- name: Re-read config.xml after start (an app may have written its own key)
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.config_path }}/config.xml"
+  register: _servarr_config
+  until: _servarr_config.content is defined
+  retries: "{{ servarr_config_retries }}"
+  delay: "{{ servarr_config_delay }}"
+  failed_when: false
+  no_log: true
+
+- name: Resolve the key that is in force
+  ansible.builtin.set_fact:
+    # A key in config.xml wins: the app wrote it, so it is what the app answers
+    # to. Otherwise the declared key is in force through the environment, which
+    # the status call below proves rather than assumes.
+    _servarr_effective_key: >-
+      {{ (_servarr_config.content | default('') | b64decode
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join(''))
+         | default(_servarr_api_key, true) }}
+  no_log: true
+
+- name: Assert a key exists to authenticate with
+  ansible.builtin.assert:
+    that: _servarr_effective_key | length > 0
+    fail_msg: >-
+      {{ instance }} has no API key from either source — none in config.xml at
+      {{ app_config.app.config_path }}, and none declared by this deploy. Without
+      one, nothing can wire this app.
+
+- name: Query the app's own status endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    # 401 is accepted here so the retry loop owns the wait and the assert below
+    # owns the explanation. Letting uri fail on it produces "Status code was 401",
+    # which says nothing about what to do next.
+    status_code: [200, 401]
+  register: _servarr_status
+  until: _servarr_status.status | default(0) == 200
+  retries: 30
+  delay: 5
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Assert the key in force actually authenticates
+  ansible.builtin.assert:
+    that: _servarr_status.status | default(0) == 200
+    fail_msg: >-
+      {{ instance }} refused the key this deploy holds. Either the app generated
+      a key of its own after start and did not write it to
+      {{ app_config.app.config_path }}/config.xml, or it never accepted
+      {{ _servarr_prefix }}__AUTH__APIKEY and is sitting on its first-run setup
+      page — which answers the port normally and serves the setup screen on every
+      UI path. `docker logs {{ instance }}` shows which.
+
+- name: Assert the app identifies itself as {{ _servarr_kind }}
+  ansible.builtin.assert:
+    that: (_servarr_status.json.appName | default('') | lower) == _servarr_kind
+    fail_msg: >-
+      {{ app_config.app.port }} answered the {{ _servarr_kind }} status endpoint
+      as "{{ _servarr_status.json.appName | default('nothing') }}". Either
+      app.image and app.media_kind disagree, or another container already holds
+      that port on this stack host.
+
+- name: Call the status endpoint with no API key
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    status_code: [200, 401]
+  register: _servarr_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses an unauthenticated caller
+  ansible.builtin.assert:
+    that: _servarr_unauthenticated.status == 401
+    fail_msg: >-
+      {{ instance }} served its API to a caller with no key. Its
+      AuthenticationRequired is "{{ app_config.app.auth_required | default('Enabled') }}"
+      as this deploy asked, but the running app answered anyway — anything on the
+      LAN can read and rewrite this app's library. `docker inspect {{ instance }}`
+      shows whether {{ _servarr_prefix }}__AUTH__REQUIRED reached the container.
+
+# The question config.xml used to be asked, put to the running app: an app still
+# on its setup screen reports no authentication method here, however healthy the
+# port looks.
+- name: Read the authentication the app reports for itself
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/config/host"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_host_config
+  changed_when: false
+  no_log: true
+
+- name: Assert the app has chosen an authentication method
+  ansible.builtin.assert:
+    that:
+      - (_servarr_host_config.json.authenticationMethod | default('') | length) > 0
+      - (_servarr_host_config.json.authenticationMethod | default('') | lower) != 'none'
+    fail_msg: >-
+      {{ instance }} reports authenticationMethod
+      "{{ _servarr_host_config.json.authenticationMethod | default('nothing') }}".
+      An app in that state serves its first-run setup page on every UI path while
+      the port answers normally, and the reverse proxy in front of it would be
+      publishing a setup wizard. Check that
+      {{ _servarr_prefix }}__AUTH__METHOD is a spelling this image honours.
