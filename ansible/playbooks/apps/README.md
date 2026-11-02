@@ -185,7 +185,9 @@ hooks under `roles/<app>/tasks/`, each run only when the file exists:
 | `remove.yml` | after the Compose project stops |
 | `remove-devices.yml` | after the data paths are gone; a GPU hook calls `tasks/proxmox/detach-app-gpu.yml` |
 
-Never add an `app == '<app>'` branch to Remove.
+Never add an `app == '<app>'` branch to Remove. Restore App's hooks
+(`restore-inputs.yml`, `restore-provisioned.yml`, `restore-config.yml`) are listed in the
+header of `playbooks/maintenance/restore-app.yml`.
 
 ---
 

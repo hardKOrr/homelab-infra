@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Resolve Remove App into the task sequence one app's removal runs.
+"""Resolve Remove App, or Restore App, into the task sequence one app's run takes.
 
-`plan()` resolves Play 2 (the stop on the app's host); `plan_all()` resolves every play,
-each starting with a step that holds its `vars`. Blocks are flattened with their
-conditions, the role hooks (`{{ _rm_hooks }}/<file>`) and
-`tasks/proxmox/detach-app-gpu.yml` are inlined, and conditions on the app's identity are
+`plan()` resolves Remove's Play 2 (the stop on the app's host); `plan_all()` resolves every
+play of Remove, or of another playbook with role hooks (`playbook=RESTORE`), each play
+starting with a step that holds its `vars`. Blocks are flattened with their
+conditions, the role hooks (`{{ _rm_hooks }}/<file>`, `{{ _ra_hooks }}/<file>`), the role
+task files a hook includes and `tasks/proxmox/detach-app-gpu.yml` are inlined, and conditions on the app's identity are
 decided for the given app and instance: an app-name comparison or list, a hook file's
 presence, a play variable that is one of those, and a flag a hook declares
 (`_rm_database_backend`, `_rm_keeps_guest_record`, true only when a hook sets it).
@@ -40,6 +41,9 @@ def listify(when) -> list[str]:
 
 
 FLAGS = ("_rm_database_backend", "_rm_keeps_guest_record")
+REMOVE = "ansible/playbooks/apps/remove.yml"
+RESTORE = "ansible/playbooks/maintenance/restore-app.yml"
+HOOK = re.compile(r"\{\{ _r[am]_hooks \}\}")
 
 
 def subjects(app: str, instance: str) -> dict:
@@ -47,6 +51,8 @@ def subjects(app: str, instance: str) -> dict:
         r"hostvars\['localhost'\]\._rm_app_name": app,
         r"\(remove_app \| default\(instance\)\)": instance,
         r"\(app \| default\(instance\)\)": app,
+        r"hostvars\['localhost'\]\._ra_app": app,
+        r"(?<![\w.])_ra_app(?!\w)": app,
     }
 
 
@@ -56,7 +62,7 @@ def substitute(text: str, app: str, instance: str, hooks: Path, flags: set) -> s
         text = re.sub(rf"{pattern} == '([\w-]+)'", lambda m: str(value == m.group(1)), text)
         text = re.sub(rf"{pattern} in \[([^\]]*)\]",
                       lambda m: str(value in re.findall(r"'([\w-]+)'", m.group(1))), text)
-    text = re.sub(r"\(_rm_hooks ~ '/([\w.-]+)'\) is file",
+    text = re.sub(r"\(_r[am]_hooks ~ '/([\w.-]+)'\) is file",
                   lambda m: str((hooks / m.group(1)).is_file()), text)
     for flag in FLAGS:
         text = re.sub(rf"\(?{flag} \| default\(false\) \| bool\)?", str(flag in flags), text)
@@ -83,14 +89,15 @@ def include_target(task: dict) -> str | None:
 
 
 def resolve(path: str, base: Path, repo: Path, hooks: Path) -> Path:
-    if "{{ _rm_hooks }}" in path:
+    if HOOK.search(path):
         return hooks / path.split("}}/", 1)[1]
     return (base / path).resolve()
 
 
 def walk(tasks, base: Path, repo: Path, app: str, instance: str, inherited: list[str],
-         via: tuple = (), flags: set | None = None, play_vars: dict | None = None):
-    hooks = repo / "ansible/roles" / app / "tasks"
+         via: tuple = (), flags: set | None = None, play_vars: dict | None = None,
+         hooks: Path | None = None):
+    hooks = hooks or repo / "ansible/roles" / app / "tasks"
     flags = set() if flags is None else flags
     for task in tasks or []:
         conditions = []
@@ -105,25 +112,26 @@ def walk(tasks, base: Path, repo: Path, app: str, instance: str, inherited: list
             continue
         if "block" in task:
             yield from walk(task["block"], base, repo, app, instance, conditions, via, flags,
-                            play_vars)
+                            play_vars, hooks)
             continue
         facts = task.get("ansible.builtin.set_fact") or {}
         if via and facts and set(facts) <= set(FLAGS):  # a hook declaring flags
             flags.update(name for name, value in facts.items() if value is True)
             continue
         target = include_target(task)
-        if target is not None and "{{" in target and "{{ _rm_hooks }}" not in target:
+        if target is not None and "{{" in target and not HOOK.search(target):
             module, arguments = "include_tasks", target  # a templated path stays as text
         elif target is not None:
             file = resolve(target, base, repo, hooks)
             relative = file.relative_to(repo.resolve()).as_posix() if file.is_relative_to(
                 repo.resolve()) else str(file)
-            if "{{ _rm_hooks }}" in target or relative.endswith(INLINE):
+            if HOOK.search(target) or relative.endswith(INLINE) or (
+                    via and relative.startswith("ansible/roles/")):
                 inner = yaml.safe_load(file.read_text()) or []
                 if task.get("vars"):  # vars on an inlining include reach every inner task
                     inner = [{**t, "vars": {**task["vars"], **t.get("vars", {})}} for t in inner]
                 yield from walk(inner, file.parent, repo, app, instance, conditions,
-                                via + (relative,), flags, play_vars)
+                                via + (relative,), flags, play_vars, hooks)
                 continue
             module = "include_tasks"
             arguments = yaml.safe_load(file.read_text())  # content, not path
@@ -150,9 +158,11 @@ def rewrite(value, change):
 
 
 def plan_all(repo: Path, app: str, instance: str | None = None,
-             only: str | None = None) -> list[dict]:
-    playbook = repo / "ansible/playbooks/apps/remove.yml"
-    hooks = repo / "ansible/roles" / app / "tasks"
+             only: str | None = None, playbook: str = REMOVE,
+             role: str | None = None) -> list[dict]:
+    """`role` is the role whose hooks run, when it is not the app's own."""
+    playbook = repo / playbook
+    hooks = repo / "ansible/roles" / (role or app) / "tasks"
     instance = instance or app
     flags: set = set()  # Play 1's hooks declare them; later plays read them
     steps = []
@@ -164,7 +174,7 @@ def plan_all(repo: Path, app: str, instance: str | None = None,
         found = []
         for section in ("pre_tasks", "tasks"):
             found += walk(play.get(section), playbook.parent, repo, app, instance, [], (),
-                          flags, play_vars)
+                          flags, play_vars, hooks)
         play_vars = {k: rewrite(v, lambda t: substitute(t, app, instance, hooks, flags))
                      for k, v in (play.get("vars") or {}).items()}  # flags now known
         if only is None:

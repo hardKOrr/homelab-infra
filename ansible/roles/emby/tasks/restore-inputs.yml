@@ -1,0 +1,25 @@
+---
+# Restore App hook, run on localhost before the target identity checks.
+# Emby's account database is part of its /config snapshot. Retain the source
+# account only in the protected variable path so a new target can prove the restored
+# user and keep Vaultwarden aligned with the restored app-owned database.
+- name: Resolve source Emby credentials without exposing them
+  ansible.builtin.set_fact:
+    restore_source_emby_user: >-
+      {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
+         | default('') }}
+    restore_source_emby_password: >-
+      {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
+         | default('') }}
+  no_log: true
+
+# Emby's config directory is target-owned. Rebind the defaulted source path when
+# restoring to a differently named instance; external media paths are never changed.
+- name: Normalize the target Emby config path
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ restore_target_config | combine({'app': {
+           'config_path': (restore_target_config.app.config_path
+                           | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                     '/opt/' ~ _ra_target ~ '/'))
+         }}, recursive=True) }}

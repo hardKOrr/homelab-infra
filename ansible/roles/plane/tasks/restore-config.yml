@@ -1,0 +1,6 @@
+---
+# Restore App hook, run on localhost once the restore target is resolved: the app_config
+# this role's restore task gets, with both owned paths rebased (restore-target-paths.yml).
+- name: Use the normalized Plane target config
+  ansible.builtin.set_fact:
+    restore_app_config: "{{ plane_restore_target_config }}"

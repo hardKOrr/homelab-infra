@@ -1,0 +1,56 @@
+---
+# Restore App hook, run on localhost before the target identity checks.
+# Plane's local RabbitMQ/MinIO credentials and application keys must follow the
+# restored database and files to a new target. They never enter the recovery plan.
+- name: Resolve source Plane recovery material without exposing it in evidence
+  ansible.builtin.set_fact:
+    restore_source_plane_secrets:
+      secret_key: "{{ app_config.app.secret_key | default('') }}"
+      live_server_secret_key: "{{ app_config.app.live_server_secret_key | default('') }}"
+      rabbitmq_password: "{{ app_config.app.rabbitmq_password | default('') }}"
+      object_storage_access_key: "{{ app_config.app.object_storage_access_key | default('') }}"
+      object_storage_secret_key: "{{ app_config.app.object_storage_secret_key | default('') }}"
+    restore_source_redis:
+      instance: "{{ app_config.app.redis.instance | default('') }}"
+      host: >-
+        {{ (homelabinfra_infra.databases | default({})).get(
+             app_config.app.redis.instance | default(''), {}).host | default('') }}
+      port: >-
+        {{ (homelabinfra_infra.databases | default({})).get(
+             app_config.app.redis.instance | default(''), {}).port | default(0) }}
+  no_log: true
+
+# Plane stores its two owned paths below /opt/<instance>. Normalize those paths for
+# a new target without changing the source config or putting secrets in the plan.
+- name: Normalize the target Plane storage paths
+  ansible.builtin.include_tasks: restore-target-paths.yml
+
+# Both paths together are Plane's storage identity for Restore App's collision check.
+# A new target that would reuse a source path keeps the source identity, so the check
+# refuses it.
+- name: Resolve Plane source and target owned storage paths
+  ansible.builtin.set_fact:
+    _ra_plane_source_storage_paths:
+      data: "{{ app_config.app.data_path | replace('{{ instance }}', _ra_source_instance) }}"
+      object_storage: "{{ app_config.app.object_storage_path | replace('{{ instance }}', _ra_source_instance) }}"
+    _ra_plane_target_storage_paths:
+      data: "{{ plane_restore_target_config.app.data_path }}"
+      object_storage: "{{ plane_restore_target_config.app.object_storage_path }}"
+
+- name: Declare Plane's storage identity
+  ansible.builtin.set_fact:
+    restore_source_storage_path: >-
+      {{ _ra_plane_source_storage_paths.data ~ '|' ~
+         _ra_plane_source_storage_paths.object_storage }}
+    restore_target_storage_path: >-
+      {{ (_ra_plane_source_storage_paths.data ~ '|' ~
+          _ra_plane_source_storage_paths.object_storage)
+         if (_ra_plane_target_storage_paths.data in [
+               _ra_plane_source_storage_paths.data,
+               _ra_plane_source_storage_paths.object_storage
+             ] or _ra_plane_target_storage_paths.object_storage in [
+               _ra_plane_source_storage_paths.data,
+               _ra_plane_source_storage_paths.object_storage
+             ])
+         else (_ra_plane_target_storage_paths.data ~ '|' ~
+               _ra_plane_target_storage_paths.object_storage) }}

@@ -1,0 +1,26 @@
+---
+# Rebase one source-owned path in the restore target's config onto the target instance,
+# for a role's Restore App restore-config.yml hook. Sets restore_app_config, the
+# app_config the role's restore task receives (default: restore_target_config unchanged).
+#
+# Inputs:  restore_rebase_key       app.<key> to rebase, e.g. data_path or config_path
+#          restore_rebase_prefix    optional, default /opt/: <prefix><source>/ becomes
+#                                   <prefix><target>/
+#          restore_rebase_instance  optional, default false: also put the target in place
+#                                   of a literal "{{ instance }}" in the path
+# Reads:   restore_target_config, _ra_source_instance, _ra_target (Restore App, localhost)
+# One expression on purpose: a path may hold a literal "{{ instance }}", which must not pass
+# through an intermediate variable that Ansible would template again.
+- name: Rebase the target's own path onto the restore target
+  ansible.builtin.set_fact:
+    restore_app_config: >-
+      {{ restore_target_config | combine({'app': {restore_rebase_key: (
+           (restore_target_config.app[restore_rebase_key]
+            | replace(restore_rebase_prefix | default('/opt/') ~ _ra_source_instance ~ '/',
+                      restore_rebase_prefix | default('/opt/') ~ _ra_target ~ '/')
+            | replace('{{ instance }}', _ra_target))
+           if restore_rebase_instance | default(false) | bool
+           else (restore_target_config.app[restore_rebase_key]
+                 | replace(restore_rebase_prefix | default('/opt/') ~ _ra_source_instance ~ '/',
+                           restore_rebase_prefix | default('/opt/') ~ _ra_target ~ '/')))}},
+         recursive=True) }}

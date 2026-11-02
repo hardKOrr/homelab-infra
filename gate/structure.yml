@@ -18,8 +18,7 @@ missing_paths:
   - config.example/apps/prowlarr.example.yml
 
 # Literal app-name comparisons per playbook (rule 5).
-literal:
-  ansible/playbooks/maintenance/restore-app.yml: 17
+literal: {}
 
 # Shared 12-word runs per pair of docs (rule 1).
 shared: {}
@@ -40,7 +39,7 @@ size:
   ansible/playbooks/apps/vaultwarden.yml: 343
   ansible/playbooks/maintenance/guest-maintenance.yml: 393
   ansible/playbooks/maintenance/reclaim-volume.yml: 441
-  ansible/playbooks/maintenance/restore-app.yml: 933
+  ansible/playbooks/maintenance/restore-app.yml: 792
   ansible/playbooks/maintenance/restore-guest.yml: 793
   ansible/playbooks/maintenance/restore-pdm.yml: 360
   ansible/playbooks/maintenance/status.yml: 558

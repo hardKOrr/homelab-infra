@@ -1,0 +1,14 @@
+---
+# Restore App hook, run on localhost before the target identity checks.
+# Jellyfin's users and server configuration live in the same /config archive.
+# Keep the source account available to the role so it can verify the restored
+# database and publish the matching credential for a new target.
+- name: Resolve source Jellyfin credentials without exposing them
+  ansible.builtin.set_fact:
+    restore_source_jellyfin_user: >-
+      {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
+         | default('') }}
+    restore_source_jellyfin_password: >-
+      {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
+         | default('') }}
+  no_log: true

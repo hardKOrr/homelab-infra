@@ -21,7 +21,7 @@ role must use for each common operation.
 | `maintenance/` | Schedules, reboots, lab descent and status helpers |
 | `network/` | Address allocation and network resolution |
 | `proxmox/` | Guests, placement, devices, tags and ownership ([README](proxmox/README.md)) |
-| `recovery/` | Restore method, validation, pre-restore point and restore swap (`recovery/scripts/`) |
+| `recovery/` | Restore method, validation, pre-restore point, target path rebasing and restore swap (`recovery/scripts/`) |
 | `stack/` | Docker stack host lookup and creation |
 | `unwiring/` | Inverse of `wiring/`, used by Remove |
 | `vaultwarden/` | The Seed-mode admin token sink |

@@ -113,11 +113,11 @@ def test_defaults_and_dispatch():
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
-    restore_dispatch = (repo / "ansible/playbooks/maintenance/restore-app.yml").read_text()
-    assert "when: _ra_app == 'jellyfin'" in restore_dispatch
-    assert "restore_source_jellyfin_user:" in restore_dispatch
-    assert "restore_source_jellyfin_password:" in restore_dispatch
-    assert "'jellyfin']" in restore_dispatch
+    restore_inputs = (repo / "ansible/roles/jellyfin/tasks/restore-inputs.yml").read_text()
+    assert "restore_source_jellyfin_user:" in restore_inputs
+    assert "restore_source_jellyfin_password:" in restore_inputs
+    restore_config = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore-config.yml").read_text())
+    assert restore_config[0]["vars"] == {"restore_rebase_key": "config_path"}
 
 
 def check_backup(fail_upload, db_relative="data/jellyfin.db"):

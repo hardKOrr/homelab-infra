@@ -97,6 +97,13 @@
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
 # use their namespaced restore job; application-consistent Docker and native-LXC roles own
 # their recovery mechanism. Apps without one remain on whole-guest PBS recovery.
+#
+# Per-app inputs live in role hooks (roles/<role>/tasks/<hook>), each run only when the
+# role has it: restore-inputs.yml before the storage identity checks (source material,
+# target path rewrites, an optional restore_source/target_storage_path), restore-provisioned.yml
+# after a new target is provisioned, and restore-config.yml once the target is resolved
+# (restore_app_config, the app_config the role's restore task gets; see
+# tasks/recovery/rebase-target-path.yml).
 
 # Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
 # durable originals/thumbnails from one application-consistent PBS snapshot. Plan mode lists
@@ -121,6 +128,11 @@
     _ra_backup_datastore: "{{ backup_datastore | default('', true) }}"
     _ra_overwrite: "{{ overwrite | default(false) | bool }}"
     _ra_pre_restore_point: "{{ pre_restore_point | default('', true) }}"
+    # Per-app restore hooks (roles/<role>/tasks/<hook>). The role is the app's own until the
+    # recovery capability is resolved, then the role that capability dispatches to.
+    _ra_hooks: >-
+      {{ playbook_dir }}/../../roles/{{ (recovery_capability | default({})).role
+                                       | default(_ra_app, true) }}/tasks
 
   pre_tasks:
     - name: Load platform vars
@@ -256,115 +268,11 @@
         restore_source_encryption_key: "{{ app_config.app.encryption_key | default('') }}"
       no_log: true
 
-    # Open WebUI encrypts application-owned credential state with its generated key.
-    # Carry the source key through the protected Ansible variable path; the product role
-    # upserts it into the target Vaultwarden item and rendered env before starting restore.
-    - name: Resolve the source Open WebUI application key without exposing it
-      ansible.builtin.set_fact:
-        restore_source_open_webui_secret_key: "{{ app_config.app.secret_key | default('') }}"
-      no_log: true
-      when: _ra_app == 'open-webui'
-
-    # Plane's local RabbitMQ/MinIO credentials and application keys must follow the
-    # restored database and files to a new target. They never enter the recovery plan.
-    - name: Resolve source Plane recovery material without exposing it in evidence
-      ansible.builtin.set_fact:
-        restore_source_plane_secrets:
-          secret_key: "{{ app_config.app.secret_key | default('') }}"
-          live_server_secret_key: "{{ app_config.app.live_server_secret_key | default('') }}"
-          rabbitmq_password: "{{ app_config.app.rabbitmq_password | default('') }}"
-          object_storage_access_key: "{{ app_config.app.object_storage_access_key | default('') }}"
-          object_storage_secret_key: "{{ app_config.app.object_storage_secret_key | default('') }}"
-        restore_source_redis:
-          instance: "{{ app_config.app.redis.instance | default('') }}"
-          host: >-
-            {{ (homelabinfra_infra.databases | default({})).get(
-                 app_config.app.redis.instance | default(''), {}).host | default('') }}
-          port: >-
-            {{ (homelabinfra_infra.databases | default({})).get(
-                 app_config.app.redis.instance | default(''), {}).port | default(0) }}
-      no_log: true
-      when: _ra_app == 'plane'
-
-    # Emby's account database is part of its /config snapshot. Retain the source
-    # account only in the protected variable path so a new target can prove the restored
-    # user and keep Vaultwarden aligned with the restored app-owned database.
-    - name: Resolve source Emby credentials without exposing them
-      ansible.builtin.set_fact:
-        restore_source_emby_user: >-
-          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
-             | default('') }}
-        restore_source_emby_password: >-
-          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
-             | default('') }}
-      no_log: true
-      when: _ra_app == 'emby'
-
-    # Jellyfin's users and server configuration live in the same /config archive.
-    # Keep the source account available to the role so it can verify the restored
-    # database and publish the matching credential for a new target.
-    - name: Resolve source Jellyfin credentials without exposing them
-      ansible.builtin.set_fact:
-        restore_source_jellyfin_user: >-
-          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
-             | default('') }}
-        restore_source_jellyfin_password: >-
-          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
-             | default('') }}
-      no_log: true
-      when: _ra_app == 'jellyfin'
-
-    # Emby's config directory is target-owned. Rebind the defaulted source path when
-    # restoring to a differently named instance; external media paths are never changed.
-    - name: Normalize the target Emby config path
-      ansible.builtin.set_fact:
-        restore_target_config: >-
-          {{ restore_target_config | combine({'app': {
-               'config_path': (restore_target_config.app.config_path
-                               | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                         '/opt/' ~ _ra_target ~ '/'))
-             }}, recursive=True) }}
-      when: _ra_app == 'emby'
-
-    # Navidrome's application data lives below /opt/<instance>. Normalize the
-    # defaulted source path when restoring into a differently named target; the
-    # external music path is intentionally not part of this replacement.
-    - name: Normalize the target Navidrome data path
-      ansible.builtin.set_fact:
-        restore_target_config: >-
-          {{ restore_target_config | combine({'app': {
-               'data_path': (restore_target_config.app.data_path
-                             | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                       '/opt/' ~ _ra_target ~ '/'))
-             }}, recursive=True) }}
-      when: _ra_app == 'navidrome'
-
-    # Plane stores its two owned paths below /opt/<instance>. Normalize those paths for
-    # a new target without changing the source config or putting secrets in the plan.
-    - name: Normalize the target Plane storage paths
-      ansible.builtin.set_fact:
-        plane_restore_target_config: >-
-          {{ restore_target_config | combine({'app': {
-               'data_path': (restore_target_config.app.data_path
-                             | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                       '/opt/' ~ _ra_target ~ '/')
-                             | replace('{{ instance }}', _ra_target)),
-               'object_storage_path': (restore_target_config.app.object_storage_path
-                                       | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                                 '/opt/' ~ _ra_target ~ '/')
-                                       | replace('{{ instance }}', _ra_target))
-             }}, recursive=True) }}
-      when: _ra_app == 'plane'
-
-    - name: Resolve Plane source and target owned storage paths
-      ansible.builtin.set_fact:
-        _ra_plane_source_storage_paths:
-          data: "{{ app_config.app.data_path | replace('{{ instance }}', _ra_source_instance) }}"
-          object_storage: "{{ app_config.app.object_storage_path | replace('{{ instance }}', _ra_source_instance) }}"
-        _ra_plane_target_storage_paths:
-          data: "{{ plane_restore_target_config.app.data_path }}"
-          object_storage: "{{ plane_restore_target_config.app.object_storage_path }}"
-      when: _ra_app == 'plane'
+    # Per-app source material and target path rewrites, before the identity checks below:
+    # roles/<app>/tasks/restore-inputs.yml.
+    - name: Resolve the app's own restore inputs
+      ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-inputs.yml"
+      when: (_ra_hooks ~ '/restore-inputs.yml') is file
 
     - name: Resolve native guest storage identity scopes
       ansible.builtin.set_fact:
@@ -402,13 +310,14 @@
           {{ (restore_target_config.get('proxmox', {}).get('vm', {}).get('ip_address',
              restore_target_config.get('proxmox', {}).get('lxc', {}).get('ip_address', '')) | string)
              | regex_replace('/.*$', '') }}
+        # A restore-inputs.yml hook may declare restore_source_storage_path and
+        # restore_target_storage_path when one path is not the app's storage identity.
         _ra_source_storage_path: >-
           {{ (_ra_kind ~ ':' ~ _ra_source_instance)
              if _ra_kind == 'kubernetes'
              else (
-               (_ra_plane_source_storage_paths.data ~ '|' ~
-                _ra_plane_source_storage_paths.object_storage)
-               if _ra_app == 'plane'
+               restore_source_storage_path
+               if restore_source_storage_path is defined
                else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
                      or (app_config.get('app', {}).get('data_path', '')
                          | replace('{{ instance }}', _ra_source_instance))
@@ -420,18 +329,8 @@
           {{ (_ra_kind ~ ':' ~ _ra_target)
              if _ra_kind == 'kubernetes'
              else (
-               ((_ra_plane_source_storage_paths.data ~ '|' ~
-                 _ra_plane_source_storage_paths.object_storage)
-                if (_ra_plane_target_storage_paths.data in [
-                      _ra_plane_source_storage_paths.data,
-                      _ra_plane_source_storage_paths.object_storage
-                    ] or _ra_plane_target_storage_paths.object_storage in [
-                      _ra_plane_source_storage_paths.data,
-                      _ra_plane_source_storage_paths.object_storage
-                    ])
-                else (_ra_plane_target_storage_paths.data ~ '|' ~
-                      _ra_plane_target_storage_paths.object_storage))
-               if _ra_app == 'plane'
+               restore_target_storage_path
+               if restore_target_storage_path is defined
                else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
                      or (restore_target_config.get('app', {}).get('data_path', '')
                          | replace('{{ instance }}', _ra_target))
@@ -707,21 +606,10 @@
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
 
-    - name: Re-normalize Plane target storage paths after provisioning
-      ansible.builtin.set_fact:
-        plane_restore_target_config: >-
-          {{ restore_target_config | combine({'app': {
-               'data_path': (restore_target_config.app.data_path
-                             | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                       '/opt/' ~ _ra_target ~ '/')
-                             | replace('{{ instance }}', _ra_target)),
-               'object_storage_path': (restore_target_config.app.object_storage_path
-                                       | replace('/opt/' ~ _ra_source_instance ~ '/',
-                                                 '/opt/' ~ _ra_target ~ '/')
-                                       | replace('{{ instance }}', _ra_target))
-             }}, recursive=True) }}
+    - name: Rewrite the app's own target config after provisioning
+      ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-provisioned.yml"
       when:
-        - _ra_app == 'plane'
+        - (_ra_hooks ~ '/restore-provisioned.yml') is file
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
 
@@ -743,6 +631,16 @@
         - _ra_kind in ['docker', 'native']
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
+
+    # The app_config the next play gives the role's restore task: restore_target_config, or
+    # the restore_app_config that roles/<role>/tasks/restore-config.yml sets, usually by
+    # rebasing a source-owned path through tasks/recovery/rebase-target-path.yml.
+    - name: Resolve the role's restore config
+      ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-config.yml"
+      when:
+        - (_ra_hooks ~ '/restore-config.yml') is file
+        - _ra_kind in ['docker', 'native']
+        - not (recovery_destination_resolved == 'new' and not (_ra_overwrite | bool))
 
   tasks:
     - name: Restore the application
@@ -816,47 +714,8 @@
         instance: "{{ hostvars['localhost']._ra_target }}"
         actual_budget_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         app_config: >-
-          {{ hostvars['localhost'].plane_restore_target_config
-             if hostvars['localhost']._ra_app == 'plane'
-             else (hostvars['localhost'].restore_target_config
-                   | combine({'app': {
-                       'data_path': (hostvars['localhost'].restore_target_config.app.data_path
-                                     | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                               '/opt/' ~ hostvars['localhost']._ra_target ~ '/')
-                                     | replace('{{ instance }}', hostvars['localhost']._ra_target))
-                     }}, recursive=True)
-                   if hostvars['localhost']._ra_app == 'observability'
-                   else (hostvars['localhost'].restore_target_config
-             | combine({'app': {
-                 'data_path': (hostvars['localhost'].restore_target_config.app.data_path
-                               | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                         '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
-               }}, recursive=True)
-             if hostvars['localhost']._ra_app == 'actual-budget'
-             else (hostvars['localhost'].restore_target_config
-                   | combine({'app': {
-                       'filestore_path': (hostvars['localhost'].restore_target_config.app.filestore_path
-                                          | replace('/opt/odoo/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                                    '/opt/odoo/' ~ hostvars['localhost']._ra_target ~ '/')
-                                          | replace('{{ instance }}', hostvars['localhost']._ra_target))
-                     }}, recursive=True)
-                   if hostvars['localhost']._ra_app == 'odoo'
-                   else (hostvars['localhost'].restore_target_config
-                         | combine({'app': {
-                             'data_path': (hostvars['localhost'].restore_target_config.app.data_path
-                                           | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                                     '/opt/' ~ hostvars['localhost']._ra_target ~ '/')
-                                           | replace('{{ instance }}', hostvars['localhost']._ra_target))
-                           }}, recursive=True)
-                         if hostvars['localhost']._ra_app == 'n8n'
-                         else (hostvars['localhost'].restore_target_config
-                               | combine({'app': {
-                                   'config_path': (hostvars['localhost'].restore_target_config.app.config_path
-                                                   | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                                             '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
-                                 }}, recursive=True)
-                               if hostvars['localhost']._ra_app in ['home-assistant', 'qbittorrent', 'sabnzbd', 'bazarr', 'deemix', 'tautulli', 'prowlarr', 'sonarr', 'radarr', 'lidarr', 'frigate', 'jellyfin']
-                               else hostvars['localhost'].restore_target_config))))) }}
+          {{ hostvars['localhost'].restore_app_config
+             | default(hostvars['localhost'].restore_target_config) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         frigate_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"

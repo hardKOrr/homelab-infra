@@ -1,0 +1,8 @@
+---
+# Restore App hook, run on localhost once the restore target is resolved: the app_config
+# this role's restore task gets, with data_path rebased onto the target instance.
+- name: Rebase the target's data_path
+  ansible.builtin.include_tasks: ../../../tasks/recovery/rebase-target-path.yml
+  vars:
+    restore_rebase_key: data_path
+    restore_rebase_instance: true
