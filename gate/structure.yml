@@ -31,7 +31,6 @@ shared:
 
 # Files over their line budget, with their ceiling (rule 2).
 size:
-  ansible/README.md: 502
   ansible/playbooks/apps/authentik.yml: 350
   ansible/playbooks/apps/caddy.yml: 358
   ansible/playbooks/apps/comfyui.yml: 339

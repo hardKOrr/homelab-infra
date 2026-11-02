@@ -145,3 +145,91 @@ target, verify service and fixture checksums, and verify dependent PVE registrat
 credentials. Keep recovery points until recovery checks pass. On failure, leave the target inactive,
 inspect the owning job's result and retry from the independent point; never discard the
 retained datastore.
+
+## Moving PBS to another node with its datastore
+
+Use this when the PBS VM's node is unavailable but its separate ZFS datastore can be made
+available to another Proxmox node. Deploy PBS in `reuse` mode so it attaches the existing
+volume without formatting it. Fence a failed source node before moving or importing its
+drives. Never let two PBS guests write to the source and received copies at the same time.
+
+1. Verify that no backup, prune, or garbage-collection task is writing to PBS. Record the
+   PBS backup groups and snapshot identifiers. Identify the datastore volume from
+   `config/apps/pbs.yml`: `proxmox.vm.datastore_disk.storage` plus its reserved
+   `source_vmid` gives
+   `<pve-storage>:vm-<pbs-datastore-vmid>-disk-1`. Keep `source_vmid` unchanged; it must
+   not be a guest VMID.
+2. For a physical drive move, power off and fence the failed node before moving every disk
+   that belongs to the ZFS pool. On the recovery node, import the pool without mounting
+   filesystems, for example `zpool import -N <zfs-pool>`. Verify the pool identity and
+   confirm the Proxmox storage ID is enabled for the recovery node and maps to that pool.
+   Never force-import a pool while the source node can still write to it.
+3. For a copy-based drill while the source is still available, resolve the exact volume
+   `<pve-storage>:vm-<pbs-datastore-vmid>-disk-1`. With node-local `zfspool` storage,
+   `pvesm path <pve-storage>:vm-<pbs-datastore-vmid>-disk-1` should resolve to
+   `/dev/zvol/<zfs-pool>/vm-<pbs-datastore-vmid>-disk-1`; snapshot and send that zvol to the
+   matching destination pool. The received zvol must keep the same
+   `vm-<pbs-datastore-vmid>-disk-1` name so Proxmox exposes the same volume ID. For example,
+   after replacing the placeholders with the paths from `pvesm path` and the Proxmox storage
+   definition:
+
+   ```sh
+   set -o pipefail
+   ssh root@<pve-node-1> zfs snapshot '<zfs-pool-1>/vm-<pbs-datastore-vmid>-disk-1@<zfs-snapshot>'
+   ssh root@<pve-node-1> zfs send -p '<zfs-pool-1>/vm-<pbs-datastore-vmid>-disk-1@<zfs-snapshot>' |
+     ssh root@<pve-node-2> zfs receive -u '<zfs-pool-2>/vm-<pbs-datastore-vmid>-disk-1'
+   ```
+
+   A Proxmox storage of type `zfs` is ZFS over iSCSI; its `pvesm path` is an iSCSI locator,
+   not a local ZFS dataset path. For a copy from that backend, snapshot and send the zvol
+   from its configured ZFS portal, then receive it into a node-local `zfspool`. Set
+   `proxmox.vm.datastore_disk.storage` to that destination storage ID before Deploy PBS.
+   For a physical move into the same local pool and storage ID, keep the existing storage ID.
+
+   Confirm on the recovery node that `pvesm list <pve-storage> --vmid <pbs-datastore-vmid>`
+   shows exactly one matching volume and its ZFS volume size matches the source. For a copy
+   to a different storage, use its destination storage ID here. Keep the source volume
+   untouched as the rollback copy.
+4. Stop the old PBS guest and remove only that owned guest while preserving its separately
+   owned datastore volume. For a still-reachable source, use Remove App with
+   `delete_data=true` and `destroy_guest=true`; its ownership checks require the exact
+   `_+lab` and `_pbs` tags. Do not continue if the datastore volume is still owned by the
+   guest VMID instead of the reserved `source_vmid`:
+
+   ```sh
+   "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/remove.yml \
+     -e instance=pbs -e delete_data=true -e destroy_guest=true
+   ```
+
+   If the source Proxmox node is offline, fence it at the power level and verify `pvecm
+   status` reports quorum from a surviving node. Do not bypass quorum. This stale-config
+   procedure is for a non-HA PBS guest; if Proxmox HA manages it, follow the HA recovery
+   procedure and confirm it cannot restart against the source datastore before continuing.
+   Before retiring the stale PBS guest registration, inspect the exact
+   `/etc/pve/nodes/<pve-node-1>/qemu-server/<GUEST-vmid>.conf`: its name and tags
+   must identify this PBS guest, and the datastore disk must use the reserved
+   `source_vmid`. Back up that one config file, then remove only that stale guest config
+   with `rm -- /etc/pve/nodes/<pve-node-1>/qemu-server/<GUEST-vmid>.conf`. This removes
+   only the stale VM registration; leave its disks and the retained zvol untouched. PBS's
+   OS disk may be local to the failed node, so do not move the old VM config to the recovery
+   node unless every disk and local resource it references is available there. Follow
+   [Proxmox's failed-node recovery guidance](https://pve.proxmox.com/pve-docs/chapter-pmxcfs.html#_recovering_moving_guests_from_failed_nodes)
+   for the cluster-side ownership rules. If quorum, fencing, ownership or the retained
+   volume identity is uncertain, stop and restore the source node first.
+5. In the private `config/apps/pbs.yml`, set `proxmox.node` to the recovery node, keep the
+   selected datastore storage ID and reserved `source_vmid`, and set
+   `app.datastore_mode: reuse`. A per-instance node must already be present in
+   `proxmox.nodes`. Run **Deploy PBS**; its volume preflight checks the selected node before
+   creating the guest, then attaches the existing disk and registers the existing
+   datastore without initialising it:
+
+   ```sh
+   "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/pbs.yml -e instance=pbs
+   ```
+6. Confirm PBS lists the baseline groups and snapshots. Restore an application canary from
+   one of those snapshots and verify the application, then verify the refreshed PVE PBS
+   storage fingerprint and managed guest VMID list. Run the scheduled backup job and
+   confirm it writes a new snapshot to the moved datastore.
+7. Keep the original volume until the application restore and a new scheduled backup have
+   both passed. If Deploy fails, stop the replacement before changing volume attachment or
+   configuration; the source volume remains the recovery point.

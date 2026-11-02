@@ -17,6 +17,8 @@ that interface.
   VM snapshot as application-consistent data. Role-backed Docker apps such as Immich stop
   their Compose services and archive named PostgreSQL data with explicitly owned durable
   media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
+  The live [recovery drill and application data port](recovery-drill.md) prove one
+  instance's deploy, backup and restore end to end.
 - Status and ascent verification read state without enforcing drift.
 
 Offline or unknown Proxmox nodes leave guest enumeration incomplete. Status reports that diagnostic
