@@ -43,7 +43,11 @@ BUDGETS = [
 
 # Directories with their own fixed layout or no reader value are not mapped.
 README_SKIP = ("ansible/roles/", ".github", ".claude", "gate/fixtures/")
-REACH_SKIP = {"CLAUDE.md", ".github/PULL_REQUEST_TEMPLATE.md"}
+REACH_SKIP = {
+    "CLAUDE.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/hosting-docker.md",
+}
 LINK = re.compile(r"\]\((<[^>]+>|[^)\s#]+)")
 
 
