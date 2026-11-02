@@ -1,0 +1,16 @@
+---
+# Rebase Plane's two owned paths from the source instance onto the restore target.
+# Run by restore-inputs.yml, and by restore-provisioned.yml after a new target exists.
+- name: Normalize the target Plane storage paths
+  ansible.builtin.set_fact:
+    plane_restore_target_config: >-
+      {{ restore_target_config | combine({'app': {
+           'data_path': (restore_target_config.app.data_path
+                         | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                   '/opt/' ~ _ra_target ~ '/')
+                         | replace('{{ instance }}', _ra_target)),
+           'object_storage_path': (restore_target_config.app.object_storage_path
+                                   | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                             '/opt/' ~ _ra_target ~ '/')
+                                   | replace('{{ instance }}', _ra_target))
+         }}, recursive=True) }}

@@ -2,6 +2,9 @@
 """Exercise Forgejo's paired PBS archive and check its restore-swap inputs and hook.
 
 gate/test-restore-swap.py proves the swap, the database dump, load and rollback.
+
+Checks: Forgejo's quiesced data archive, and its restore swap inputs with the database dump
+and the staged hook refusing a point without `app.ini`.
 """
 
 import copy

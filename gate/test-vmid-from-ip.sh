@@ -14,6 +14,8 @@
 # Both Jinja expressions are evaluated out of their task files rather than restated here,
 # so a change to either expression is what this test compares against.
 #
+# Every derived VMID must also fall inside the valid Proxmox range.
+#
 # Nothing is contacted: pure Python and Bash against the repository.
 set -euo pipefail
 

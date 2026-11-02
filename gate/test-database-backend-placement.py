@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check shared database guest selection and pinned placement defaults."""
+"""Check shared database guest selection and pinned placement defaults.
+
+Checks: shared backend placement for all five engines, per-instance node/storage defaults,
+legacy type compatibility, mismatch refusal and single-node LXC/VM placement.
+"""
 
 import json
 import os
@@ -504,7 +508,7 @@ def check_all_engines_share_placement():
     )
     assert role_guard["when"] == "not (guest_placement_database_backend | default(false) | bool)"
 
-    contract = (ROOT / "ansible/vars/CONTRACT.md").read_text(encoding="utf-8")
+    contract = (ROOT / "ansible/vars/contract/proxmox.md").read_text(encoding="utf-8")
     assert "proxmox.guest_type" in contract
     assert "defaults to `config/proxmox.yml` `proxmox.node`" in contract
     assert "defaults to `config/proxmox.yml` `proxmox.storage`" in contract

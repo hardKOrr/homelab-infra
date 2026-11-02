@@ -193,7 +193,7 @@ Use the catalog and stack declarations to decide placement:
 
 Do not infer sharing from where an app happened to land. A stack that will host apps
 from multiple estates must declare `shared: true`; the declaration, not deployment
-order, determines the host identity and network. The [contract's stack section](../ansible/vars/CONTRACT.md#stack-identity-and-estate-isolation)
+order, determines the host identity and network. The [contract's stack section](../ansible/vars/contract/infrastructure.md#stack-identity-and-estate-isolation)
 has the identity and merge details.
 
 If the estate sends mail under its own identity, add a `domains.<estate>.mail` block

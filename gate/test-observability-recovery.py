@@ -2,6 +2,10 @@
 """Exercise Observability backup with local shims; check its restore-swap inputs and hooks.
 
 gate/test-restore-swap.py proves the swap's preview, staging, ownership and rollback.
+
+Checks: both-service quiescence, the complete data archive, and the restore swap inputs:
+Prometheus and Grafana trees with their own uids, the staged Grafana database hook and the
+Grafana health hook.
 """
 
 import copy

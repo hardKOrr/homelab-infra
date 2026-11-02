@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check Ntfy's PBS recovery contract and its inputs to the shared restore swap."""
+"""Check Ntfy's PBS recovery contract and its inputs to the shared restore swap.
+
+Checks: native auth/cache archives and the two paths, owner and auth-database checks Ntfy
+gives the restore swap.
+"""
 
 from pathlib import Path
 

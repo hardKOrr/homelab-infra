@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Plex capability/dispatch and the real role's non-mutating restore plan."""
+"""Exercise Plex capability/dispatch and the real role's non-mutating restore plan.
+
+Checks: Plex native capability/dispatch, non-mutating restore preview, the source-group
+check and both server-token guards.
+"""
 
 import base64
 import importlib.util

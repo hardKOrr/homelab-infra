@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise Lab Status public DNS decisions with an in-memory fake resolver."""
+"""Exercise Lab Status public DNS decisions with an in-memory fake resolver.
+
+Checks: public resolver matches, drift, missing answers, resolver failure, disabled estates
+and unchanged output when public DNS is not configured.
+"""
 
 import http.client
 import importlib.util

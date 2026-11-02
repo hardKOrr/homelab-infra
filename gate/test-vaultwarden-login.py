@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""The vaulted Vaultwarden login: helper round trip, lab-run.sh loading it, edge copy."""
+"""The vaulted Vaultwarden login: helper round trip, lab-run.sh loading it, edge copy.
+
+Checks: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
+"""
 
 import json
 import os

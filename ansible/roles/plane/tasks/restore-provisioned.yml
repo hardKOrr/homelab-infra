@@ -1,0 +1,5 @@
+---
+# Restore App hook, run on localhost after a new restore target is provisioned and its
+# config merged again.
+- name: Re-normalize Plane target storage paths after provisioning
+  ansible.builtin.include_tasks: restore-target-paths.yml

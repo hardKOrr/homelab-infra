@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Keep Kometa's optional collection file in the operator-owned Secret."""
+"""Keep Kometa's optional collection file in the operator-owned Secret.
+
+Checks: optional operator-owned collection YAML stays in the Kubernetes Secret and mounts
+read-only only when configured.
+"""
 
 import os
 import re

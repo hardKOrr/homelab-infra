@@ -38,8 +38,12 @@
 #      it is a PostgreSQL guest that this playbook leaves in place for redeployment
 #      (a kept guest's next Deploy finds it again by exact name through
 #      tasks/proxmox/resolve-instance-guest.yml)
-#   4. Stop and remove the app on its host (compose down, or stop+disable the service),
-#      running the app role's remove.yml and remove-devices.yml hooks when it has them
+#   4. Stop and remove the app on its host (compose down, or stop+disable the service)
+#
+# Per-app behavior lives in role hooks (roles/<app>/tasks/<hook>), each run only when the
+# app's role has it: remove-inputs.yml before unwiring, remove-unwire.yml before the
+# registry prune, remove-units.yml and remove-native-data.yml around a native stop, and
+# remove.yml and remove-devices.yml around a Compose stop and its data.
 #   5. Notify via Ntfy: "<instance> removed"
 #
 # Traffic is drained before the backend disappears, and the uptime monitor is gone
@@ -117,36 +121,11 @@
           {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
              if app_config.stack is defined else app_config }}
 
-    # Immich keeps originals and thumbnails on one separately mounted durable path. Validate
-    # that exact target before unwiring; delete_data must never turn into removing a path
-    # outside the declared Immich mount. Its named database is dropped like any other app's.
-    - name: Resolve Immich's media removal inputs
-      ansible.builtin.set_fact:
-        _rm_immich_media_mounts: "{{ app_config.media_storage.mounts | default([]) }}"
-        _rm_immich_media_path: >-
-          {{ ((app_config.media_storage.mounts | default([]) | first | default({})).path
-               | default('') | regex_replace('/+$', '')) }}
-      no_log: true
-      when:
-        - (app | default(instance)) == 'immich'
-        - delete_data | default(false) | bool
-
-    - name: Validate Immich's dedicated media mount
-      ansible.builtin.assert:
-        that:
-          - _rm_immich_media_mounts | length == 1
-          - _rm_immich_media_path is match('^/')
-          - _rm_immich_media_path | length > 1
-          - _rm_immich_media_path.split('/') | select('equalto', '..') | list | length == 0
-          - app_config.media_storage.owner.uid | default(0) | int > 0
-          - app_config.media_storage.owner.gid | default(0) | int > 0
-        fail_msg: >-
-          Refusing to remove Immich data without exactly one safe, owned durable media mount.
-      no_log: true
-      when:
-        - (app | default(instance)) == 'immich'
-        - delete_data | default(false) | bool
-
+    # Per-app removal inputs, before anything is unwired: roles/<app>/tasks/remove-inputs.yml
+    # validates what delete_data will remove and declares facts the later plays read.
+    - name: Resolve the app's removal inputs
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-inputs.yml"
+      when: (_rm_hooks ~ '/remove-inputs.yml') is file
 
     # An app with a named database on a registered backend owns only that database and
     # login, never the backend guest. Check ownership before unwiring anything, so a
@@ -199,7 +178,7 @@
     - name: Identify a registered database backend missing from the inventory
       ansible.builtin.set_fact:
         _rm_database_backend_inventory_absence_candidate: >-
-          {{ (app | default(instance)) in ['influxdb', 'mariadb', 'mysql', 'postgresql', 'redis']
+          {{ (_rm_database_backend | default(false) | bool)
              and instance in ((homelabinfra_infra | default({})).get('databases', {}))
              and _rm_destroy_guest_host | length == 0
              and (groups['all'] | default([])
@@ -320,11 +299,12 @@
     wiring_app_name: "{{ instance }}"
     wiring_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain | default('invalid') }}"
-    # Remove App stops PostgreSQL and may drop its cluster, but it deliberately keeps the
-    # guest. Keep the guest's app row/tag as its deployment identity so PostgreSQL Deploy
-    # reuses that LXC instead of refusing it at the creation seam as an unrecorded guest.
+    # A native backend whose remove-inputs.yml keeps its guest record (PostgreSQL) keeps
+    # its app row/tag, so its next Deploy reuses the guest Remove left in place.
     _rm_preserve_guest_identity: >-
-      {{ _rm_kind == 'native' and (app | default(instance)) == 'postgresql' }}
+      {{ _rm_kind == 'native' and (_rm_keeps_guest_record | default(false) | bool) }}
+    # Per-app removal hooks; Play 2 resolves the same directory.
+    _rm_hooks: "{{ playbook_dir }}/../../roles/{{ app | default(instance) }}/tasks"
 
   tasks:
     - name: Unwire reverse proxy
@@ -369,29 +349,13 @@
         - homelabinfra_infra.firewall is defined
         - homelabinfra_infra.firewall.provider | default('none') != 'none'
 
-    # The runner is an app-to-app registration, not a proxy route. Remove exactly this
-    # named registration while its Forgejo API credential still exists; the shared
-    # Forgejo instance and all other runners are left untouched.
-    - name: Deregister Forgejo Runner
-      ansible.builtin.include_tasks: ../../tasks/app-wiring/forgejo-runner-remove.yml
-      vars:
-        runner_remove_instance: "{{ instance }}"
-        runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
-      when:
-        - (app | default(instance)) == 'forgejo-runner'
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.apps is defined
-
+    # Per-app unwiring (client registrations in other apps): roles/<app>/tasks/remove-unwire.yml.
     # After the provider unwiring, deliberately: the registry is what the unwire steps
     # above read to find those providers, so pruning it first would remove the app's own
     # entry while the reverse proxy and DNS still carried its route.
-    - name: Withdraw SABnzbd from deployed Usenet consumers
-      ansible.builtin.include_tasks: ../../tasks/unwiring/sabnzbd-clients.yml
-      when: (app | default(instance)) == 'sabnzbd'
-
-    - name: Withdraw qBittorrent from its deployed consumers
-      ansible.builtin.include_tasks: ../../tasks/unwiring/qbittorrent-clients.yml
-      when: (app | default(instance)) == 'qbittorrent'
+    - name: Run the app's own unwiring
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-unwire.yml"
+      when: (_rm_hooks ~ '/remove-unwire.yml') is file
 
     - name: Unregister from the service registry
       ansible.builtin.include_tasks: ../../tasks/unwiring/registry.yml
@@ -615,47 +579,17 @@
     _rm_delete_data: "{{ delete_data | default(false) | bool }}"
     _rm_destroy_guest: "{{ remove_destroy_guest | default(false) | bool }}"
     _rm_project_dir: "/opt/{{ instance }}"
-    _rm_is_postgresql: "{{ (app | default(instance)) == 'postgresql' }}"
-    # Per-app removal hooks: remove.yml after the stop, remove-devices.yml after the data.
+    # Per-app removal hooks: remove-units.yml resolves a native app's units, remove.yml runs
+    # after a Compose stop, remove-native-data.yml after a native stop, remove-devices.yml
+    # after the data.
     _rm_hooks: "{{ playbook_dir }}/../../roles/{{ hostvars['localhost']._rm_app_name }}/tasks"
 
   pre_tasks:
-    # PostgreSQL's instantiated unit is derived from the cluster configuration
-    # and is not reliably listed by systemctl list-unit-files. Discover the
-    # cluster before removal so a legacy PostgreSQL 15 guest is stopped before
-    # delete_data can remove its files.
-    - name: Discover PostgreSQL clusters
-      ansible.builtin.command:
-        argv:
-          - pg_lsclusters
-          - --no-header
-      register: _rm_postgresql_clusters
-      failed_when: false
-      changed_when: false
+    - name: Resolve the app's own native removal units
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-units.yml"
       when:
         - remove_kind == 'native'
-        - _rm_is_postgresql | bool
-
-    - name: Resolve every PostgreSQL cluster removal unit
-      ansible.builtin.set_fact:
-        _rm_service_names: "{{ _rm_service_names | default([]) + ['postgresql@' ~ _rm_postgresql_cluster[0] ~ '-' ~ _rm_postgresql_cluster[1]] }}"
-      vars:
-        _rm_postgresql_cluster: "{{ item | split() }}"
-      loop: >-
-        {{ _rm_postgresql_clusters.stdout_lines | default([])
-           | select('match', '^[0-9]+[ ]+') | list }}
-      when:
-        - remove_kind == 'native'
-        - _rm_is_postgresql | bool
-
-    - name: Fall back to the configured PostgreSQL removal unit
-      ansible.builtin.set_fact:
-        _rm_service_names:
-          - "postgresql@{{ app_config.app.version | default('16') }}-main"
-      when:
-        - remove_kind == 'native'
-        - _rm_is_postgresql | bool
-        - _rm_service_names | default([]) | length == 0
+        - (_rm_hooks ~ '/remove-units.yml') is file
 
     - name: Resolve the ordinary native removal unit
       ansible.builtin.set_fact:
@@ -663,7 +597,7 @@
           - "{{ app_config.app.service_name | default(instance) }}"
       when:
         - remove_kind == 'native'
-        - not (_rm_is_postgresql | bool)
+        - not ((_rm_hooks ~ '/remove-units.yml') is file)
 
   tasks:
     # ── Docker app on a shared stack host ──────────────────────────────────────
@@ -784,36 +718,9 @@
             or 'could not find the requested service' in
             (item.msg | default('') | lower)
 
-        # PostgreSQL's data directory is not the cluster's whole identity: Debian keeps
-        # its cluster registration and configuration under /etc/postgresql. Drop each
-        # discovered cluster before deleting the parent data path, so a later Deploy can
-        # create a fresh main cluster even when the server package remains installed.
-        - name: Require PostgreSQL cluster discovery before deleting its data
-          ansible.builtin.assert:
-            that: _rm_postgresql_clusters.rc == 0
-            fail_msg: >-
-              Could not enumerate PostgreSQL clusters safely. No PostgreSQL data or
-              cluster configuration was deleted.
-          when:
-            - _rm_is_postgresql | bool
-            - _rm_delete_data | bool
-
-        - name: Drop PostgreSQL clusters with their configuration when deleting data
-          ansible.builtin.command:
-            argv:
-              - pg_dropcluster
-              - --stop
-              - "{{ _rm_postgresql_cluster[0] }}"
-              - "{{ _rm_postgresql_cluster[1] }}"
-          vars:
-            _rm_postgresql_cluster: "{{ item | split() }}"
-          loop: >-
-            {{ _rm_postgresql_clusters.stdout_lines | default([])
-               | select('match', '^[0-9]+[ ]+') | list }}
-          when:
-            - _rm_is_postgresql | bool
-            - _rm_delete_data | bool
-          changed_when: true
+        - name: Remove the app's own native state
+          ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-native-data.yml"
+          when: (_rm_hooks ~ '/remove-native-data.yml') is file
 
         # A native app's recovery unit can span more than data_path (Ntfy keeps its
         # message cache in cache_path), so delete every declared state path.
@@ -870,7 +777,7 @@
       when:
         - delete_data | default(false) | bool
         - destroy_guest | default(false) | bool
-        - (app | default(instance)) in ['influxdb', 'mariadb', 'mysql', 'postgresql', 'redis']
+        - _rm_database_backend | default(false) | bool
 
 # ── Play 4: Drop the app's named database from its registered backend ──────────
 # Runs on the controller after Play 2 has stopped the app (or found its guest already

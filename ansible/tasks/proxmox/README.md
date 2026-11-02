@@ -118,6 +118,12 @@ updates at this creation boundary preserves existing console, network and storag
 settings without choosing a replacement enum. `cmode` remains outside the repository
 allowlist.
 
+## Instance guest reuse
+
+[`resolve-instance-guest.yml`](resolve-instance-guest.yml) selects the guest with the
+instance tag. Remove withdraws the tag but keeps the guest, so Deploy then adopts and retags
+the one `_+lab` guest named exactly as the instance; several, or a claimed one, stop Deploy.
+
 ## Asynchronous task completion
 
 `wait-for-task.yml` is the common completion boundary for asynchronous PVE and PBS
@@ -196,7 +202,8 @@ Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 first, then removes a binding only when its content matches the caller's input AND its
 `_.dev+<slug>` tag is present. A content match with no tag is an operator's own entry, left
 in place and reported, never deleted. Every other `devN`/`hostpciN`/`usbN` entry, every
-other tag, and the guest itself are always untouched.
+other tag, and the guest itself are always untouched. A failed PCI detach restarts a VM
+that was running; untagged assignments are never adopted and need operator recovery.
 
 ## Guest application records
 

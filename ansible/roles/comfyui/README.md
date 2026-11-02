@@ -1,9 +1,8 @@
 # ComfyUI role
 
-Deploy selects the VM carrying the instance tag. If that tag is missing, it can adopt one
-`_+lab` VM whose Proxmox name exactly matches the instance, then records the instance tag
-before running the application role. Multiple same-name owned VMs stop Deploy before it can
-create another guest.
+Deploy finds its VM through
+[instance guest reuse](../../tasks/proxmox/README.md#instance-guest-reuse); PCI assignment
+and detach follow [device passthrough](../../tasks/proxmox/README.md#device-passthrough).
 
 ComfyUI runs as one Docker service on its own Debian VM. `app.accelerator` selects `cuda`
 or `cpu` and defaults to `cuda` for existing configurations. CUDA mode requires the named
@@ -31,5 +30,4 @@ also stay under `app.storage_path`, which the application-consistent PBS archive
 The GPU is hardware and must be rebound after VM recovery; it is not part of the archive.
 
 For CUDA, declare the exact PCI device; both modes declare the model-storage path and keep
-node console recovery access. If PCI detach fails, the seam restarts a previously running
-VM. Untagged assignments require operator recovery and are not adopted.
+node console recovery access.

@@ -1,0 +1,13 @@
+---
+# Restore App hook, run on localhost before the target identity checks.
+# Navidrome's application data lives below /opt/<instance>. Normalize the
+# defaulted source path when restoring into a differently named target; the
+# external music path is intentionally not part of this replacement.
+- name: Normalize the target Navidrome data path
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ restore_target_config | combine({'app': {
+           'data_path': (restore_target_config.app.data_path
+                         | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                   '/opt/' ~ _ra_target ~ '/'))
+         }}, recursive=True) }}

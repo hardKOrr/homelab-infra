@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise production recovery input publication through two real Ansible plays."""
+"""Exercise production recovery input publication through two real Ansible plays.
+
+Checks: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane
+and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
+"""
 
 import json
 import os
@@ -219,8 +223,14 @@ def main():
     assert any(str(task.get("ansible.builtin.include_tasks", "")).endswith("tasks/recovery/restore-swap.yml")
                for task in restore_tasks)
 
-    # Render the production Docker restore arguments in a second play. A renamed
-    # target must receive its own config path, while an authored custom path survives.
+    # Render the production Docker restore arguments in a second play, after the role's
+    # restore-config.yml hook ran as Restore App runs it. A renamed target must receive its
+    # own config path, while an authored custom path survives.
+    def config_hook(app):
+        role = "servarr" if app in ("prowlarr", "sonarr", "radarr", "lidarr") else app
+        return {"ansible.builtin.include_tasks": str(
+            repo / f"ansible/roles/{role}/tasks/restore-config.yml")}
+
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
     dispatch = next(play for play in source if play["name"] ==
                     "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"][0]
@@ -234,7 +244,8 @@ def main():
                         {"ansible.builtin.set_fact": {
                             "_ra_app": app, "_ra_source_instance": app,
                             "_ra_target": app + "-copy",
-                            "restore_target_config": {"app": {"config_path": config_path}}}}]},
+                            "restore_target_config": {"app": {"config_path": config_path}}}},
+                        config_hook(app)]},
                     {"hosts": "localhost", "gather_facts": False, "tasks": [
                         {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
                             f"instance == '{app}-copy'",
@@ -255,7 +266,8 @@ def main():
                     {"ansible.builtin.set_fact": {
                         "_ra_app": "observability", "_ra_source_instance": "observability",
                         "_ra_target": "observability-copy",
-                        "restore_target_config": {"app": {"data_path": data_path}}}}]},
+                        "restore_target_config": {"app": {"data_path": data_path}}}},
+                    config_hook("observability")]},
                 {"hosts": "localhost", "gather_facts": False, "tasks": [
                     {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
                         "instance == 'observability-copy'",
@@ -430,12 +442,19 @@ def main():
     assert plane_config["ansible.builtin.file"]["state"] == "absent"
     assert "when" not in plane_config
 
-    immich_remove_inputs = next(
+    immich_inputs_hook = yaml.safe_load(
+        (repo / "ansible/roles/immich/tasks/remove-inputs.yml").read_text())
+    run_inputs_hook = next(
         task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve the app's removal inputs"
+    )
+    assert run_inputs_hook["ansible.builtin.include_tasks"] == "{{ _rm_hooks }}/remove-inputs.yml"
+    immich_remove_inputs = next(
+        task for task in immich_inputs_hook
         if task.get("name") == "Resolve Immich's media removal inputs"
     )
     immich_validate = next(
-        task for task in unwire_play["pre_tasks"]
+        task for task in immich_inputs_hook
         if task.get("name") == "Validate Immich's dedicated media mount"
     )
     assert "_rm_immich_media_mounts | length == 1" in immich_validate[

@@ -692,7 +692,7 @@ else:
 # ── config/apps/<instance>.yml ────────────────────────────────────────────────
 # Instance files are override layers over vars/app-defaults/<app>.yml, so almost every
 # key is optional. What is checked is shape: a recursive merge means replacing a mapping
-# with a scalar silently clobbers the whole subtree (CONTRACT.md, App-level layering).
+# with a scalar silently clobbers the whole subtree (ansible/vars/contract/app-layering.md).
 IDENTITY_MODES = ["none", "catalog", "oidc", "forward_auth"]
 MAPPING_KEYS = ["proxmox", "app", "routing", "update", "resources", "network", "firewall"]
 

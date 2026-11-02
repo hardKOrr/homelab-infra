@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render and reconcile the documented OPNsense base firewall example."""
+"""Render and reconcile the documented OPNsense base firewall example.
+
+Checks: base aliases and filter rules render from the documented example, validate family-
+specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and
+restore a pre-write config backup after a failed readback.
+"""
 
 import copy
 import base64

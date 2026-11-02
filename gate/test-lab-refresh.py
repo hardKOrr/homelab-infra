@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Ordinary lab-run executions must not move the shared runner checkout."""
+"""Ordinary lab-run executions must not move the shared runner checkout.
+
+Checks: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote
+push; explicit refresh still updates it.
+"""
 
 import os
 import subprocess

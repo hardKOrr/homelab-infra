@@ -225,7 +225,7 @@
     # `app:` with nothing under it parses to null, and null survives combine() — it would
     # be written out as `app: null` and then clobber the entire app subtree of the
     # defaults at deploy time, because the per-app merge is recursive and a scalar
-    # replaces a mapping wholesale (CONTRACT.md, App-level layering). The usual way to
+    # replaces a mapping wholesale (ansible/vars/contract/app-layering.md). The usual way to
     # produce one is an extra_yaml value that lost its indentation in transit, which is
     # exactly the case worth catching before it is on disk.
     - name: Assert no top-level mapping key is empty

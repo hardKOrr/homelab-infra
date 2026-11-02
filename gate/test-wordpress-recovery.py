@@ -3,6 +3,12 @@
 
 gate/test-restore-swap.py proves the swap and its database rollback;
 gate/test-pre-restore-point-age.py proves the one-hour pre-restore point rule.
+
+Checks: WordPress Restore runs the role's restore swap for `wp-content` and the database
+from the point's own group, after the recent pre-restore point check; the replaced hook
+points the site URLs at the target and updates or creates its administrator. The guest
+helper and its env file only back up. It also checks that the bind-mounted data directory is
+accessible to Apache's `www-data` user.
 """
 
 import os

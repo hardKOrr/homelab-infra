@@ -4,7 +4,7 @@ Public DNS is opt-in per estate with `domains.<estate>.public_dns.enabled: true`
 The lab-wide `public_dns` block supplies one address source, record TTL, and enabled
 IP families; each enabled estate uses its own DNS-01 provider configuration and
 credentials for its apex (`@`) and wildcard (`*`) records. See the
-[configuration contract](../../vars/CONTRACT.md).
+[estates contract](../../vars/contract/estates.md).
 When the default estate's `dns_challenge` has no provider, it inherits the lab's
 `reverse_proxy.dns_challenge`; estate-specific fields such as Vault-provided credentials
 override inherited values. Other estates continue to use only their own challenge

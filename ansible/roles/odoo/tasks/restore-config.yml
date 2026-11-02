@@ -1,0 +1,9 @@
+---
+# Restore App hook, run on localhost once the restore target is resolved: the app_config
+# this role's restore task gets, with filestore_path rebased onto the target instance.
+- name: Rebase the target's filestore_path
+  ansible.builtin.include_tasks: ../../../tasks/recovery/rebase-target-path.yml
+  vars:
+    restore_rebase_key: filestore_path
+    restore_rebase_prefix: /opt/odoo/
+    restore_rebase_instance: true

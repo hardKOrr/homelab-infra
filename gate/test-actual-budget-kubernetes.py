@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Guard Actual Budget's opt-in Kubernetes workload and shared recovery path."""
+"""Guard Actual Budget's opt-in Kubernetes workload and shared recovery path.
+
+Checks: Actual Budget's opt-in Kubernetes workload, shared PBS recovery path, and Docker
+default.
+"""
 
 from pathlib import Path
 

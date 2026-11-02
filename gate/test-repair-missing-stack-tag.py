@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise the missing stack identity repair against socket-free PVE fixtures."""
+"""Exercise the missing stack identity repair against socket-free PVE fixtures.
+
+Checks: the missing stack identity repair's plan, execute, repeat and refusal cases.
+"""
 import copy,json,os,subprocess,tempfile
 from pathlib import Path
 import yaml

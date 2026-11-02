@@ -2,7 +2,7 @@
 # Register an app with Authentik per its identity mode.
 # Inverse: tasks/unwiring/authentik.yml.
 #
-# Identity modes (wiring_identity_mode, from routing.identity — CONTRACT.md):
+# Identity modes (wiring_identity_mode, from routing.identity — vars/contract/app-layering.md):
 #   catalog       Application only: a launch tile in the Authentik user portal with
 #                 the group binding. No provider, no outpost — the app keeps its
 #                 own login. This is the default mode.

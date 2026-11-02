@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check PostgreSQL's native PBS contract, its recovery helper and its restore swap inputs."""
+"""Check PostgreSQL's native PBS contract, its recovery helper and its restore swap inputs.
+
+Checks: native LXC capability, consistent physical PBS backup, manifest and version guards,
+the live-cluster check, and the data directory, owner and mode PostgreSQL gives the restore
+swap.
+"""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import os

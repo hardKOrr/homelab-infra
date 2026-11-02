@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Guard Uptime Kuma's opt-in Kubernetes workload and cross-method recovery."""
+"""Guard Uptime Kuma's opt-in Kubernetes workload and cross-method recovery.
+
+Checks: opt-in Kubernetes workload, route and firewall selection, shared setup tasks, and
+Docker/Kubernetes archive compatibility.
+"""
 
 from pathlib import Path
 import os

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise shared Servarr dispatch, restore guards and archived key continuity."""
+"""Exercise shared Servarr dispatch, restore guards and archived key continuity.
+
+Checks: shared four-app dispatch, restore preview, the restore swap inputs and API key
+continuity: the staged hook refuses a point without the database or key, the replaced hook
+adopts the archived key in Compose, and the rollback hook puts the original Compose back.
+"""
 
 import base64
 import importlib.util

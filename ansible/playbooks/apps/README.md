@@ -91,7 +91,7 @@ application with no `scope`.
 Application scope and hosting placement are related but not interchangeable. `scope: lab`
 classifies one application deployment. `_.shared` marks hosting substrate that crosses
 estate boundaries. Read [`../../tasks/proxmox/README.md`](../../tasks/proxmox/README.md) for
-the tag grammar and [`../../vars/CONTRACT.md`](../../vars/CONTRACT.md) for estate and network
+the tag grammar and [`../../vars/contract/`](../../vars/CONTRACT.md#5-required-vs-optional-keys-per-config-file) for estate and network
 resolution.
 
 Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, or another
@@ -174,9 +174,20 @@ Make each integration idempotent by reading current state before creating or cha
 
 Per-app removal state that `playbooks/apps/remove.yml` cannot know about, such as a
 backup schedule, files outside `/opt/<instance>` or a dedicated device, goes in role
-hooks. Remove runs `roles/<app>/tasks/remove.yml` after the Compose project stops, and
-`roles/<app>/tasks/remove-devices.yml` after the data paths are gone. A GPU hook calls
-`tasks/proxmox/detach-app-gpu.yml`. Never add an `app == '<app>'` branch to Remove.
+hooks under `roles/<app>/tasks/`, each run only when the file exists:
+
+| Hook | Remove runs it |
+| --- | --- |
+| `remove-inputs.yml` | on localhost before unwiring: validate delete targets, declare `_rm_database_backend` or `_rm_keeps_guest_record` |
+| `remove-unwire.yml` | on localhost after provider unwiring, before the registry prune: withdraw the app from other apps |
+| `remove-units.yml` | on a native guest: set `_rm_service_names` instead of `app.service_name` |
+| `remove-native-data.yml` | on a native guest after the service stops, before the data paths go |
+| `remove.yml` | after the Compose project stops |
+| `remove-devices.yml` | after the data paths are gone; a GPU hook calls `tasks/proxmox/detach-app-gpu.yml` |
+
+Never add an `app == '<app>'` branch to Remove. Restore App's hooks
+(`restore-inputs.yml`, `restore-provisioned.yml`, `restore-config.yml`) are listed in the
+header of `playbooks/maintenance/restore-app.yml`.
 
 ---
 

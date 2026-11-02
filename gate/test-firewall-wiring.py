@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the OPNsense firewall wiring and unwiring against a local fake of its API."""
+"""Run the OPNsense firewall wiring and unwiring against a local fake of its API.
+
+Checks: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and
+convergence against a fake API.
+"""
 
 import http.server
 import json

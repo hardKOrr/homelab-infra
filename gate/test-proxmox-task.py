@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Run the shared Proxmox waiter with real caller expressions and a local pvesh stub."""
+"""Run the shared Proxmox waiter with real caller expressions and a local pvesh stub.
+
+Checks: guest backup/restore task IDs, exact polling paths and invalid-output guards.
+"""
 
 import json
 import os

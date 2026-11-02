@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Execute the source repair play against socket-free PVE command fixtures."""
+"""Execute the source repair play against socket-free PVE command fixtures.
+
+Checks: the orphan stack tag repair's plan, execute, repeat and refusal cases.
+"""
 import copy,json,os,subprocess,tempfile
 from pathlib import Path
 import yaml

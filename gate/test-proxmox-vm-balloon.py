@@ -129,7 +129,7 @@ assert any(
     for task in play.get("tasks", [])
 ), "PDM must pass its optional balloon setting to the installer VM path"
 
-contract = (repo / "ansible/vars/CONTRACT.md").read_text()
+contract = (repo / "ansible/vars/contract/app-layering.md").read_text()
 example = (repo / "config.example/apps/home-assistant.example.yml").read_text()
 assert "VM instances may set `proxmox.vm.balloon`" in contract
 assert "balloon: 2048 # optional minimum in MiB" in example

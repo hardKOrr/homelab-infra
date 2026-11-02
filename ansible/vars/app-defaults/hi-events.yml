@@ -19,7 +19,7 @@
 #      and never will — that is the application, not an exception to it. `identity:
 #      catalog` alongside it: Hi.Events runs its own organizer login, and a forward-auth
 #      gate in front of the whole app would put an Authentik sign-in between every
-#      attendee and the tickets they came to buy. CONTRACT.md's access/identity split
+#      attendee and the tickets they came to buy. contract/app-layering.md's access/identity split
 #      (tasks/wiring/caddy.yml) is what makes this a supported, asserted combination
 #      rather than an app quietly bypassing the platform's identity gate.
 #   3. SMTP: order confirmations and ticket delivery are the application, not an add-on,

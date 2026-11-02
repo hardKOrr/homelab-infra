@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check database facts and provisioning contracts remain safe and resolvable."""
+"""Check database facts and provisioning contracts remain safe and resolvable.
+
+Checks: generated database registry cleanup, PostgreSQL privilege/extension setup and
+delete/redeploy cluster lifecycle.
+"""
 
 import os
 from pathlib import Path
@@ -365,8 +369,13 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     withdraw = task_named(unwire_play["tasks"], "Withdraw the app's record from its Proxmox guest")
     native_tasks = native_play["tasks"]
     native_block = task_named(native_tasks, "Stop the native service")["block"]
-    resolve = task_named(native_play["pre_tasks"], "Resolve every PostgreSQL cluster removal unit")
-    drop = task_named(native_block, "Drop PostgreSQL clusters with their configuration when deleting data")
+    units_hook = yaml.safe_load(read("ansible/roles/postgresql/tasks/remove-units.yml"))
+    data_hook = yaml.safe_load(read("ansible/roles/postgresql/tasks/remove-native-data.yml"))
+    inputs_hook = yaml.safe_load(read("ansible/roles/postgresql/tasks/remove-inputs.yml"))
+    resolve = task_named(units_hook, "Resolve every PostgreSQL cluster removal unit")
+    drop = task_named(data_hook, "Drop PostgreSQL clusters with their configuration when deleting data")
+    run_data_hook = task_named(native_block, "Remove the app's own native state")
+    assert run_data_hook["ansible.builtin.include_tasks"] == "{{ _rm_hooks }}/remove-native-data.yml"
     assert drop["ansible.builtin.command"]["argv"] == [
         "pg_dropcluster",
         "--stop",
@@ -375,14 +384,17 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     ]
     assert "_rm_delete_data | bool" in drop["when"]
     assert "^[0-9]+[ ]+" in resolve["loop"] and "^[0-9]+[ ]+" in drop["loop"]
-    assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data and cache paths"))
+    assert native_block.index(run_data_hook) < native_block.index(
+        task_named(native_block, "Delete the data and cache paths"))
 
     # Remove App withdraws guest records before it stops services. PostgreSQL's LXC survives
     # removal, so its identity must be retained through cluster teardown for the next Deploy
     # to reuse instead of reaching the LXC creation seam as an unrecorded existing guest.
     assert remove_plays.index(unwire_play) < remove_plays.index(native_play)
     preserve_identity = unwire_play["vars"]["_rm_preserve_guest_identity"]
-    postgresql_removal = {"_rm_kind": "native", "app": "postgresql", "instance": "postgresql-n8n"}
+    declared = task_named(inputs_hook, "Declare a database backend that keeps its guest record")
+    postgresql_removal = {"_rm_kind": "native", "app": "postgresql", "instance": "postgresql-n8n",
+                          **declared["ansible.builtin.set_fact"]}
     ordinary_removal = {"_rm_kind": "docker", "app": "n8n", "instance": "n8n"}
     assert render(preserve_identity, postgresql_removal) is True
     assert render(preserve_identity, ordinary_removal) is False

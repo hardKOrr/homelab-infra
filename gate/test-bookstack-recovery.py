@@ -3,6 +3,12 @@
 
 gate/test-restore-swap.py proves the swap and its database rollback;
 gate/test-pre-restore-point-age.py proves the one-hour pre-restore point rule.
+
+Checks: BookStack validates its default admin address, ensures its backup scheduler, and
+Remove clears only its validated, unshared database and login. Restore runs the role's
+restore swap (the /config owner Deploy gives it, the database and dump) after the recent
+pre-restore point check, and the guest helper only backs up, starting BookStack again even
+when the upload fails.
 """
 
 import os

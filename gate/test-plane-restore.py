@@ -5,6 +5,10 @@ gate/test-restore-swap.py proves the swap and database. Plane's Redis backend is
 guest, so the replaced hook swaps the RDB there and the rollback hook puts the live RDB
 back. The hooks run here on local files with the remote host, services, Redis ping and
 Vaultwarden stubbed.
+
+Checks: Plane's restore swap inputs (every data bind mount, the whole project stopped, the
+routed health check) under its lock, the staged release and RDB checks, and the Redis RDB
+swapped on the backend guest and put back on rollback with the target's own keys.
 """
 
 import tempfile

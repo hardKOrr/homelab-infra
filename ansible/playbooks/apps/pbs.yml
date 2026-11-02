@@ -194,7 +194,7 @@
         that: network_effective.bridge | default('', true) | length > 0
         fail_msg: >-
           config/proxmox.yml must declare a bridge for network {{ network_selected }},
-          directly or through networks.default.bridge (ansible/vars/CONTRACT.md).
+          directly or through networks.default.bridge (ansible/vars/contract/proxmox.md).
           Refusing PBS provisioning before template creation, guest start or deployment.
 
     # A replacement PBS guest can be pinned to a different node from the control node.

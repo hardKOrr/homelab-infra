@@ -17,6 +17,8 @@ that interface.
   VM snapshot as application-consistent data. Role-backed Docker apps such as Immich stop
   their Compose services and archive named PostgreSQL data with explicitly owned durable
   media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
+  The live [recovery drill and application data port](recovery-drill.md) prove one
+  instance's deploy, backup and restore end to end.
 - Status and ascent verification read state without enforcing drift.
 
 Offline or unknown Proxmox nodes leave guest enumeration incomplete. Status reports that diagnostic
@@ -56,7 +58,8 @@ projection. Read playbook headers for exact inputs and effects.
 ## Disruption schedules
 
 `maintenance.schedule` is the single automated-disruption policy. Its schema and
-resolution precedence are authoritative in [`../../vars/CONTRACT.md`](../../vars/CONTRACT.md).
+resolution precedence are authoritative in
+[`../../vars/contract/infrastructure.md`](../../vars/contract/infrastructure.md#maintenance-schedules).
 The resolution order is global, estate, stack, then application; a narrower declaration
 replaces the inherited schedule.
 
@@ -88,10 +91,8 @@ reboot that shuts down its own runner.
 Proxmox VMs and LXCs. Rundeck exposes them under **Recover / Guests**. The exact VMID is
 the recovery unit; selecting an application is not an application-only restore. A shared
 Docker guest or Kubernetes node must be handled as a whole guest, with its workload scope
-shown in the job output. When configured, `infrastructure.backups.restore_bandwidth_mib_s`
-sets the Restore Guest request's per-restore `--bwlimit`; an unset value leaves the
-Proxmox default in effect. This is a request to PVE, not a guaranteed cap: current PVE
-does not forward `--bwlimit` to `proxmox-backup-client` for LXC restores from PBS.
+shown in the job output. Restore Guest's optional bandwidth limit is
+[`backups.restore_bandwidth_mib_s`](../../vars/contract/infrastructure.md).
 
 Backup coverage is read from the current PVE backup jobs before an on-demand `vzdump`
 request. PVE returns an UPID for backup, stop, start, and restore workers, so the shared

@@ -1,0 +1,29 @@
+---
+# Remove App hook, run on localhost before any unwiring. Immich keeps originals and
+# thumbnails on one separately mounted durable path. Validate that exact target first, so
+# delete_data never turns into removing a path outside the declared Immich mount
+# (remove-media.yml deletes it later). Its named database is dropped like any other app's.
+- name: Resolve Immich's media removal inputs
+  ansible.builtin.set_fact:
+    _rm_immich_media_mounts: "{{ app_config.media_storage.mounts | default([]) }}"
+    _rm_immich_media_path: >-
+      {{ ((app_config.media_storage.mounts | default([]) | first | default({})).path
+           | default('') | regex_replace('/+$', '')) }}
+  no_log: true
+  when:
+    - delete_data | default(false) | bool
+
+- name: Validate Immich's dedicated media mount
+  ansible.builtin.assert:
+    that:
+      - _rm_immich_media_mounts | length == 1
+      - _rm_immich_media_path is match('^/')
+      - _rm_immich_media_path | length > 1
+      - _rm_immich_media_path.split('/') | select('equalto', '..') | list | length == 0
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
+    fail_msg: >-
+      Refusing to remove Immich data without exactly one safe, owned durable media mount.
+  no_log: true
+  when:
+    - delete_data | default(false) | bool

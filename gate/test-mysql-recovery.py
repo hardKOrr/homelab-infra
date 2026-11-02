@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check MySQL's declared PBS contract and the shared server recovery script's reload restore."""
+"""Check MySQL's declared PBS contract and the shared server recovery script's reload restore.
+
+Checks: the shared `server-recovery.py` for MySQL: export flags, manifest, a point in the
+older `mysql-version.txt` format still restoring, the version guard, and reapplying the pre-
+restore point when a load fails.
+"""
 
 from importlib.util import module_from_spec, spec_from_file_location
 import os
