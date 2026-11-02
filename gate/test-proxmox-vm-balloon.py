@@ -5,13 +5,14 @@ from pathlib import Path
 
 from jinja2 import Environment, StrictUndefined
 import yaml
+import task_parts
 
 repo = Path(__file__).resolve().parents[1]
 task_dir = repo / "ansible/tasks/proxmox"
 
 
 def load_tasks(path):
-    return yaml.safe_load(path.read_text())
+    return task_parts.inline(path)
 
 
 def task_index(tasks, name):

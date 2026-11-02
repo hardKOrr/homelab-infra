@@ -1,0 +1,233 @@
+---
+# Phase of resolve-guest-placement.yml: read online nodes and storage, resolve every
+# requested passthrough device, collect node pins and narrow the candidate pool to nodes
+# that reach every requested storage and device. Inputs are listed in resolve-guest-
+# placement.yml.
+
+- name: Guest placement | Read online Proxmox nodes and usable storage
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/resources
+      - --type
+      - "{{ item }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop:
+    - node
+    - storage
+  loop_control:
+    label: "cluster {{ item }} resources"
+  register: _guest_placement_resources
+  changed_when: false
+
+- name: Guest placement | Collect online node names
+  ansible.builtin.set_fact:
+    _guest_placement_online_nodes: >-
+      {{ (_guest_placement_resources.results[0].stdout | from_json)
+         | selectattr('type', 'defined')
+         | selectattr('type', 'eq', 'node')
+         | selectattr('status', 'defined')
+         | selectattr('status', 'eq', 'online')
+         | map(attribute='node') | list }}
+
+- name: Guest placement | Require the GPU's declared node online
+  ansible.builtin.assert:
+    that: _guest_gpu_node in _guest_placement_online_nodes
+    fail_msg: >-
+      The node declared for GPU device {{ guest_placement_device }} is offline. GPU
+      placement is pinned to the device node; refusing to place it elsewhere.
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Build required storage constraints
+  ansible.builtin.set_fact:
+    _guest_placement_storage_requirements: >-
+      {{ [{'storage': _guest_placement_storage, 'guest_type': _guest_placement_guest_type}]
+         + ([{'storage': guest_placement_additional_storage,
+              'guest_type': guest_placement_additional_guest_type | default('qemu')}]
+            if guest_placement_additional_storage is defined
+               and guest_placement_additional_storage | string | trim | length > 0
+               and guest_placement_additional_storage != _guest_placement_storage
+            else []) }}
+    _guest_placement_storage_availability: []
+
+- name: Guest placement | Collect each required storage's node reachability
+  ansible.builtin.set_fact:
+    _guest_placement_storage_availability: >-
+      {{ _guest_placement_storage_availability + [{
+           'storage': guest_placement_storage_requirement.storage,
+           'guest_type': guest_placement_storage_requirement.guest_type,
+           'nodes': (_guest_placement_resources.results[1].stdout | from_json
+             | selectattr('storage', 'defined')
+             | selectattr('storage', 'equalto', guest_placement_storage_requirement.storage)
+             | selectattr('status', 'defined')
+             | selectattr('status', 'equalto', 'available')
+             | selectattr('content', 'defined')
+             | selectattr('content', 'search', '(^|,)' ~ ('rootdir' if guest_placement_storage_requirement.guest_type == 'lxc' else 'images') ~ '(,|$)')
+             | selectattr('node', 'in', _guest_placement_online_nodes)
+             | map(attribute='node') | unique | list),
+           'shared': (_guest_placement_resources.results[1].stdout | from_json
+             | selectattr('storage', 'defined')
+             | selectattr('storage', 'equalto', guest_placement_storage_requirement.storage)
+             | selectattr('status', 'defined')
+             | selectattr('status', 'equalto', 'available')
+             | selectattr('content', 'defined')
+             | selectattr('content', 'search', '(^|,)' ~ ('rootdir' if guest_placement_storage_requirement.guest_type == 'lxc' else 'images') ~ '(,|$)')
+             | selectattr('node', 'in', _guest_placement_online_nodes)
+             | selectattr('shared', 'defined')
+             | selectattr('shared', 'truthy') | list | length > 0)
+         }] }}
+  loop: "{{ _guest_placement_storage_requirements }}"
+  loop_control:
+    loop_var: guest_placement_storage_requirement
+    label: "{{ guest_placement_storage_requirement.storage }}"
+
+- name: Guest placement | Require every requested storage on a compatible online node
+  ansible.builtin.assert:
+    that: item.nodes | length > 0
+    fail_msg: >-
+      Proxmox storage {{ item.storage }} is not available for
+      {{ 'LXC root filesystems' if item.guest_type == 'lxc' else 'VM images' }}
+      on any online node. Refusing to create the guest.
+  loop: "{{ _guest_placement_storage_availability }}"
+  loop_control:
+    label: "{{ item.storage }}"
+
+- name: Guest placement | Record storage node sets
+  ansible.builtin.set_fact:
+    _guest_placement_storage_node_sets: "{{ _guest_placement_storage_availability | map(attribute='nodes') | list }}"
+
+- name: Guest placement | Initialize device placement constraints
+  ansible.builtin.set_fact:
+    _guest_placement_device_keys: >-
+      {{ (([guest_placement_device]
+           if guest_placement_device is defined and guest_placement_device | string | trim | length > 0
+           else [])
+          + (guest_placement_devices | default([]) | list)) | unique }}
+    _guest_placement_device_node_sets: >-
+      {{ [[_guest_gpu_node]] if guest_placement_class == 'gpu_vm' else [] }}
+
+- name: Guest placement | Require every requested device declaration
+  ansible.builtin.assert:
+    that:
+      - item in (homelabinfra_config.proxmox.devices | default({}))
+    fail_msg: >-
+      Guest placement device {{ item }} is not declared in proxmox.devices.
+  loop: "{{ _guest_placement_device_keys }}"
+  when: guest_placement_class != 'gpu_vm' or item != guest_placement_device
+
+- name: Guest placement | Resolve each requested passthrough device
+  ansible.builtin.include_tasks: ../resolve-one-guest-placement-device.yml
+  loop: "{{ _guest_placement_device_keys }}"
+  loop_control:
+    loop_var: guest_placement_device_key
+    label: "{{ guest_placement_device_key }}"
+  when: guest_placement_class != 'gpu_vm' or guest_placement_device_key != guest_placement_device
+
+- name: Guest placement | Verify a requested compute node is eligible
+  ansible.builtin.assert:
+    that:
+      - guest_placement_preferred_node in _guest_placement_compute_nodes
+      - guest_placement_preferred_node in _guest_placement_online_nodes
+    fail_msg: >-
+      Requested guest node is not an online member of proxmox.node_roles.compute.
+      Refusing to create the guest outside the declared compute pool.
+  when: guest_placement_preferred_node is defined
+
+- name: Guest placement | Initialize single-node device pins
+  ansible.builtin.set_fact:
+    _guest_placement_device_pin_nodes: []
+
+- name: Guest placement | Collect single-node device pins
+  ansible.builtin.set_fact:
+    _guest_placement_device_pin_nodes: >-
+      {{ _guest_placement_device_pin_nodes
+         + ([item[0]] if item | length == 1 else []) }}
+  loop: "{{ _guest_placement_device_node_sets }}"
+  loop_control:
+    label: passthrough node set
+
+- name: Guest placement | Initialize single-node storage pins
+  ansible.builtin.set_fact:
+    _guest_placement_storage_pin_nodes: []
+
+- name: Guest placement | Collect single-node storage pins
+  ansible.builtin.set_fact:
+    _guest_placement_storage_pin_nodes: "{{ _guest_placement_storage_pin_nodes + [item.nodes[0]] }}"
+  loop: "{{ _guest_placement_storage_availability }}"
+  loop_control:
+    label: "{{ item.storage }}"
+  when: not item.shared and item.nodes | length == 1
+
+- name: Guest placement | Collect explicit placement pins
+  ansible.builtin.set_fact:
+    _guest_placement_pins: >-
+      {{ ([{'source': 'guest configuration', 'node': _guest_placement_configured_node}]
+          if _guest_placement_configured_node | length > 0 else [])
+         + ([{'source': 'requested cluster node', 'node': guest_placement_preferred_node}]
+            if guest_placement_preferred_node is defined else [])
+         + ([{'source': 'database node role', 'node': homelabinfra_config.proxmox.node_roles.storage}]
+            if guest_placement_class == 'database_vm'
+               and not (guest_placement_database_backend | default(false) | bool)
+               and _guest_placement_configured_node | length == 0
+               and _guest_placement_storage_pin_nodes | length == 0 else []) }}
+
+- name: Guest placement | Add the node-local storage pins
+  ansible.builtin.set_fact:
+    _guest_placement_pins: "{{ _guest_placement_pins + [{'source': 'node-local storage', 'node': item}] }}"
+  loop: "{{ _guest_placement_storage_pin_nodes }}"
+  loop_control:
+    label: storage node
+
+- name: Guest placement | Add the passthrough device pins
+  ansible.builtin.set_fact:
+    _guest_placement_pins: "{{ _guest_placement_pins + [{'source': 'passthrough device', 'node': item}] }}"
+  loop: "{{ _guest_placement_device_pin_nodes }}"
+  loop_control:
+    label: passthrough node
+
+- name: Guest placement | Refuse conflicting node pins
+  ansible.builtin.assert:
+    that: _guest_placement_pins | map(attribute='node') | unique | list | length <= 1
+    fail_msg: >-
+      The guest's explicit node, local storage and passthrough device point to different
+      Proxmox nodes. Correct the guest configuration before creating it.
+
+- name: Guest placement | Choose the online candidate pool
+  ansible.builtin.set_fact:
+    _guest_placement_base_nodes: >-
+      {{ [_guest_placement_pins | map(attribute='node') | list | first]
+         if _guest_placement_pins | length > 0
+         else _guest_placement_compute_nodes }}
+    _guest_placement_device_nodes: >-
+      {{ _guest_placement_online_nodes if _guest_placement_device_node_sets | length == 0
+         else (_guest_placement_device_node_sets | first) }}
+
+- name: Guest placement | Intersect multiple device node sets
+  ansible.builtin.set_fact:
+    _guest_placement_device_nodes: "{{ _guest_placement_device_nodes | select('in', item) | list }}"
+  loop: "{{ _guest_placement_device_node_sets[1:] }}"
+
+- name: Guest placement | Filter nodes by online status and devices
+  ansible.builtin.set_fact:
+    _guest_placement_storage_device_nodes: >-
+      {{ _guest_placement_base_nodes
+         | select('in', _guest_placement_online_nodes)
+         | select('in', _guest_placement_device_nodes) | list }}
+
+- name: Guest placement | Intersect every required storage's node set
+  ansible.builtin.set_fact:
+    _guest_placement_storage_device_nodes: >-
+      {{ _guest_placement_storage_device_nodes | select('in', item) | list }}
+  loop: "{{ _guest_placement_storage_node_sets }}"
+  loop_control:
+    label: required storage nodes
+
+- name: Guest placement | Require a node with the requested storage and devices
+  ansible.builtin.assert:
+    that: _guest_placement_storage_device_nodes | length > 0
+    fail_msg: >-
+      No online node satisfies the guest's pinned node, passthrough devices and all
+      required storage. Refusing to create the guest elsewhere.

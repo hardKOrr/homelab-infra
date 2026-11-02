@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
+import task_parts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -179,8 +180,7 @@ def delete_rule_retries_digest_races():
 
 
 def api_health_check_uses_configured_token():
-    tasks = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    tasks = task_parts.inline(ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml")
     uri_tasks = [task for task in tasks if "ansible.builtin.uri" in task]
     check("one authenticated API health check is configured", len(uri_tasks), 1)
     if not uri_tasks:
@@ -195,8 +195,7 @@ def api_health_check_uses_configured_token():
 
 
 def quorum_guard_accepts_aligned_output():
-    tasks = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    tasks = task_parts.inline(ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml")
     quorum_task = next(
         task for task in tasks
         if task.get("name") == "Proxmox host firewall | Require quorum before cancelling rollback")
@@ -212,8 +211,7 @@ def quorum_guard_accepts_aligned_output():
 
 
 def rollback_cancellation_is_guarded_and_idempotent():
-    tasks = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml").read_text())
+    tasks = task_parts.inline(ROOT / "ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml")
     by_name = {task.get("name"): task for task in tasks}
     guard = by_name["Proxmox host firewall | Require rollback timer before cancellation"]
     check("rollback cancellation requires an armed timer",

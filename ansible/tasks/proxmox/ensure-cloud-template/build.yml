@@ -1,0 +1,114 @@
+---
+# Phase of ensure-cloud-template.yml: download the declared cloud image and build, stamp
+# and convert the template on the selected node.
+
+- name: Cloud template | Build the template
+  when: _ct_existing.rc != 0 or (_ct_replace | bool)
+  delegate_to: "{{ _guest_placement.node }}"
+  block:
+    - name: Cloud template | Ensure the image cache directory exists
+      ansible.builtin.file:
+        path: "{{ _ct_cache_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Cloud template | Download the Debian cloud image
+      ansible.builtin.get_url:
+        url: "{{ _ct_url }}"
+        dest: "{{ _ct_cache_dir }}/{{ _ct_url | basename }}"
+        mode: "0644"
+      register: _ct_image
+
+    # serial0 + vga serial0 is what the Debian genericcloud image expects for
+    # console output; without it the Proxmox console stays blank and debugging a
+    # failed boot is guesswork.
+    - name: Cloud template | Create the VM shell
+      ansible.builtin.command:
+        argv:
+          - qm
+          - create
+          - "{{ _ct_vmid }}"
+          - --name
+          - "{{ _ct_name }}"
+          - --memory
+          - "2048"
+          - --cores
+          - "2"
+          - --net0
+          - "virtio,bridge={{ _ct_bridge }}"
+          - --scsihw
+          - virtio-scsi-pci
+          - --ostype
+          - l26
+          - --agent
+          - "1"
+          - --serial0
+          - socket
+          - --vga
+          - serial0
+          # Tagged like every other guest this platform creates, so the template is
+          # recognisable as ours on a lab full of hand-built ones — which is the same
+          # distinction the vmid assert in existing.yml enforces. Ownership, the declared machine
+          # fact, then the topology tag — see the ensure-cloud-template.yml header.
+          - --tags
+          - "{{ [_ct_owner_tag, _ct_os_tag, _ct_facet_tag] | sort | join(';') }}"
+          # The stamp the replacement rule reads back. `homelab-infra-image=` rather than
+          # `image:` so the marker cannot be confused with anything an operator writes, and
+          # so a description edited by hand keeps working as long as this token survives.
+          - --description
+          - >-
+            Debian cloud-init template built by homelab-infra
+            (homelab-infra-image={{ _ct_image_id }}).
+            Delete this VM, or change the declared image, to force a rebuild.
+      changed_when: true
+
+    # PVE 8+ imports straight into a disk slot; no separate `qm importdisk` step.
+    - name: Cloud template | Import the cloud image as scsi0
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --scsi0
+          - "{{ _ct_storage }}:0,import-from={{ _ct_cache_dir }}/{{ _ct_url | basename }}"
+      changed_when: true
+
+    - name: Cloud template | Attach the cloud-init drive and boot order
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --ide2
+          - "{{ _ct_storage }}:cloudinit"
+          - --boot
+          - "order=scsi0"
+      changed_when: true
+
+    # Baked into the template so a clone can reach SSH even before per-VM
+    # cloud-init settings are applied.
+    - name: Cloud template | Set the default cloud-init SSH key
+      ansible.builtin.copy:
+        content: "{{ homelabinfra_config.ansible.ssh_public_key }}\n"
+        dest: "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+        mode: "0600"
+
+    - name: Cloud template | Apply the SSH key to the template
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --sshkeys
+          - "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+      changed_when: true
+
+    - name: Cloud template | Remove the staged SSH key
+      ansible.builtin.file:
+        path: "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+        state: absent
+
+    - name: Cloud template | Convert the VM into a template
+      ansible.builtin.command:
+        cmd: "qm template {{ _ct_vmid }}"
+      changed_when: true

@@ -1,0 +1,103 @@
+---
+# Phase of attach-host-mounts-lxc.yml: read the guest's configuration, resolve the
+# mountpoints still missing and the identity passthrough the guest needs, and decide
+# whether the guest has to stop.
+
+- name: Host mounts | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ _am_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_config
+  changed_when: false
+
+- name: Host mounts | Resolve which mountpoints are already attached
+  ansible.builtin.set_fact:
+    # Existing pairs as "<host>|<guest path>", and the indices already in use so a
+    # new mountpoint claims a free one instead of overwriting somebody else's.
+    _am_existing_pairs: >-
+      {{ _am_mp_lines
+         | map('regex_replace', '^mp[0-9]+:\s*([^,]+),.*mp=([^,]+).*$', '\1|\2')
+         | list }}
+    _am_used_indices: >-
+      {{ _am_mp_lines | map('regex_replace', '^mp([0-9]+):.*$', '\1')
+         | map('int') | list }}
+  vars:
+    _am_mp_lines: >-
+      {{ _am_config.stdout_lines | select('match', '^mp[0-9]+:') | list }}
+
+- name: Host mounts | Resolve the mountpoints still missing
+  ansible.builtin.set_fact:
+    _am_missing: >-
+      {{ attach_mounts_list
+         | rejectattr('host', 'in', _am_matched_hosts) | list }}
+  vars:
+    # A pair counts as present only when BOTH sides match: the same host path
+    # attached at a different guest path is not the mount this app asked for.
+    _am_matched_hosts: >-
+      {{ attach_mounts_list
+         | selectattr('host', 'defined')
+         | selectattr('path', 'defined')
+         | selectattr('host', 'in',
+             _am_existing_pairs | map('regex_replace', '\|.*$', '') | list)
+         | selectattr('path', 'in',
+             _am_existing_pairs | map('regex_replace', '^.*\|', '') | list)
+         | map(attribute='host') | list }}
+
+# The id range is split into three: everything below the owner's id keeps the
+# stock 100000+ offset, the owner's id maps to ITSELF, and everything above
+# resumes the offset. That single passthrough entry is the whole mechanism — it is
+# what makes uid 1313 on the node and uid 1313 in the container the same identity,
+# and therefore what makes the library writable.
+- name: Host mounts | Resolve the identity passthrough the guest needs
+  ansible.builtin.set_fact:
+    # `| int` at every use, not once into a var: a `vars:` entry is a templated
+    # STRING even when its expression ended in `| int`, so arithmetic on it fails
+    # at runtime with "can only concatenate str (not int) to str" — and no gate
+    # sees it, because the playbook is syntactically perfect (execution 58).
+    _am_idmap_lines: >-
+      {{ ['lxc.idmap: u 0 100000 ' ~ (attach_mounts_owner.uid | int),
+          'lxc.idmap: u ' ~ (attach_mounts_owner.uid | int)
+            ~ ' ' ~ (attach_mounts_owner.uid | int) ~ ' 1',
+          'lxc.idmap: u ' ~ ((attach_mounts_owner.uid | int) + 1)
+            ~ ' ' ~ (100001 + (attach_mounts_owner.uid | int))
+            ~ ' ' ~ (65535 - (attach_mounts_owner.uid | int)),
+          'lxc.idmap: g 0 100000 ' ~ (attach_mounts_owner.gid | int),
+          'lxc.idmap: g ' ~ (attach_mounts_owner.gid | int)
+            ~ ' ' ~ (attach_mounts_owner.gid | int) ~ ' 1',
+          'lxc.idmap: g ' ~ ((attach_mounts_owner.gid | int) + 1)
+            ~ ' ' ~ (100001 + (attach_mounts_owner.gid | int))
+            ~ ' ' ~ (65535 - (attach_mounts_owner.gid | int))] }}
+  when: attach_mounts_owner | default({}) | length > 0
+
+# The guest config file, not `pct config` — pct renders the runtime view and drops
+# the raw lxc.* keys entirely, so it can never show whether the map is present.
+- name: Host mounts | Read the raw guest config file
+  ansible.builtin.slurp:
+    src: "/etc/pve/lxc/{{ _am_vmid }}.conf"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_raw_conf
+  when: attach_mounts_owner | default({}) | length > 0
+
+- name: Host mounts | Resolve whether the passthrough is already in place
+  ansible.builtin.set_fact:
+    # `.splitlines()`, never `.split('\n')`: inside a YAML folded scalar the escape
+    # reaches Jinja as a literal backslash-n and the split silently returns the WHOLE
+    # file as one element, so every run reports the map missing and writes it again —
+    # media-stack ended up with two conflicting copies and refused to boot
+    # (execution 60, 2026-08-09). Measured, not assumed.
+    _am_conf_lines: >-
+      {{ (_am_raw_conf.content | default('') | b64decode).splitlines()
+         | map('trim') | list }}
+- name: Host mounts | Resolve whether the passthrough has to be rewritten
+  ansible.builtin.set_fact:
+    _am_idmap_missing: >-
+      {{ (attach_mounts_owner | default({}) | length > 0)
+         and ((_am_conf_lines | select('match', '^lxc\.idmap:') | list)
+              != (_am_idmap_lines | default([]) | list)) }}
+
+# Both the mountpoints and the identity map are guest configuration that a running
+# container will not accept, so one stop covers both.
+- name: Host mounts | Resolve whether the guest has to stop at all
+  ansible.builtin.set_fact:
+    _am_work: >-
+      {{ (_am_missing | length > 0) or (_am_idmap_missing | bool) }}

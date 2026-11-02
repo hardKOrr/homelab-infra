@@ -1,0 +1,143 @@
+---
+# Phase of vm-create.yml: start the new VM, wait for it, resolve its address, write its
+# instance metadata, reconcile its HA resource and refresh the PBS backup job.
+
+# `present` in vm-create.yml created the VM stopped, exactly as it does for LXC in
+# lxc-create.yml, and nothing else here starts it — without this the wait below spins its
+# full 30 retries and fails on every first create.
+#
+# Node-local `qm start` rather than the module's `state: started`: the module resolves the
+# guest through the eventually-consistent /cluster/resources cache and reads its name
+# unconditionally, which fails on a guest created seconds earlier. Same reasoning, same
+# shape and same node as lxc-create/ready.yml — see the longer note there.
+- name: Start the VM
+  ansible.builtin.command:
+    cmd: "qm start {{ homelabinfra_instance.vm.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_start
+  changed_when: vm_start.rc == 0
+  failed_when:
+    - vm_start.rc != 0
+    - "'already running' not in (vm_start.stderr | default('')) | lower"
+
+- name: Wait for VM to be running
+  ansible.builtin.command:
+    cmd: "qm status {{ homelabinfra_instance.vm.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_status
+  retries: 30
+  delay: 2
+  until: "'status: running' in vm_status.stdout"
+  changed_when: false
+
+- name: Wait for VM guest agent to accept exec
+  ansible.builtin.command:
+    cmd: "qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/true"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_guest_exec_ready
+  retries: 30
+  delay: 2
+  until: vm_guest_exec_ready.rc == 0
+  changed_when: false
+
+- name: Discover VM DHCP lease
+  ansible.builtin.command:
+    argv:
+      - qm
+      - guest
+      - exec
+      - "{{ homelabinfra_instance.vm.vmid }}"
+      - --synchronous
+      - "1"
+      - --timeout
+      - "70"
+      - --
+      - /bin/sh
+      - -c
+      - |
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          interface="$(ip -4 route show default | awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+          if [ -n "$interface" ]; then
+            lease="$(ip -4 -o address show dev "$interface" scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          else
+            lease="$(ip -4 -o address show scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          fi
+          if [ -n "$lease" ]; then
+            printf '%s\n' "$lease"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        exit 1
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_dhcp_lease
+  changed_when: false
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Parse VM DHCP lease result
+  ansible.builtin.set_fact:
+    vm_dhcp_lease_result: "{{ vm_dhcp_lease.stdout | from_json }}"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert VM DHCP lease was discovered
+  ansible.builtin.assert:
+    that:
+      - vm_dhcp_lease_result.exited | default(false) | bool
+      - vm_dhcp_lease_result.exitcode | default(1) | int == 0
+      - vm_dhcp_lease_result['out-data'] | default('') | trim | ansible.utils.ipaddr('address')
+    fail_msg: "The VM guest agent did not return a leased IPv4 address"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Merge VM DHCP lease into instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'network': {'ip_address': vm_dhcp_lease_result['out-data'] | trim},
+          'vm': {'ip_address': vm_dhcp_lease_result['out-data'] | trim},
+          'vm_ansible_host': (
+            vm_dhcp_lease_result['out-data'] | trim
+            if (homelabinfra_instance.vm_ansible_host | default('') | string | trim | lower) in ['', 'dhcp']
+            else homelabinfra_instance.vm_ansible_host
+          )
+        }, recursive=True) }}
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert VM connection address is resolved
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_instance.vm_ansible_host | string | trim | length > 0
+      - homelabinfra_instance.vm_ansible_host | string | trim | lower != 'dhcp'
+    fail_msg: "The VM connection address is empty or still set to DHCP"
+
+- name: Write sanitized VM instance metadata to /root with mode 0600
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cat <<'EOF' | qm guest exec {{ homelabinfra_instance.vm.vmid }} --pass-stdin 1 --synchronous 1 --timeout 30 -- /bin/sh -c 'set -e; umask 077; cat > /root/homelabinfra_instance.vm.json; chmod 0600 /root/homelabinfra_instance.vm.json; rm -f /root/home/homelabinfra_instance.vm.json'
+    {{ homelabinfra_instance.vm | dict2items | rejectattr('key', 'in', ['api_token_secret', 'api_token_id', 'password', 'cipassword', 'pubkey', 'sshkeys']) | list | items2dict | to_nice_json }}
+    EOF
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_instance_metadata_write
+  args:
+    executable: /bin/bash
+
+- name: Assert VM instance metadata was written
+  ansible.builtin.assert:
+    that:
+      - vm_instance_metadata_write_result.exited | default(false) | bool
+      - vm_instance_metadata_write_result.exitcode | default(1) | int == 0
+    fail_msg: "The VM guest agent failed to write protected instance metadata"
+  vars:
+    vm_instance_metadata_write_result: "{{ vm_instance_metadata_write.stdout | from_json }}"
+
+- name: Reconcile the VM's optional HA resource
+  ansible.builtin.include_tasks: ../reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_ha_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+    proxmox_ha_name: "{{ homelabinfra_instance.vm.name }}"
+    proxmox_ha_enabled: "{{ homelabinfra_instance.vm.ha | default(false) }}"
+
+- name: Refresh the PBS backup job after creating the VM
+  ansible.builtin.include_tasks: ../refresh-backup-job.yml

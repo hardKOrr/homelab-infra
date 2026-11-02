@@ -1,0 +1,114 @@
+---
+# Phase of resolve-guest-placement.yml: keep the candidates that carry the guest's bridge
+# and VLAN, select the one with the most available memory and publish the VM or LXC target
+# settings. Inputs are listed in resolve-guest-placement.yml.
+
+- name: Guest placement | Read candidate node networks
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ item }}/network"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _guest_placement_storage_device_nodes }}"
+  loop_control:
+    label: "{{ item }} network"
+  register: _guest_placement_network_results
+  changed_when: false
+  failed_when: false
+
+- name: Guest placement | Initialize bridge-compatible nodes
+  ansible.builtin.set_fact:
+    _guest_placement_network_nodes: []
+
+- name: Guest placement | Check each candidate bridge and VLAN
+  ansible.builtin.include_tasks: ../check-guest-placement-network.yml
+  loop: "{{ _guest_placement_network_results.results }}"
+  loop_control:
+    loop_var: guest_placement_network_result
+    label: "{{ guest_placement_network_result.item }}"
+  when:
+    - guest_placement_network_result.rc == 0
+    - _guest_placement_bridge | length > 0
+
+- name: Guest placement | Require the requested bridge on an eligible node
+  ansible.builtin.assert:
+    that: _guest_placement_network_nodes | default([]) | length > 0
+    fail_msg: >-
+      No online storage-compatible node has the active guest bridge
+      {{ _guest_placement_bridge | default('(unset)') }}. Refusing to create the guest
+      without its declared network.
+
+- name: Guest placement | Read available memory on eligible nodes
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ item }}/status"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _guest_placement_network_nodes }}"
+  loop_control:
+    label: "{{ item }} memory"
+  register: _guest_placement_memory_results
+  changed_when: false
+
+- name: Guest placement | Initialize available-memory candidates
+  ansible.builtin.set_fact:
+    _guest_placement_memory_candidates: []
+
+- name: Guest placement | Build available-memory ranking
+  ansible.builtin.set_fact:
+    _guest_placement_memory_candidates: >-
+      {{ _guest_placement_memory_candidates
+         + [{'node': item.item,
+             'available_bytes': ((item.stdout | from_json).memory.available
+               | default((item.stdout | from_json).memory.total
+                         - (item.stdout | from_json).memory.used, true) | int)}] }}
+  loop: "{{ _guest_placement_memory_results.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Guest placement | Select the node with the most available memory
+  ansible.builtin.set_fact:
+    _guest_placement:
+      class: "{{ guest_placement_class }}"
+      node: "{{ (_guest_placement_memory_candidates
+                 | sort(attribute='available_bytes', reverse=true) | first).node }}"
+      storage: "{{ _guest_placement_storage }}"
+      guest_type: "{{ _guest_placement_guest_type }}"
+      cpu_model: >-
+        {{ homelabinfra_config.proxmox.floating_vm_cpu_model
+           if guest_placement_class in ['floating_vm', 'gpu_vm'] else '' }}
+      device: "{{ guest_placement_device if guest_placement_class == 'gpu_vm' else '' }}"
+      pci_mapping: "{{ _guest_gpu_mapping_id if guest_placement_class == 'gpu_vm' else '' }}"
+      pci_id: "{{ _guest_gpu_pci_id if guest_placement_class == 'gpu_vm' else '' }}"
+      available_memory_bytes: "{{ (_guest_placement_memory_candidates
+                                    | sort(attribute='available_bytes', reverse=true) | first).available_bytes }}"
+
+- name: Guest placement | Apply VM target settings
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': _guest_placement.node
+         }}, recursive=True) }}
+  when: _guest_placement_guest_type == 'qemu'
+
+- name: Guest placement | Apply the common floating VM CPU model
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'vm': {
+           'cpu': _guest_placement.cpu_model
+         }}}, recursive=True) }}
+  when: guest_placement_class in ['floating_vm', 'gpu_vm']
+
+- name: Guest placement | Apply LXC target settings
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': _guest_placement.node
+         }}, recursive=True) }}
+  when: _guest_placement_guest_type == 'lxc'

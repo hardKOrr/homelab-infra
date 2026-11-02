@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+import task_parts
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
@@ -23,9 +24,9 @@ BOOTSTRAP = REPO / "rundeck/bootstrap-rundeck.sh"
 
 
 def verify_pci_mapping_contract():
-    resolver_tasks = yaml.safe_load(RESOLVER.read_text())
+    resolver_tasks = task_parts.inline(RESOLVER)
     parser_tasks = yaml.safe_load(PCI_MAPPING_PARSER.read_text())
-    attach_tasks = yaml.safe_load(PCI_ATTACH.read_text())
+    attach_tasks = task_parts.inline(PCI_ATTACH)
     parser_name = "parse-pci-mapping-entries.yml"
 
     assert len(parser_tasks) == 2
@@ -66,12 +67,12 @@ def verify_virtiofs_mount_contract():
     collections = {item["name"]: item["version"] for item in requirements["collections"]}
     assert collections.get("ansible.posix") == "2.2.2"
 
-    task_source = VM_HOST_MOUNTS.read_text()
+    task_source = task_parts.text(VM_HOST_MOUNTS)
     assert "ansible.posix.mount:" in task_source
     assert "ansible.builtin.mount:" not in task_source
     assert "ansible.posix" in BOOTSTRAP.read_text()
 
-    tasks = yaml.safe_load(task_source)
+    tasks = task_parts.inline(VM_HOST_MOUNTS)
     mapping_task = next(
         task for task in tasks
         if task.get("name") == "VM host mounts | Create only missing directory mappings"
@@ -304,7 +305,7 @@ def verify_virtiofs_mount_contract():
 
 
 def verify_vm_clone_existing_node_contract():
-    tasks = yaml.safe_load(VM_CLONE.read_text())
+    tasks = task_parts.inline(VM_CLONE)
     task_names = [task.get("name") for task in tasks]
     resource_lookup = "VM clone | Read cluster resources to preserve an existing guest's node"
     existing_node = "VM clone | Keep an existing guest on its current node"
@@ -334,7 +335,7 @@ def verify_vm_clone_existing_node_contract():
     )
     assert clone_task["vars"]["proxmox_placement_node"] == "{{ _guest_placement.node }}"
 
-    clone_tasks = yaml.safe_load(VM_CLONE.read_text())
+    clone_tasks = task_parts.inline(VM_CLONE)
     clone_call = next(
         task for task in clone_tasks
         if task.get("name") == "VM clone | Clone the template"
@@ -352,7 +353,7 @@ def verify_vm_clone_existing_node_contract():
         (REPO / "ansible/tasks/proxmox/lxc-create.yml", "Preserve an existing LXC's current node",
          "Resolve the declared placement for this LXC"),
     ):
-        tasks = yaml.safe_load(path.read_text())
+        tasks = task_parts.inline(path)
         names = [task.get("name") for task in tasks]
         assert names.index(preserve_task_name) < names.index(resolver_name)
 
@@ -360,7 +361,7 @@ def verify_vm_clone_existing_node_contract():
         (REPO / "ansible/tasks/proxmox/vm-create.yml", "Apply the selected VM disk storage"),
         (REPO / "ansible/tasks/proxmox/lxc-create.yml", "Apply the selected LXC rootfs storage"),
     ):
-        tasks = yaml.safe_load(path.read_text())
+        tasks = task_parts.inline(path)
         storage_task = next(task for task in tasks if task.get("name") == storage_task_name)
         assert "_guest_placement.storage" in storage_task["ansible.builtin.set_fact"][
             "homelabinfra_instance"
@@ -379,15 +380,13 @@ def verify_vm_clone_existing_node_contract():
             module_args_key
         ]
 
-    resolver_tasks = yaml.safe_load(RESOLVER.read_text())
+    resolver_tasks = task_parts.inline(RESOLVER)
     for task_name in ("Guest placement | Apply VM target settings",
                       "Guest placement | Apply LXC target settings"):
         task = next(task for task in resolver_tasks if task.get("name") == task_name)
         assert "storage" not in task["ansible.builtin.set_fact"]["homelabinfra_config"]
 
-    template_tasks = yaml.safe_load(
-        (REPO / "ansible/tasks/proxmox/ensure-cloud-template.yml").read_text()
-    )
+    template_tasks = task_parts.inline(REPO / "ansible/tasks/proxmox/ensure-cloud-template.yml")
     template_placement = next(
         task for task in template_tasks
         if task.get("name") == "Resolve the declared placement before ensuring the VM template"
@@ -402,7 +401,7 @@ def verify_vm_clone_existing_node_contract():
 
 
 def verify_vm_clone_connection_follows_relocated_guest():
-    tasks = yaml.safe_load(VM_CLONE.read_text())
+    tasks = task_parts.inline(VM_CLONE)
     preserve_node = next(
         task for task in tasks
         if task.get("name") == "VM clone | Keep an existing guest on its current node"
@@ -465,7 +464,7 @@ def verify_vm_clone_connection_follows_relocated_guest():
 
 
 def verify_vm_clone_start_skips_running_guest():
-    tasks = yaml.safe_load(VM_CLONE.read_text())
+    tasks = task_parts.inline(VM_CLONE)
     start = next(
         task for task in tasks
         if task.get("name") == "VM clone | Start the VM"

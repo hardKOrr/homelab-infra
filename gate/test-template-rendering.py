@@ -11,6 +11,7 @@ import yaml
 from restore_swap_inputs import swap_inputs
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+import task_parts
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
@@ -362,9 +363,7 @@ def caddy_declared_lab_dns_reaches_guest_and_disabled_propagation_policy(self):
         network = render(
             expression, {"homelabinfra_config": config, "network_selected": "shared"}
         )
-        create_tasks = yaml.safe_load(
-            (ROOT / "ansible/tasks/proxmox/lxc-create.yml").read_text()
-        )
+        create_tasks = task_parts.inline(ROOT / "ansible/tasks/proxmox/lxc-create.yml")
         module_task = task_named(create_tasks, "Merge LXC network settings")
         guest = render(
             module_task["ansible.builtin.set_fact"]["homelabinfra_instance"],
@@ -1590,7 +1589,7 @@ def k3s_template_supports_a_per_node_snapshotter():
 
 def vm_clone_keeps_recorded_app_tags_and_notes():
     # A redeploy must not strip what apps recorded on the guest (record-app-on-guest.yml).
-    tasks = yaml.safe_load(read("ansible/tasks/proxmox/vm-clone.yml"))
+    tasks = task_parts.inline(ROOT / "ansible/tasks/proxmox/vm-clone.yml")
     merge = task_named(tasks, "VM clone | Merge the recorded app tags and notes into the request")
     region = "<!-- homelab-infra:apps -->\n| app | kind |\n<!-- /homelab-infra:apps -->"
     current = {"tags": "_+lab;_-k3s;_.shared;_jellyseerr;_old-platform-lane;operator-note;_.stale",

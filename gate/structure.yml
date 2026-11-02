@@ -70,16 +70,6 @@ size:
   ansible/tasks/firewall/opnsense-apply-base.yml: 354
   ansible/tasks/firewall/opnsense-base.yml: 357
   ansible/tasks/kubernetes/recovery-restore.yml: 458
-  ansible/tasks/proxmox/attach-host-mounts-lxc.yml: 378
-  ansible/tasks/proxmox/attach-host-mounts-vm.yml: 435
-  ansible/tasks/proxmox/attach-pci-passthrough.yml: 308
-  ansible/tasks/proxmox/ensure-cloud-template.yml: 479
-  ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml: 329
-  ansible/tasks/proxmox/lxc-create.yml: 477
-  ansible/tasks/proxmox/reconcile-host-firewall-baseline.yml: 472
-  ansible/tasks/proxmox/resolve-guest-placement.yml: 565
-  ansible/tasks/proxmox/vm-clone.yml: 566
-  ansible/tasks/proxmox/vm-create.yml: 389
   ansible/tasks/recovery/restore-swap.yml: 607
   ansible/tasks/stack/find-or-create-host.yml: 457
   ansible/tasks/wiring/authentik.yml: 787

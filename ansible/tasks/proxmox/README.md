@@ -1,6 +1,11 @@
 # Proxmox automation boundary
 
-This directory contains shared Proxmox provisioning and guest-record tasks.
+This directory contains shared Proxmox provisioning and guest-record tasks. Callers
+include a seam's entry file; a long entry imports runs of its tasks from a same-named
+directory: `vm-clone/`, `vm-create/`, `lxc-create/`, `ensure-cloud-template/`,
+`resolve-guest-placement/`, `reconcile-host-firewall-baseline/`, `attach-host-mounts-vm/`,
+`attach-host-mounts-lxc/`, `ensure-pbs-datastore-disk/`, `attach-pci-passthrough/`. Each
+part's header names its steps and it reaches the entry's siblings as `../<file>.yml`.
 
 ## Execution model
 
@@ -43,11 +48,10 @@ is ready. The shared owned-guest destroy seams refresh it after Proxmox confirms
 is gone. PBS configuration uses the same task and creates the job when needed, so Deploy
 and Remove cannot leave stale VMIDs behind.
 
-VM Deploy paths call `reconcile-vm-ha.yml` for the optional per-VM `proxmox.vm.ha`
-setting, including reused guests. HA requires every configured VM disk to use storage
-marked `shared` in Proxmox. The HA resource comment is the ownership marker: Deploy only
-removes a matching resource, and VM destruction refuses an unmarked HA resource before
-the guest can be purged.
+VM Deploy paths call `reconcile-vm-ha.yml` for the optional per-VM `proxmox.vm.ha` setting,
+including reused guests. HA requires every configured VM disk to use storage marked `shared`
+in Proxmox. The HA resource comment is the ownership marker: Deploy only removes a matching
+resource, and VM destruction refuses an unmarked HA resource before the guest can be purged.
 
 `resolve-guest-placement.yml` is the placement source for those creation seams. It honors
 an explicit `proxmox.vm.node`, `proxmox.lxc.node`, or `stacks.<name>.node`, then
@@ -79,15 +83,14 @@ offline migration or an HA restart.
 
 The pinned VM module omits NIC changes on safe updates. `vm-clone.yml` enables NIC
 configuration only after that invocation successfully creates a clone, before its first
-boot, so the declared guest network reaches the VM alongside cloud-init addressing.
-Existing guests and clone no-ops retain their NIC/MAC; this update supplies no disk
-attachments. Before configuration or start, a reused non-running VM must already have
-the declared NIC model, bridge and VLAN tag. A mismatch fails without mutation, including
-a clone left unconfigured by an interrupted earlier run. The comparison preserves MACs
-and other NIC options; stopped state alone does not establish that a VM has never booted.
-SSH timeout remains fatal and names the guest and expected NIC/cloud-init
-configuration. A mismatched existing clone
-requires a supported recovery or recreation path.
+boot, so the declared guest network reaches the VM alongside cloud-init addressing. Existing
+guests and clone no-ops retain their NIC/MAC; this update supplies no disk attachments.
+Before configuration or start, a reused non-running VM must already have the declared NIC
+model, bridge and VLAN tag. A mismatch fails without mutation, including a clone left
+unconfigured by an interrupted earlier run. The comparison preserves MACs and other NIC
+options; stopped state alone does not establish that a VM has never booted. SSH timeout
+remains fatal and names the guest and expected NIC/cloud-init configuration. A mismatched
+existing clone requires a supported recovery or recreation path.
 
 PBS's separate existing-tag branch calls `validate-vm-network.yml` before adding its
 guest to the deploy group or starting it. It reads current and pending NIC fields for
@@ -112,11 +115,10 @@ has no inventory reuse branch and is create-only. Re-running it against an exist
 pinned address/VMID refuses creation instead of updating that guest in place. Use the
 application or stack deployment path for existing-guest reuse.
 
-Pinned `community.proxmox` 2.0.0 defaults to `update: true` and `cmode: default`.
-Creation strips that sentinel, while existing updates can forward it to PVE. Disabling
-updates at this creation boundary preserves existing console, network and storage
-settings without choosing a replacement enum. `cmode` remains outside the repository
-allowlist.
+Pinned `community.proxmox` 2.0.0 defaults to `update: true` and `cmode: default`. Creation
+strips that sentinel, while existing updates can forward it to PVE. Disabling updates at
+this creation boundary preserves existing console, network and storage settings without
+choosing a replacement enum. `cmode` remains outside the repository allowlist.
 
 ## Instance guest reuse
 
@@ -235,12 +237,12 @@ is preserved. It removes no guest, application record or application data.
 **Repair Missing Stack Tag** at
 [`repair-missing-stack-tag.yml`](../../playbooks/maintenance/repair-missing-stack-tag.yml)
 handles the inverse case: an explicitly reviewed owned guest has no stack identity tag.
-Supply its exact VMID, the authored stack name, and the estate when a multi-estate lab
-needs one. The playbook derives the tag from repository and lab configuration, requires
-the guest name to match that identity, and plans by default. Execution requires the
-literal `ADD STACK TAG` confirmation, saves each original config privately, checks the
-PVE config digest, and verifies every other config field and tag is preserved. It does
-not start or remove a guest.
+Supply its exact VMID, the authored stack name, and the estate when a multi-estate lab needs
+one. The playbook derives the tag from repository and lab configuration, requires the guest
+name to match that identity, and plans by default. Execution requires the literal
+`ADD STACK TAG` confirmation, saves each original config privately, checks the PVE config
+digest, and verifies every other config field and tag is preserved. It does not start or
+remove a guest.
 
 **Start Owned Guest** at
 [`start-owned-guest.yml`](../../playbooks/maintenance/start-owned-guest.yml) plans or
@@ -283,18 +285,16 @@ for operator handoff, volume checks and interrupted-execution recovery.
 
 ## Native application guests
 
-Native apps include role `_template-native` with `tasks_from: provision` on
-localhost, setting `native_guest_network_app` to the catalog slug. Run their
-installation role on `deploy_<instance>` afterward. `proxmox.guest_type: lxc`
-(the default) or `vm` selects the guest; ntfy supports both. Changing the type of
-an existing instance is refused: back up, remove the owned guest, then redeploy
-and restore to move between types.
+Native apps include role `_template-native` with `tasks_from: provision` on localhost,
+setting `native_guest_network_app` to the catalog slug. Run their installation role on
+`deploy_<instance>` afterward. `proxmox.guest_type: lxc` (the default) or `vm` selects the
+guest; ntfy supports both. Changing the type of an existing instance is refused: back up,
+remove the owned guest, then redeploy and restore to move between types.
 
-`resolve-native-placement.yml`, `resolve-native-memory.yml` and
-`provision-native-guest.yml` normalize per-instance placement, sizing, network,
-identity and tags. VMs use `ensure-cloud-template.yml` then `vm-clone.yml`;
-LXCs use `lxc-create.yml`. Native VMs use floating placement. Database engines
-call these same tasks through the adapters under `tasks/database/`, preserving
-their storage-node VM placement, legacy `proxmox.type`, memory tuning and network
-scope. The selected guest memory block overrides shared memory, then 2048 MiB.
-An existing guest is reused and started only if needed; Deploy never converts it.
+`resolve-native-placement.yml`, `resolve-native-memory.yml` and `provision-native-guest.yml`
+normalize per-instance placement, sizing, network, identity and tags. VMs use
+`ensure-cloud-template.yml` then `vm-clone.yml`; LXCs use `lxc-create.yml`. Native VMs use
+floating placement. Database engines call these same tasks through the adapters under
+`tasks/database/`, preserving their storage-node VM placement, legacy `proxmox.type`, memory
+tuning and network scope. The selected guest memory block overrides shared memory, then 2048
+MiB. An existing guest is reused and started only if needed; Deploy never converts it.
