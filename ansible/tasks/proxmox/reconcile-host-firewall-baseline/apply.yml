@@ -1,0 +1,137 @@
+---
+# Phase of reconcile-host-firewall-baseline.yml, after the rollback timer is armed: create
+# missing datacenter and node rules, remove stale and legacy baseline rules, then enable
+# host rule processing and the datacenter policy.
+
+- name: Proxmox host firewall | Create missing datacenter rules first
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'create', '/cluster/firewall/rules',
+          '--type', item.type, '--action', item.action]
+         + (['--proto', item.proto] if item.proto is defined else [])
+         + (['--dport', item.dport] if item.dport is defined else [])
+         + (['--source', item.source] if item.source is defined else [])
+         + (['--dest', item.dest] if item.dest is defined else [])
+         + ['--enable', '1', '--comment', item.comment] }}
+  loop: "{{ _pve_fw_initial_plan.cluster.create }}"
+  loop_control:
+    label: datacenter baseline rule
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  no_log: true
+
+- name: Proxmox host firewall | Flatten missing node rules
+  ansible.builtin.set_fact:
+    _pve_fw_node_rules_to_create: "{{ _pve_fw_node_rules_to_create_json | from_json }}"
+  vars:
+    _pve_fw_node_rules_to_create_json: >-
+      {%- set result = [] -%}
+      {%- for node, state in _pve_fw_initial_plan.nodes.items() -%}
+      {%- for rule in state.create -%}
+      {%- set _ = result.append({'node': node, 'rule': rule}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
+
+- name: Proxmox host firewall | Create missing node rules first
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'create', '/nodes/' ~ item.node ~ '/firewall/rules',
+          '--type', item.rule.type, '--action', item.rule.action]
+         + (['--proto', item.rule.proto] if item.rule.proto is defined else [])
+         + (['--dport', item.rule.dport] if item.rule.dport is defined else [])
+         + (['--source', item.rule.source] if item.rule.source is defined else [])
+         + (['--dest', item.rule.dest] if item.rule.dest is defined else [])
+         + ['--enable', '1', '--comment', item.rule.comment] }}
+  loop: "{{ _pve_fw_node_rules_to_create }}"
+  loop_control:
+    label: node baseline rule
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  no_log: true
+
+- name: Proxmox host firewall | Refresh rules after adding the desired baseline
+  ansible.builtin.include_tasks: ../read-host-firewall-state.yml
+  when: _pve_fw_initial_plan.changed | bool
+
+- name: Proxmox host firewall | Plan stale and legacy rule removal
+  ansible.builtin.include_tasks: ../plan-host-firewall-state.yml
+  when: _pve_fw_initial_plan.changed | bool
+
+- name: Proxmox host firewall | Save the cleanup plan
+  ansible.builtin.set_fact:
+    _pve_fw_cleanup_plan: "{{ _pve_fw_plan }}"
+  when: _pve_fw_initial_plan.changed | bool
+  no_log: true
+
+- name: Proxmox host firewall | Use the no-op plan when no rule writes are needed
+  ansible.builtin.set_fact:
+    _pve_fw_cleanup_plan: "{{ _pve_fw_initial_plan }}"
+  when: not (_pve_fw_initial_plan.changed | bool)
+  no_log: true
+
+- name: Proxmox host firewall | Flatten stale node rules
+  ansible.builtin.set_fact:
+    _pve_fw_node_rules_to_delete: "{{ _pve_fw_node_rules_to_delete_json | from_json }}"
+  vars:
+    _pve_fw_node_rules_to_delete_json: >-
+      {%- set result = [] -%}
+      {%- for node, state in _pve_fw_cleanup_plan.nodes.items() -%}
+      {%- for rule in state.delete -%}
+      {%- set _ = result.append({'node': node, 'rule': rule}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
+
+- name: Proxmox host firewall | Remove stale datacenter baseline rules
+  ansible.builtin.include_tasks: ../delete-host-firewall-rule.yml
+  loop: "{{ _pve_fw_cleanup_plan.cluster.delete }}"
+  loop_control:
+    label: datacenter baseline rule
+  vars:
+    pve_fw_delete_path: /cluster/firewall/rules
+    pve_fw_delete_rule: "{{ item }}"
+
+- name: Proxmox host firewall | Remove stale node baseline rules
+  ansible.builtin.include_tasks: ../delete-host-firewall-rule.yml
+  loop: "{{ _pve_fw_node_rules_to_delete }}"
+  loop_control:
+    label: node baseline rule
+  vars:
+    pve_fw_delete_path: "/nodes/{{ item.node }}/firewall/rules"
+    pve_fw_delete_rule: "{{ item.rule }}"
+
+- name: Proxmox host firewall | Enable host rule processing on each node
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - set
+      - "/nodes/{{ item.key }}/firewall/options"
+      - --enable
+      - "1"
+  loop: "{{ _pve_fw_cleanup_plan.nodes | dict2items }}"
+  loop_control:
+    label: Proxmox node firewall options
+  when: item.value.options_changed | bool
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  no_log: true
+
+- name: Proxmox host firewall | Enable the datacenter policy after rules are ready
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - set
+      - /cluster/firewall/options
+      - --enable
+      - "1"
+      - --policy_in
+      - DROP
+      - --policy_out
+      - ACCEPT
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _pve_fw_cleanup_plan.cluster.options_changed | bool
+  changed_when: true
+  no_log: true

@@ -1,0 +1,117 @@
+---
+# Phase of attach-host-mounts-vm.yml: wait for the guest after a device change, refuse a
+# conflicting active mount or fstab entry, then persist and mount each share at its guest
+# path.
+
+- name: VM host mounts | Wait for guest SSH after virtiofs device changes
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[attach_mounts_guest].ansible_host | default(attach_mounts_guest) }}"
+    port: "{{ hostvars[attach_mounts_guest].ansible_port | default(22) }}"
+    state: started
+    connect_timeout: 5
+    delay: 2
+    sleep: 5
+    timeout: 300
+    msg: >-
+      SSH readiness timed out after 300 seconds for VM {{ attach_mounts_guest }}
+      ({{ _vmfs_vmid }}) after assigning virtiofs devices. The VM was started, but
+      guest-side mounts cannot continue.
+  when:
+    - _vmfs_missing_devices | length > 0
+    - _vmfs_vm_entry.status | default('') == 'running'
+
+- name: VM host mounts | Verify existing guest fstab entry for each path
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --fstab
+      - --mountpoint
+      - "{{ item.path }}"
+      - --noheadings
+      - --raw
+      - --output
+      - SOURCE,FSTYPE
+  delegate_to: "{{ attach_mounts_guest }}"
+  register: _vmfs_fstab_entries
+  failed_when: false
+  changed_when: false
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Verify the active guest mount before changing it
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --mountpoint
+      - "{{ item.path }}"
+      - --noheadings
+      - --raw
+      - --output
+      - SOURCE,FSTYPE
+  delegate_to: "{{ attach_mounts_guest }}"
+  register: _vmfs_active_mounts
+  failed_when: false
+  changed_when: false
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Refuse a conflicting active guest mount
+  ansible.builtin.assert:
+    that:
+      - item.rc != 0 or item.stdout | trim == _vmfs_expected_active_mount
+    fail_msg: >-
+      {{ item.item.path }} is already mounted from a different source or filesystem type
+      in {{ attach_mounts_guest }}. Existing guest mounts are not replaced.
+  vars:
+    _vmfs_expected_active_mount: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }} virtiofs
+  loop: "{{ _vmfs_active_mounts.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: VM host mounts | Refuse a conflicting guest fstab entry
+  ansible.builtin.assert:
+    that:
+      - item.rc != 0 or item.stdout | trim == _vmfs_expected_fstab
+    fail_msg: >-
+      {{ item.item.path }} already has a different /etc/fstab source or filesystem type
+      in {{ attach_mounts_guest }}. Existing guest mounts are not replaced.
+  vars:
+    _vmfs_expected_fstab: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }} virtiofs
+  loop: "{{ _vmfs_fstab_entries.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: VM host mounts | Ensure each guest mount directory exists
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ attach_mounts_guest }}"
+  become: true
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Persist and mount virtiofs at the requested guest path
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }}
+    fstype: virtiofs
+    opts: rw,relatime
+    state: mounted
+  delegate_to: "{{ attach_mounts_guest }}"
+  become: true
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.host }} -> {{ item.path }}"

@@ -1,0 +1,99 @@
+---
+# Phase of resolve-guest-placement.yml: require the class storage ID and VM CPU model, and
+# for gpu_vm resolve the declared GPU's node and verify its PCI resource mapping. Inputs
+# are listed in resolve-guest-placement.yml.
+
+- name: Guest placement | Require the class storage ID
+  ansible.builtin.assert:
+    that:
+      - _guest_placement_storage | default('', true) | string | trim | length > 0
+    fail_msg: >-
+      No Proxmox storage is configured for guest class {{ guest_placement_class }}.
+
+- name: Guest placement | Require the common migratable VM CPU model
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.floating_vm_cpu_model | default('') | string | trim | length > 0
+      - homelabinfra_config.proxmox.floating_vm_cpu_model | lower != 'host'
+    fail_msg: >-
+      config/proxmox.yml must set proxmox.floating_vm_cpu_model to one common,
+      migratable model; 'host' is not allowed for floating or GPU VMs.
+  when: guest_placement_class in ['floating_vm', 'gpu_vm']
+
+- name: Guest placement | Require a dedicated declared GPU device
+  ansible.builtin.assert:
+    that:
+      - guest_placement_device is defined
+      - guest_placement_device in (homelabinfra_config.proxmox.devices | default({}))
+      - _guest_gpu_declaration is mapping
+      - _guest_gpu_declaration.mode == 'dedicated'
+      - _guest_gpu_declaration.kind in ['igpu', 'gpu']
+      - _guest_gpu_declaration.node is defined
+      - _guest_gpu_declaration.node | string | trim | length > 0
+      - _guest_gpu_pci_ids | length == 1
+      - _guest_gpu_mapping_id is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      GPU VMs require guest_placement_device to name exactly one proxmox.devices
+      declaration with mode: dedicated, kind: igpu or gpu, one exact PCI identifier,
+      an explicit node, and a valid PCI resource mapping ID.
+  vars:
+    _guest_gpu_declaration: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})).get(guest_placement_device | default(''), {}) }}
+    _guest_gpu_pci_ids: >-
+      {{ _guest_gpu_declaration.identifiers | default([])
+         | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$') | list }}
+    _guest_gpu_mapping_id: >-
+      {{ _guest_gpu_declaration.pci_mapping | default(guest_placement_device | default('')) }}
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Resolve the declared GPU node and mapping identity
+  ansible.builtin.set_fact:
+    _guest_gpu_declaration: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device] }}
+    _guest_gpu_node: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].node }}
+    _guest_gpu_mapping_id: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].pci_mapping
+         | default(guest_placement_device) }}
+    _guest_gpu_pci_id: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].identifiers
+         | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+         | list | first }}
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Read the Proxmox PCI resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/pci/{{ _guest_gpu_mapping_id }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _guest_gpu_mapping
+  changed_when: false
+  failed_when: false
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Parse the GPU PCI resource mapping
+  ansible.builtin.include_tasks: ../parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _guest_gpu_mapping }}"
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Verify the PCI mapping names this device on its node
+  ansible.builtin.assert:
+    that:
+      - _guest_gpu_mapping.rc == 0
+      - _guest_gpu_map_entries | length == 1
+      - _guest_gpu_map_entries[0].path == _guest_gpu_pci_id
+    fail_msg: >-
+      PCI resource mapping {{ _guest_gpu_mapping_id }} must map exactly
+      {{ _guest_gpu_pci_id }} on the declared device node. The mapping is operator-owned;
+      this task does not create or alter PCI mappings.
+  vars:
+    _guest_gpu_map_entries: >-
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('node', 'equalto', _guest_gpu_node)
+         | selectattr('path', 'equalto', _guest_gpu_pci_id) | list }}
+  when: guest_placement_class == 'gpu_vm'

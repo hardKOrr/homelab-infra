@@ -6,6 +6,7 @@ from pathlib import Path
 
 from jinja2 import Environment, StrictUndefined
 import yaml
+import task_parts
 
 repo = Path(__file__).resolve().parents[1]
 task_dir = repo / "ansible/tasks/proxmox"
@@ -13,7 +14,7 @@ preflight = yaml.safe_load((task_dir / "check-node-free-memory.yml").read_text()
 
 
 def named_tasks(filename):
-    return yaml.safe_load((task_dir / filename).read_text())
+    return task_parts.inline(task_dir / filename)
 
 
 def task_index(tasks, *, name=None, include=None):

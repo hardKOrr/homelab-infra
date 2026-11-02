@@ -1,0 +1,175 @@
+---
+# Phase of vm-create.yml: build the disk, network and boot-order settings and filter them
+# through the community.proxmox.proxmox_kvm allowlist.
+
+- name: Build facts for usage in proxmox vm creation
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'vm': dict(
+            state = 'present',
+            api_host = homelabinfra_config.proxmox.api_host,
+            api_port = homelabinfra_config.proxmox.api_port,
+            api_token_id = homelabinfra_config.proxmox.api_token_id,
+            api_token_secret = homelabinfra_config.proxmox.api_token_secret,
+            node = homelabinfra_config.proxmox.node,
+            sshkeys = homelabinfra_config.ansible.ssh_public_key,
+            validate_certs = (homelabinfra_config.proxmox.validate_certs | default(false)),
+            ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
+          ) | combine(homelabinfra_config.proxmox.vm, recursive=True),
+          'vm_ansible_host': (
+            homelabinfra_config.proxmox.vm.ip_address
+            if (homelabinfra_config.proxmox.vm.ansible_host | default('') | string | trim | lower) in ['', 'dhcp']
+            else homelabinfra_config.proxmox.vm.ansible_host
+          )
+        }, recursive=True) }}
+
+# Placement resolves the effective storage (an explicit VM pool or the class default).
+# Keep it on this guest instance instead of writing it back into shared config facts.
+- name: Apply the selected VM disk storage
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm': {
+           'storage': _guest_placement.storage
+         }}, recursive=True) }}
+
+# Deliberately its own task: keys set by one set_fact are templated against the variable
+# context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
+# this back into the task below reintroduces "'vm_ip_cidr' is undefined" at the first
+# VM creation — the same defect that stopped the first live LXC create.
+- name: Resolve the VM address in CIDR form
+  ansible.builtin.set_fact:
+    vm_ip_cidr: >-
+      {{
+        'dhcp'
+        if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+        else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
+      }}
+  when: homelabinfra_instance.network is defined
+
+- name: Build VM network settings
+  ansible.builtin.set_fact:
+    vm_net0: >-
+      virtio
+      {%- if homelabinfra_instance.network.bridge is defined -%}
+      ,bridge={{ homelabinfra_instance.network.bridge }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.vlan is defined and (homelabinfra_instance.network.vlan | int) > 0 -%}
+      ,tag={{ homelabinfra_instance.network.vlan }}
+      {%- endif -%}
+    vm_ipconfig0: >-
+      ip={{ vm_ip_cidr }}
+      {%- if homelabinfra_instance.network.gateway is defined and (homelabinfra_instance.network.ip_address | lower) != 'dhcp' -%}
+      ,gw={{ homelabinfra_instance.network.gateway }}
+      {%- endif -%}
+  when: homelabinfra_instance.network is defined
+
+- name: Merge VM network settings
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm':
+          homelabinfra_instance.vm
+          | combine(
+              dict(net=dict(net0=vm_net0), ipconfig=dict(ipconfig0=vm_ipconfig0)),
+              recursive=True
+            )
+          | combine(
+              (homelabinfra_instance.network.dns_servers is defined and (homelabinfra_instance.network.dns_servers | length > 0))
+              | ternary(dict(nameservers=homelabinfra_instance.network.dns_servers), {}),
+              recursive=True
+            )
+          | combine(
+              homelabinfra_instance.network.searchdomain is defined
+              | ternary(dict(searchdomains=homelabinfra_instance.network.searchdomain), {}),
+              recursive=True
+            )
+        }, recursive=True) }}
+  when: homelabinfra_instance.network is defined
+
+# Boot order (slice 205) — same reasoning and same seam as lxc-create.yml.
+- name: Resolve the VM's boot order
+  ansible.builtin.include_tasks: ../resolve-startup.yml
+  vars:
+    resolve_startup_guest: "{{ homelabinfra_instance.vm }}"
+
+- name: Apply the resolved boot order
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm': {'startup': _proxmox_startup}}, recursive=True) }}
+  when: _proxmox_startup | length > 0
+
+- name: Build VM module arguments from the community.proxmox.proxmox_kvm allowlist
+  ansible.builtin.set_fact:
+    vm_module_args: >-
+      {{ homelabinfra_instance.vm | dict2items
+         | rejectattr('key', 'equalto', 'balloon')
+         | selectattr('key', 'in', vm_module_keys)
+         | list
+         | items2dict
+         | combine({
+             'api_user': homelabinfra_config.proxmox.api_user,
+             'node': _guest_placement.node
+           })
+         | combine(
+             {'memory': _proxmox_vm_memory_max_mib | int,
+              'balloon': _proxmox_vm_balloon_requested | int}
+             if _proxmox_vm_balloon_configured | bool else {}
+           ) }}
+  vars:
+    # community.proxmox.proxmox_kvm parameters only. User/bookkeeping keys (network, ip_address,
+    # ansible_host) are absent by design. vm_ansible_host is a sibling of .vm (not inside it), so
+    # it is untouched. Every key here is verified against the 2.0.0 spec — see Verification step 2.
+    vm_module_keys:
+      - state
+      - api_host
+      - api_port
+      - api_user
+      - api_token_id
+      - api_token_secret
+      # See the note in lxc-create.yml: Proxmox is self-signed by default, and the module
+      # verifies unless told otherwise.
+      - validate_certs
+      - node
+      - sshkeys
+      - ciuser
+      - vmid
+      - name
+      - agent
+      - onboot
+      - autostart
+      - description
+      - tags
+      - net
+      - ipconfig
+      - nameservers
+      - searchdomains
+      - cores
+      - memory
+      - sockets
+      - vcpus
+      - cpu
+      - ostype
+      - scsihw
+      - boot
+      - bootdisk
+      - balloon
+      - bios
+      - machine
+      - ide
+      - sata
+      - scsi
+      - virtio
+      - efidisk0
+      - vga
+      - serial
+      - cipassword
+      - cicustom
+      - citype
+      - ciupgrade
+      - storage
+      - pool
+      - kvm
+      - numa_enabled
+      - hotplug
+      - startup
+      - timeout

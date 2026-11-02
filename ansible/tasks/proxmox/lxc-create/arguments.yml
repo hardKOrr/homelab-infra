@@ -1,0 +1,211 @@
+---
+# Phase of lxc-create.yml: validate the instance data, build the rootfs, network, feature
+# and boot-order settings and filter them through the community.proxmox.proxmox allowlist.
+# Inputs are listed in lxc-create.yml.
+
+- name: Assert homelabinfra instance data is provided
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config is defined
+      - homelabinfra_config.ansible.ssh_public_key is defined
+      - homelabinfra_config.proxmox.api_host is defined
+      - homelabinfra_config.proxmox.api_token_id is defined
+      - homelabinfra_config.proxmox.api_token_secret is defined
+      - homelabinfra_config.proxmox.node is defined
+      - homelabinfra_config.proxmox.lxc.vmid is defined
+      - homelabinfra_config.proxmox.lxc.hostname is defined
+      - homelabinfra_config.proxmox.lxc.ostemplate is defined
+      - homelabinfra_config.proxmox.lxc.ip_address is defined
+    fail_msg: "Required homelabinfra_config inputs: ansible[ssh_public_key], proxmox[api_host,api_token_id,api_token_secret,node,lxc[vmid,hostname,ostemplate,ip_address]]"
+
+# state is 'present': it is the only state that CREATES a container. `started` does not
+# create — community.proxmox's lxc_started() resolves the guest first and raises
+# "VM with VMID <n> does not exist in cluster." on anything that is not already there.
+# `present` leaves the new container STOPPED, so "Start the LXC container" (ready.yml) turns it
+# on as its own step; that call is a no-op on a container already running, which keeps the
+# re-run path idempotent.
+#
+# The comment lives HERE, above the task, and not inside the expression: Jinja has no `#`
+# comment form, so a YAML comment indented into a `{{ }}` block is parsed as expression
+# text and fails with "unexpected char '#'". Neither gate catches it — ansible-lint and
+# --syntax-check both parse the YAML without ever templating the string.
+- name: Build facts for usage in proxmox lxc creation
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': dict(
+          state = 'present',
+          api_host = homelabinfra_config.proxmox.api_host,
+          api_port = homelabinfra_config.proxmox.api_port,
+          api_token_id = homelabinfra_config.proxmox.api_token_id,
+          api_token_secret = homelabinfra_config.proxmox.api_token_secret,
+          node = homelabinfra_config.proxmox.node,
+          pubkey = homelabinfra_config.ansible.ssh_public_key,
+          validate_certs = (homelabinfra_config.proxmox.validate_certs | default(false))
+        ) | combine(homelabinfra_config.proxmox.lxc, recursive=True)}, recursive=True) }}
+
+# Apply placement's resolved rootfs pool to this guest instance. The resolver does not
+# write storage into shared config facts, which may be reused by the next guest in a play.
+- name: Apply the selected LXC rootfs storage
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'disk_volume': {
+           'storage': _guest_placement.storage
+         }}}, recursive=True) }}
+
+# Deliberately its own task: keys set by one set_fact are templated against the variable
+# context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
+# this back into the task below reintroduces "'lxc_ip_cidr' is undefined" at the first
+# guest creation.
+- name: Resolve the LXC address in CIDR form
+  ansible.builtin.set_fact:
+    lxc_ip_cidr: >-
+      {{
+        'dhcp'
+        if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+        else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
+      }}
+  when: homelabinfra_instance.network is defined
+
+- name: Build LXC network settings
+  ansible.builtin.set_fact:
+    lxc_netif: >-
+      name=eth0,ip={{ lxc_ip_cidr }}
+      {%- if homelabinfra_instance.network.gateway is defined and (homelabinfra_instance.network.ip_address | lower) != 'dhcp' -%}
+      ,gw={{ homelabinfra_instance.network.gateway }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.bridge is defined -%}
+      ,bridge={{ homelabinfra_instance.network.bridge }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.vlan is defined and (homelabinfra_instance.network.vlan | int) > 0 -%}
+      ,tag={{ homelabinfra_instance.network.vlan }}
+      {%- endif -%}
+  when: homelabinfra_instance.network is defined
+
+- name: Merge LXC network settings
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc':
+          homelabinfra_instance.lxc
+          | combine(
+              dict(netif=dict(net0=lxc_netif)),
+              recursive=True
+            )
+          | combine(
+              (homelabinfra_instance.network.dns_servers is defined and (homelabinfra_instance.network.dns_servers | length > 0))
+              | ternary(dict(nameserver=(homelabinfra_instance.network.dns_servers | join(' '))), {}),
+              recursive=True
+            )
+          | combine(
+              homelabinfra_instance.network.searchdomain is defined
+              | ternary(dict(searchdomain=homelabinfra_instance.network.searchdomain), {}),
+              recursive=True
+            )
+        }, recursive=True) }}
+  when: homelabinfra_instance.network is defined
+
+# ── Feature flags the API is not allowed to set ───────────────────────────────
+# PVE refuses every container feature except `nesting` for any token that is not
+# root@pam:
+#
+#   403 Forbidden: Permission check failed
+#   (changing feature flags (except nesting) is only allowed for root@pam)
+#
+# This platform authenticates as homelab-infra@pve with a deliberately scoped role, so
+# that restriction is permanent by design, not a misconfiguration to fix with more
+# privileges. It matters because a Docker stack host needs `keyctl` — containerd uses the
+# kernel keyring — and every Docker app is created through this file.
+#
+# So the create call carries only what the API will accept, and the rest is applied
+# node-locally with `pct set`, where the command runs as real root. Same split, same
+# reason, as starting the guest through pct rather than the module.
+- name: Split the feature flags into what the API accepts and what pct must set
+  ansible.builtin.set_fact:
+    _lxc_features_desired: "{{ _features_normalized }}"
+    _lxc_features_api: "{{ _features_normalized | select('match', '^nesting=') | list }}"
+  vars:
+    _features_raw: "{{ homelabinfra_instance.lxc.features | default([]) }}"
+    # Both shapes reach here: a list of "key=value" strings (the global default) and a
+    # mapping (what a user is most likely to write). Normalize to the list form, which is
+    # what the module takes and what `pct set --features` joins with commas.
+    _features_normalized: >-
+      {{ _features_raw | dict2items | map(attribute='key') | zip(_features_raw | dict2items | map(attribute='value'))
+         | map('join', '=') | map('regex_replace', '=True$', '=1') | map('regex_replace', '=False$', '=0') | list
+         if _features_raw is mapping
+         else _features_raw }}
+
+- name: Restrict the created container's features to the API-permitted set
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'features': _lxc_features_api}}, recursive=True) }}
+
+# Boot order (slice 205). `startup` is in the allowlist below and was never set by
+# anything, so guests came back from a reboot in arbitrary order. `boot_order`/`boot_up`
+# are bookkeeping keys and are filtered out by that same allowlist.
+- name: Resolve the container's boot order
+  ansible.builtin.include_tasks: ../resolve-startup.yml
+  vars:
+    resolve_startup_guest: "{{ homelabinfra_instance.lxc }}"
+
+- name: Apply the resolved boot order
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'startup': _proxmox_startup}}, recursive=True) }}
+  when: _proxmox_startup | length > 0
+
+- name: Build LXC module arguments from the community.proxmox.proxmox allowlist
+  ansible.builtin.set_fact:
+    lxc_module_args: >-
+      {{ homelabinfra_instance.lxc | dict2items
+         | selectattr('key', 'in', lxc_module_keys)
+         | list
+         | items2dict
+         | combine({
+             'api_user': homelabinfra_config.proxmox.api_user,
+             'state': 'present',
+             'update': false,
+             'node': _guest_placement.node
+           }) }}
+  vars:
+    # community.proxmox.proxmox parameters only. User/bookkeeping keys (network, ip_address)
+    # are absent by design so they can never reach the module. Every key here is verified
+    # against the community.proxmox 2.0.0 argument spec — see this plan's Verification step 2.
+    lxc_module_keys:
+      - state
+      - api_host
+      - api_port
+      - api_user
+      - api_token_id
+      - api_token_secret
+      # Proxmox serves a self-signed certificate out of the box, so the module's default of
+      # verifying it fails every create on a stock node. The rest of the repo already assumes
+      # this — inventory/proxmox.yml and every PBS task set validate_certs: false — and this
+      # allowlist omitting the key was the one place that did not.
+      - validate_certs
+      - node
+      - pubkey
+      - vmid
+      - hostname
+      - ostemplate
+      - cores
+      - memory
+      - tags
+      - features
+      - password
+      - description
+      - onboot
+      - disk_volume
+      - storage
+      - netif
+      - nameserver
+      - searchdomain
+      - swap
+      - unprivileged
+      - ostype
+      - timezone
+      - timeout
+      - cpuunits
+      - mounts
+      - mount_volumes
+      - pool
+      - hookscript
+      - startup

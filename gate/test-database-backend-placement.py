@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+import task_parts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -412,9 +413,7 @@ def check_all_engines_share_placement():
         task for task in provision_tasks
         if task.get("name") == "Native guest | Set LXC identity and sizing"
     )
-    lxc_create = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/lxc-create.yml").read_text(encoding="utf-8")
-    )
+    lxc_create = task_parts.inline(ROOT / "ansible/tasks/proxmox/lxc-create.yml")
     lxc_build_facts = next(
         task for task in lxc_create
         if task.get("name") == "Build facts for usage in proxmox lxc creation"
@@ -480,9 +479,7 @@ def check_all_engines_share_placement():
     )
     assert lxc_memory["vars"]["proxmox_memory_node"] == "{{ _guest_placement.node }}"
 
-    vm_clone = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/vm-clone.yml").read_text(encoding="utf-8")
-    )
+    vm_clone = task_parts.inline(ROOT / "ansible/tasks/proxmox/vm-clone.yml")
     vm_start = next(
         task for task in vm_clone if task.get("name") == "VM clone | Start the VM"
     )
@@ -492,16 +489,14 @@ def check_all_engines_share_placement():
     )
     assert "_guest_placement.node" in vm_api["ansible.builtin.set_fact"]["_vmc_api"]["node"]
 
-    cloud_template = yaml.safe_load(
-        (ROOT / "ansible/tasks/proxmox/ensure-cloud-template.yml").read_text(encoding="utf-8")
-    )
+    cloud_template = task_parts.inline(ROOT / "ansible/tasks/proxmox/ensure-cloud-template.yml")
     template_builder = next(
         task for task in cloud_template
         if task.get("name") == "Cloud template | Build the template"
     )
     assert template_builder["delegate_to"] == "{{ _guest_placement.node }}"
 
-    resolver = yaml.safe_load(RESOLVER.read_text(encoding="utf-8"))
+    resolver = task_parts.inline(RESOLVER)
     role_guard = next(
         task for task in resolver
         if task.get("name") == "Guest placement | Validate the declared placement role shape"

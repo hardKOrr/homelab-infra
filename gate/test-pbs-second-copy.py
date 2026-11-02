@@ -5,13 +5,14 @@ from pathlib import Path
 
 import yaml
 from remove_plan import load_playbook
+import task_parts
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_yaml(path):
-    return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
+    return task_parts.inline(ROOT / path)
 
 
 def task(tasks, name):

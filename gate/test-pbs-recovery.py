@@ -12,12 +12,11 @@ import tempfile
 from jinja2 import Environment, StrictUndefined
 import yaml
 from remove_plan import load_playbook
+import task_parts
+
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_yaml(path):
-    return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
+load_yaml = lambda path: task_parts.inline(ROOT / path)  # noqa: E731
 
 
 def task(tasks, name):

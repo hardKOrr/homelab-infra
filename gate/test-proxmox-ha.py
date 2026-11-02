@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+import task_parts
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -237,7 +238,7 @@ def module_tests():
 
 def wiring_tests():
     def tasks(path):
-        return yaml.safe_load(path.read_text())
+        return task_parts.inline(path)
 
     for filename, task_name in (
         ("vm-clone.yml", "VM clone | Reconcile the guest's optional HA resource"),

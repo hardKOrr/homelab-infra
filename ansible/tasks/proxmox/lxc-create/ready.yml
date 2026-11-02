@@ -1,0 +1,135 @@
+---
+# Phase of lxc-create.yml: start the new container, wait until it accepts exec and SSH,
+# resolve its address, write its instance metadata and refresh the PBS backup job.
+
+- name: Check node memory before starting the LXC container
+  ansible.builtin.include_tasks: ../check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ _guest_placement.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_instance.lxc.hostname }}"
+    proxmox_guest_memory_mib: "{{ lxc_module_args.memory | default(512) | int }}"
+
+# `present` in lxc-create.yml created the container STOPPED and no other task here starts it — without
+# this, "Wait for LXC to be running" spins its full 30 retries and fails on every first
+# deploy.
+#
+# Node-local `pct start` rather than the module's `state: started`, for two reasons. The
+# module resolves the guest through /cluster/resources and then reads lxc["name"]
+# unconditionally; that cache is only eventually consistent, and a container queried in the
+# seconds after its creation comes back as a partial entry, so the start died with
+# `An error occurred: 'name'`. Second, `pct` is already how this file waits for the
+# container and how it writes the metadata file, so the start now runs over the same path
+# as the checks that follow it, on the node that owns the guest.
+#
+# Idempotent by the rc==0 / "already running" pair, which is the re-run case.
+- name: Start the LXC container
+  ansible.builtin.command:
+    cmd: "pct start {{ homelabinfra_instance.lxc.vmid }}"
+  delegate_to: "{{ _guest_placement.node }}"
+  register: lxc_start
+  changed_when: lxc_start.rc == 0
+  failed_when:
+    - lxc_start.rc != 0
+    - "'already running' not in (lxc_start.stderr | default('')) | lower"
+
+- name: Wait for LXC to be running
+  ansible.builtin.command:
+    cmd: "pct status {{ homelabinfra_instance.lxc.vmid }}"
+  delegate_to: "{{ _guest_placement.node }}"
+  register: lxc_status
+  retries: 30
+  delay: 2
+  until: "'status: running' in lxc_status.stdout"
+  changed_when: false
+
+- name: Wait for LXC to accept exec
+  ansible.builtin.command:
+    cmd: "pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/true"
+  delegate_to: "{{ _guest_placement.node }}"
+  register: lxc_exec_ready
+  retries: 30
+  delay: 2
+  until: lxc_exec_ready.rc == 0
+  changed_when: false
+
+- name: Discover LXC DHCP lease
+  ansible.builtin.command:
+    argv:
+      - pct
+      - exec
+      - "{{ homelabinfra_instance.lxc.vmid }}"
+      - --
+      - /bin/sh
+      - -c
+      - |
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          lease="$(ip -4 -o address show dev eth0 scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          if [ -n "$lease" ]; then
+            printf '%s\n' "$lease"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        exit 1
+  delegate_to: "{{ _guest_placement.node }}"
+  register: lxc_dhcp_lease
+  changed_when: false
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert LXC DHCP lease was discovered
+  ansible.builtin.assert:
+    that:
+      - lxc_dhcp_lease.stdout | trim | ansible.utils.ipaddr('address')
+    fail_msg: "The LXC did not return a leased IPv4 address"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Merge LXC DHCP lease into instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'network': {'ip_address': lxc_dhcp_lease.stdout | trim},
+          'lxc': {'ip_address': lxc_dhcp_lease.stdout | trim}
+        }, recursive=True) }}
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert LXC connection address is resolved
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_instance.lxc.ip_address | string | trim | length > 0
+      - homelabinfra_instance.lxc.ip_address | string | trim | lower != 'dhcp'
+    fail_msg: "The LXC connection address is empty or still set to DHCP"
+
+# `pct exec` works as soon as the container's init is up, which is EARLIER than sshd
+# binding port 22 — and the play that follows this one connects over SSH, not pct. On a
+# freshly created guest that gap is real:
+#
+#   fatal: [sso-stack]: UNREACHABLE! ssh: connect to host 192.0.2.16 port 22:
+#   Connection refused
+#
+# and the port was open moments later, so nothing was wrong except the timing. It hid for
+# a long time because the race only exists for a guest created in the same run that then
+# connects to it; a reused guest has had sshd up for hours.
+#
+# Placed after the address assert above, so the DHCP path waits on its resolved lease
+# rather than on the literal string 'dhcp'. tasks/proxmox/vm-clone.yml waits the same way.
+- name: Wait for SSH on the new container
+  ansible.builtin.wait_for:
+    host: "{{ homelabinfra_instance.lxc.ip_address }}"
+    port: 22
+    timeout: 180
+    sleep: 3
+
+- name: Write sanitized LXC instance metadata to /root with mode 0600
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'set -e; umask 077; cat > /root/homelabinfra_instance.lxc.json; chmod 0600 /root/homelabinfra_instance.lxc.json; rm -f /root/home/homelabinfra_instance.lxc.json'
+    {{ homelabinfra_instance.lxc | dict2items | rejectattr('key', 'in', ['api_token_secret', 'api_token_id', 'password', 'cipassword', 'pubkey', 'sshkeys']) | list | items2dict | to_nice_json }}
+    EOF
+  delegate_to: "{{ _guest_placement.node }}"
+  args:
+    executable: /bin/bash
+
+- name: Refresh the PBS backup job after creating the LXC
+  ansible.builtin.include_tasks: ../refresh-backup-job.yml

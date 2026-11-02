@@ -1,0 +1,231 @@
+---
+# Phase of reconcile-host-firewall-baseline.yml: read back the reconciled rules, verify
+# SSH, API, NFS and quorum on every current node, and only then cancel the rollback timer.
+# A failed check leaves the timer armed.
+
+- name: Proxmox host firewall | Read back reconciled state
+  ansible.builtin.include_tasks: ../read-host-firewall-state.yml
+
+- name: Proxmox host firewall | Recheck cluster membership
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/status
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_final_cluster_status_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Save final cluster membership
+  ansible.builtin.set_fact:
+    _pve_fw_cluster_status: "{{ _pve_fw_final_cluster_status_read.stdout | from_json }}"
+  no_log: true
+
+- name: Proxmox host firewall | Plan and verify final API state
+  ansible.builtin.include_tasks: ../plan-host-firewall-state.yml
+
+- name: Proxmox host firewall | Require exact baseline readback
+  ansible.builtin.assert:
+    that:
+      - not (_pve_fw_plan.changed | bool)
+      - _pve_fw_plan.members | difference(_pve_fw_members) | length == 0
+      - _pve_fw_members | difference(_pve_fw_plan.members) | length == 0
+    fail_msg: Proxmox firewall API readback does not match the configured baseline.
+  no_log: true
+
+- name: Proxmox host firewall | Verify SSH access to every current node
+  ansible.builtin.ping:
+  loop: "{{ _pve_fw_plan.members }}"
+  loop_control:
+    label: Proxmox node SSH access
+  delegate_to: "{{ item }}"
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Verify API access to every current node
+  ansible.builtin.uri:
+    url: >-
+      https://{{ ('[' ~ _pve_fw_plan.node_addresses[item] ~ ']')
+                  if ':' in _pve_fw_plan.node_addresses[item]
+                  else _pve_fw_plan.node_addresses[item] }}:{{ homelabinfra_config.proxmox.api_port | default(8006) }}/api2/json/version
+    method: GET
+    headers:
+      Authorization: >-
+        PVEAPIToken={{ homelabinfra_config.proxmox.api_user }}!{{
+          homelabinfra_config.proxmox.api_token_id }}={{
+          homelabinfra_config.proxmox.api_token_secret }}
+    validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) | bool }}"
+    status_code: 200
+    return_content: false
+  loop: "{{ _pve_fw_plan.members }}"
+  loop_control:
+    label: Proxmox node API access
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Verify NFS mounts on compute nodes
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --types
+      - nfs,nfs4
+  loop: "{{ _pve_fw_plan.compute_nodes }}"
+  loop_control:
+    label: NFS mount on compute node
+  delegate_to: "{{ item }}"
+  register: _pve_fw_nfs_mounts
+  changed_when: false
+  when: homelabinfra_config.proxmox.firewall.storage_clients | default([]) | length > 0
+  no_log: true
+
+- name: Proxmox host firewall | Require an NFS mount on each compute node
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - item.stdout | trim | length > 0
+    fail_msg: An NFS mount is missing on a configured compute node.
+  loop: "{{ _pve_fw_nfs_mounts.results | default([]) }}"
+  loop_control:
+    label: NFS mount verification
+  when: homelabinfra_config.proxmox.firewall.storage_clients | default([]) | length > 0
+  no_log: true
+
+- name: Proxmox host firewall | Verify cluster quorum
+  ansible.builtin.command:
+    argv:
+      - pvecm
+      - status
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_quorum
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Require quorum before cancelling rollback
+  ansible.builtin.assert:
+    that:
+      - _pve_fw_quorum.stdout | regex_search('(?im)^\s*Quorate:\s*Yes\s*$') is not none
+    fail_msg: Proxmox cluster does not report quorum.
+  no_log: true
+
+- name: Proxmox host firewall | Recheck datacenter options after all health checks
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/firewall/options
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_options_before_rollback_cancel
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Keep the baseline enabled before cancelling rollback
+  ansible.builtin.assert:
+    that:
+      - (_pve_fw_options_before_rollback_cancel.stdout | from_json).enable | int == 1
+      - (_pve_fw_options_before_rollback_cancel.stdout | from_json).policy_in | upper == 'DROP'
+      - (_pve_fw_options_before_rollback_cancel.stdout | from_json).policy_out | upper == 'ACCEPT'
+    fail_msg: Datacenter firewall options changed during post-change verification.
+  no_log: true
+
+- name: Proxmox host firewall | Check rollback timer before cancellation
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - homelab-infra-fw-rollback.timer
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_rollback_timer_before_cancel
+  changed_when: false
+  failed_when: false
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Require rollback timer before cancellation
+  ansible.builtin.assert:
+    that:
+      - _pve_fw_rollback_timer_before_cancel.rc == 0
+    fail_msg: The rollback timer is no longer armed.
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Stop rollback only after access, storage and quorum pass
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - stop
+      - homelab-infra-fw-rollback.timer
+      - homelab-infra-fw-rollback.service
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_rollback_stop
+  changed_when: _pve_fw_rollback_stop.rc == 0
+  failed_when: _pve_fw_rollback_stop.rc not in [0, 5]
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Read rollback unit activity after cancellation
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ item }}"
+  loop:
+    - homelab-infra-fw-rollback.timer
+    - homelab-infra-fw-rollback.service
+  loop_control:
+    label: rollback unit
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_rollback_units_after_cancel
+  changed_when: false
+  failed_when: false
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Require rollback units inactive after cancellation
+  ansible.builtin.assert:
+    that:
+      - item.rc != 0
+    fail_msg: A rollback unit is still active after cancellation.
+  loop: "{{ _pve_fw_rollback_units_after_cancel.results | default([]) }}"
+  loop_control:
+    label: rollback unit
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Recheck datacenter options after rollback cancellation
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/firewall/options
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_options_after_rollback_cancel
+  changed_when: false
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true
+
+- name: Proxmox host firewall | Keep the baseline enabled after rollback cancellation
+  ansible.builtin.assert:
+    that:
+      - (_pve_fw_options_after_rollback_cancel.stdout | from_json).enable | int == 1
+      - (_pve_fw_options_after_rollback_cancel.stdout | from_json).policy_in | upper == 'DROP'
+      - (_pve_fw_options_after_rollback_cancel.stdout | from_json).policy_out | upper == 'ACCEPT'
+    fail_msg: Datacenter firewall options changed while cancelling rollback.
+  when:
+    - _pve_fw_initial_plan.changed | bool or _pve_fw_rollback_timer_status.rc == 0
+  no_log: true

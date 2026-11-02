@@ -1,0 +1,92 @@
+---
+# Phase of attach-pci-passthrough.yml: require the inputs, a dedicated declaration for the
+# device, the device on the node and a PCI resource mapping that names it there. Inputs
+# are listed in attach-pci-passthrough.yml.
+
+- name: PCI passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - pci_passthrough_guest is defined
+      - pci_passthrough_device is defined
+      - pci_passthrough_device.id is defined
+      - pci_passthrough_device.mapping is defined
+      - pci_passthrough_device.mapping | string is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      attach-pci-passthrough.yml needs pci_passthrough_guest and
+      pci_passthrough_device.id.
+
+# This is the primary mode gate. It intentionally runs before any node or guest query: a
+# declaration is an operator-owned config fact, not something inferred from current VM
+# bindings. A shared render node and the PCI identity of the same physical iGPU can both be
+# listed under one named declaration, so a later dedicated request cannot evade the gate by
+# using a different identifier for the same device.
+- name: PCI passthrough | Assert the physical device is declared dedicated
+  ansible.builtin.assert:
+    that:
+      - _pci_device_declarations | length == 1
+      - (_pci_device_declarations | map(attribute='value.mode') | first | default('', true)) == 'dedicated'
+      - (_pci_device_declarations | map(attribute='value.kind') | first | default('', true)) in ['igpu', 'gpu']
+      - (_pci_device_declarations | map(attribute='value.pci_mapping') | first
+         | default(_pci_device_declarations[0].key, true)) == pci_passthrough_device.mapping
+    fail_msg: >-
+      PCI device {{ pci_passthrough_device.id }} must match exactly one physical-device
+      declaration with mode: dedicated, kind: igpu or gpu, and the requested PCI mapping
+      in homelabinfra_config.proxmox.devices.
+  vars:
+    _pci_device_candidates: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
+         | selectattr('value.identifiers', 'defined')
+         | selectattr('value.identifiers', 'contains', pci_passthrough_device.id) | list }}
+    _pci_device_declarations: >-
+      {{ (_pci_device_candidates | selectattr('value.node', 'undefined') | list)
+         + (_pci_device_candidates | selectattr('value.node', 'defined')
+            | selectattr('value.node', 'equalto', homelabinfra_config.proxmox.node) | list) }}
+
+- name: PCI passthrough | Verify the device is present on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/hardware/pci --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_hardware
+  changed_when: false
+
+- name: PCI passthrough | Read the declared resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/pci/{{ pci_passthrough_device.mapping }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_mapping
+  changed_when: false
+
+- name: PCI passthrough | Parse the PCI resource mapping properties
+  ansible.builtin.include_tasks: ../parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _pci_mapping }}"
+
+- name: PCI passthrough | Assert the mapping names this device on this node
+  ansible.builtin.assert:
+    that:
+      - _pci_map_entries | length == 1
+      - _pci_map_entries[0].path == pci_passthrough_device.id
+    fail_msg: >-
+      PCI resource mapping {{ pci_passthrough_device.mapping }} must map
+      {{ pci_passthrough_device.id }} on {{ homelabinfra_config.proxmox.node }}. The
+      mapping is operator-owned; this platform does not create or alter PCI mappings.
+  vars:
+    _pci_map_entries: >-
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node)
+         | selectattr('path', 'equalto', pci_passthrough_device.id) | list }}
+
+- name: PCI passthrough | Assert the device exists on the node
+  ansible.builtin.assert:
+    that: pci_passthrough_device.id in _pci_ids
+    fail_msg: >-
+      {{ pci_passthrough_device.id }} is not present on
+      {{ homelabinfra_config.proxmox.node }}. This platform assigns a device the node
+      already exposes; it does not create or discover one.
+  vars:
+    _pci_ids: "{{ _pci_hardware.stdout | from_json | map(attribute='id') | list }}"
