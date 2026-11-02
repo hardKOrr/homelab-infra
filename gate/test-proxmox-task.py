@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from remove_plan import load_playbook
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
@@ -51,9 +52,7 @@ def named_task(value, name):
 
 def main():
     playbooks = {
-        name: yaml.safe_load(
-            (repo / "ansible/playbooks/maintenance" / name).read_text()
-        )
+        name: load_playbook(repo / "ansible/playbooks/maintenance" / name)
         for name in ("backup-guest.yml", "restore-guest.yml")
     }
     callers = [

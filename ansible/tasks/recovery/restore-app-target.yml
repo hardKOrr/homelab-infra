@@ -1,0 +1,173 @@
+---
+# Restore App, Play 1 (localhost): provision a new target through its app playbook
+# with recovery_isolated=true (overwrite only), refresh the Vaultwarden runtime and
+# re-merge the target config, run roles/<role>/tasks/restore-provisioned.yml, resolve
+# the Docker or native-LXC target host (apptarget_<target>) and run
+# roles/<role>/tasks/restore-config.yml, which may set restore_app_config.
+
+# New destinations use the same application provisioning seam as a normal deploy,
+# but the isolated flag suppresses route/SSO/DNS/monitor publication. The source is
+# never contacted; only the target's authored config and defaults are loaded by this
+# child playbook. Plan mode remains read-only and does not create the target.
+- name: Provision the isolated new restore target
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
+      - -i
+      - "{{ playbook_dir }}/../../inventory/"
+      - "{{ playbook_dir }}/../apps/{{ _ra_app }}.yml"
+      - -e
+      - "instance={{ _ra_target }}"
+      - -e
+      - recovery_isolated=true
+  environment:
+    ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
+  changed_when: true
+
+- name: Refresh inventory after provisioning the new restore target
+  ansible.builtin.meta: refresh_inventory
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+# Provisioning runs in a child ansible-playbook process. Its Vaultwarden writes do
+# not update this controller process's localhost facts or the startup snapshot, so
+# read the canonical vault again before passing target credentials to the Docker
+# restore play. Missing or unreadable Vaultwarden state fails closed here.
+- name: Verify the Vaultwarden session before refreshing target credentials
+  ansible.builtin.include_tasks: ../bitwarden/authenticate.yml
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Synchronize Vaultwarden after isolated target provisioning
+  ansible.builtin.command:
+    argv: [bw, sync]
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Read the fresh Vaultwarden item snapshot
+  ansible.builtin.command:
+    argv: [bw, list, items]
+  register: _ra_refreshed_vault_items
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Parse the refreshed Vaultwarden runtime contract
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../../scripts/vault-runtime.py"
+      - --base64-stdin
+    stdin: "{{ _ra_refreshed_vault_items.stdout | b64encode }}"
+    stdin_add_newline: false
+  register: _ra_refreshed_vault_runtime
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Publish the fresh Vaultwarden runtime contract
+  ansible.builtin.set_fact:
+    homelabinfra_vault: "{{ _ra_refreshed_vault_runtime.stdout | from_json }}"
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine(_ra_refreshed_vault_runtime.stdout | from_json, recursive=True) }}
+  no_log: true
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Re-merge the target config with provisioned Vaultwarden credentials
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_target_config | default({}), recursive=True)
+         | combine({'app': (homelabinfra_vault.apps | default({})).get(_ra_target, {})},
+                   recursive=True) }}
+  vars:
+    _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Reapply the selected PBS datastore after target provisioning
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ restore_target_config
+         | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+    - _ra_backup_datastore | length > 0
+
+- name: Re-resolve the provisioned restore target's GPU stack
+  ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
+  vars:
+    stack_resolution_config: "{{ restore_target_config }}"
+    stack_resolution_default_name: "{{ restore_target_config.stack | default('', true) }}"
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Reapply the effective stack to the provisioned restore target
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ restore_target_config
+         | combine({'stack': _stack_resolution_name}, recursive=True)
+         if restore_target_config.stack is defined else restore_target_config }}
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Rewrite the app's own target config after provisioning
+  ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-provisioned.yml"
+  when:
+    - (_ra_hooks ~ '/restore-provisioned.yml') is file
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+- name: Resolve the Docker or native-LXC target
+  ansible.builtin.include_tasks: ../maintenance/resolve-app-target.yml
+  vars:
+    app: "{{ _ra_app }}"
+    resolve_app_target_instance: "{{ _ra_target }}"
+  when:
+    - _ra_kind in ['docker', 'native']
+    - recovery_destination_resolved == 'existing'
+
+- name: Resolve the newly provisioned Docker or native-LXC target
+  ansible.builtin.include_tasks: ../maintenance/resolve-app-target.yml
+  vars:
+    app: "{{ _ra_app }}"
+    resolve_app_target_instance: "{{ _ra_target }}"
+  when:
+    - _ra_kind in ['docker', 'native']
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
+# The app_config the next play gives the role's restore task: restore_target_config, or
+# the restore_app_config that roles/<role>/tasks/restore-config.yml sets, usually by
+# rebasing a source-owned path through tasks/recovery/rebase-target-path.yml.
+- name: Resolve the role's restore config
+  ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-config.yml"
+  when:
+    - (_ra_hooks ~ '/restore-config.yml') is file
+    - _ra_kind in ['docker', 'native']
+    - not (recovery_destination_resolved == 'new' and not (_ra_overwrite | bool))

@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from remove_plan import load_playbook
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
@@ -279,7 +280,7 @@ def check_client_image_matches_server():
 
 
 def check_remove_wiring():
-    remove = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     unwire = remove[0]
     decide = task_named(unwire["pre_tasks"], "Decide whether Remove drops a named database")
     pre_names = [task.get("name") for task in unwire["pre_tasks"]]

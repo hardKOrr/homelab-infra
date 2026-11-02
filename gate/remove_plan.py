@@ -14,7 +14,9 @@ Every other condition stays as text. Each step is
 (name, module, arguments, conditions, and `via`, the inlined files it came
 through); an included task file that is not inlined is
 represented by its parsed content, so a renamed file with the same tasks compares equal.
-A hook task that only declares flags is not a step.
+A hook task that only declares flags is not a step. A phase file the playbook imports
+(PHASES) is inlined without entering `via`; `load_playbook()` returns a playbook with its
+phases expanded, as one file, for suites that read the playbook's tasks.
 
 Usage: remove_plan.py <repo> <app> [<instance>] [--all]  prints the plan as JSON lines.
 """
@@ -22,6 +24,7 @@ Usage: remove_plan.py <repo> <app> [<instance>] [--all]  prints the plan as JSON
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -29,6 +32,10 @@ from pathlib import Path
 import yaml
 
 INLINE = ("tasks/proxmox/detach-app-gpu.yml",)
+# A playbook's phase files: imported statically and inlined without entering `via`, so a
+# phase split leaves every step, and the plan, exactly as it was.
+PHASES = ("ansible/tasks/removal/", "ansible/tasks/recovery/restore-app-",
+          "ansible/tasks/recovery/restore-guest-")
 CONTROL = {"name", "when", "vars", "loop", "register", "block", "rescue", "always",
            "no_log", "changed_when", "failed_when", "args", "become", "delegate_to",
            "tags", "until", "retries", "delay", "notify", "environment", "loop_control"}
@@ -43,6 +50,7 @@ def listify(when) -> list[str]:
 FLAGS = ("_rm_database_backend", "_rm_keeps_guest_record")
 REMOVE = "ansible/playbooks/apps/remove.yml"
 RESTORE = "ansible/playbooks/maintenance/restore-app.yml"
+GUEST = "ansible/playbooks/maintenance/restore-guest.yml"
 HOOK = re.compile(r"\{\{ _r[am]_hooks \}\}")
 
 
@@ -120,11 +128,15 @@ def walk(tasks, base: Path, repo: Path, app: str, instance: str, inherited: list
             continue
         target = include_target(task)
         if target is not None and "{{" in target and not HOOK.search(target):
-            module, arguments = "include_tasks", target  # a templated path stays as text
+            module, arguments = "include_tasks", templated(target, base, repo)
         elif target is not None:
             file = resolve(target, base, repo, hooks)
             relative = file.relative_to(repo.resolve()).as_posix() if file.is_relative_to(
                 repo.resolve()) else str(file)
+            if relative.startswith(PHASES) and "ansible.builtin.import_tasks" in task:
+                yield from walk(yaml.safe_load(file.read_text()) or [], file.parent, repo, app,
+                                instance, conditions, via, flags, play_vars, hooks)
+                continue
             if HOOK.search(target) or relative.endswith(INLINE) or (
                     via and relative.startswith("ansible/roles/")):
                 inner = yaml.safe_load(file.read_text()) or []
@@ -145,6 +157,18 @@ def walk(tasks, base: Path, repo: Path, app: str, instance: str, inherited: list
                             for x in (arguments, extra))
         yield {"name": task.get("name"), "module": module, "arguments": arguments,
                "extra": extra, "when": conditions, "via": list(via)}
+
+
+def templated(target: str, base: Path, repo: Path) -> str:
+    """A templated path as text, its literal directory prefix made repo-relative."""
+    prefix, rest = target.split("{{", 1)
+    if not prefix:
+        return target
+    folder = os.path.normpath(base / prefix)
+    root = os.path.normpath(repo.resolve())
+    if folder.startswith(root + os.sep):
+        folder = folder[len(root) + 1:]
+    return folder + ("/" if prefix.endswith("/") else "") + "{{" + rest
 
 
 def rewrite(value, change):
@@ -182,6 +206,64 @@ def plan_all(repo: Path, app: str, instance: str | None = None,
         if only is None or name.startswith(only):
             steps += found
     return steps
+
+
+def phase_file(task: dict, base: Path) -> Path | None:
+    """The phase file a task statically imports, if it is one."""
+    target = task.get("ansible.builtin.import_tasks")
+    if not isinstance(target, str) or "{{" in target:
+        return None
+    file = (base / target).resolve()  # also inside a copy of the tree
+    return file if any("/" + phase in file.as_posix() for phase in PHASES) else None
+
+
+def rebase(tasks: list, source: Path, base: Path) -> list:
+    """Tasks read from directory `source`, their include paths made relative to `base`."""
+    out = []
+    for task in tasks or []:
+        task = dict(task)
+        for key in ("block", "rescue", "always"):
+            if key in task:
+                task[key] = rebase(task[key], source, base)
+        for key in ("ansible.builtin.include_tasks", "ansible.builtin.import_tasks"):
+            value = task.get(key)
+            if isinstance(value, str) and not value.startswith("{{"):
+                prefix, brace, rest = value.partition("{{")
+                moved = os.path.relpath(os.path.normpath(source / prefix), base)
+                task[key] = moved + ("/" if prefix.endswith("/") else "") + brace + rest
+        out.append(task)
+    return out
+
+
+def expand(tasks: list, base: Path) -> list:
+    out = []
+    for task in tasks or []:
+        file = phase_file(task, base)
+        if file is None:
+            out.append(task)
+        else:
+            out += rebase(expand(yaml.safe_load(file.read_text()) or [], file.parent),
+                          file.parent, base)
+    return out
+
+
+def load_playbook(path: Path) -> list:
+    """A playbook's plays as one file: each phase import is replaced by the phase file's
+    tasks, their include paths rebased to the playbook directory."""
+    plays = yaml.safe_load(Path(path).read_text())
+    for play in plays:
+        for section in ("pre_tasks", "tasks", "post_tasks"):
+            if section in play:
+                play[section] = expand(play[section], Path(path).parent)
+    return plays
+
+
+def playbook_text(path: Path) -> str:
+    """A playbook's text followed by the text of every phase file it imports."""
+    path = Path(path)
+    files = [phase_file(task, path.parent) for play in yaml.safe_load(path.read_text())
+             for section in ("pre_tasks", "tasks", "post_tasks") for task in play.get(section) or []]
+    return "\n".join([path.read_text()] + [f.read_text() for f in files if f is not None])
 
 
 def plan(repo: Path, app: str, instance: str | None = None) -> list[dict]:

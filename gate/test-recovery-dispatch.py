@@ -12,13 +12,14 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from remove_plan import load_playbook
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 
 def check_native_restore_storage_scopes():
-    source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())[0]
+    source = load_playbook(repo / "ansible/playbooks/maintenance/restore-app.yml")[0]
     scope_task = next(task for task in source["pre_tasks"]
                       if task.get("name") == "Resolve native guest storage identity scopes")
     identity_task = next(task for task in source["pre_tasks"]
@@ -110,7 +111,7 @@ def check_native_restore_storage_scopes():
 
 
 def check(playbook, task_name, inputs, expected):
-    source = yaml.safe_load((repo / "ansible/playbooks/maintenance" / playbook).read_text())[0]
+    source = load_playbook(repo / "ansible/playbooks/maintenance" / playbook)[0]
     publish = next(task for task in source["pre_tasks"] if task["name"] == task_name)
     # Play two deliberately receives none of play one's vars. This is the app recovery
     # dispatch boundary that syntax checks and single-play templating cannot exercise.
@@ -141,9 +142,7 @@ def check_iso_appliance_recovery_dispatch():
             ("backup-app.yml", "_ba_kind"),
             ("restore-app.yml", "_ra_kind"),
         ]:
-            source = yaml.safe_load(
-                (repo / "ansible/playbooks/maintenance" / playbook).read_text()
-            )[0]
+            source = load_playbook(repo / "ansible/playbooks/maintenance" / playbook)[0]
             resolve_kind = next(
                 task for task in source["pre_tasks"]
                 if task.get("name") == "Resolve the hosting kind"
@@ -190,9 +189,7 @@ def main():
         ("backup-app.yml", "Backup App | Run the application-owned backup"),
         ("restore-app.yml", "Restore App | Restore Docker or native-LXC application data from PBS"),
     ]:
-        plays = yaml.safe_load(
-            (repo / "ansible/playbooks/maintenance" / playbook).read_text()
-        )
+        plays = load_playbook(repo / "ansible/playbooks/maintenance" / playbook)
         target_play = next(play for play in plays if play.get("name") == play_name)
         assert target_play.get("gather_facts") is True, play_name
 
@@ -231,7 +228,7 @@ def main():
         return {"ansible.builtin.include_tasks": str(
             repo / f"ansible/roles/{role}/tasks/restore-config.yml")}
 
-    source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
+    source = load_playbook(repo / "ansible/playbooks/maintenance/restore-app.yml")
     dispatch = next(play for play in source if play["name"] ==
                     "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"][0]
     for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr", "frigate"]:
@@ -336,9 +333,7 @@ def main():
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
-    remove_playbook = yaml.safe_load(
-        (repo / "ansible/playbooks/apps/remove.yml").read_text()
-    )
+    remove_playbook = load_playbook(repo / "ansible/playbooks/apps/remove.yml")
     unwire_play = next(
         play for play in remove_playbook if play["name"] == "Remove App | Unwire"
     )

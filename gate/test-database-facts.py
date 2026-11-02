@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from remove_plan import load_playbook
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
@@ -363,7 +364,7 @@ def immich_database_extensions_are_prepared_by_the_backend():
 
 
 def postgresql_delete_and_redeploy_reconcile_cluster_identity():
-    remove_plays = yaml.safe_load(read("ansible/playbooks/apps/remove.yml"))
+    remove_plays = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     unwire_play = next(play for play in remove_plays if play["name"] == "Remove App | Unwire")
     native_play = next(play for play in remove_plays if play["name"].startswith("Remove App | Stop"))
     withdraw = task_named(unwire_play["tasks"], "Withdraw the app's record from its Proxmox guest")

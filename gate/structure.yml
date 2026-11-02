@@ -33,14 +33,11 @@ size:
   ansible/playbooks/apps/migrate-servarr.yml: 395
   ansible/playbooks/apps/ollama.yml: 349
   ansible/playbooks/apps/pbs.yml: 667
-  ansible/playbooks/apps/remove.yml: 819
   ansible/playbooks/apps/slskd.yml: 304
   ansible/playbooks/apps/uptime-kuma.yml: 316
   ansible/playbooks/apps/vaultwarden.yml: 343
   ansible/playbooks/maintenance/guest-maintenance.yml: 393
   ansible/playbooks/maintenance/reclaim-volume.yml: 441
-  ansible/playbooks/maintenance/restore-app.yml: 792
-  ansible/playbooks/maintenance/restore-guest.yml: 793
   ansible/playbooks/maintenance/restore-pdm.yml: 360
   ansible/playbooks/maintenance/status.yml: 558
   ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367

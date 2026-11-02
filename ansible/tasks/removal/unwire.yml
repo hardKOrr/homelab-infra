@@ -1,0 +1,60 @@
+---
+# Remove App, Play 1 (localhost): withdraw the route, SSO objects, uptime monitor, DNS
+# record and firewall rules, run roles/<app>/tasks/remove-unwire.yml, then prune the
+# service registry, which the steps before it read to find their providers.
+# Inputs: the play's wiring_* contract vars and _rm_hooks.
+
+- name: Unwire reverse proxy
+  ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.reverse_proxy is defined
+    - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+# Unconditional on routing.identity, unlike the wire half: one pass removes
+# whichever shape exists, so an instance whose identity mode changed between
+# deploys still gets its stale Authentik objects cleaned up.
+- name: Unwire SSO
+  ansible.builtin.include_tasks: ../unwiring/authentik.yml
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.sso is defined
+    - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+    - homelabinfra_infra.sso.token | default('') | length > 0
+    # Authentik is the identity provider, with routing.identity=none. Removing an
+    # Authentik instance must not send its slug to another provider's API, where an
+    # unrelated same-named application could be deleted.
+    - not ((app | default(instance)) is match('^authentik(?:-|$)'))
+
+- name: Unregister uptime monitor
+  ansible.builtin.include_tasks: ../unwiring/uptime-kuma.yml
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.monitoring is defined
+
+- name: Unwire DNS
+  ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.dns is defined
+    - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+- name: Unwire firewall
+  ansible.builtin.include_tasks: "../unwiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.firewall is defined
+    - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
+# Per-app unwiring (client registrations in other apps): roles/<app>/tasks/remove-unwire.yml.
+# After the provider unwiring, deliberately: the registry is what the unwire steps
+# above read to find those providers, so pruning it first would remove the app's own
+# entry while the reverse proxy and DNS still carried its route.
+- name: Run the app's own unwiring
+  ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-unwire.yml"
+  when: (_rm_hooks ~ '/remove-unwire.yml') is file
+
+- name: Unregister from the service registry
+  ansible.builtin.include_tasks: ../unwiring/registry.yml
+  vars:
+    unwire_registry_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"

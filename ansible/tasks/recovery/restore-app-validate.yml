@@ -1,0 +1,214 @@
+---
+# Restore App, Play 1 (localhost): run roles/<role>/tasks/restore-inputs.yml, derive
+# the source and target route, VMID, address and storage identities, collect a new
+# target's collisions, resolve the declared recovery capability and run the shared
+# tasks/recovery/validate-restore.yml guard. Nothing is changed before it passes.
+# Results: recovery_capability, recovery_method_resolved and
+# recovery_destination_resolved.
+
+# Per-app source material and target path rewrites, before the identity checks below:
+# roles/<app>/tasks/restore-inputs.yml.
+- name: Resolve the app's own restore inputs
+  ansible.builtin.include_tasks: "{{ _ra_hooks }}/restore-inputs.yml"
+  when: (_ra_hooks ~ '/restore-inputs.yml') is file
+
+- name: Resolve native guest storage identity scopes
+  ansible.builtin.set_fact:
+    # Paths inside a Proxmox guest root filesystem are private to that guest. Keep
+    # explicit host-mounted paths shared so the collision guard still protects them.
+    _ra_source_storage_scope: >-
+      {{ _ra_source_instance
+         if _ra_kind == 'native'
+            and app_config.get('proxmox', {}).get(
+              'guest_type', app_config.get('proxmox', {}).get('type', '')) in ['lxc', 'vm']
+            and app_config.get('media_storage', {}).get('mounts', []) | length == 0
+         else '' }}
+    _ra_target_storage_scope: >-
+      {{ _ra_target
+         if _ra_kind == 'native'
+            and restore_target_config.get('proxmox', {}).get(
+              'guest_type', restore_target_config.get('proxmox', {}).get('type', '')) in ['lxc', 'vm']
+            and restore_target_config.get('media_storage', {}).get('mounts', []) | length == 0
+         else '' }}
+
+- name: Resolve target identities before mutation
+  ansible.builtin.set_fact:
+    _ra_source_route_key: >-
+      {{ ((app_config.routing.estate | default('')) ~ '/' ~
+          (app_config.routing.subdomain | default(instance, true)))
+         if app_config.routing.proxy | default('none') != 'none' else '' }}
+    _ra_target_route_key: >-
+      {{ ((restore_target_config.routing.estate | default('')) ~ '/' ~
+          (restore_target_config.routing.subdomain | default(_ra_target, true)))
+         if restore_target_config.routing.proxy | default('none') != 'none' else '' }}
+    _ra_requested_vmid: >-
+      {{ restore_target_config.get('proxmox', {}).get('vm', {}).get('vmid',
+         restore_target_config.get('proxmox', {}).get('lxc', {}).get('vmid', '')) | string }}
+    _ra_requested_address: >-
+      {{ (restore_target_config.get('proxmox', {}).get('vm', {}).get('ip_address',
+         restore_target_config.get('proxmox', {}).get('lxc', {}).get('ip_address', '')) | string)
+         | regex_replace('/.*$', '') }}
+    # A restore-inputs.yml hook may declare restore_source_storage_path and
+    # restore_target_storage_path when one path is not the app's storage identity.
+    _ra_source_storage_path: >-
+      {{ (_ra_kind ~ ':' ~ _ra_source_instance)
+         if _ra_kind == 'kubernetes'
+         else (
+           restore_source_storage_path
+           if restore_source_storage_path is defined
+           else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                 or (app_config.get('app', {}).get('data_path', '')
+                     | replace('{{ instance }}', _ra_source_instance))
+                 or app_config.get('app', {}).get('config_path', '')
+                 or (app_config.get('app', {}).get('filestore_path', '')
+                     | replace('{{ instance }}', _ra_source_instance))
+                 or (_ra_kind ~ ':' ~ _ra_source_instance))) | string }}
+    _ra_target_storage_path: >-
+      {{ (_ra_kind ~ ':' ~ _ra_target)
+         if _ra_kind == 'kubernetes'
+         else (
+           restore_target_storage_path
+           if restore_target_storage_path is defined
+           else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                 or (restore_target_config.get('app', {}).get('data_path', '')
+                     | replace('{{ instance }}', _ra_target))
+                 or restore_target_config.get('app', {}).get('config_path', '')
+                 or (restore_target_config.get('app', {}).get('filestore_path', '')
+                     | replace('{{ instance }}', _ra_target))
+                 or (_ra_kind ~ ':' ~ _ra_target))) | string }}
+
+- name: Scope native guest paths to their owning guest
+  ansible.builtin.set_fact:
+    _ra_source_storage_key: >-
+      {{ (_ra_source_storage_scope ~ ':' ~ _ra_source_storage_path)
+         if _ra_source_storage_scope | length > 0 else _ra_source_storage_path }}
+    _ra_target_storage_key: >-
+      {{ (_ra_target_storage_scope ~ ':' ~ _ra_target_storage_path)
+         if _ra_target_storage_scope | length > 0 else _ra_target_storage_path }}
+
+- name: Refresh inventory before checking a new target's ownership
+  ansible.builtin.meta: refresh_inventory
+  when: _ra_destination == 'new'
+
+- name: Resolve the target application ownership group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_{{ _ra_target }}"
+  when:
+    - _ra_destination == 'new'
+    - _ra_kind != 'kubernetes'
+
+- name: Resolve the target Kubernetes namespace for a collision check
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+  when:
+    - _ra_destination == 'new'
+    - _ra_kind == 'kubernetes'
+
+- name: Derive the target Kubernetes namespace for a collision check
+  ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ _ra_target }}"
+  when:
+    - _ra_destination == 'new'
+    - _ra_kind == 'kubernetes'
+
+- name: Check whether the target Kubernetes namespace already exists
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, namespace, "{{ k8s_namespace }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _ra_k8s_namespace
+  changed_when: false
+  failed_when: false
+  when:
+    - _ra_destination == 'new'
+    - _ra_kind == 'kubernetes'
+
+- name: Collect existing VMIDs for a new-target collision check
+  ansible.builtin.set_fact:
+    _ra_existing_vmids: >-
+      {{ _ra_existing_vmids | default([]) +
+         ([hostvars[item].proxmox_vmid | string]
+          if hostvars[item].proxmox_vmid is defined else []) }}
+  loop: "{{ groups['proxmox_clients'] | default([]) }}"
+  when: _ra_destination == 'new'
+
+- name: Collect existing addresses for a new-target collision check
+  ansible.builtin.set_fact:
+    _ra_existing_addresses: >-
+      {{ _ra_existing_addresses | default([]) +
+         ([hostvars[item].ansible_host | string]
+          if hostvars[item].ansible_host | default('') | length > 0 else []) }}
+  loop: "{{ groups['proxmox_clients'] | default([]) }}"
+  when: _ra_destination == 'new'
+
+# This is the common method/destination gate. It deliberately runs before any role
+# task, so an undeclared path fails as a capability error rather than as an include_role
+# or missing-file error.
+- name: Resolve the declared recovery capability
+  ansible.builtin.include_tasks: ../recovery/resolve-method.yml
+  vars:
+    recovery_app: "{{ _ra_app }}"
+    recovery_app_config: "{{ app_config }}"
+    recovery_instance: "{{ instance }}"
+    recovery_method_requested: "{{ _ra_method }}"
+    recovery_destination_requested: "{{ _ra_destination }}"
+    recovery_operation: restore
+
+- name: Require Restore App's native role dispatch
+  ansible.builtin.assert:
+    that: recovery_method_resolved in ['native', 'project_managed']
+    fail_msg: >-
+      Restore App cannot execute method={{ recovery_method_resolved }} for
+      destination={{ recovery_destination_resolved }}. Use the method-specific recovery
+      job declared by that method; this playbook dispatches native and project-managed
+      role tasks only.
+
+- name: Assert this app has a restore path
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_ra_kind == 'kubernetes' and app_config.backup is defined)
+        or
+        (_ra_kind in ['docker', 'native']
+         and app_config.backup.enabled | default(false) | bool
+         and app_config.backup.application_consistent | default(false) | bool)
+    fail_msg: >-
+      {{ _ra_app }} has no declared application restore path. Kubernetes roles use their
+      backup contract; a declared Docker or native-LXC role owns its
+      application-consistent archive and restore tasks. Other applications remain on
+      whole-guest PBS recovery.
+
+- name: Validate the destination and replacement plan before mutation
+  ansible.builtin.include_tasks: ../recovery/validate-restore.yml
+  vars:
+    recovery_source_instance: "{{ instance }}"
+    recovery_target_instance: "{{ _ra_target }}"
+    recovery_destination: "{{ recovery_destination_resolved }}"
+    recovery_overwrite: "{{ _ra_overwrite }}"
+    recovery_point: "{{ _ra_recovery_point }}"
+    recovery_pre_restore_point: "{{ _ra_pre_restore_point }}"
+    recovery_target_config_present: "{{ _ra_target_config_file.stat.exists | default(false) }}"
+    recovery_source_route_key: "{{ _ra_source_route_key }}"
+    recovery_target_route_key: "{{ _ra_target_route_key }}"
+    recovery_target_name_collision: >-
+      {{ ((_ra_kind != 'kubernetes' and
+           (groups[tag_group_name | default('')] | default([]) | length > 0))
+          or
+          (_ra_kind == 'kubernetes' and
+           (_ra_k8s_namespace.rc | default(1) | int == 0)))
+         | bool }}
+    recovery_target_vmid_collision: >-
+      {{ (_ra_requested_vmid | length > 0 and
+          _ra_requested_vmid in (_ra_existing_vmids | default([]))) | bool }}
+    recovery_target_address_collision: >-
+      {{ (_ra_requested_address | length > 0 and
+          _ra_requested_address | lower != 'dhcp' and
+          _ra_requested_address in (_ra_existing_addresses | default([]))) | bool }}
+    recovery_target_storage_collision: >-
+      {{ (_ra_source_storage_key | length > 0 and
+          _ra_source_storage_key == _ra_target_storage_key and
+          '{{' not in _ra_source_storage_key) | bool }}
+    recovery_source_storage_key: "{{ _ra_source_storage_key }}"
+    recovery_target_storage_key: "{{ _ra_target_storage_key }}"
+    recovery_affected_scope: "{{ app_config.recovery.affected_scope | default([instance]) }}"

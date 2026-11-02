@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,14 +92,14 @@ def test_deploy_and_recovery_paths_share_the_resolver():
 
     for path, needle in (
         ("ansible/tasks/maintenance/resolve-app-target.yml", "../stack/resolve-app-stack.yml"),
-        ("ansible/playbooks/apps/remove.yml", "../../tasks/stack/resolve-app-stack.yml"),
-        ("ansible/playbooks/maintenance/restore-app.yml", "../../tasks/stack/resolve-app-stack.yml"),
+        ("ansible/tasks/removal/resolve-instance.yml", "../stack/resolve-app-stack.yml"),
+        ("ansible/tasks/recovery/restore-app-load.yml", "../stack/resolve-app-stack.yml"),
     ):
         assert needle in (ROOT / path).read_text(encoding="utf-8"), path
 
 
 def test_removal_keeps_a_gpu_used_by_sibling_apps():
-    remove = read_yaml("ansible/playbooks/apps/remove.yml")
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     sibling_task = named(remove, "Resolve whether this stack host still has sibling applications")
     expression = sibling_task["ansible.builtin.set_fact"]["_rm_stack_has_other_apps"]
 

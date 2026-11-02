@@ -1,0 +1,140 @@
+---
+# Restore App, Play 1 (localhost): validate the inputs, publish the _ra_* dispatch
+# facts across plays, load and merge the source and target instance configs (with
+# their Vaultwarden overlays and an optional backup_datastore), apply the target's
+# effective stack and resolve the hosting kind and the source's safe identity.
+# Inputs: the play's _ra_* vars. Results: app_config, restore_target_config, _ra_kind,
+# _ra_backup_id, _ra_source_instance, restore_source_database and its key.
+
+- name: Load platform vars
+  ansible.builtin.import_tasks: ../load-user-vars.yml
+
+- name: Assert instance name is provided
+  ansible.builtin.assert:
+    that: instance is defined and instance | length > 0
+    fail_msg: >-
+      Provide the instance that owns the backup: -e instance=mixpost
+
+- name: Validate an explicitly selected PBS datastore
+  ansible.builtin.assert:
+    that: _ra_backup_datastore is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+    fail_msg: >-
+      backup_datastore must be a PBS datastore name. Omit it to use the app's configured
+      default datastore.
+  when: _ra_backup_datastore | length > 0
+
+- name: Publish the application restore dispatch across plays
+  ansible.builtin.set_fact:
+    _ra_app: "{{ _ra_app }}"
+    _ra_target: "{{ _ra_target }}"
+    _ra_method: "{{ _ra_method }}"
+    _ra_destination: "{{ _ra_destination }}"
+    _ra_recovery_point: "{{ _ra_recovery_point }}"
+    _ra_backup_datastore: "{{ _ra_backup_datastore }}"
+    _ra_overwrite: "{{ _ra_overwrite }}"
+    _ra_pre_restore_point: "{{ _ra_pre_restore_point }}"
+
+# Tolerated rather than required, so an unknown app name produces the assert below —
+# which names the actual problem — instead of an include_vars file-not-found crash.
+- name: Load app defaults (optional — absent for an app with no defaults file)
+  ansible.builtin.include_vars:
+    file: "../../vars/app-defaults/{{ _ra_app }}.yml"
+    name: _app_defaults
+  failed_when: false
+
+- name: Load the source instance's config (optional — all defaults used if absent)
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+    name: _instance_config
+  failed_when: false
+
+# Loaded separately, because the target is a different deployment with its own
+# overrides — its own database image, its own storage sizing, possibly its own
+# database name. Assuming the source's config described the target is how a restore
+# writes into the wrong place while reporting success.
+- name: Load the target instance's config (optional — all defaults used if absent)
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/apps/{{ _ra_target }}.yml"
+    name: _target_config
+  failed_when: false
+
+- name: Check whether the target instance configuration is authored
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../../config/apps/{{ _ra_target }}.yml"
+  register: _ra_target_config_file
+  changed_when: false
+
+- name: Load infrastructure facts
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    name: homelabinfra_infra
+  failed_when: false
+
+# Same merge as the deploy playbook, for both instances. The vault overlay matters
+# here in particular: the source's app_key and the target's db_root_password are both
+# canonical Vaultwarden values and neither exists anywhere else.
+- name: Merge the source and target configs
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_instance_config | default({}), recursive=True)
+         | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    restore_target_config: >-
+      {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_target_config | default({}), recursive=True)
+         | combine({'app': (homelabinfra_vault.apps | default({}))[_ra_target] | default({})}, recursive=True) }}
+  vars:
+    # The same key derivation tasks/removal/resolve-instance.yml uses: an app whose file name
+    # carries a hyphen declares its defaults under an underscored name.
+    _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+
+- name: Apply the selected PBS datastore to this restore only
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+    restore_target_config: >-
+      {{ restore_target_config
+         | combine({'backup': {'datastore': _ra_backup_datastore}}, recursive=True) }}
+  when: _ra_backup_datastore | length > 0
+
+- name: Resolve the restore target's GPU stack
+  ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
+  vars:
+    stack_resolution_config: "{{ restore_target_config }}"
+    stack_resolution_default_name: "{{ restore_target_config.stack | default('', true) }}"
+
+- name: Apply the effective stack to the restore target config
+  ansible.builtin.set_fact:
+    restore_target_config: >-
+      {{ restore_target_config
+         | combine({'stack': _stack_resolution_name}, recursive=True)
+         if restore_target_config.stack is defined else restore_target_config }}
+
+- name: Resolve the hosting kind
+  ansible.builtin.set_fact:
+    _ra_kind: >-
+      {{ 'appliance'
+         if (app_config.get('proxmox', {}).get('installer')
+             or app_config.get('install', {}).get('method') == 'official-iso')
+         else (app_config.get('hosting', {}).get('method')
+               | default('docker' if app_config.stack is defined else 'native', true)) }}
+    _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _ra_source_instance: "{{ instance }}"
+    # Safe identity only. Product restore tasks may use this to reject a new target
+    # that would restore into the source's named external database; credentials stay
+    # in the source/target Vaultwarden overlays and are never copied into this fact.
+    restore_source_database: >-
+      {{ {
+           'provider': app_config.get('app', {}).get('database', {}).get('provider', ''),
+           'instance': app_config.get('app', {}).get('database', {}).get('instance', ''),
+           'name': app_config.get('app', {}).get('database', {}).get('name', ''),
+           'host': (homelabinfra_infra.databases | default({})).get(
+             app_config.get('app', {}).get('database', {}).get('instance', ''), {}).host | default(''),
+           'port': (homelabinfra_infra.databases | default({})).get(
+             app_config.get('app', {}).get('database', {}).get('instance', ''), {}).port | default(0)
+         } }}
+
+- name: Resolve source n8n recovery key without exposing it in evidence
+  ansible.builtin.set_fact:
+    restore_source_encryption_key: "{{ app_config.app.encryption_key | default('') }}"
+  no_log: true

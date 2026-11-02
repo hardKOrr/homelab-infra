@@ -1,0 +1,169 @@
+---
+# Remove App, Play 2 (the app's host): bring a Compose project down or stop a native
+# service, run the remove.yml, remove-devices.yml and remove-native-data.yml hooks in
+# place, delete data only with delete_data=true, and destroy an explicitly selected
+# native guest after the final ownership check in tasks/proxmox/destroy-owned-*.yml.
+# Inputs: remove_kind and remove_guest_* from Play 1's add_host, _rm_* play vars.
+
+# ── Docker app on a shared stack host ──────────────────────────────────────
+- name: Remove the Compose project
+  when: remove_kind == 'docker'
+  block:
+    - name: Stat the Compose file
+      ansible.builtin.stat:
+        path: "{{ _rm_project_dir }}/docker-compose.yml"
+      register: _rm_compose_stat
+
+    - name: Report an already-removed Compose project
+      ansible.builtin.debug:
+        msg: "{{ _rm_project_dir }}/docker-compose.yml is already gone — nothing to stop."
+      when: not _rm_compose_stat.stat.exists
+
+    - name: Stop and remove the containers
+      community.docker.docker_compose_v2:
+        project_src: "{{ _rm_project_dir }}"
+        # Exited init services still belong to the project. Without their profiles,
+        # down can leave containers referencing the network it just removed.
+        profiles: ["*"]
+        state: absent
+        remove_volumes: "{{ _rm_delete_data | bool }}"
+        remove_orphans: true
+      when: _rm_compose_stat.stat.exists
+
+    # Per-app cleanup once the containers stop, before the shared files go:
+    # roles/<app>/tasks/remove.yml, when the app's role has one.
+    - name: Run the app's removal hook
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove.yml"
+      when: (_rm_hooks ~ '/remove.yml') is file
+
+    # The shared PBS client's root-only settings (tasks/backup/pbs-client-script.yml)
+    # hold the PBS credentials for this instance's recovery script; they go with it.
+    - name: Remove the instance's PBS client settings
+      ansible.builtin.file:
+        path: "/etc/homelab-infra/pbs-client/{{ instance }}.env"
+        state: absent
+
+    - name: Delete the project directory
+      ansible.builtin.file:
+        path: "{{ _rm_project_dir }}"
+        state: absent
+      when: _rm_delete_data | bool
+
+    # A bind-mounted data path is neither a named volume nor part of the project
+    # directory, so neither of the two tasks above touches it. Older app defaults
+    # hard-coded the app name (`/opt/authentik/data`) while the project directory
+    # is `/opt/<instance>`, which put the app's whole database outside everything
+    # removal deleted: `delete_data: true` reported success and the data survived.
+    # The next deploy then generated fresh credentials the surviving database did
+    # not accept, and Authentik never came up (executions 153 then 155).
+    # `state: absent` on a path already gone is a no-op, so this is safe for apps
+    # whose data does live under the project directory.
+    - name: Delete bind-mounted data and config paths
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_config.app.data_path | default('') }}"
+        - "{{ app_config.app.config_path | default('') }}"
+      when:
+        - _rm_delete_data | bool
+        - item | length > 0
+
+# Dedicated devices are released only after the app's containers stop and its data is
+# gone: roles/<app>/tasks/remove-devices.yml, when the app's role has one. A media
+# stack GPU stays while another app still uses the shared VM.
+- name: Release the app's project-owned devices
+  ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-devices.yml"
+  when:
+    - remove_kind == 'docker'
+    - (_rm_hooks ~ '/remove-devices.yml') is file
+
+# Legacy shared device declarations remain accepted for non-GPU users. GPU-capable
+# apps no longer call this LXC bind seam.
+- name: Detach the app's project-owned shared device
+  ansible.builtin.include_tasks: ../proxmox/detach-shared-device.yml
+  vars:
+    shared_device_guest: "{{ inventory_hostname }}"
+    shared_device_list:
+      - host: "{{ app_config.app.shared_device }}"
+  when:
+    - remove_kind == 'docker'
+    - app_config.app.shared_device | default('') | length > 0
+
+# ── Native app on its own LXC ──────────────────────────────────────────────
+- name: Stop the native service
+  when: remove_kind == 'native'
+  block:
+    # app.service_name is declared in vars/app-defaults/<app>.yml for every
+    # native baseline app, because a unit name does not always match the app
+    # (PBS runs proxmox-backup-proxy). The instance name is the fallback.
+    - name: Stop and disable every service unit
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      register: _rm_service_stop
+      loop: "{{ _rm_service_names | default([]) }}"
+      failed_when:
+        - _rm_service_stop is failed
+        - >-
+          'could not be found' not in (_rm_service_stop.msg | default('') | lower)
+          and 'could not find the requested service' not in
+          (_rm_service_stop.msg | default('') | lower)
+
+    - name: Report an already-removed service
+      ansible.builtin.debug:
+        msg: >-
+          No systemd unit named
+          {{ item.item }} on
+          {{ inventory_hostname }} — nothing to stop.
+      loop: "{{ _rm_service_stop.results | default([]) }}"
+      when: >-
+        'could not be found' in (item.msg | default('') | lower)
+        or 'could not find the requested service' in
+        (item.msg | default('') | lower)
+
+    - name: Remove the app's own native state
+      ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-native-data.yml"
+      when: (_rm_hooks ~ '/remove-native-data.yml') is file
+
+    # A native app's recovery unit can span more than data_path (Ntfy keeps its
+    # message cache in cache_path), so delete every declared state path.
+    - name: Delete the data and cache paths
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_config.app.data_path | default('') }}"
+        - "{{ app_config.app.cache_path | default('') }}"
+      when:
+        - _rm_delete_data | bool
+        - item | length > 0
+
+- name: Destroy the explicitly selected native LXC
+  ansible.builtin.include_tasks: ../proxmox/destroy-owned-lxc.yml
+  vars:
+    destroy_lxc_instance: "{{ instance }}"
+    destroy_lxc_name: "{{ remove_guest_name }}"
+    destroy_lxc_node: "{{ remove_guest_node }}"
+    destroy_lxc_vmid: "{{ remove_guest_vmid }}"
+    destroy_lxc_original_tags: "{{ remove_guest_original_tags }}"
+  when:
+    - _rm_destroy_guest | bool
+    - _rm_delete_data | bool
+    - remove_kind == 'native'
+    - proxmox_vmtype == 'lxc'
+
+- name: Destroy the explicitly selected native VM
+  ansible.builtin.include_tasks: ../proxmox/destroy-owned-vm.yml
+  vars:
+    destroy_vm_instance: "{{ instance }}"
+    destroy_vm_name: "{{ remove_guest_name }}"
+    destroy_vm_node: "{{ remove_guest_node }}"
+    destroy_vm_vmid: "{{ remove_guest_vmid }}"
+    destroy_vm_original_tags: "{{ remove_guest_original_tags }}"
+  when:
+    - _rm_destroy_guest | bool
+    - _rm_delete_data | bool
+    - remove_kind == 'native'
+    - proxmox_vmtype == 'qemu'

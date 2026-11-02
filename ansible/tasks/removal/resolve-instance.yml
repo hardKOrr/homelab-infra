@@ -1,0 +1,96 @@
+---
+# Remove App, Play 1 (localhost): load the instance's merged app_config, apply its
+# effective stack, run the roles/<app>/tasks/remove-inputs.yml hook, check a named
+# database's ownership before anything is unwired, and resolve the estate.
+# Inputs: instance, optional app and delete_data; _rm_hooks from the play.
+# Results: app_config, _rm_drops_database and the hook's declared flags.
+
+- name: Load platform vars
+  ansible.builtin.import_tasks: ../load-user-vars.yml
+
+- name: Assert instance name provided
+  ansible.builtin.assert:
+    that: instance is defined and instance | length > 0
+    fail_msg: "Pass the app instance name: -e instance=<name> (e.g. radarr-4k)"
+
+- name: Load app defaults (optional — absent for an app with no defaults file)
+  ansible.builtin.include_vars:
+    file: "../../vars/app-defaults/{{ app | default(instance) }}.yml"
+    name: _app_defaults
+  failed_when: false
+
+- name: Load instance config (optional — all defaults used if absent)
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+    name: _instance_config
+  failed_when: false
+
+- name: Load infrastructure facts
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    name: homelabinfra_infra
+  failed_when: false   # absent pre-bootstrap — every unwire step below no-ops
+
+- name: Merge app config (instance overrides defaults)
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ (_app_defaults | default({})).get(_defaults_key, {})
+         | combine(_instance_config | default({}), recursive=True) }}
+  vars:
+    _defaults_key: "{{ (app | default(instance)) | replace('-', '_') }}_defaults"
+
+- name: Assert the instance is known
+  ansible.builtin.assert:
+    that: app_config | length > 0
+    fail_msg: >-
+      Nothing describes instance '{{ instance }}': neither
+      vars/app-defaults/{{ app | default(instance) }}.yml nor
+      config/apps/{{ instance }}.yml exists. If the instance was deployed under
+      a different app name, pass it: -e app=<app>.
+
+- name: Resolve the app's GPU stack before locating its host
+  ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
+  vars:
+    stack_resolution_config: "{{ app_config }}"
+    stack_resolution_default_name: "{{ app_config.stack | default('', true) }}"
+
+- name: Apply the effective stack for removal
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
+         if app_config.stack is defined else app_config }}
+
+# Per-app removal inputs, before anything is unwired: roles/<app>/tasks/remove-inputs.yml
+# validates what delete_data will remove and declares facts the later plays read.
+- name: Resolve the app's removal inputs
+  ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-inputs.yml"
+  when: (_rm_hooks ~ '/remove-inputs.yml') is file
+
+# An app with a named database on a registered backend owns only that database and
+# login, never the backend guest. Check ownership before unwiring anything, so a
+# refused drop leaves the app in place; Play 4 drops it after the app has stopped.
+- name: Decide whether Remove drops a named database
+  ansible.builtin.set_fact:
+    _rm_drops_database: >-
+      {{ (delete_data | default(false) | bool)
+         and (app_config.app.database.provider | default('')) in ['postgresql', 'mariadb', 'mysql']
+         and (app_config.app.database.instance | default('') | length > 0) }}
+
+- name: Resolve the app's named database before unwiring
+  ansible.builtin.include_tasks: ../database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+  when: _rm_drops_database | bool
+
+- name: Check the app's named database ownership before unwiring
+  ansible.builtin.include_tasks: ../database/guard-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+  when: _rm_drops_database | bool
+
+
+- name: Resolve estate scope
+  ansible.builtin.import_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"

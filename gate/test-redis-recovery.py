@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from restore_swap_inputs import swap_inputs
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -371,7 +372,7 @@ def check_restore():
 
 
 def check_remove_scope():
-    remove = read_yaml("ansible/playbooks/apps/remove.yml")
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     unwire_play = remove[0]
     pre_tasks = list(tasks_recursive(unwire_play["pre_tasks"]))
     explicit_request = task_named(pre_tasks, "Validate the explicit guest destruction request before unwiring")
