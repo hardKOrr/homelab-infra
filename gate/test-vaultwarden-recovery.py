@@ -19,6 +19,7 @@ import threading
 import yaml
 
 from restore_swap_inputs import swap_inputs
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,7 +63,7 @@ def check_contract_and_dispatch():
     dispatch = task_named(backup_tasks, "Run the application-owned backup")
     assert "native" in str(dispatch["when"])
 
-    restore = read_yaml(ROOT / "ansible/playbooks/maintenance/restore-app.yml")
+    restore = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-app.yml")
     restore_tasks = list(tasks_recursive(restore))
     restore_assert = task_named(restore_tasks, "Assert this app has a restore path")
     assert "native" in str(restore_assert["ansible.builtin.assert"]["that"])
@@ -125,7 +126,7 @@ def check_contract_and_dispatch():
         },
     }
 
-    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     remove_pre_tasks = list(tasks_recursive(remove[0]))
     absence_candidate = task_named(
         remove_pre_tasks,
@@ -189,7 +190,7 @@ def check_contract_and_dispatch():
 
 
 def check_remove_absent_database_backend_cleanup():
-    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     remove_pre_tasks = list(tasks_recursive(remove[0]))
     resolve = task_named(remove_pre_tasks, "Resolve the exact guest selected for explicit destruction")
     absence_candidate = task_named(

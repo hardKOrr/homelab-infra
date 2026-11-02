@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import tempfile
 import yaml
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,7 +161,7 @@ def check_contract():
     )
     assert task_named(restore, "MySQL restore | Remove private staging data")
 
-    remove = task_tree(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove = list(tasks_recursive(load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")))
     stop_services = task_named(remove, "Stop and disable every service unit")
     missing_unit_handling = str(stop_services["failed_when"])
     assert "could not find the requested service" in missing_unit_handling

@@ -1,0 +1,208 @@
+---
+# Remove App, Play 1 (localhost): find the guest that runs the app, remove a
+# Kubernetes app's namespace resources, add the host to remove_<instance> for Play 2,
+# withdraw the app's row and tag from its guest(s) and shut down an ISO appliance.
+# Inputs: app_config, _rm_kind and _rm_destroy_guest_* from the earlier phases.
+# Results: _rm_hosts, _rm_app_name and the remove_<instance> group.
+
+# ── Locate the host that runs the app ──────────────────────────────────────
+- name: Refresh inventory to get current Proxmox state
+  ansible.builtin.meta: refresh_inventory
+
+# `hosting.method` selects the app contract. Docker and native are still told apart by
+# the presence of `stack:` for the host target. An ISO appliance has no SSH service
+# contract, so it is stopped through
+# Proxmox rather than being treated as a native LXC.
+#
+# A Kubernetes app has NO Proxmox guest of its own. Its resources live in a namespace
+# on a cluster that outlives it, so `_rm_hosts` is deliberately empty: Play 2, which
+# stops a container or a systemd unit on a guest, has nothing to do and is skipped.
+# The cluster-side removal happens in the unwiring step below.
+# The stack host an estate-scoped app runs on carries its estate, exactly as the
+# deploy resolved it: `media` is `stack-media-foxglove` in a lab with two estates and
+# plain `stack-media` in a lab with one. A stack that declares `shared: true` is the
+# single lab-wide host for every estate and takes no suffix.
+- name: Load stack sizing defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+    name: _rm_stack_defaults_file
+
+- name: Resolve the stack identity this app was placed on
+  ansible.builtin.set_fact:
+    _rm_stack_id: >-
+      {{ (app_config.stack | default(''))
+         if (_rm_stack_sizing.shared | default(false) | bool) or _rm_estates | length < 2
+         else (app_config.stack | default('')) ~ '-' ~ _rm_estate }}
+  vars:
+    _rm_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+    _rm_stack_sizing: >-
+      {{ ((_rm_stack_defaults_file.stack_defaults | default({}))[app_config.stack | default('')] | default({}))
+         | combine(((homelabinfra_config.infrastructure | default({})).stacks | default({}))[app_config.stack | default('')]
+                   | default({}), recursive=True) }}
+    _rm_default_estate: >-
+      {{ ((_rm_estates | dict2items
+           | selectattr('value.default', 'defined') | selectattr('value.default')
+           | map(attribute='key') | list) | first)
+         | default(_rm_estates | list | first | default(''), true) }}
+    _rm_estate: >-
+      {{ ((app_config.routing | default({})).estate | default('', true)) or _rm_default_estate }}
+
+# Removal resolves a shared Docker stack through the SAME estate-aware identity the
+# deploy used. Docker-on-VM apps have no stack tag; their own VM carries _<instance>,
+# so removal never creates a host while trying to empty it.
+- name: Resolve the stack host's inventory group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_.stack+{{ _rm_stack_id }}"
+  when:
+    - _rm_kind == 'docker'
+    - app_config.stack | default('') | length > 0
+
+- name: Resolve the Docker-on-VM inventory group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_{{ instance }}"
+  when:
+    - _rm_kind == 'docker'
+    - app_config.stack | default('') | length == 0
+
+- name: Select the host running the app
+  ansible.builtin.set_fact:
+    _rm_hosts: >-
+      {{ []
+         if _rm_kind in ['kubernetes', 'appliance']
+         else (groups[tag_group_name] | default([])
+               if _rm_kind == 'docker'
+               else ([instance] if instance in (groups['all'] | default([])) else [])) }}
+
+# A GPU assignment belongs to the stack host. Removing one GPU-backed app may detach
+# it only when no sibling app remains on that host; shared media stacks keep the device
+# for their other applications.
+- name: Resolve whether this stack host still has sibling applications
+  ansible.builtin.set_fact:
+    _rm_stack_has_other_apps: >-
+      {{ (hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([])
+          | select('match', '^_[A-Za-z0-9]')
+          | reject('equalto', '_' ~ instance) | list | length) > 0 }}
+  when:
+    - _rm_kind == 'docker'
+    - app_config.stack | default('', true) | length > 0
+    - _rm_hosts | length > 0
+
+- name: Resolve the Proxmox node for the app guest
+  ansible.builtin.set_fact:
+    _rm_guest_node: "{{ hostvars[_rm_hosts[0]].proxmox_node | default('') }}"
+  when: _rm_hosts | length > 0
+
+- name: Require the app guest's Proxmox node
+  ansible.builtin.assert:
+    that: _rm_guest_node | length > 0
+    fail_msg: >-
+      Proxmox inventory did not provide the node for {{ _rm_hosts[0] }}. Removal of
+      node-local device assignments requires the guest's actual node.
+  when: _rm_hosts | length > 0
+
+- name: Use the app guest's Proxmox node for removal operations
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'node': _rm_guest_node}}, recursive=True) }}
+  when: _rm_hosts | length > 0
+
+# This is the Kubernetes equivalent of Play 2's compose-down, and it sits here because
+# there is no guest for Play 2 to run on. It runs AFTER the unwiring above, which is
+# this playbook's deliberate order: the route is withdrawn and the uptime monitor is
+# deleted while the app still answers, so traffic drains and the removal does not page
+# the operator. Stopping first would invert both.
+- name: Remove the app's Kubernetes resources
+  ansible.builtin.include_tasks: ../unwiring/kubernetes.yml
+  vars:
+    unwire_delete_data: "{{ delete_data | default(false) | bool }}"
+  when: _rm_kind == 'kubernetes'
+
+# DEGRADATION BY DESIGN — and in fact not a degradation at all: a host that is not
+# there is the success case for a removal. The guest may already be gone, or never
+# have existed. The unwiring above still ran, which is the part that leaves stale
+# state behind. Do not convert this to tasks/report-degradation.yml.
+- name: Report a missing host
+  ansible.builtin.debug:
+    msg: >-
+      No {{ ('stack host tagged _.stack+' ~ _rm_stack_id
+              if app_config.stack | default('') | length > 0
+              else 'Docker-on-VM guest tagged _' ~ instance)
+            if _rm_kind == 'docker'
+            else 'Proxmox guest named ' ~ instance }} is in inventory —
+      nothing to stop. Unwiring completed; {{ instance }} is fully removed.
+  when: _rm_hosts | length == 0
+
+# Keep the app identity on localhost. Passing conditional Jinja expressions as
+# add_host vars defers their evaluation until the remote host context, where `app`
+# and `instance` can resolve to unrelated inventory values.
+- name: Resolve removal identity for the app host
+  ansible.builtin.set_fact:
+    _rm_app_name: "{{ app | default(instance) }}"
+
+- name: Add the app host to the removal group
+  ansible.builtin.add_host:
+    name: "{{ _rm_hosts[0] }}"
+    groups: "remove_{{ instance }}"
+    ansible_host: >-
+      {{ hostvars[_rm_hosts[0]].ansible_host
+         | default(hostvars[_rm_hosts[0]].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    proxmox_vmtype: "{{ hostvars[_rm_hosts[0]].proxmox_vmtype }}"
+    proxmox_node: "{{ _rm_guest_node }}"
+    remove_destroy_guest: "{{ destroy_guest | default(false) | bool }}"
+    remove_guest_name: >-
+      {{ _rm_destroy_guest_name | default(
+           hostvars[_rm_hosts[0]].proxmox_name | default(_rm_hosts[0], true), true) }}
+    remove_guest_vmid: >-
+      {{ _rm_destroy_guest_vmid | default(hostvars[_rm_hosts[0]].proxmox_vmid | default(0), true) }}
+    remove_guest_node: >-
+      {{ _rm_destroy_guest_node | default(_rm_guest_node, true) }}
+    remove_guest_original_tags: >-
+      {{ _rm_destroy_guest_tags | default(
+           hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([]), true) }}
+    app_config: "{{ app_config }}"
+    homelabinfra_config: "{{ homelabinfra_config }}"
+    remove_kind: "{{ _rm_kind }}"
+  when: _rm_hosts | length > 0
+  # Inventory bookkeeping, not a lab change — the same reason
+  # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
+  # this, a second Remove App on an already-removed app reports changed=1 with
+  # every unwiring step skipped, and "a re-run is a clean no-op" cannot be read
+  # off the recap (execution 171, 2026-08-16).
+  changed_when: false
+
+# Withdrawn here rather than beside the other unwiring steps, because this is the
+# only point in the play that knows WHICH guest ran the app - _rm_hosts resolves the
+# shared stack host and the native app's own LXC through the same lookup, so the
+# withdrawal does not have to re-derive that distinction and get it subtly wrong.
+# A Kubernetes app has no guest of its own, so `_rm_hosts` is empty — but the deploy
+# stamped it on every node of the cluster, and the withdrawal has to reach exactly the
+# same set. Withdrawing from one node would leave the other two claiming to host an app
+# that no longer exists.
+# This runs before Play 2 stops the service and tears down PostgreSQL's cluster. A
+# PostgreSQL guest survives Remove App, so retain its record/tag for that whole time;
+# its next Deploy will find the same owned guest and create a fresh cluster if needed.
+- name: Withdraw the app's record from its Proxmox guest
+  ansible.builtin.include_tasks: ../unwiring/guest-record.yml
+  vars:
+    record_guest_names: >-
+      {{ ((homelabinfra_infra.kubernetes | default({})).nodes | default([])
+          | map(attribute='name') | list)
+         if _rm_kind == 'kubernetes'
+         else ([instance] if _rm_kind == 'appliance' else _rm_hosts[:1]) }}
+  when:
+    - _rm_hosts | length > 0 or _rm_kind in ['kubernetes', 'appliance']
+    - not (_rm_preserve_guest_identity | bool)
+
+- name: Stop an ISO appliance through Proxmox
+  ansible.builtin.command:
+    argv: [qm, shutdown, "{{ app_config.proxmox.vm.vmid }}"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _rm_appliance_shutdown
+  changed_when: _rm_appliance_shutdown.rc == 0
+  failed_when:
+    - _rm_appliance_shutdown.rc != 0
+    - "'not running' not in (_rm_appliance_shutdown.stderr | lower)"
+  when: _rm_kind == 'appliance'

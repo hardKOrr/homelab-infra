@@ -1,0 +1,199 @@
+---
+# Restore Guest (localhost): for an existing target, capture (or take the supplied)
+# independent PBS point and prove it is readable, then run the shared
+# tasks/recovery/validate-restore.yml guard. Nothing is stopped before it passes.
+# Results: _rg_pre_restore_point and _rg_pre_restore_config.
+
+- name: Capture and verify an independent pre-restore recovery point
+  when:
+    - _rg_destination == 'existing'
+    - _rg_execute | bool
+  block:
+    - name: Use the supplied pre-restore point when present
+      ansible.builtin.set_fact:
+        _rg_pre_restore_point: "{{ pre_restore_point | default('', true) | regex_replace('^[A-Za-z0-9][A-Za-z0-9_.-]*:', '') }}"
+
+    - name: Create the target recovery point when none was supplied
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - "/nodes/{{ _rg_target_node }}/vzdump"
+          - --vmid
+          - "{{ _rg_target_vmid }}"
+          - --storage
+          - "{{ _rg_storage }}"
+          - --mode
+          - snapshot
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_pre_task
+      changed_when: true
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Normalize the independent target recovery task response
+      ansible.builtin.set_fact:
+        _rg_pre_task_upids: >-
+          {{ _rg_pre_task.stdout | default('')
+             | regex_findall('UPID:[^\s"\\]+:') }}
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Require at most one independent recovery task identity
+      ansible.builtin.assert:
+        that: _rg_pre_task_upids | length <= 1
+        fail_msg: >-
+          Proxmox returned multiple task identities for one target recovery point.
+          Inspect the backup result before retrying.
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Select the independent target recovery task identity
+      ansible.builtin.set_fact:
+        _rg_pre_task_upid: "{{ (_rg_pre_task_upids | first | default('', true)) | trim }}"
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Wait for the independent target recovery point
+      ansible.builtin.include_tasks: ../proxmox/wait-for-task.yml
+      vars:
+        proxmox_task_node: "{{ _rg_target_node }}"
+        proxmox_task_upid: "{{ _rg_pre_task_upid }}"
+        proxmox_task_timeout: "{{ restore_timeout | default(7200) }}"
+      when:
+        - _rg_pre_restore_point | length == 0
+        - _rg_pre_task_upid | length > 0
+
+    - name: Require a successful synchronous target recovery point
+      ansible.builtin.assert:
+        that:
+          - _rg_pre_task.rc == 0
+          - "'INFO: Backup job finished successfully' in (_rg_pre_task.stdout | default(''))"
+        fail_msg: >-
+          Proxmox returned neither one task identity nor a successful completed backup
+          result. Inspect the target before retrying.
+      when:
+        - _rg_pre_restore_point | length == 0
+        - _rg_pre_task_upid | length == 0
+
+    - name: List target recovery points after the pre-restore backup
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _rg_target_node }}/storage/{{ _rg_storage }}/content"
+          - --content
+          - backup
+          - --vmid
+          - "{{ _rg_target_vmid }}"
+          - --output-format
+          - json
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_pre_artifacts
+      changed_when: false
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Select the newest independent target recovery point
+      ansible.builtin.set_fact:
+        _rg_pre_restore_point: >-
+          {{ ((_rg_pre_artifacts.stdout | from_json) | default([])
+              | selectattr('volid', 'defined') | sort(attribute='ctime') | last).volid
+              | regex_replace('^[A-Za-z0-9][A-Za-z0-9_.-]*:', '') }}
+      when: _rg_pre_restore_point | length == 0
+
+    - name: Require an independent readable pre-restore point
+      ansible.builtin.assert:
+        that:
+          - _rg_pre_restore_point | length > 0
+          - _rg_pre_restore_point != _rg_artifact
+          - >-
+            _rg_pre_restore_point is match(
+              '^backup/' ~ ('vm' if _rg_target_type == 'qemu' else 'ct') ~ '/'
+              ~ _rg_target_vmid ~ '/(' ~ _rg_timestamp_pattern ~ '|vzdump-'
+              ~ ('qemu' if _rg_target_type == 'qemu' else 'lxc') ~ '-'
+              ~ _rg_target_vmid ~ '-[^/\s:]+)\Z')
+        fail_msg: >-
+          No independent readable pre-restore point exists for target VMID
+          {{ _rg_target_vmid }}. The target remains untouched.
+
+- name: Verify the independent pre-restore point on the destination PBS
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ _rg_target_node }}/storage/{{ _rg_storage }}/content"
+      - --content
+      - backup
+      - --output-format
+      - json
+  delegate_to: "{{ _rg_target_node }}"
+  register: _rg_pre_restore_artifacts
+  changed_when: false
+  when:
+    - _rg_destination == 'existing'
+    - _rg_execute | bool
+
+- name: Require the independent pre-restore point to remain available
+  ansible.builtin.assert:
+    that:
+      - _rg_pre_restore_artifacts.rc == 0
+      - >-
+        (_rg_pre_restore_artifacts.stdout | from_json) | default([])
+        | selectattr('volid', 'defined')
+        | selectattr('volid', 'search', '(^|:)' ~ (_rg_pre_restore_point | regex_escape) ~ '$')
+        | list | length > 0
+    fail_msg: >-
+      Independent pre-restore artifact {{ _rg_pre_restore_point }} is not available
+      from {{ _rg_target_node }}. No existing target was stopped or replaced.
+  when:
+    - _rg_destination == 'existing'
+    - _rg_execute | bool
+
+- name: Read the independent pre-restore configuration blob
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - extractconfig
+      - "{{ _rg_storage }}:{{ _rg_pre_restore_point }}"
+  delegate_to: "{{ _rg_target_node }}"
+  register: _rg_pre_restore_config
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - _rg_destination == 'existing'
+    - _rg_execute | bool
+
+- name: Require independent pre-restore credentials and decryption material
+  ansible.builtin.assert:
+    that:
+      - _rg_pre_restore_config.rc == 0
+      - _rg_pre_restore_config.stdout | length > 0
+    fail_msg: >-
+      PBS exposed the independent pre-restore point but its configuration blob could
+      not be read. No existing target was stopped or replaced.
+  when:
+    - _rg_destination == 'existing'
+    - _rg_execute | bool
+
+- name: Freeze the normalized artifact for shared restore validation
+  ansible.builtin.set_fact:
+    _rg_validation_artifact: "{{ _rg_artifact }}"
+
+- name: Validate the shared destination plan before mutation
+  ansible.builtin.include_tasks: ../recovery/validate-restore.yml
+  vars:
+    recovery_source_instance: "{{ _rg_source_vmid }}"
+    recovery_target_instance: "{{ _rg_restore_name | default(_rg_target_vmid, true) }}"
+    recovery_destination: "{{ _rg_destination }}"
+    recovery_overwrite: "{{ _rg_execute }}"
+    recovery_validation_point: "{{ _rg_validation_artifact }}"
+    recovery_pre_restore_point: "{{ _rg_pre_restore_point | default('', true) }}"
+    recovery_artifact_available: "{{ _rg_artifacts.rc == 0 and (_rg_artifacts.stdout | default('') | length > 0) if _rg_execute | bool else true }}"
+    recovery_pre_restore_available: "{{ _rg_pre_restore_config.rc == 0 and (_rg_pre_restore_config.stdout | default('') | length > 0) if _rg_destination == 'existing' and _rg_execute | bool else true }}"
+    recovery_target_config_present: "{{ _rg_destination == 'existing' or target_network | default('', true) | length > 0 }}"
+    recovery_source_storage_key: "{{ _rg_storage }}:{{ _rg_artifact }}"
+    recovery_target_storage_key: "{{ _rg_target_node }}:{{ target_storage | default('', true) }}"
+    recovery_target_vmid_collision: "{{ _rg_destination == 'new' and _rg_targets | length > 0 }}"
+    recovery_target_name_collision: false
+    recovery_target_address_collision: false
+    recovery_target_resource_collision: false
+    recovery_target_storage_collision: false
+    recovery_affected_scope: >-
+      {{ ['guest:' ~ _rg_target_vmid, 'workloads:' ~ (_rg_restore_tags | default('_+lab'))] }}

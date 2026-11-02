@@ -1,0 +1,76 @@
+---
+# Restore Guest (localhost): resolve the restore bandwidth limit, register the Proxmox
+# delegates and validate the shared contract inputs and that the native PBS artifact
+# belongs to the source VMID. Nothing on Proxmox is read or changed yet.
+# Inputs: the play's _rg_* vars. Results: _rg_restore_bandwidth_mib_s,
+# _rg_restore_bwlimit_kib and _rg_restore_bwlimit_args.
+
+- name: Load platform vars
+  ansible.builtin.import_tasks: ../load-user-vars.yml
+
+- name: Validate configured restore bandwidth
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is number
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not boolean
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int > 0
+      - >-
+        homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int
+        == homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | float
+    fail_msg: >-
+      infrastructure.backups.restore_bandwidth_mib_s must be a positive integer MiB/s
+      value when set; omit it for no restore bandwidth limit.
+  when:
+    - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is defined
+    - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not none
+
+- name: Resolve configured restore bandwidth
+  ansible.builtin.set_fact:
+    _rg_restore_bandwidth_mib_s: >-
+      {{ homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s
+         | default('', true) | string }}
+
+- name: Convert restore bandwidth to Proxmox KiB/s
+  ansible.builtin.set_fact:
+    _rg_restore_bwlimit_kib: >-
+      {{ ((_rg_restore_bandwidth_mib_s | int) * 1024) | string
+         if _rg_restore_bandwidth_mib_s | length > 0 else '' }}
+
+- name: Resolve restore bandwidth command arguments
+  ansible.builtin.set_fact:
+    _rg_restore_bwlimit_args: >-
+      {{ ['--bwlimit', _rg_restore_bwlimit_kib]
+         if _rg_restore_bwlimit_kib | length > 0 else [] }}
+
+- name: Register Proxmox delegation targets
+  ansible.builtin.import_tasks: ../proxmox/register-nodes.yml
+
+- name: Validate the shared restore contract
+  ansible.builtin.assert:
+    that:
+      - _rg_method == 'pbs_guest'
+      - _rg_control_node in groups['proxmox_delegates']
+      - _rg_control_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+      - _rg_destination in ['new', 'existing']
+      - _rg_storage is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _rg_artifact | length > 0
+      - _rg_artifact is match('^backup/(vm|ct)/[1-9][0-9]*/[^/]+$')
+      - _rg_source_vmid is match('^[1-9][0-9]*$')
+      - _rg_target_vmid is match('^[1-9][0-9]*$')
+      - _rg_execute | bool or (_rg_artifact | length > 0)
+    fail_msg: >-
+      Restore Guest needs recovery_point, source_vmid, an exact target VMID, and
+      destination=new|existing. Plan mode remains read-only.
+
+- name: Validate artifact identity before touching a target
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_rg_artifact is match('^backup/vm/' ~ _rg_source_vmid ~ '/('
+          ~ _rg_timestamp_pattern ~ '|vzdump-qemu-' ~ _rg_source_vmid ~ '-[^/\s:]+)\Z'))
+        or
+        (_rg_artifact is match('^backup/ct/' ~ _rg_source_vmid ~ '/('
+          ~ _rg_timestamp_pattern ~ '|vzdump-lxc-' ~ _rg_source_vmid ~ '-[^/\s:]+)\Z'))
+    fail_msg: >-
+      {{ recovery_point }} is not a native PBS VM/LXC artifact for source VMID
+      {{ _rg_source_vmid }}. No destination was inspected or changed.

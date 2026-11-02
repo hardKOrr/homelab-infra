@@ -13,6 +13,7 @@ from pathlib import Path
 import stat
 import tempfile
 import yaml
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,9 +184,7 @@ def check_contract():
         ("backup-app.yml", "Resolve the declared native recovery capability"),
         ("restore-app.yml", "Resolve the declared recovery capability"),
     ]:
-        play = yaml.safe_load(
-            (ROOT / "ansible/playbooks/maintenance" / filename).read_text(encoding="utf-8")
-        )
+        play = load_playbook(ROOT / "ansible/playbooks/maintenance" / filename)
         dispatch = named(list(tasks(play)), task_name)
         assert "../../tasks/recovery/resolve-method.yml" in dispatch["ansible.builtin.include_tasks"]
 

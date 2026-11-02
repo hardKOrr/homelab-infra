@@ -21,11 +21,12 @@ from pathlib import Path
 import yaml
 
 from restore_swap_inputs import swap_inputs
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
-REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+REMOVE = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
 BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())

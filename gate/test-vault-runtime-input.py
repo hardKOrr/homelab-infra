@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import yaml
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,9 +50,7 @@ def main():
     assert newline.returncode == 2
     assert "Bitwarden item input must be valid base64" in newline.stderr
 
-    restore = yaml.safe_load(
-        (ROOT / "ansible/playbooks/maintenance/restore-app.yml").read_text()
-    )[0]
+    restore = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-app.yml")[0]
     parser_task = next(
         task for task in restore["pre_tasks"]
         if task.get("name") == "Parse the refreshed Vaultwarden runtime contract"
@@ -61,9 +60,7 @@ def main():
     assert parser_command["argv"][-1] == "--base64-stdin"
     assert "| b64encode" in parser_command["stdin"]
 
-    plays = yaml.safe_load(
-        (ROOT / "ansible/playbooks/maintenance/restore-app.yml").read_text()
-    )
+    plays = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-app.yml")
     reconcile_play = next(
         play for play in plays
         if play.get("name") == "Restore App | Establish intended connections after a verified new restore"

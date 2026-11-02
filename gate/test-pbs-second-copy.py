@@ -4,6 +4,7 @@
 from pathlib import Path
 
 import yaml
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,7 +119,7 @@ assert task(copy_tasks, "PBS second copy | Create datastore")
 assert task(copy_tasks, "PBS second copy | Create scheduled prune job")
 assert task(copy_tasks, "PBS second copy | Register PVE storage backend for restores")
 
-restore_app = load_yaml("ansible/playbooks/maintenance/restore-app.yml")
+restore_app = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-app.yml")
 restore_app_vars = restore_app[0]["vars"]
 assert "backup_datastore" in restore_app_vars["_ra_backup_datastore"]
 restore_app_pre = restore_app[0]["pre_tasks"]

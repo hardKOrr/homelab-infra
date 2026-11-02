@@ -11,7 +11,7 @@ import tempfile
 
 from jinja2 import Environment, StrictUndefined
 import yaml
-
+from remove_plan import load_playbook
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -482,7 +482,7 @@ assert any(
     item.get("ansible.builtin.include_tasks") == "refresh-backup-job.yml"
     for item in installer_create
 )
-restore_playbook = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
+restore_playbook = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-guest.yml")
 restore_block = task(
     restore_playbook[0]["tasks"], "Restore the guest without activating the target"
 )["block"]
@@ -556,7 +556,7 @@ assert task(configure, "PBS | Require the PVE storage backend to be active")["an
 
 assert not any("restore_bandwidth" in str(item) for item in configure)
 
-restore_guest = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
+restore_guest = load_playbook(ROOT / "ansible/playbooks/maintenance/restore-guest.yml")
 restore_pre_tasks = restore_guest[0]["pre_tasks"]
 restore_limit_validation = task(restore_pre_tasks, "Validate configured restore bandwidth")
 assert "restore_bandwidth_mib_s is number" in str(restore_limit_validation["ansible.builtin.assert"]["that"])

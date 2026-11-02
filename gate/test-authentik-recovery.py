@@ -21,6 +21,7 @@ import yaml
 
 from pbs_client_stub import stub_pbs_client
 from restore_swap_inputs import run_hook, swap_inputs
+from remove_plan import load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -297,7 +298,7 @@ def check_backup_and_restore_contract():
     assert task_named(restore, "Authentik restore | Validate the independent pre-restore group")["when"] \
         == "restore_overwrite | bool"
 
-    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     remove_tasks = list(tasks_recursive(remove))
     unwire = task_named(remove_tasks, "Unwire SSO")
     assert "is match('^authentik(?:-|$)')" in str(unwire["when"]), (
