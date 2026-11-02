@@ -1,0 +1,156 @@
+---
+# Phase of main.yml: own the library root folder and add it to the app. Imported in
+# place; inputs are listed in main.yml.
+
+# ── Point the app at its library ──────────────────────────────────────────────
+# A Servarr app with no root folder accepts nothing: every add, every import and
+# every search needs somewhere to put the result. Configuring it here is the
+# difference between a deployed app and a usable one.
+#
+# The LIBRARY is the lab's and is only ever asserted — attach-host-mounts refuses
+# to run against a library that is not already mounted on the node. This app's own
+# subdirectory of it is a different thing: app.library_subpath is the platform's
+# declaration of the one folder this instance owns, so creating it, and owning it,
+# is this deploy finishing its own job rather than inventing storage on somebody's
+# NFS. It is created empty, next to whatever else the library already holds.
+#
+# Ownership is the point, not existence. A Servarr app refuses a root folder it
+# cannot write — `Folder '...' is not writable by user 'abc'` — so an unwritable
+# directory fails the deploy just as surely as a missing one.
+- name: Ensure this app owns its root folder
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
+    mode: "0775"
+  register: _servarr_root_check
+  loop: "{{ _servarr_root_folders }}"
+  failed_when: false
+
+- name: Assert the root folder is usable before configuring it
+  ansible.builtin.assert:
+    that: not (item.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}).
+      It is media_storage.library plus app.library_subpath. On an unprivileged
+      stack host this is what an unmapped owner looks like: a directory whose
+      host uid falls outside the guest's id range appears as nobody:nogroup and
+      not even root inside the guest can chown it. Check that the library and
+      everything under it belongs to media_storage.owner
+      ({{ app_config.media_storage.owner.user | default('unset') }}) on the
+      Proxmox node.
+  loop: "{{ _servarr_root_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# Lidarr and Readarr refuse a root folder that does not name a quality profile and
+# a metadata profile, so the ids have to be read from the app that is about to be
+# asked. The first of each is the app's own freshly-seeded default; nothing here
+# creates or reconciles profiles, and an operator's own choice in the UI stands.
+- name: Read the profiles a v1 root folder has to name
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/{{ item }}"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_profiles
+  loop: [qualityprofile, metadataprofile]
+  changed_when: false
+  no_log: true
+  when:
+    - _servarr_root_folders | length > 0
+    - _servarr_rootfolder_needs_profiles
+
+- name: Assert the app seeded the profiles a root folder needs
+  ansible.builtin.assert:
+    that: item.json | default([]) | length > 0
+    fail_msg: >-
+      {{ instance }} reports no {{ item.item }}. A freshly started Lidarr or Readarr
+      seeds its own defaults, so an empty list means the app came up without
+      initialising its database — check the container's log before re-running.
+  loop: "{{ _servarr_profiles.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when: _servarr_rootfolder_needs_profiles
+
+- name: Resolve the root folder payload this app accepts
+  ansible.builtin.set_fact:
+    _servarr_rootfolder_extra: >-
+      {{ {} if not _servarr_rootfolder_needs_profiles else
+         {'defaultQualityProfileId':
+            (_servarr_profiles.results[0].json | first).id,
+          'defaultMetadataProfileId':
+            (_servarr_profiles.results[1].json | first).id} }}
+  when: _servarr_root_folders | length > 0
+
+- name: Read the root folders the app already has
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_rootfolders
+  changed_when: false
+  no_log: true
+  when: _servarr_root_folders | length > 0
+
+# Added, never reconciled: an operator who adds a second root folder in the UI
+# keeps it. This deploy owns the one it configures and nothing else — the same
+# fire-and-forget rule the rest of the platform follows.
+- name: Configure the root folder
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
+    method: POST
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    body_format: json
+    # A bare path for Radarr and Sonarr — exactly what they took before — plus the
+    # name and profile ids only where the app validates them. Nothing extra is sent
+    # to an app that never asked for it.
+    body: >-
+      {{ {'path': item}
+         | combine({'name': item | basename} if _servarr_rootfolder_needs_profiles
+                   else {})
+         | combine(_servarr_rootfolder_extra | default({})) }}
+    status_code: 201
+  loop: "{{ _servarr_root_folders }}"
+  when:
+    - _servarr_root_folders | length > 0
+    - item not in (_servarr_rootfolders.json | default([]) | map(attribute='path') | list)
+  # The key is in the request headers, so the call cannot report itself. The
+  # failure is re-raised below from the RESPONSE alone, which carries no
+  # credential — a refusal here is a storage-permission answer worth reading.
+  no_log: true
+  register: _servarr_rootfolder_add
+  failed_when: false
+
+# Without this, `no_log` swallowed the reason and a deploy failed with nothing
+# but "censored". Radarr answering `Folder '/mnt/data/media/movies' is not
+# writable by user 'abc'` (execution 57, 2026-08-09) is the whole diagnosis, and
+# it cost a hand-run curl against the container to read it. Only `status` and the
+# decoded body are quoted; neither holds the API key.
+- name: Report a refused root folder
+  ansible.builtin.fail:
+    msg: >-
+      {{ instance }} refused the root folder {{ item.item }}
+      (HTTP {{ item.status | default('no response') }}):
+      {{ _servarr_rf_reason }}
+      A Servarr app must be able to WRITE its root folder. On an unprivileged
+      LXC the library is visible but owned by an unmapped host uid, so check
+      that the mount's owner maps to app.puid/app.pgid inside the guest.
+  vars:
+    # A Servarr validation failure is a list of records; anything else answers
+    # with an object or nothing at all.
+    _servarr_rf_body: "{{ item.json | default('', true) }}"
+    _servarr_rf_reason: >-
+      {{ (_servarr_rf_body | map(attribute='errorMessage') | join('; '))
+         if (_servarr_rf_body is sequence and _servarr_rf_body is not string
+             and _servarr_rf_body is not mapping)
+         else (_servarr_rf_body.message | default(_servarr_rf_body, true)) }}
+  loop: "{{ _servarr_rootfolder_add.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.status | default(0) != 201

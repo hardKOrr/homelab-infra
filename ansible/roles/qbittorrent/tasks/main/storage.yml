@@ -1,0 +1,104 @@
+---
+# Phase of main.yml: create the directories, check the lab's mounts and own the download
+# directory. Imported in place; inputs are listed in main.yml.
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ qbittorrent_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: qBittorrent writes its configuration, its resume
+# data and its logs here, and the seeded config file below has to be readable and
+# rewritable by the same account.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.config_path }}"
+    - "{{ _qbt_conf_dir }}"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/servarr: the mounts are the lab's, attached to the stack
+# host by Play 1, and only ever asserted here. A container started against a
+# missing bind source gets an empty directory, and qBittorrent then downloads into
+# the stack host's own root disk until it fills.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _qbt_mount_check
+  loop: "{{ _qbt_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _qbt_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# The download directory is this app's own, the way an *arr's library_subpath is:
+# the platform declares it, so creating it and owning it is this deploy finishing
+# its own job. It must live under one of the mounts above — a path outside them
+# is the stack host's root disk, which is what this check is really for.
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _qbt_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _qbt_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not inside
+      any media_storage mount
+      ({{ _qbt_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Downloads would land on the stack host's own disk and never hardlink into
+      the library. Point app.download_path at a directory under one of the mounts,
+      or declare the mount that holds it in config/infrastructure.yml.
+  vars:
+    # The download path's own ancestors, so the comparison lands on a path
+    # component rather than a string prefix — /mnt/data2 is not inside /mnt/data.
+    # Serialized through JSON because a template carrying {% %} statement blocks
+    # renders to a STRING; see the same construction in tasks/load-user-vars.yml.
+    _qbt_download_ancestors_json: >-
+      {%- set parts = (app_config.app.download_path | regex_replace('/+$', '')).split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _qbt_download_ancestors: "{{ _qbt_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.download_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _qbt_download_dir
+  failed_when: false
+
+- name: Assert the download directory is usable
+  ansible.builtin.assert:
+    that: not (_qbt_download_dir.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ app_config.app.download_path }}
+      ({{ _qbt_download_dir.msg | default('') }}). On an unprivileged stack host
+      this is what an unmapped owner looks like: a directory whose host uid falls
+      outside the guest's id range appears as nobody:nogroup and not even root
+      inside the guest can chown it. Check that the mount and everything under it
+      belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.

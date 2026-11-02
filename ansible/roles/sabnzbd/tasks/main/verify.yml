@@ -1,0 +1,143 @@
+---
+# Phase of main.yml: prove the key in force works (repairing it with the app stopped),
+# the app is SABnzbd and the API refuses an unkeyed caller. Imported in place; inputs
+# are listed in main.yml.
+
+# ── Prove the key works, and repair it if it does not ─────────────────────────
+# The app is asked, not its configuration file — the lesson roles/servarr paid for.
+# A container that answers its port is not the same thing as an app that answers to
+# the credential this deploy holds, and the credential is the only part the media
+# wiring depends on.
+- name: Re-read sabnzbd.ini after start (the app may have rewritten it)
+  ansible.builtin.slurp:
+    src: "{{ _sab_ini }}"
+  register: _sab_ini_started
+  until: _sab_ini_started.content is defined
+  retries: "{{ sabnzbd_ini_retries }}"
+  delay: "{{ sabnzbd_ini_delay }}"
+  failed_when: false
+  no_log: true
+
+- name: Resolve the key that is in force
+  ansible.builtin.set_fact:
+    # A key in the file the running app read wins: it is what the app answers to.
+    # Otherwise the key this deploy resolved is what was seeded, which the probe
+    # below proves rather than assumes.
+    _sab_effective_key: >-
+      {{ (_sab_ini_started.content | default('') | b64decode
+          | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
+          | default([], true) | join(''))
+         | default(_sab_api_key, true) }}
+  no_log: true
+
+- name: Ask the API a question that needs the key
+  ansible.builtin.include_tasks: ../api-check.yml
+  vars:
+    sab_check_base: "{{ _sab_base }}"
+    sab_check_key: "{{ _sab_effective_key }}"
+
+# An instance whose key was regenerated in the web interface cannot be reached with
+# the credential every *arr holds, so this deploy puts the platform's key back. The
+# file is edited with the container STOPPED, deliberately: SABnzbd holds its
+# configuration in memory and rewrites this file on shutdown, so an edit made while
+# it runs is discarded by the very restart meant to apply it. Stopping first is also
+# what makes the edit deterministic — the flush happens, then the value is set.
+- name: Repair an API key that is not the platform's
+  when: not (sab_api_ok | bool)
+  block:
+    - name: Stop the app before editing its configuration
+      community.docker.docker_compose_v2:
+        project_src: "{{ sabnzbd_project_dir }}"
+        state: stopped
+
+    - name: Restore the platform's API key
+      community.general.ini_file:
+        path: "{{ _sab_ini }}"
+        section: misc
+        option: api_key
+        value: "{{ _sab_api_key }}"
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0640"
+        no_extra_spaces: false
+      no_log: true
+
+    - name: Record the repaired key as the one in force
+      ansible.builtin.set_fact:
+        _sab_effective_key: "{{ _sab_api_key }}"
+      no_log: true
+
+    - name: Start the app again
+      community.docker.docker_compose_v2:
+        project_src: "{{ sabnzbd_project_dir }}"
+        state: present
+
+    - name: Wait for the web interface to answer after the repair
+      ansible.builtin.uri:
+        url: "{{ _sab_base }}/api?mode=version&output=json"
+        status_code: [200, 401, 403]
+      register: _sab_up_again
+      until: _sab_up_again.status | default(0) in [200, 401, 403]
+      retries: "{{ sabnzbd_webui_retries }}"
+      delay: "{{ sabnzbd_webui_delay }}"
+      changed_when: false
+
+    - name: Ask the API again with the restored key
+      ansible.builtin.include_tasks: ../api-check.yml
+      vars:
+        sab_check_base: "{{ _sab_base }}"
+        sab_check_key: "{{ _sab_api_key }}"
+
+- name: Assert the API answers to the key this deploy holds
+  ansible.builtin.assert:
+    that: sab_api_ok | bool
+    fail_msg: >-
+      {{ instance }} refused the API key this deploy holds, and refused it again
+      after it was written back into {{ _sab_ini }} ({{ sab_api_reason }}). Nothing
+      can wire this download client until it answers: check
+      `docker logs {{ instance }}`, and check that the container is reading the
+      configuration file this role writes — SABnzbd rewrites sabnzbd.ini from
+      memory on shutdown, so a second process holding the same /config would undo
+      the repair.
+
+- name: Ask the app what it is
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json&apikey={{ _sab_effective_key | urlencode }}"
+    status_code: 200
+  register: _sab_version
+  changed_when: false
+  no_log: true
+
+- name: Assert the app identifies itself as SABnzbd
+  ansible.builtin.assert:
+    that: (_sab_version.json | default({})).version | default('') is match('^[0-9]')
+    fail_msg: >-
+      {{ app_config.app.port }} answered mode=version with
+      "{{ (_sab_version.json | default({})).version | default('nothing') }}", which
+      is not a SABnzbd version. Either app.image is not SABnzbd, or another
+      container already holds that port on this stack host.
+
+# The mirror of the servarr and qbittorrent unauthenticated-API checks, and the
+# same reason: without it, an instance that has stopped requiring a key looks
+# identical to a secured one from here, and the lab ships an open usenet client on
+# the LAN — one that will write anywhere its configuration lets it.
+- name: Call the API with no key
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=queue&output=json"
+    status_code: [200, 401, 403]
+  register: _sab_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses a caller with no key
+  ansible.builtin.assert:
+    # Not a status check. SABnzbd has refused an unkeyed call as HTTP 401 and, in
+    # older releases, as HTTP 200 carrying {"status": false, ...} — so the refusal
+    # is "it did not hand over the queue", which both shapes satisfy.
+    that: >-
+      _sab_unauthenticated.status != 200
+      or (_sab_unauthenticated.json | default({})).queue is not defined
+    fail_msg: >-
+      {{ instance }} served its queue to a caller with no API key. Its `api_key` in
+      {{ _sab_ini }} is what decides that, and this deploy seeds one — so the
+      running app is reading a configuration this role did not write. Anything on
+      the LAN can queue downloads and change where they are written.

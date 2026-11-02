@@ -1,0 +1,107 @@
+---
+# Phase of datastore-disk.yml: mount the disk by UUID, verify its identity and reuse
+# artifacts, and make the PBS services require the mount. Imported in place; inputs are
+# listed in datastore-disk.yml.
+
+- name: PBS datastore disk | Mount the retained datastore at its declared path
+  ansible.posix.mount:
+    src: "UUID={{ _pbs_data_uuid.stdout | trim }}"
+    path: "{{ pbs_datastore_disk_path }}"
+    fstype: ext4
+    opts: defaults
+    dump: '0'
+    passno: '2'
+    state: mounted
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Verify the mounted filesystem identity
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - UUID
+      - --mountpoint
+      - "{{ pbs_datastore_disk_path }}"
+  register: _pbs_final_mount_after
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Require the expected disk at the datastore path
+  ansible.builtin.assert:
+    that:
+      - _pbs_final_mount_after.rc == 0
+      - _pbs_final_mount_after.stdout | trim == _pbs_data_uuid.stdout | trim
+    fail_msg: >-
+      The declared PBS datastore path is not backed by the retained disk UUID. PBS services
+      will not be started against a directory on the OS disk.
+
+- name: PBS datastore disk | Check the mounted retained chunk directory
+  ansible.builtin.stat:
+    path: "{{ pbs_datastore_disk_path }}/.chunks"
+    follow: false
+  register: _pbs_final_chunks
+  when: pbs_datastore_disk_mode == 'reuse'
+
+- name: PBS datastore disk | Check the mounted retained snapshot metadata
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ pbs_datastore_disk_path }}"
+      - -path
+      - "{{ pbs_datastore_disk_path }}/.chunks"
+      - -prune
+      - -o
+      - -type
+      - f
+      - '('
+      - -name
+      - index.json.blob
+      - -o
+      - -name
+      - manifest.blob
+      - ')'
+      - -print
+      - -quit
+  register: _pbs_final_snapshot_marker
+  changed_when: false
+  when: pbs_datastore_disk_mode == 'reuse'
+  no_log: true
+
+- name: PBS datastore disk | Require existing artifacts in reuse mode
+  ansible.builtin.assert:
+    that:
+      - _pbs_final_chunks.stat.isdir | default(false)
+      - _pbs_final_snapshot_marker.stdout | default('') | trim | length > 0
+    fail_msg: >-
+      Reuse requires an existing PBS chunk store and at least one snapshot manifest/index
+      on the retained disk. Refusing to register a blank or incomplete directory.
+  when: pbs_datastore_disk_mode == 'reuse'
+
+- name: PBS datastore disk | Create service drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+
+- name: PBS datastore disk | Make both PBS services require the datastore mount
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.service.d/homelabinfra-datastore.conf"
+    content: |
+      [Unit]
+      RequiresMountsFor={{ (pbs_datastore_required_mounts | default([pbs_datastore_disk_path])) | join(' ') }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+  notify: Reload systemd
+
+- name: PBS datastore disk | Apply mount dependency changes
+  ansible.builtin.meta: flush_handlers

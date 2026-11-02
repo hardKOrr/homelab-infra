@@ -1,5 +1,10 @@
 # SABnzbd
 
+Deploy's `tasks/main.yml` imports `tasks/main/resolve.yml` (kind, download directories),
+`storage.yml` (mounts, owned download directories, host whitelist), `start.yml` (API key
+continuity, seeded `sabnzbd.ini`, Compose) and `verify.yml` (key probe and repair, identity,
+refused anonymous queue); the vault write and registry export follow in `main.yml`.
+
 ## Client wiring
 
 SABnzbd Deploy registers only that client in each deployed Usenet consumer and creates

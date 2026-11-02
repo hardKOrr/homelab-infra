@@ -1504,7 +1504,7 @@ def apps_open_access_through_the_shared_task():
                 app, rendered, declared)
 
 def qbittorrent_enforces_peer_ports_before_start():
-    tasks = yaml.safe_load(read("ansible/roles/qbittorrent/tasks/main.yml"))
+    tasks = task_parts.inline(ROOT / "ansible/roles/qbittorrent/tasks/main.yml")
     names = [task["name"] for task in tasks if "name" in task]
     check = names.index("Check qBittorrent's outgoing peer port settings")
     enforce = names.index("Enforce qBittorrent's outgoing peer port settings when they drift")

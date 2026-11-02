@@ -1,0 +1,124 @@
+---
+# Phase of main.yml: prove the credential signs in (repairing it with the app stopped),
+# the app is qBittorrent and the API refuses a caller with no session. Imported in
+# place; inputs are listed in main.yml.
+
+# ── Prove the credential works, and repair it if it does not ──────────────────
+# What counts as an accepted login is version-dependent, so login.yml owns that
+# judgement and every caller here reads only its qbt_login_ok. A 5.x WebUI answers
+# an accepted login with 204 and no body; a 4.x one answers 200 "Ok." and reports a
+# bad password as 200 "Fails.", which is why the body cannot simply be ignored
+# either. See login.yml, and execution 76 for what assuming one of them costs.
+- name: Sign in to the WebUI
+  ansible.builtin.include_tasks: ../login.yml
+  vars:
+    qbt_login_base: "{{ _qbt_base }}"
+    qbt_login_user: "{{ _qbt_user }}"
+    qbt_login_password: "{{ _qbt_password }}"
+
+# An existing instance whose password was changed in the WebUI cannot be signed
+# into with the credential every *arr holds, so this deploy puts the platform's
+# password back. The file is edited with the container STOPPED, deliberately:
+# qBittorrent rewrites its config from memory on shutdown, so an edit made while
+# it runs is discarded by the very restart meant to apply it.
+- name: Repair a WebUI password that is not the platform's
+  when: not (qbt_login_ok | bool)
+  block:
+    - name: Stop the app before editing its configuration
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: stopped
+
+    - name: Restore the platform's WebUI credentials
+      community.general.ini_file:
+        path: "{{ _qbt_conf }}"
+        section: Preferences
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0640"
+        no_extra_spaces: true
+      loop:
+        - option: 'WebUI\Username'
+          value: "{{ _qbt_user }}"
+        # Stored quoted, exactly as qBittorrent writes it — the quotes are part of
+        # the value QSettings reads back.
+        - option: 'WebUI\Password_PBKDF2'
+          value: '"{{ _qbt_password_hash }}"'
+      loop_control:
+        label: "{{ item.option }}"
+      no_log: true
+
+    - name: Start the app again
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: present
+
+    - name: Wait for the WebUI to answer after the repair
+      ansible.builtin.uri:
+        url: "{{ _qbt_base }}/"
+        status_code: [200, 401, 403]
+      register: _qbt_up_again
+      until: _qbt_up_again.status | default(0) in [200, 401, 403]
+      retries: "{{ qbittorrent_webui_retries }}"
+      delay: "{{ qbittorrent_webui_delay }}"
+      changed_when: false
+
+    - name: Sign in to the WebUI again
+      ansible.builtin.include_tasks: ../login.yml
+      vars:
+        qbt_login_base: "{{ _qbt_base }}"
+        qbt_login_user: "{{ _qbt_user }}"
+        qbt_login_password: "{{ _qbt_password }}"
+
+- name: Assert the WebUI accepts the platform's credentials
+  ansible.builtin.assert:
+    that: qbt_login_ok | bool
+    fail_msg: >-
+      {{ instance }} refused the WebUI credentials this deploy holds, and refused
+      them again after they were written back into {{ _qbt_conf }}
+      ({{ qbt_login_reason }}). Nothing can wire this download client until it
+      accepts them: qBittorrent bans a calling address for an hour after repeated
+      failed logins, so check `docker logs {{ instance }}`, and check that the
+      container is reading the config file this role writes.
+
+- name: Ask the app what it is
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/api/v2/app/version"
+    headers:
+      Cookie: "{{ qbt_login_cookie }}"
+    return_content: true
+    status_code: 200
+  register: _qbt_version
+  changed_when: false
+  no_log: true
+
+- name: Assert the app identifies itself as qBittorrent
+  ansible.builtin.assert:
+    that: _qbt_version.content | default('') is match('^v?[0-9]')
+    fail_msg: >-
+      {{ app_config.app.port }} answered /api/v2/app/version with
+      "{{ _qbt_version.content | default('nothing') }}", which is not a qBittorrent
+      version. Either app.image is not qBittorrent, or another container already
+      holds that port on this stack host.
+
+# The mirror of the servarr role's unauthenticated-API check, and the same reason:
+# without it, an instance configured to bypass authentication looks identical to a
+# secured one from here, and the lab ships an open torrent client on the LAN.
+- name: Call the API with no session
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/api/v2/app/version"
+    status_code: [200, 401, 403]
+  register: _qbt_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses a caller with no session
+  ansible.builtin.assert:
+    that: _qbt_unauthenticated.status in [401, 403]
+    fail_msg: >-
+      {{ instance }} served its API to a caller with no session. Its
+      WebUI\LocalHostAuth is what decides that, and this deploy seeds it as true —
+      so the running app is reading a configuration this role did not write, or an
+      address whitelist is in force. Anything on the LAN can add torrents and
+      change where they are written.

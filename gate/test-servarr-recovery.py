@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from restore_swap_inputs import swap_inputs
+import task_parts
 
 repo = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("plex_test", repo / "gate/test-plex-recovery.py")
@@ -168,7 +169,7 @@ def main():
                 run(key_tasks + rollback, at_stage)
                 assert compose.read_text() == fresh
                 # Final Deploy's production key resolution must prefer the archive to a fresh vault key.
-                main_tasks = yaml.safe_load((repo / "ansible/roles/servarr/tasks/main.yml").read_text())
+                main_tasks = task_parts.inline(repo / "ansible/roles/servarr/tasks/main.yml")
                 resolve_key = next(t for t in main_tasks if t["name"] == "Resolve the API key")
                 run([resolve_key, {"ansible.builtin.assert": {"that": ["_servarr_api_key == 'archived-key'"]}}],
                     {"_servarr_config_existing": {"content": base64.b64encode(config_path.read_bytes()).decode()},
