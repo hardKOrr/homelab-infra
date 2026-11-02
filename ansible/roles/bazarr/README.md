@@ -1,5 +1,9 @@
 # Bazarr
 
+Bazarr defaults to Docker on the `media` VM stack. An instance can select a
+Docker LXC stack through the [instance example](../../../config.example/apps/bazarr.example.yml);
+stack provisioning, media mounts and wiring use the same shared operations for both guest types.
+
 ## Native recovery
 
 Bazarr native recovery stops only the selected service and archives its config directory
