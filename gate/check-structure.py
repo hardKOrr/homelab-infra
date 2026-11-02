@@ -48,6 +48,7 @@ REACH_SKIP = {
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/hosting-docker-lxc.md",
     ".github/ISSUE_TEMPLATE/hosting-docker-lxc-vm.md",
+    ".github/ISSUE_TEMPLATE/hosting-kubernetes.md",
 }
 LINK = re.compile(r"\]\((<[^>]+>|[^)\s#]+)")
 
