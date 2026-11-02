@@ -9,12 +9,14 @@ from pathlib import Path
 import yaml
 from jinja2 import Environment
 
+import task_parts
+
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible/roles/authentik"
 
 
 def tasks(name):
-    return yaml.safe_load((ROLE / "tasks" / name).read_text())
+    return task_parts.inline(ROLE / "tasks" / name)
 
 
 def includes(name):

@@ -79,7 +79,7 @@ class CaddyRendering:
         self.defaults = yaml.safe_load(DEFAULTS_FILE.read_text(encoding="utf-8"))[
             "caddy_defaults"
         ]
-        self.tasks = yaml.safe_load(ROLE_FILE.read_text(encoding="utf-8"))
+        self.tasks = task_parts.inline(ROLE_FILE)
         self.public_dns_tasks = yaml.safe_load(
             (ROOT / "ansible/roles/caddy/tasks/public-dns-contract.yml").read_text(
                 encoding="utf-8"

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """A shared task file split into phase files behaves as the single file it replaced.
 
-Every `ansible/tasks/<dir>/<entry>/<phase>.yml` is imported exactly once, by its entry
-`<entry>.yml`, with a bare `import_tasks` (a name and nothing else), and nothing else names
-it; parts hold no parts of their own, and every static include in a part resolves from the
+Every `<entry>/<phase>.yml` under `ansible/tasks/` or a role's `tasks/` is imported exactly
+once, by its entry `<entry>.yml`, with a bare `import_tasks` (a name and nothing else, at
+any block depth), and nothing else names it; parts hold no parts of their own, and every static include in a part resolves from the
 part's directory, as Ansible resolves it (`../<file>.yml` for a sibling of the entry).
 
 Against the merge base with master, when this clone holds it and it lacks a part directory
@@ -28,8 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import task_parts  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TASKS = ROOT / "ansible/tasks"
-ENTRIES = sorted(d.with_suffix(".yml") for d in TASKS.rglob("*")
+TASKS = [ROOT / "ansible/tasks", *sorted((ROOT / "ansible/roles").glob("*/tasks"))]
+ENTRIES = sorted(d.with_suffix(".yml") for tasks in TASKS for d in tasks.rglob("*")
                  if d.is_dir() and d.with_suffix(".yml").is_file() and task_parts.parts(
                      d.with_suffix(".yml")))
 assert ENTRIES, "no split task files found"
@@ -44,6 +44,15 @@ def static_includes(tasks):
         key, path = task_parts._target(task)
         if key is not None and isinstance(path, str) and "{{" not in path:
             yield path
+
+
+def tasks_in(tasks):
+    """Every task, including those nested in blocks."""
+    for task in tasks or []:
+        if isinstance(task, dict):
+            yield task
+            for key in task_parts.NESTED:
+                yield from tasks_in(task.get(key))
 
 
 def targets(node):
@@ -66,7 +75,7 @@ for source in (ROOT / "ansible").rglob("*.yml"):
         references.setdefault(target, []).append(source)
 for entry in ENTRIES:
     rel = entry.relative_to(ROOT)
-    imports = [task_parts.part_of(t, entry) for t in task_parts.load(entry)]
+    imports = [task_parts.part_of(t, entry) for t in tasks_in(task_parts.load(entry))]
     imported = [p.resolve() for p in imports if p is not None]
     for part in task_parts.parts(entry):
         name = f"{entry.stem}/{part.name}"
@@ -74,7 +83,7 @@ for entry in ENTRIES:
         others = [p.relative_to(ROOT) for p in references.get(part, []) if p != entry]
         assert not others, f"{name} is included from outside {rel}: {others}"
         tasks = task_parts.load(part)
-        assert not any(task_parts.part_of(t, part) for t in tasks), f"{name} imports a part"
+        assert not any(task_parts.part_of(t, part) for t in tasks_in(tasks)), f"{name} imports a part"
         for path in static_includes(tasks):
             assert (part.parent / path).is_file(), f"{name}: {path} does not resolve from {part.parent}"
     nested = [d for d in entry.with_suffix("").iterdir() if d.is_dir()]

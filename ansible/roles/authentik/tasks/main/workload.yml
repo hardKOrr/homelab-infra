@@ -1,0 +1,85 @@
+---
+# Phase of main.yml: deploy the Kubernetes or Compose workload, wait until it is ready and
+# verify the API token belongs to the bootstrap admin. Imported in place; inputs are
+# listed in main.yml.
+
+- name: Deploy the Kubernetes workload
+  ansible.builtin.include_tasks: ../kubernetes.yml
+  when: app_config.hosting.method | default('docker') == 'kubernetes'
+
+- name: Deploy the Compose workload
+  when: app_config.hosting.method | default('docker') == 'docker'
+  block:
+    - name: Write the compose environment file
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ authentik_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart authentik
+
+    - name: Write docker-compose.yml
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ authentik_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart authentik
+
+    - name: Pull images
+      community.docker.docker_compose_v2_pull:
+        project_src: "{{ authentik_project_dir }}"
+
+    - name: Start Authentik
+      community.docker.docker_compose_v2:
+        project_src: "{{ authentik_project_dir }}"
+        state: present
+        remove_orphans: true
+
+    - name: Apply pending restarts before the health check
+      ansible.builtin.meta: flush_handlers
+
+
+# Authentik answers 204 on ready; migrations on a first start or an upgrade can
+# take a while, hence the long ceiling.
+- name: Wait for Authentik to be ready
+  ansible.builtin.uri:
+    url: "{{ _authentik_local_url }}/-/health/ready/"
+    status_code: [200, 204]
+    headers: "{{ _authentik_request_headers }}"
+  register: _authentik_health
+  until: _authentik_health.status in [200, 204]
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# ── Verify the bootstrap credentials actually work ────────────────────────────
+# A token that does not authenticate would fail every later app deploy at the SSO
+# wiring step, far from the cause. Fail here instead.
+- name: Verify the API token authenticates
+  ansible.builtin.uri:
+    url: "{{ _authentik_local_url }}/api/v3/core/users/me/"
+    headers:
+      Host: "{{ _authentik_request_headers.Host }}"
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    status_code: 200
+  register: _authentik_whoami
+  retries: 10
+  delay: 5
+  until: _authentik_whoami.status | default(0) == 200
+  changed_when: false
+  no_log: true
+
+- name: Assert the token belongs to the bootstrap admin
+  ansible.builtin.assert:
+    that: _authentik_whoami.json.user.username | default('') == authentik_admin_user
+    fail_msg: >-
+      The recorded Authentik API token does not belong to {{ authentik_admin_user }}.
+      AUTHENTIK_BOOTSTRAP_TOKEN is consumed only on the very first start, so a token
+      changed after that never took effect. Issue a fresh token for
+      {{ authentik_admin_user }} in the Authentik UI and put it in
+      the canonical Vaultwarden item homelab-infra/sso.

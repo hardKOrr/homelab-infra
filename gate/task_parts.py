@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Read a shared task file whose phases live in part files, and resolve a playbook's tasks.
 
-An entry file `ansible/tasks/<dir>/<entry>.yml` may move a run of its tasks verbatim to
-`<entry>/<phase>.yml` and import it with a bare `import_tasks` (a `name` and nothing else),
-which Ansible treats exactly as if the tasks were written in place. A part refers to the
+An entry file `ansible/tasks/<dir>/<entry>.yml` or `ansible/roles/<role>/tasks/<entry>.yml`
+may move a run of its tasks verbatim to `<entry>/<phase>.yml` and import it with a bare
+`import_tasks` (a `name` and nothing else, also inside a block), which Ansible treats
+exactly as if the tasks were written in place. A part refers to the
 entry's sibling task files as `../<file>.yml`, because Ansible resolves an include against
 the directory of the file that holds it.
 

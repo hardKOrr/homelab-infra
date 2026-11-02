@@ -1,0 +1,202 @@
+---
+# Phase of main.yml: collect and validate the per-estate DNS challenges, add the DNS
+# modules, and build the TLS policies and the wildcard names to automate. Imported in
+# place; inputs are listed in main.yml.
+
+# ── DNS-challenge TLS (per-estate) ────────────────────────────────────────────
+# Estates declared in config/infrastructure.yml `domains:` may carry a
+# dns_challenge block (provider + provider-specific options); single-domain labs declare the
+# provider under infrastructure.reverse_proxy.dns_challenge. The token is supplied
+# temporarily by CLOUDFLARE_API_TOKEN in Seed mode and by the canonical
+# homelab-infra/reverse_proxy Vaultwarden item after cutover. app.dns_challenge is
+# retained as a backwards-compatible input. Each token is referenced only from its own domain's
+# TLS automation policy — the sanctioned per-estate separation. The stock apt
+# binary ships no DNS provider modules, so the matching caddy-dns package is
+# installed with `caddy add-package` (which swaps the binary in place; an apt
+# upgrade on a later deploy replaces it again, and this task re-adds the module).
+# Gathered on the Caddy guest, not the runner. Provisioning seeds resolv.conf from
+# the selected network's dns_servers; reused guests retain their current DNS path.
+- name: Collect DNS-challenge resolver defaults
+  ansible.builtin.set_fact:
+    _caddy_default_resolvers: "{{ ansible_facts.dns.nameservers | default([]) }}"
+
+- name: Collect DNS-challenge domains
+  ansible.builtin.set_fact:
+    _caddy_dns_domains: >-
+      {{ ((homelabinfra_config.infrastructure.domains | default({})).values()
+          | selectattr('dns_challenge', 'defined') | list)
+         + ([{'domain': homelabinfra_config.infrastructure.domain | default(''),
+              'dns_challenge': _caddy_default_dns_challenge}]
+            if _caddy_default_dns_challenge.provider | default('') | length > 0 else []) }}
+  vars:
+    _caddy_infra_challenge: >-
+      {{ homelabinfra_config.infrastructure.reverse_proxy.dns_challenge | default({}) }}
+    _caddy_legacy_challenge: "{{ app_config.app.dns_challenge | default({}) }}"
+    _caddy_default_dns_challenge: >-
+      {{ _caddy_legacy_challenge | combine(_caddy_infra_challenge, recursive=True) }}
+  no_log: true   # entries carry API tokens
+
+- name: Validate DNS-challenge configuration
+  ansible.builtin.assert:
+    that:
+      - item.domain | default('') | length > 0
+      - item.dns_challenge.provider | default('') | length > 0
+      - _caddy_provider_options | length > 0
+    fail_msg: >-
+      Caddy DNS-01 needs a domain, provider, and that provider's configuration
+      fields. The guided Cloudflare path receives api_token from
+      CLOUDFLARE_API_TOKEN in Seed mode and homelab-infra/reverse_proxy after
+      cutover; other modules retain their own option names.
+  loop: "{{ _caddy_dns_domains }}"
+  vars:
+    _caddy_challenge_option_names:
+      - resolvers
+      - ttl
+      - propagation_delay
+      - propagation_timeout
+      - override_domain
+    _caddy_provider_options: >-
+      {{ item.dns_challenge | dict2items
+         | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
+         | list | items2dict }}
+  no_log: true
+
+- name: Collect DNS provider module names
+  ansible.builtin.set_fact:
+    _caddy_dns_provider_names: >-
+      {%- set result = _caddy_dns_domains
+            | map(attribute='dns_challenge.provider') | list -%}
+      {%- for provider in _caddy_public_dns_provider_names -%}
+      {%- if provider not in result -%}{%- set _ = result.append(provider) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ result | unique | list }}
+  no_log: true
+
+- name: Validate DNS-challenge resolver path
+  ansible.builtin.assert:
+    that:
+      - _caddy_resolvers is sequence
+      - _caddy_resolvers is not string
+      - _caddy_resolvers is not mapping
+      - _caddy_resolvers | length > 0
+      - _caddy_resolvers | select('string') | reject('equalto', '') | list | length == _caddy_resolvers | length
+    fail_msg: >-
+      Caddy DNS-01 needs a non-empty resolver list, even with propagation_timeout=-1.
+      Configure the guest's declared DNS path or explicit dns_challenge.resolvers.
+      The selected resolvers must be reachable from Caddy over UDP/TCP DNS and
+      return the public zone's SOA for zone discovery; reachability alone is not sufficient.
+  # Project only resolver lists, not domain entries carrying provider credentials,
+  # so a failed prerequisite can explain the remedy without exposing any token.
+  loop: >-
+    {{ _caddy_dns_domains
+       | map(attribute='dns_challenge.resolvers', default=_caddy_default_resolvers) | list }}
+  vars:
+    _caddy_resolvers: "{{ item }}"
+
+- name: List installed Caddy modules
+  ansible.builtin.command:
+    cmd: caddy list-modules
+  register: _caddy_modules
+  changed_when: false
+  when: _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
+
+- name: Install missing DNS provider modules
+  ansible.builtin.command:
+    cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
+  loop: "{{ _caddy_dns_provider_names }}"
+  when:
+    - _caddy_dns_provider_names | length > 0
+    - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
+  changed_when: true
+  notify: Restart caddy
+
+- name: Install pinned Caddy dynamic DNS module
+  ansible.builtin.command:
+    cmd: >-
+      caddy add-package
+      github.com/mholt/caddy-dynamicdns@v0.0.0-20260805195708-67d107a42c02
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - "'dynamic_dns' not in _caddy_modules.stdout | default('')"
+  changed_when: true
+  notify: Restart caddy
+
+- name: Install pinned Caddy static DNS records module for CNAME sources
+  ansible.builtin.command:
+    cmd: >-
+      caddy add-package
+      github.com/SvenDowideit/caddy-host-dns/dnsrec@v0.0.0-20261018020852-ed6a941fc8cc
+  when:
+    - _caddy_dns_records_enabled | bool
+    - "'dns_records' not in _caddy_modules.stdout | default('')"
+  changed_when: true
+  notify: Restart caddy
+
+# One policy per estate, ahead of the catch-all: subjects pin it to that estate's
+# domain tree, so its token never issues for another estate's names.
+- name: Build per-estate DNS-challenge TLS policies
+  ansible.builtin.set_fact:
+    _caddy_dns_policies: >-
+      {{ _caddy_dns_policies | default([]) + [ {
+           'subjects': ['*.' ~ item.domain, item.domain],
+           'issuers': [ {'module': 'acme',
+                         'challenges': {'dns': {
+                           'provider': ({'name': item.dns_challenge.provider}
+                                        | combine(_caddy_provider_options, recursive=True))}
+                           | combine(_caddy_challenge_options, recursive=True)}}
+                        | combine({'email': app_config.app.acme_email}
+                                  if app_config.app.acme_email | default('') | length > 0
+                                  else {})
+                        | combine({'ca': app_config.app.acme_ca}
+                                  if app_config.app.tls_mode | default('acme') != 'internal'
+                                     and app_config.app.acme_ca | default('') | length > 0
+                                  else {}) ]
+         } ] }}
+  loop: "{{ _caddy_dns_domains }}"
+  vars:
+    _caddy_challenge_option_names:
+      - resolvers
+      - ttl
+      - propagation_delay
+      - propagation_timeout
+      - override_domain
+    _caddy_provider_options: >-
+      {{ item.dns_challenge | dict2items
+         | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
+         | list | items2dict }}
+    # SOA/zone discovery uses these resolvers BEFORE challenge presentation, even
+    # when TXT propagation checking is disabled. Use the guest's configured DNS
+    # path by default, never assume direct external port-53 egress is available.
+    # Split DNS must still return the public zone's SOA. The 30s delay is only a
+    # settling interval; it does not prove propagation or successful CA validation.
+    # Explicit estate/legacy options below override defaults only for this policy.
+    _caddy_challenge_options: >-
+      {{ {'resolvers': _caddy_default_resolvers,
+          'propagation_delay': '30s',
+          'propagation_timeout': -1}
+         | combine(item.dns_challenge | dict2items
+                   | selectattr('key', 'in', _caddy_challenge_option_names)
+                   | list | items2dict, recursive=True) }}
+  no_log: true   # policy bodies carry API tokens
+
+# A policy's `subjects` selects which managed names that policy governs; it does not
+# ask for a certificate. Caddy manages a certificate for each name it is told to serve,
+# so naming every app's own hostname as a site address yields one certificate per app —
+# a DNS-01 challenge on every deploy, and a slow walk toward Let's Encrypt's
+# 50-certificates-per-registered-domain-per-week limit (slice 015).
+#
+# The `automate` certificate loader is what asks for a name. Listing `*.<domain>` there
+# obtains one wildcard per estate, and Caddy 2.10+ then serves every subdomain from it:
+# TLS.Manage skips issuing for a subject already covered by a managed wildcard, and the
+# automate list is one of the three sources it consults for that coverage. The wildcard
+# is matched by the estate's own DNS-01 policy above, so each estate's token issues only
+# for its own tree.
+#
+# The apex is deliberately absent — a wildcard does not cover it, nothing in the baseline
+# serves it, and each automate name is a separate certificate. The policy subjects still
+# carry the apex, so a future apex route issues under the same DNS-01 token.
+- name: Collect the estate wildcards to automate
+  ansible.builtin.set_fact:
+    _caddy_automate_names: >-
+      {{ _caddy_dns_domains | map(attribute='domain')
+         | map('regex_replace', '^', '*.') | unique | list }}

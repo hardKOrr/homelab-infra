@@ -1,5 +1,10 @@
 # Caddy public DNS
 
+Deploy runs `tasks/main.yml`, which imports its phases from `tasks/main/` in order:
+`install.yml` (public DNS preflight, apt install), `tls.yml` (DNS-01 policies, wildcard
+names), `config.yml` (base config, service start), `public-dns.yml` (the apps below) and
+`routes.yml` (owned subtrees, wildcard gate).
+
 Public DNS is opt-in per estate with `domains.<estate>.public_dns.enabled: true`.
 The lab-wide `public_dns` block supplies one address source, record TTL, and enabled
 IP families; each enabled estate uses its own DNS-01 provider configuration and

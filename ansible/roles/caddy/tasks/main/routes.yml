@@ -1,0 +1,197 @@
+---
+# Phase of main.yml: reconcile srv0 listeners, TLS policies and certificate names without
+# touching routes, then gate on every estate wildcard and drop the migration pins.
+# Imported in place; inputs are listed in main.yml.
+
+# ── Reconcile the subtrees this role owns ─────────────────────────────────────
+- name: Read the running http server config
+  ansible.builtin.uri:
+    url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0"
+    status_code: [200, 404, 500]
+    return_content: true
+  register: _caddy_srv0
+  changed_when: false
+  vars:
+    _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
+
+# A pre-015 Caddy manages one certificate for every route hostname. Replacing that
+# implicit set with only the wildcard unloads those certificates before the wildcard
+# has finished issuing, taking an already-serving estate offline. Find which desired
+# wildcards are not present before changing the loader, then keep the affected route
+# hostnames in `tls.certificates.automate` for the transition. The pins are removed only
+# after the wildcard gate below succeeds. Fresh installs have no routes to preserve;
+# converged installs already have every wildcard and therefore skip the transition.
+- name: Check which estate wildcard certificates already exist
+  ansible.builtin.find:
+    paths: "{{ caddy_cert_dir }}"
+    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+    recurse: true
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_existing_wildcard_cert
+  changed_when: false
+
+- name: Collect estate wildcards still awaiting issuance
+  ansible.builtin.set_fact:
+    _caddy_pending_wildcards: >-
+      {{ _caddy_existing_wildcard_cert.results | default([])
+         | selectattr('matched', 'equalto', 0)
+         | map(attribute='item') | list }}
+
+- name: Collect route hostnames to preserve during wildcard migration
+  ansible.builtin.set_fact:
+    _caddy_migration_names: >-
+      {%- set result = [] -%}
+      {%- for route in (_caddy_srv0.json | default({})).routes | default([]) -%}
+        {%- for matcher_set in route.match | default([]) -%}
+          {%- for host in matcher_set.host | default([]) -%}
+            {%- for wildcard in _caddy_pending_wildcards -%}
+              {%- if host.endswith(wildcard[1:]) and host not in result -%}
+                {%- set _ = result.append(host) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ result }}
+
+# Fresh install, or an autosave that lost the server — load the base config whole.
+# Safe here precisely because there are no routes to lose.
+- name: Load the base configuration
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/load"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_base_config }}"
+    status_code: 200
+  when: _caddy_srv0.status != 200 or (_caddy_srv0.json | default(None)) is none
+  changed_when: true
+  no_log: "{{ _caddy_dns_domains | length > 0 }}"   # body may embed DNS tokens
+
+- name: Reconcile the subtrees this role owns
+  when:
+    - _caddy_srv0.status == 200
+    - (_caddy_srv0.json | default(None)) is not none
+  vars:
+    _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
+    _caddy_desired_listen: "{{ _caddy_base_config.apps.http.servers.srv0.listen }}"
+    _caddy_desired_policies: "{{ _caddy_base_config.apps.tls.automation.policies }}"
+    _caddy_desired_certificates: >-
+      {{ _caddy_base_config.apps.tls.certificates | default({}) }}
+    _caddy_transition_certificates: >-
+      {{ {'automate': (_caddy_automate_names + _caddy_migration_names)
+                        | unique | list} }}
+  block:
+    # PATCH, not PUT on the parent: replacing srv0 wholesale would take its routes
+    # with it.
+    - name: Update drifted srv0 listeners
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/listen"
+        method: PATCH
+        body_format: json
+        body: "{{ _caddy_desired_listen }}"
+        status_code: 200
+      when: _caddy_srv0.json.listen | default([]) != _caddy_desired_listen
+      changed_when: true
+
+    - name: Read the running TLS automation policies
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/automation/policies"
+        status_code: [200, 404, 500]
+        return_content: true
+      register: _caddy_policies
+      changed_when: false
+      no_log: "{{ _caddy_dns_domains | length > 0 }}"   # response may embed DNS tokens
+
+    - name: Update drifted TLS automation policies
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/automation/policies"
+        method: PATCH
+        body_format: json
+        body: "{{ _caddy_desired_policies }}"
+        status_code: 200
+      when: >-
+        _caddy_policies.status != 200
+        or (_caddy_policies.json | default([])) != _caddy_desired_policies
+      changed_when: true
+      no_log: "{{ _caddy_dns_domains | length > 0 }}"   # body may embed DNS tokens
+
+    # A running Caddy from before slice 015 has no `certificates` key at all, so this
+    # creates as well as replaces — POST is the only method that does both (PATCH
+    # requires the path to exist, PUT requires it not to).
+    - name: Read the running automated certificate names
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/certificates"
+        status_code: [200, 404, 500]
+        return_content: true
+      register: _caddy_certificates_running
+      changed_when: false
+      when: _caddy_desired_certificates | length > 0
+
+    - name: Stage wildcard certificates without unloading serving hostnames
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/certificates"
+        method: POST
+        body_format: json
+        body: "{{ _caddy_transition_certificates }}"
+        status_code: 200
+      when:
+        - _caddy_desired_certificates | length > 0
+        - >-
+          _caddy_certificates_running.status != 200
+          or (_caddy_certificates_running.json | default({})) != _caddy_transition_certificates
+      changed_when: true
+
+- name: Verify the route table is reachable
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/http/servers/srv0/routes"
+    status_code: 200
+  changed_when: false
+
+# ── Gate the deploy on the wildcard actually existing ─────────────────────────
+# Under the per-hostname model each app deploy carried its own issuance, so a broken
+# DNS-01 credential surfaced on that app. Under the wildcard model nothing issues at
+# wire time — every app is served from this certificate — so an estate whose challenge
+# never completes produces routes that no certificate can serve, and the failure would
+# otherwise appear as an unexplained TLS error on the next app's deploy.
+#
+# Caddy sanitizes `*.<domain>` to `wildcard_.<domain>` on disk and files it under the
+# issuer's directory, so the name is matched rather than a full path assembled.
+- name: Wait for each estate wildcard certificate to be issued
+  ansible.builtin.find:
+    paths: "{{ caddy_cert_dir }}"
+    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+    recurse: true
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_wildcard_cert
+  until: _caddy_wildcard_cert.matched | default(0) > 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  # The assert below reports which estate failed and why; a bare retry timeout does not.
+  failed_when: false
+
+- name: Assert every estate wildcard was issued
+  ansible.builtin.assert:
+    that:
+      - item.matched | default(0) > 0
+    fail_msg: >-
+      Caddy never obtained a certificate for {{ item.item }} after five minutes.
+      The DNS-01 challenge for that estate did not complete — check the estate's
+      dns_challenge provider and token, and `journalctl -u {{ caddy_service_name }}`
+      on this host for the ACME error. No app can be served over HTTPS on this
+      estate until the wildcard exists.
+  loop: "{{ _caddy_wildcard_cert.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Remove temporary per-hostname certificate pins
+  ansible.builtin.uri:
+    url: >-
+      http://{{ _caddy_bind_ip }}:{{ app_config.app.port
+      }}/config/apps/tls/certificates
+    method: POST
+    body_format: json
+    body: "{{ _caddy_base_config.apps.tls.certificates }}"
+    status_code: 200
+  when: _caddy_migration_names | length > 0
+  changed_when: true

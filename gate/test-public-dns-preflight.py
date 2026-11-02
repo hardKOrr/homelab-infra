@@ -12,6 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
+import task_parts
+
 
 repo = Path(__file__).resolve().parents[1]
 module_path = repo / "ansible/roles/caddy/library/public_dns_preflight.py"
@@ -426,7 +428,7 @@ def test_cloudflare_mark_waits_for_async_records_and_times_out_safely():
 
 
 def test_role_preflights_before_publication_and_marks_after():
-    tasks = yaml.safe_load((repo / "ansible/roles/caddy/tasks/main.yml").read_text())
+    tasks = task_parts.inline(repo / "ansible/roles/caddy/tasks/main.yml")
     names = [task.get("name") for task in tasks]
     preflight_index = names.index("Preflight public DNS addresses and existing provider records")
     install_index = names.index("Install Caddy")

@@ -1,0 +1,141 @@
+---
+# Phase of main.yml: build and write the base configuration, point the service at it, and
+# start Caddy until its admin API answers. Imported in place; inputs are listed in
+# main.yml.
+
+# ── Base configuration ────────────────────────────────────────────────────────
+- name: Resolve the admin API bind address
+  ansible.builtin.set_fact:
+    # The wiring tasks reach the admin API from the Ansible controller, so it must
+    # bind the LXC's own interface rather than the localhost default.
+    _caddy_bind_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+
+- name: Build the desired base configuration
+  ansible.builtin.set_fact:
+    # One dict expression keeps ports as ints in the JSON body.
+    # srv0 starts with an empty route
+    # table — every route is added later through the admin API by the wiring tasks.
+    _caddy_base_config: >-
+      {{ {
+           'admin': {'listen': _caddy_bind_ip ~ ':' ~ (app_config.app.port | int)},
+           'apps': {
+             'http': {
+               'servers': {
+                 'srv0': {
+                   'listen': [':' ~ (app_config.app.https_port | default(443) | int),
+                              ':' ~ (app_config.app.http_port | default(80) | int)],
+                   'routes': [],
+                 },
+               },
+             },
+             'tls': {'automation': {'policies':
+               (_caddy_dns_policies | default([])) + [{'issuers': [_caddy_issuer]}]}}
+               | combine(_caddy_certificates),
+           } | combine(_caddy_public_dns_apps, recursive=True),
+         } }}
+  vars:
+    _caddy_certificates: >-
+      {{ {'certificates': {'automate': _caddy_automate_names}}
+         if _caddy_automate_names | length > 0 else {} }}
+    _caddy_issuer: >-
+      {{ {'module': 'internal'}
+         if app_config.app.tls_mode | default('acme') == 'internal'
+         else ({'module': 'acme'}
+               | combine({'email': app_config.app.acme_email}
+                         if app_config.app.acme_email | default('') | length > 0 else {})
+               | combine({'ca': app_config.app.acme_ca}
+                         if app_config.app.acme_ca | default('') | length > 0 else {})) }}
+
+- name: Write the base configuration
+  ansible.builtin.copy:
+    content: "{{ _caddy_base_config | to_nice_json }}"
+    dest: "{{ caddy_config_file }}"
+    owner: root
+    group: caddy
+    mode: "0640"
+  # The config embeds per-estate DNS tokens when any dns_challenge is declared —
+  # keep them out of logs/diffs (the 0640 root:caddy file itself is the narrow
+  # guest-held-credential exception, as with the authentik compose env).
+  no_log: "{{ _caddy_dns_domains | length > 0 }}"
+
+# The packaged unit runs a Caddyfile; remove it so nothing can silently apply an
+# empty server set over the JSON config.
+- name: Remove the packaged Caddyfile
+  ansible.builtin.file:
+    path: /etc/caddy/Caddyfile
+    state: absent
+
+- name: Create the systemd drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ caddy_service_name }}.service.d"
+    state: directory
+    mode: "0755"
+
+- name: Point the service at the JSON config with autosave resume
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ caddy_service_name }}.service.d/homelab-infra.conf"
+    mode: "0644"
+    content: |
+      # Managed by homelab-infra. Overrides the packaged Caddyfile invocation.
+      # --resume replays the autosaved running config so admin-API routes survive
+      # restarts; the --config file is only the first-boot seed.
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/caddy run --config {{ caddy_config_file }} --resume
+      ExecReload=
+  notify: Restart caddy
+
+# ── Make sure the base configuration can actually be applied ──────────────────
+# `--resume` does not merely prefer the autosave, it makes Caddy IGNORE --config
+# outright whenever an autosave exists:
+#
+#   --config and --resume flags were used together; ignoring --config and
+#   resuming from last configuration
+#
+# The packaged caddy service starts on install with its stock Caddyfile and autosaves
+# that — a file_server on :80 with no `admin` key, so the admin endpoint stays on its
+# localhost default. The base config written above, including the admin bind the
+# wiring tasks depend on, was therefore never applied on a first deploy: the deploy
+# then failed waiting for an admin API that was only ever listening on loopback.
+# "--config is the first-boot seed" was the intent; with an autosave already on disk
+# it seeded nothing.
+#
+# So an autosave that does not already carry the admin bind we want is discarded,
+# which lets --config apply on the next start; Caddy immediately autosaves the result.
+# An autosave that DOES carry it is left alone, which is the steady state and is what
+# keeps admin-API routes across restarts — the property --resume exists for.
+- name: Check for an autosaved running configuration
+  ansible.builtin.slurp:
+    src: "{{ caddy_autosave_file }}"
+  register: _caddy_autosave
+  failed_when: false
+
+- name: Discard an autosave that predates this role's base configuration
+  ansible.builtin.file:
+    path: "{{ caddy_autosave_file }}"
+    state: absent
+  when:
+    - _caddy_autosave.content is defined
+    - ((_caddy_autosave.content | b64decode | from_json).admin | default({})).listen | default('')
+      != (_caddy_bind_ip ~ ':' ~ (app_config.app.port | int))
+  notify: Restart caddy
+
+- name: Enable and start caddy service
+  ansible.builtin.systemd:
+    name: "{{ caddy_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts before touching the admin API
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the admin API to answer
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/"
+    status_code: 200
+  register: _caddy_admin
+  until: _caddy_admin.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false

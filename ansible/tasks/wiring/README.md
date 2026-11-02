@@ -1,5 +1,11 @@
 # Wiring tasks
 
+## Authentik
+
+[`authentik.yml`](authentik.yml) checks the SSO wiring contract, then imports its phases
+from `authentik/` in run order: `flows.yml`, `proxy-provider.yml`, `oauth2-provider.yml`,
+`application.yml`, `access.yml` (access group and user bindings) and `outpost.yml`.
+
 ## OPNsense DNS account
 
 Every app Deploy that writes DNS through OPNsense first includes

@@ -11,7 +11,9 @@ both guest types.
 ## Scope
 
 The role provisions the service, applies the declared directory, and hands back its
-API endpoint, admin credentials and token.
+API endpoint, admin credentials and token. `tasks/main.yml` imports its deploy phases
+from `tasks/main/` (`install.yml`, `secrets.yml`, `workload.yml`); `tasks/directory.yml`
+imports `tasks/directory/groups.yml` and `tasks/directory/accounts.yml`.
 
 **Groups and accounts are configuration** — declare them under `directory:` in
 `config/apps/<instance>.yml` and `tasks/directory.yml` creates them and keeps them
