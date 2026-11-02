@@ -21,7 +21,7 @@
 # restore would need to recover. This is the "disposable" half of the catalog note; the
 # other half — pointing it at a lab's own shared Redis/Valkey backend instead — remains a
 # later option once this platform has a named-Redis consumer contract to point it at
-# (CONTRACT.md's "Application database provisioning" section). Until then this role
+# (ansible/vars/contract/recovery.md, "Application database provisioning"). Until then this role
 # declares no `backup:` block at all, the same as roles/flaresolverr: there is nothing a
 # nightly job would have to preserve.
 searxng_defaults:

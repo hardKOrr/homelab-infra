@@ -164,7 +164,8 @@ are the live procedures for one instance; moving PBS with its datastore is in
   [qbittorrent](roles/qbittorrent/README.md), [sabnzbd](roles/sabnzbd/README.md),
   [servarr](roles/servarr/README.md).
 - `vars/` contains Git-managed defaults (`vars/app-defaults/<app>.yml`) and the
-  authoritative configuration [contract](vars/CONTRACT.md).
+  authoritative configuration [contract](vars/CONTRACT.md), split by config file under
+  `vars/contract/`.
 - `inventory/` and `inventory_plugins/` resolve the managed Proxmox estate into Ansible
   hosts and groups.
 - `scripts/` contains runner entry points and committed helpers used by jobs and tasks.

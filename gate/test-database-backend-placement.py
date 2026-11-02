@@ -508,7 +508,7 @@ def check_all_engines_share_placement():
     )
     assert role_guard["when"] == "not (guest_placement_database_backend | default(false) | bool)"
 
-    contract = (ROOT / "ansible/vars/CONTRACT.md").read_text(encoding="utf-8")
+    contract = (ROOT / "ansible/vars/contract/proxmox.md").read_text(encoding="utf-8")
     assert "proxmox.guest_type" in contract
     assert "defaults to `config/proxmox.yml` `proxmox.node`" in contract
     assert "defaults to `config/proxmox.yml` `proxmox.storage`" in contract

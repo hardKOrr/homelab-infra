@@ -255,7 +255,7 @@ def wiring_tests():
     remove = next(i for i, item in enumerate(destroy) if item.get("name") == "Destroy owned VM | Destroy the stopped guest")
     assert ha < stop < remove, "Remove must withdraw the HA resource before guest shutdown and destruction"
 
-    contract = (REPO / "ansible/vars/CONTRACT.md").read_text()
+    contract = (REPO / "ansible/vars/contract/app-layering.md").read_text()
     example = (REPO / "config.example/apps/k3s-cluster.example.yml").read_text()
     pdm = yaml.safe_load((REPO / "ansible/playbooks/apps/proxmox-datacenter-manager.yml").read_text())
     assert "`proxmox.vm.ha: true`" in contract

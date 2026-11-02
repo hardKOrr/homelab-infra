@@ -91,7 +91,7 @@ application with no `scope`.
 Application scope and hosting placement are related but not interchangeable. `scope: lab`
 classifies one application deployment. `_.shared` marks hosting substrate that crosses
 estate boundaries. Read [`../../tasks/proxmox/README.md`](../../tasks/proxmox/README.md) for
-the tag grammar and [`../../vars/CONTRACT.md`](../../vars/CONTRACT.md) for estate and network
+the tag grammar and [`../../vars/contract/`](../../vars/CONTRACT.md#5-required-vs-optional-keys-per-config-file) for estate and network
 resolution.
 
 Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, or another

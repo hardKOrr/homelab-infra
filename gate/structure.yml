@@ -23,10 +23,7 @@ literal:
   ansible/playbooks/maintenance/restore-app.yml: 17
 
 # Shared 12-word runs per pair of docs (rule 1).
-shared:
-  ansible/playbooks/maintenance/README.md ansible/vars/CONTRACT.md: 4
-  ansible/vars/CONTRACT.md config.example/README.md: 34
-  ansible/vars/CONTRACT.md rundeck/README.md: 2
+shared: {}
 
 # Files over their line budget, with their ceiling (rule 2).
 size:
@@ -95,7 +92,6 @@ size:
   ansible/tasks/wiring/opnsense-dns-account.yml: 601
   ansible/tasks/wiring/opnsense.yml: 365
   ansible/templates/kubernetes/recovery-backup.yaml.j2: 427
-  ansible/vars/CONTRACT.md: 995
   gate/test-config.py: 1469
   gate/test-guest-placement.py: 1154
   gate/test-k8s-recovery-jobs.py: 747

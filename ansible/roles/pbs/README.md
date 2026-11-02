@@ -43,7 +43,7 @@ fields, preserves NIC/MAC, disks and data, and stops before guest readiness or d
 This applies to running guests too. Matching guests retain their identity and converge.
 
 Deploy PBS requires a nonempty bridge after network inheritance, as specified by the
-[`networks` contract](../../vars/CONTRACT.md#configproxmoxyml) and enforced by Config Doctor.
+[`networks` contract](../../vars/contract/proxmox.md) and enforced by Config Doctor.
 A selected network may omit `bridge` when it inherits `networks.default.bridge`.
 If neither declares one, both creation and reuse refuse before template creation,
 guest start or deployment. The shared cloud template's `vmbr0` fallback does not supply

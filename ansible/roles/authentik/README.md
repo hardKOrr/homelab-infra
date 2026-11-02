@@ -91,7 +91,7 @@ one Authentik per estate, each at its own estate's `auth.<domain>`.
 
 ## Identity modes served
 
-Apps register per `routing.identity` (see `ansible/vars/CONTRACT.md`): `catalog`
+Apps register per `routing.identity` (see [app layering](../../vars/contract/app-layering.md)): `catalog`
 (Application tile only), `oidc` (OAuth2 provider + Application; client credentials
 handed back to the app deploy), `forward_auth` (proxy provider + embedded outpost;
 the selected reverse proxy enforces it), `none` (no Authentik object).

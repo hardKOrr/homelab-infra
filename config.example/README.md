@@ -35,30 +35,11 @@ before changing state. For stack-backed Docker apps, `stacks.<stack>.guest_type`
 
 ## Public DNS
 
-Public DNS publishes each opted-in estate's apex and wildcard, without app records or port
-forwards, using the estate's DNS-01 provider credentials. The address settings are
-lab-wide in top-level `public_dns` because the lab has one WAN; each estate only opts in.
-This example is commented out, so copying it keeps the feature disabled:
-
-```yaml
-# domains:
-#   <ESTATE>:
-#     domain: "<ESTATE-domain>"
-#     public_dns:
-#       enabled: false
-#       # provider: cloudflare  # defaults to this estate's dns_challenge.provider
-#       adopt_existing: false  # allow a different same-type record; type conflicts still fail
-#
-# public_dns:                   # lab-wide; one WAN address for every enabled estate
-#   ttl: 300
-#   families: [ipv4]            # list ipv6 to publish AAAA too
-#   allow_private: false
-#   address:
-#     source: lookup            # static | lookup | cname; required when an estate enables it
-#     # static: address: 203.0.113.10
-#     # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
-#     # cname: target: ddns.operator.example.net
-```
+Public DNS is commented out in [`infrastructure.yml`](infrastructure.yml) (top-level
+`public_dns` and each estate's `domains.<estate>.public_dns`), so copying the example keeps
+it disabled. Its keys are in the
+[`config/infrastructure.yml` contract](../ansible/vars/contract/infrastructure.md) and its
+behavior in [estates and public DNS](../ansible/vars/contract/estates.md).
 
 ## Safety
 
