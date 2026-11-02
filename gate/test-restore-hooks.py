@@ -95,17 +95,17 @@ def rebase(app, **inputs):
     - name: Rebase
       ansible.builtin.include_tasks: {ROOT / "ansible/tasks/recovery/rebase-target-path.yml"}
       vars: {json.dumps(inputs)}
-    - name: Show
-      ansible.builtin.debug:
-        msg: "REBASED {{{{ restore_app_config | to_json }}}}"
+    - name: Record the result
+      ansible.builtin.copy:
+        content: "{{{{ restore_app_config | to_json }}}}"
+        dest: {Path(directory) / "rebased.json"}
+        mode: "0600"
 """)
         result = subprocess.run(
             [ANSIBLE_PLAYBOOK, "-i", "localhost,", "-c", "local", str(playbook)],
-            env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
             text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
-        line = next(x for x in result.stdout.splitlines() if "REBASED " in x)
-        rebased = json.loads(json.loads(line.split('"msg": ', 1)[1]).split("REBASED ", 1)[1])
+        rebased = json.loads((Path(directory) / "rebased.json").read_text())
         assert rebased["routing"] == {"proxy": "none"}, rebased
         return rebased["app"]
 
