@@ -25,7 +25,6 @@ literal:
 # Shared 12-word runs per pair of docs (rule 1).
 shared:
   ansible/playbooks/maintenance/README.md ansible/vars/CONTRACT.md: 4
-  ansible/roles/comfyui/README.md ansible/roles/ollama/README.md: 49
   ansible/vars/CONTRACT.md config.example/README.md: 34
   ansible/vars/CONTRACT.md rundeck/README.md: 2
 
