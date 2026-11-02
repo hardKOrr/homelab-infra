@@ -1,0 +1,160 @@
+---
+# Phase of authentik.yml: ensure the oidc OAuth2 provider, resolve its pk, hand back and
+# store its client credentials, and assert a provider pk resolved in either provider mode.
+# Imported in place; inputs are listed in authentik.yml.
+
+# ── oidc: OAuth2 provider ─────────────────────────────────────────────────
+- name: Wire Authentik | Ensure OAuth2 provider (oidc)
+  when: _ak_mode == 'oidc'
+  block:
+    - name: Wire Authentik | Find existing OAuth2 provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_oauth_list
+      no_log: true
+
+    - name: Wire Authentik | Select existing OAuth2 provider
+      ansible.builtin.set_fact:
+        _ak_oauth_matches: >-
+          {{ (_ak_oauth_list.json.results | default([]))
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list }}
+        _ak_oauth: >-
+          {{ (_ak_oauth_list.json.results | default([]))
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list | first | default({}) }}
+      no_log: true
+
+    - name: Wire Authentik | Reject duplicate OAuth2 providers
+      ansible.builtin.assert:
+        that: _ak_oauth_matches | length <= 1
+        fail_msg: >-
+          Authentik has multiple OAuth2 providers named '{{ wiring_app_name }}'. In
+          Authentik Admin > Applications > Providers > OAuth2/OpenID Providers, remove
+          the stale duplicate, then rerun this application's Deploy.
+
+    # RS256 needs a signing key; the stock install ships a self-signed one.
+    # Absent (renamed) key → provider is created without and Authentik falls
+    # back to HS256 — functional, so a missing key is not fatal.
+    - name: Wire Authentik | Find signing key
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/crypto/certificatekeypairs/?name={{ _ak_signing_key_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_signing_key_list
+      no_log: true
+
+    # Single dict expression keeps pks ints and the redirect list structured.
+    # Default redirect scope: any path
+    # on the app's own domain — override with wiring_oidc_redirect_uris.
+    - name: Wire Authentik | Build OAuth2 provider payload
+      ansible.builtin.set_fact:
+        _ak_oauth_payload: >-
+          {{ {
+               'name': wiring_app_name,
+               'client_type': 'confidential',
+               'authorization_flow': _ak_auth_flow.json.results[0].pk,
+               'invalidation_flow': _ak_inval_flow.json.results[0].pk,
+               'redirect_uris': wiring_oidc_redirect_uris
+                 | default([{'matching_mode': 'regex',
+                             'url': 'https://' ~ wiring_domain ~ '/.*'}]),
+             }
+             | combine({'signing_key': (_ak_signing_key_list.json.results | first).pk}
+                       if _ak_signing_key_list.json.results | default([]) | length > 0
+                       else {}) }}
+      no_log: true
+
+    - name: Wire Authentik | Create OAuth2 provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_oauth_payload }}"
+        status_code: 201
+      register: _ak_oauth_create
+      when: _ak_oauth.pk is not defined
+      changed_when: _ak_oauth.pk is not defined
+      no_log: true
+
+    - name: Wire Authentik | Update drifted OAuth2 provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/{{ _ak_oauth.pk | default(0) }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_oauth_payload }}"
+        status_code: 200
+      when:
+        - _ak_oauth.pk is defined
+        - >-
+          _ak_oauth.client_type | default('') != 'confidential'
+          or _ak_oauth.redirect_uris | default([]) != _ak_oauth_payload.redirect_uris
+      changed_when: true
+      no_log: true
+
+    - name: Wire Authentik | Read OAuth2 providers after reconciliation
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_oauth_verify
+      no_log: true
+
+    - name: Wire Authentik | Assert exactly one OAuth2 provider is active
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_ak_oauth_verify.json.results | default([])
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list | length) == 1
+        fail_msg: >-
+          Authentik did not end with exactly one OAuth2 provider named
+          '{{ wiring_app_name }}'. Inspect Authentik Admin > Applications > Providers
+          > OAuth2/OpenID Providers, remove any stale duplicate, then rerun this
+          application's Deploy.
+
+    - name: Wire Authentik | Resolve provider pk
+      ansible.builtin.set_fact:
+        _ak_provider_pk: >-
+          {{ _ak_oauth.pk | default(_ak_oauth_create.json.pk | default(''), true) }}
+
+    # Hand the client credentials back to the caller. The POST/GET responses
+    # include client_secret for confidential providers; the app role consumes
+    # these on its next run (store per the secrets model).
+    - name: Wire Authentik | Read OAuth2 client credentials
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/{{ _ak_provider_pk }}/"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_oauth_detail
+      no_log: true
+
+    - name: Wire Authentik | Export OAuth2 client credentials
+      ansible.builtin.set_fact:
+        authentik_oidc_client_id: "{{ _ak_oauth_detail.json.client_id }}"
+        authentik_oidc_client_secret: "{{ _ak_oauth_detail.json.client_secret }}"
+      no_log: true
+
+    - name: Wire Authentik | Store OAuth2 client credentials immediately
+      ansible.builtin.include_tasks: ../../bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ wiring_app_name }}"
+        vault_item_fields:
+          identity_provider: authentik
+          oidc_client_id: "{{ authentik_oidc_client_id }}"
+          oidc_client_secret: "{{ authentik_oidc_client_secret }}"
+        vault_item_secret_fields: [oidc_client_secret]
+
+- name: Wire Authentik | Assert provider pk resolved
+  ansible.builtin.assert:
+    that:
+      - _ak_provider_pk | string | length > 0
+    fail_msg: "Could not resolve the Authentik provider pk for {{ wiring_app_name }}."
+  when: _ak_mode in ['oidc', 'forward_auth']

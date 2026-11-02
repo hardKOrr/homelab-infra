@@ -11,11 +11,13 @@ from pathlib import Path
 
 import yaml
 
+import task_parts
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 DEPLOY = yaml.safe_load((ROOT / "ansible/roles/deemix/tasks/main.yml").read_text())
-AUTHENTIK = yaml.safe_load((ROOT / "ansible/tasks/wiring/authentik.yml").read_text())
+AUTHENTIK = task_parts.inline(ROOT / "ansible/tasks/wiring/authentik.yml")
 DEEMIX_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/deemix.yml").read_text())
 
 

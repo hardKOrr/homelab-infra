@@ -1,0 +1,123 @@
+---
+# Phase of authentik.yml: ensure the application (every mode) and re-read it for its pk.
+# Imported in place; inputs are listed in authentik.yml.
+
+# ── Application (all modes; catalog gets a tile with no provider) ─────────
+# superuser_full_list=true is REQUIRED, not a tuning flag. Authentik's application
+# list is filtered by per-object view permission, so a token that has just CREATED an
+# application cannot see it back on the next run. The response is doubly misleading:
+# pagination.count honours the ?slug= filter while results does not, so a lookup for
+# 'ntfy' came back count=1 with a body containing 'vaultwarden'. Measured live:
+#
+#   ?slug=ntfy                            count=1  results=['vaultwarden']
+#   ?slug=ntfy&superuser_full_list=true   count=1  results=['ntfy']
+#   ?slug=nope&superuser_full_list=true   count=0  results=[]
+#
+# Without it the lookup never matched, so every app's SECOND deploy tried to create an
+# application that already existed and failed the whole deploy on
+# "Application with this slug already exists" — the Authentik wiring was never
+# idempotent.
+#
+# Only this endpoint needs it. Verified live that /flows/instances/,
+# /outposts/instances/ and /providers/* return count == len(results) and filter
+# correctly; superuser_full_list is specific to Authentik's ApplicationViewSet.
+- name: Wire Authentik | Find existing application
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}&superuser_full_list=true"
+    method: GET
+    headers: "{{ _ak_headers }}"
+    status_code: 200
+  register: _ak_app_list
+  no_log: true
+
+- name: Wire Authentik | Select existing application and build payload
+  ansible.builtin.set_fact:
+    _ak_app_matches: >-
+      {{ (_ak_app_list.json.results | default([]))
+         | selectattr('slug', 'equalto', wiring_app_name)
+         | list }}
+    _ak_app: >-
+      {{ (_ak_app_list.json.results | default([]))
+         | selectattr('slug', 'equalto', wiring_app_name)
+         | list | first | default({}) }}
+    _ak_app_payload: >-
+      {{ {
+           'name': _ak_display,
+           'slug': wiring_app_name,
+           'meta_launch_url': _ak_external_url,
+         }
+         | combine({'provider': _ak_provider_pk | int}
+                   if _ak_mode in ['oidc', 'forward_auth']
+                   else {'provider': none})
+         | combine({'policy_engine_mode': 'any'}
+                   if _ak_auth_usernames | length > 0 else {}) }}
+  no_log: true
+
+- name: Wire Authentik | Reject duplicate application slugs
+  ansible.builtin.assert:
+    that: _ak_app_matches | length <= 1
+    fail_msg: >-
+      Authentik has multiple applications with slug '{{ wiring_app_name }}'. In
+      Authentik Admin > Applications > Applications, remove the stale duplicate, then
+      rerun this application's Deploy.
+
+- name: Wire Authentik | Create application
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/applications/"
+    method: POST
+    headers: "{{ _ak_headers }}"
+    body_format: json
+    body: "{{ _ak_app_payload }}"
+    status_code: 201
+  when: _ak_app.slug is not defined
+  changed_when: _ak_app.slug is not defined
+  no_log: true
+
+- name: Wire Authentik | Update drifted application
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+    method: PATCH
+    headers: "{{ _ak_headers }}"
+    body_format: json
+    body: "{{ _ak_app_payload }}"
+    status_code: 200
+  when:
+    - _ak_app.slug is defined
+    - >-
+      _ak_app.provider | default(none) != _ak_app_payload.provider
+      or _ak_app.name | default('') != _ak_display
+      or _ak_app.meta_launch_url | default('') != _ak_external_url
+      or (_ak_auth_usernames | length > 0
+          and (_ak_app.policy_engine_mode | default('any') | lower) != 'any')
+  changed_when: true
+  no_log: true
+
+- name: Wire Authentik | Read applications after reconciliation
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}&superuser_full_list=true"
+    method: GET
+    headers: "{{ _ak_headers }}"
+    status_code: 200
+  register: _ak_app_verify
+  no_log: true
+
+- name: Wire Authentik | Assert exactly one application is active
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_ak_app_verify.json.results | default([])
+         | selectattr('slug', 'equalto', wiring_app_name)
+         | list | length) == 1
+    fail_msg: >-
+      Authentik did not end with exactly one application with slug
+      '{{ wiring_app_name }}'. Inspect Authentik Admin > Applications > Applications,
+      remove any stale duplicate, then rerun this application's Deploy.
+
+- name: Wire Authentik | Re-read application for its pk
+  ansible.builtin.uri:
+    url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+    method: GET
+    headers: "{{ _ak_headers }}"
+    status_code: 200
+  register: _ak_app_final
+  no_log: true

@@ -1,0 +1,120 @@
+---
+# Phase of directory.yml: create, update and parent the declared groups. Imported in
+# place; inputs are listed in directory.yml.
+
+# ── Groups ────────────────────────────────────────────────────────────────
+# One list call rather than a lookup per group: a homelab directory is small,
+# and the index it builds is what resolves membership names to pks below.
+# page_size is Authentik's own cap parameter; the default 100 would silently
+# truncate on a lab that has grown past it.
+- name: Directory | List existing groups
+  ansible.builtin.uri:
+    url: "{{ _ak_dir_api }}/core/groups/?page_size=1000"
+    method: GET
+    headers: "{{ _ak_dir_headers }}"
+    status_code: 200
+  register: _ak_dir_group_list
+  changed_when: false
+  no_log: true
+
+- name: Directory | Index existing groups by name
+  ansible.builtin.set_fact:
+    _ak_dir_group_index: >-
+      {{ dict((_ak_dir_group_list.json.results | default([]) | map(attribute='name') | list)
+              | zip(_ak_dir_group_list.json.results | default([]))) }}
+
+- name: Directory | Assert every parent group is known
+  ansible.builtin.assert:
+    that:
+      - >-
+        _ak_dir_groups | selectattr('parent', 'defined')
+        | map(attribute='parent')
+        | reject('in', _ak_dir_group_index.keys() | list)
+        | reject('in', _ak_dir_groups | map(attribute='name') | list)
+        | list | length == 0
+    fail_msg: >-
+      A directory.groups entry names a `parent` that neither exists in Authentik
+      nor is declared here. Declare the parent group as well.
+
+# is_superuser is passed explicitly on every create rather than left to the API
+# default: a group that grants access to one published application must never
+# carry administrative rights over Authentik itself by accident.
+- name: Directory | Create declared groups that do not exist
+  ansible.builtin.uri:
+    url: "{{ _ak_dir_api }}/core/groups/"
+    method: POST
+    headers: "{{ _ak_dir_headers }}"
+    body_format: json
+    body: >-
+      {{ {'name': item.name,
+          'is_superuser': item.is_superuser | default(false) | bool,
+          'attributes': item.attributes | default({}, true)} }}
+    status_code: 201
+  loop: "{{ _ak_dir_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in _ak_dir_group_index
+  changed_when: true
+  no_log: true
+
+- name: Directory | Update declared groups that drifted
+  ansible.builtin.uri:
+    url: "{{ _ak_dir_api }}/core/groups/{{ _ak_dir_group_index[item.name].pk | default('') }}/"
+    method: PATCH
+    headers: "{{ _ak_dir_headers }}"
+    body_format: json
+    body: >-
+      {{ {'is_superuser': item.is_superuser | default(false) | bool,
+          'attributes': item.attributes | default({}, true)} }}
+    status_code: 200
+  loop: "{{ _ak_dir_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - item.name in _ak_dir_group_index
+    - >-
+      (_ak_dir_group_index[item.name].is_superuser | default(false) | bool)
+      != (item.is_superuser | default(false) | bool)
+      or (_ak_dir_group_index[item.name].attributes | default({}, true))
+         != (item.attributes | default({}, true))
+  changed_when: true
+  no_log: true
+
+# Re-read: groups just created have pks nothing has seen yet, and parenting and
+# membership below both resolve names through this index.
+- name: Directory | Re-list groups after creating them
+  ansible.builtin.uri:
+    url: "{{ _ak_dir_api }}/core/groups/?page_size=1000"
+    method: GET
+    headers: "{{ _ak_dir_headers }}"
+    status_code: 200
+  register: _ak_dir_group_list
+  changed_when: false
+  no_log: true
+
+- name: Directory | Re-index groups by name
+  ansible.builtin.set_fact:
+    _ak_dir_group_index: >-
+      {{ dict((_ak_dir_group_list.json.results | default([]) | map(attribute='name') | list)
+              | zip(_ak_dir_group_list.json.results | default([]))) }}
+
+# Parenting is a second pass, not part of the create: a declaration may name a
+# parent that is itself declared later in the same list, which has no pk until
+# the pass above has run.
+- name: Directory | Set declared group parents
+  ansible.builtin.uri:
+    url: "{{ _ak_dir_api }}/core/groups/{{ _ak_dir_group_index[item.name].pk }}/"
+    method: PATCH
+    headers: "{{ _ak_dir_headers }}"
+    body_format: json
+    body: >-
+      {{ {'parent': _ak_dir_group_index[item.parent].pk} }}
+    status_code: 200
+  loop: "{{ _ak_dir_groups | selectattr('parent', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (_ak_dir_group_index[item.name].parent | default(''))
+    != _ak_dir_group_index[item.parent].pk
+  changed_when: true
+  no_log: true

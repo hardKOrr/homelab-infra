@@ -1,0 +1,101 @@
+---
+# Phase of main.yml: reconcile the dynamic DNS and static DNS records apps and mark new
+# public records. Imported in place; inputs are listed in main.yml.
+
+# Reconcile only the two public DNS app paths this role owns. An unchanged GET
+# response is a no-op; the provider API is called only when the desired Caddy app
+# configuration changes (or when the CNAME app is first added).
+- name: Read the running Caddy dynamic DNS app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    status_code: [200, 404]
+    return_content: true
+  register: _caddy_dynamic_dns_running
+  changed_when: false
+  no_log: true
+
+- name: Reconcile the Caddy dynamic DNS app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_public_dns_apps.dynamic_dns }}"
+    status_code: 200
+  when:
+    - _caddy_dynamic_dns_enabled | bool
+    - >-
+      _caddy_dynamic_dns_running.status != 200
+      or (_caddy_dynamic_dns_running.json | default(None))
+         != _caddy_public_dns_apps.dynamic_dns
+  changed_when: true
+  no_log: true
+
+- name: Remove the Caddy dynamic DNS app when no estate uses it
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    method: DELETE
+    status_code: 200
+  when:
+    - not (_caddy_dynamic_dns_enabled | bool)
+    - _caddy_dynamic_dns_running.status == 200
+    - (_caddy_dynamic_dns_running.json | default(None)) is mapping
+  changed_when: true
+  no_log: true
+
+- name: Read the running Caddy static DNS records app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    status_code: [200, 404]
+    return_content: true
+  register: _caddy_dns_records_running
+  changed_when: false
+  no_log: true
+
+- name: Reconcile CNAME records through the estate DNS providers
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_public_dns_apps.dns_records }}"
+    status_code: 200
+  when:
+    - _caddy_dns_records_enabled | bool
+    - >-
+      _caddy_dns_records_running.status != 200
+      or (_caddy_dns_records_running.json | default(None))
+         != _caddy_public_dns_apps.dns_records
+  changed_when: true
+  no_log: true
+
+- name: Remove the Caddy static DNS records app when no estate uses it
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    method: DELETE
+    status_code: 200
+  when:
+    - not (_caddy_dns_records_enabled | bool)
+    - _caddy_dns_records_running.status == 200
+    - (_caddy_dns_records_running.json | default(None)) is mapping
+  changed_when: true
+  no_log: true
+
+- name: Mark newly created Cloudflare public DNS records
+  public_dns_preflight:
+    operation: mark
+    public_dns: "{{ _caddy_public_dns_config }}"
+    estates: "{{ _caddy_public_dns_enabled_estates }}"
+    records_to_mark: "{{ _caddy_public_dns_preflight.records_to_mark | default([]) }}"
+  register: _caddy_public_dns_mark_result
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.records_to_mark | default([]) | length > 0
+  no_log: true
+
+- name: Report a safe public DNS ownership comment failure
+  ansible.builtin.assert:
+    that:
+      - _caddy_public_dns_mark_result.safe_error | default('') | length == 0
+    fail_msg: "{{ _caddy_public_dns_mark_result.safe_error | default('Could not mark new public DNS records.') }}"
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.records_to_mark | default([]) | length > 0

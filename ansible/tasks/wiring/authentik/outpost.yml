@@ -1,0 +1,74 @@
+---
+# Phase of authentik.yml: add the forward_auth provider to the outpost and point the
+# outpost at the public Authentik URL. Imported in place; inputs are listed in
+# authentik.yml.
+
+# ── Outpost (forward_auth only) ───────────────────────────────────────────
+# The outpost is what actually serves forward-auth for the provider; a provider
+# missing from it authenticates nobody. Catalog and oidc need no outpost.
+- name: Wire Authentik | Ensure outpost membership (forward_auth)
+  when: _ak_mode == 'forward_auth'
+  block:
+    - name: Wire Authentik | Find outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/?name={{ _ak_outpost_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_outpost_list
+      no_log: true
+
+    - name: Wire Authentik | Select outpost
+      ansible.builtin.set_fact:
+        _ak_outpost: >-
+          {{ (_ak_outpost_list.json.results | default([]))
+             | selectattr('name', 'equalto', _ak_outpost_name)
+             | list | first | default({}) }}
+
+    - name: Wire Authentik | Assert outpost exists
+      ansible.builtin.assert:
+        that:
+          - _ak_outpost.pk is defined
+        fail_msg: >-
+          Authentik outpost '{{ _ak_outpost_name }}' not found. Pass wiring_authentik_outpost
+          with the name of the outpost that should serve {{ wiring_app_name }}.
+
+    - name: Wire Authentik | Add provider to outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {'providers': (_ak_outpost.providers | default([])) + [_ak_provider_pk | int]} }}
+        status_code: 200
+      when: (_ak_provider_pk | int) not in (_ak_outpost.providers | default([]))
+      changed_when: true
+      no_log: true
+
+    # The outpost builds every sign-in redirect against config.authentik_host. An
+    # empty value (the shipped default of the Embedded Outpost) makes it emit
+    # `http://localhost/application/o/authorize/...`, so the browser is bounced to
+    # localhost and login can never complete — while the reverse-proxy forward_auth
+    # block and the provider-to-outpost membership both look perfectly correct. It
+    # is invisible to any check short of following the 302 in a browser, and cost a
+    # live run to find (2026-08-13).
+    #
+    # Merged, never replaced: config also carries log_level, the docker settings,
+    # cookie domain and the object-naming template, and PATCHing a bare
+    # {'authentik_host': ...} would drop them.
+    - name: Wire Authentik | Point outpost at the public Authentik URL
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {'config': (_ak_outpost.config | default({}, true))
+                        | combine({'authentik_host': _ak_public_url})} }}
+        status_code: 200
+      when: >-
+        (_ak_outpost.config | default({}, true)).authentik_host
+        | default('', true) != _ak_public_url
+      changed_when: true
+      no_log: true

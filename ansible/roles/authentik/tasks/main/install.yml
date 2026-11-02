@@ -1,0 +1,86 @@
+---
+# Phase of main.yml: install the PBS client, resolve the image tag and create the Compose
+# directories. Imported in place; inputs are listed in main.yml.
+
+# ── Resolve the image tag ─────────────────────────────────────────────────────
+- name: Install the pinned PBS client for Authentik recovery
+  when: app_config.hosting.method | default('docker') == 'docker'
+  ansible.builtin.include_tasks: ../../../../tasks/backup/pbs-client-install.yml
+
+- name: Get latest Authentik release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
+    return_content: true
+  register: _authentik_release
+  when: app_config.app.image_tag | default('') | length == 0
+  changed_when: false
+
+- name: Select the image tag
+  ansible.builtin.set_fact:
+    # Authentik tags releases as `version/2025.10.1`; the container tag is the
+    # bare version.
+    #
+    # Written as a conditional expression, not `| default(..., true)`: Jinja
+    # evaluates a filter's arguments eagerly, so the default branch would touch
+    # _authentik_release.json even when the release lookup was skipped by a pinned
+    # image_tag — and a skipped register leaves a dict with no .json. The
+    # conditional only evaluates the branch it takes.
+    _authentik_tag: >-
+      {{ app_config.app.image_tag
+         if app_config.app.image_tag | default('') | length > 0
+         else (_authentik_release.json.tag_name | regex_replace('^version/', '')) }}
+
+- name: Assert an image tag was resolved
+  ansible.builtin.assert:
+    that: _authentik_tag | length > 0
+    fail_msg: >-
+      Could not resolve an Authentik image tag. Set app.image_tag in
+      config/apps/{{ instance }}.yml to pin one explicitly.
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  when: app_config.hosting.method | default('docker') == 'docker'
+  ansible.builtin.file:
+    path: "{{ authentik_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Database and Redis are written only by their containers, which chown their own data
+# directory on first start. Do not set owner/group here: chowning a live PostgreSQL data
+# directory is how you break an instance that was working. PostgreSQL also enforces 0700
+# when it starts; declaring 0750 made the next deploy change it back after every container
+# recreate, so each directory carries its runtime-stable mode explicitly.
+
+- name: Create data directories owned by their own container
+  when: app_config.hosting.method | default('docker') == 'docker'
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item.name }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - name: database
+      mode: "0700"
+    - name: redis
+      mode: "0750"
+
+# authentik-server runs as uid 1000 (fixed by the image; the worker runs as root and
+# is unaffected), and 0750 root:root makes these three unreadable to it. /templates
+# unreadable is not a degraded feature: EVERY flow interface render 500s, so nobody
+# can sign in to Authentik at all, and every forward_auth app behind it is sealed
+# shut. certs and media only escaped it here because their containers wrote content
+# and took ownership on the way. Cost a live run to find, 2026-08-13.
+
+- name: Create data directories read by authentik-server
+  when: app_config.hosting.method | default('docker') == 'docker'
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0750"
+  loop:
+    - media
+    - certs
+    - custom-templates

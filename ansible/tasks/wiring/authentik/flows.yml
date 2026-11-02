@@ -1,0 +1,35 @@
+---
+# Phase of authentik.yml: look up the authorization and invalidation flows both provider
+# modes name. Imported in place; inputs are listed in authentik.yml.
+
+# ── Flows (provider modes only — catalog creates no provider) ─────────────
+- name: Wire Authentik | Look up provider flows
+  when: _ak_mode in ['oidc', 'forward_auth']
+  block:
+    - name: Wire Authentik | Look up authorization flow
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_auth_flow_slug }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_flow
+      no_log: true
+
+    - name: Wire Authentik | Look up invalidation flow
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_invalidation_flow_slug }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_inval_flow
+      no_log: true
+
+    - name: Wire Authentik | Assert both flows exist
+      ansible.builtin.assert:
+        that:
+          - _ak_auth_flow.json.results | default([]) | length > 0
+          - _ak_inval_flow.json.results | default([]) | length > 0
+        fail_msg: >-
+          Authentik has no flow with slug {{ _ak_auth_flow_slug }} and/or
+          {{ _ak_invalidation_flow_slug }}. Pass wiring_authentik_auth_flow /
+          wiring_authentik_invalidation_flow if this lab renamed the stock flows.

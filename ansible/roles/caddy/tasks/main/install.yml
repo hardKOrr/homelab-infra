@@ -1,0 +1,78 @@
+---
+# Phase of main.yml: validate and preflight public DNS, then install Caddy from its apt
+# repository. Imported in place; inputs are listed in main.yml.
+
+- name: Validate public DNS config
+  ansible.builtin.include_tasks: ../public-dns-contract.yml
+
+- name: Preflight public DNS addresses and existing provider records
+  public_dns_preflight:
+    operation: preflight
+    public_dns: "{{ _caddy_public_dns_config }}"
+    estates: "{{ _caddy_public_dns_enabled_estates }}"
+  register: _caddy_public_dns_preflight
+  when: _caddy_public_dns_enabled_estates | length > 0
+  no_log: true
+
+- name: Refuse unsafe public DNS preflight results
+  ansible.builtin.assert:
+    that:
+      - _caddy_public_dns_preflight.safe_error | default('') | length == 0
+    fail_msg: "{{ _caddy_public_dns_preflight.safe_error | default('Public DNS preflight failed.') }}"
+  when: _caddy_public_dns_enabled_estates | length > 0
+
+- name: Warn that public DNS will publish a restricted address by explicit request
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: public DNS is configured to publish a private, loopback, link-local,
+      or CGNAT address because public_dns.allow_private is true.
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - _caddy_public_dns_preflight.private_override_used | default(false) | bool
+
+# ── Install ───────────────────────────────────────────────────────────────────
+- name: Install apt repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - debian-keyring
+      - debian-archive-keyring
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Install the Caddy apt signing key
+  ansible.builtin.get_url:
+    url: "{{ caddy_apt_key_url }}"
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    mode: "0644"
+  register: _caddy_key
+
+- name: Dearmor the Caddy apt signing key
+  ansible.builtin.command:
+    cmd: "gpg --batch --yes --dearmor -o {{ caddy_apt_keyring }} /etc/apt/keyrings/caddy-stable.asc"
+  when: _caddy_key is changed
+  changed_when: true
+
+- name: Add the Caddy apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ caddy_apt_keyring }}] {{ caddy_apt_repo_url }} any-version main"
+    filename: caddy-stable
+    state: present
+    update_cache: true
+
+# state: latest is deliberate — re-running the deploy is the documented update path
+# for native apps (CLAUDE.md "Native LXC App Update Path").
+- name: Install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: latest    # noqa package-latest — re-running the deploy IS the update mechanism
+  notify: Restart caddy

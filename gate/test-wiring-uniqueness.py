@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-import yaml
+import task_parts
 
 repo = Path(__file__).resolve().parents[1]
 
@@ -44,7 +44,7 @@ def require_actionable_guard(source, name, expression, guidance):
 
 def main():
     sources = {
-        name: list(walk_tasks(yaml.safe_load((repo / path).read_text())))
+        name: list(walk_tasks(task_parts.inline(repo / path)))
         for name, path in {
             "caddy": "ansible/tasks/wiring/caddy.yml",
             "dns": "ansible/tasks/wiring/opnsense.yml",

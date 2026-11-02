@@ -41,9 +41,6 @@ size:
   ansible/playbooks/maintenance/restore-pdm.yml: 360
   ansible/playbooks/maintenance/status.yml: 558
   ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367
-  ansible/roles/authentik/tasks/directory.yml: 346
-  ansible/roles/authentik/tasks/main.yml: 466
-  ansible/roles/caddy/tasks/main.yml: 775
   ansible/roles/deemix/tasks/main.yml: 353
   ansible/roles/emby/tasks/main.yml: 334
   ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 360
@@ -72,7 +69,6 @@ size:
   ansible/tasks/kubernetes/recovery-restore.yml: 458
   ansible/tasks/recovery/restore-swap.yml: 607
   ansible/tasks/stack/find-or-create-host.yml: 457
-  ansible/tasks/wiring/authentik.yml: 787
   ansible/tasks/wiring/caddy.yml: 321
   ansible/tasks/wiring/opnsense-dns-account.yml: 601
   ansible/tasks/wiring/opnsense.yml: 365

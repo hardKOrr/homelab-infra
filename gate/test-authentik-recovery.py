@@ -22,6 +22,7 @@ import yaml
 from pbs_client_stub import stub_pbs_client
 from restore_swap_inputs import run_hook, swap_inputs
 from remove_plan import load_playbook
+import task_parts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,7 +200,7 @@ def check_contract_and_secret_continuity():
     assert set(catalog["extra"]) >= {"backup", "restore"}
     assert "rollback" in catalog["exclude"]
 
-    main = read_yaml(ROOT / "ansible/roles/authentik/tasks/main.yml")
+    main = task_parts.inline(ROOT / "ansible/roles/authentik/tasks/main.yml")
     main_tasks = list(tasks_recursive(main))
     install = task_named(main_tasks, "Install the pinned PBS client for Authentik recovery")
     assert install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
@@ -216,7 +217,7 @@ def check_contract_and_secret_continuity():
 
 
 def check_directory_password_continuity():
-    main = read_yaml(ROOT / "ansible/roles/authentik/tasks/main.yml")
+    main = task_parts.inline(ROOT / "ansible/roles/authentik/tasks/main.yml")
     store = task_named(main, "Store Authentik secrets before applying them")
     shared = read_yaml(ROOT / "ansible/tasks/bitwarden/upsert-item.yml")
     comparison = [task_named(shared, name) for name in [
