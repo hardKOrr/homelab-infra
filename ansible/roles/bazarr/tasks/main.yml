@@ -40,7 +40,10 @@
   ansible.builtin.slurp:
     src: "{{ _bazarr_config_file }}"
   register: _bazarr_config
-  until: _bazarr_config.content is defined
+  until: >-
+    _bazarr_config.content is defined and
+    (((_bazarr_config.content | b64decode | from_yaml | default({}, true)).auth
+      | default({}, true)).apikey | default('') | length > 0)
   retries: 30
   delay: 2
   changed_when: false
