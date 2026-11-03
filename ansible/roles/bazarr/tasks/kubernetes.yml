@@ -1,0 +1,121 @@
+---
+# Bazarr on Kubernetes: its config lives on a default-StorageClass PVC and the media and
+# download shares are the existing NFS exports, mounted at the same container paths as on
+# Docker. The playbook's prepare play has already resolved them into k8s_media_nfs.
+- name: Bazarr Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Bazarr Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+  when: k8s_media_nfs | default([]) | length > 0
+
+- name: Bazarr Kubernetes | Default to no media volumes when none are declared
+  ansible.builtin.set_fact:
+    k8s_media_volumes: []
+    k8s_media_volume_mounts: []
+  when: k8s_media_nfs | default([]) | length == 0
+
+- name: Bazarr Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ bazarr_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: bazarr_k8s_node
+    label: Kubernetes node
+  when: k8s_media_volumes | length > 0
+
+- name: Bazarr Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Bazarr Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _bazarr_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Bazarr Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _bazarr_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Bazarr Kubernetes | Read the generated configuration
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - cat
+      - /config/config/config.yaml
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _bazarr_k8s_config
+  until: _bazarr_k8s_config.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  no_log: true
+
+- name: Bazarr Kubernetes | Extract and verify the API key
+  ansible.builtin.set_fact:
+    _bazarr_api_key: >-
+      {{ ((_bazarr_k8s_config.stdout | from_yaml).auth | default({})).apikey | default('') }}
+  no_log: true
+
+- name: Bazarr Kubernetes | Assert Bazarr generated an API key
+  ansible.builtin.assert:
+    that: _bazarr_api_key | length > 0
+  no_log: true
+
+- name: Bazarr Kubernetes | Verify the authenticated settings API
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/system/settings"
+    headers:
+      Host: "{{ bazarr_fqdn }}"
+      X-API-KEY: "{{ _bazarr_api_key }}"
+      Accept: application/json
+    status_code: 200
+  register: _bazarr_settings
+  until: _bazarr_settings.status | default(0) == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+  no_log: true
+
+- name: Bazarr Kubernetes | Store the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _bazarr_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
+
+- name: Bazarr Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Bazarr's configuration, API key, language profiles and database from its config
+        volume; the shared media is not included

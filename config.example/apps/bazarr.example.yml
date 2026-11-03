@@ -9,3 +9,5 @@
 # hosting:
 #   method: docker
 # stack: media-lxc
+# To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
+# stack line). app.mounts are mounted from their existing NFS exports at the same paths.
