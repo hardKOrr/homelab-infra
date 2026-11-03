@@ -4,6 +4,13 @@ Bazarr defaults to Docker on the `media` VM stack. An instance can select a
 Docker LXC stack through the [instance example](../../../config.example/apps/bazarr.example.yml);
 stack provisioning, media mounts and wiring use the same shared operations for both guest types.
 
+With `hosting.method: kubernetes` Bazarr runs in its own namespace: the config volume
+uses the cluster's default StorageClass, and each `app.mounts` entry is mounted from the
+NFS export the Proxmox node already uses, at the same container path, through
+`tasks/kubernetes/resolve-media-nfs.yml` and `prepare-media-volumes.yml`. A Kubernetes
+instance has no stack host, so Wire Media Stack does not discover it. Backup and restore
+use the shared Kubernetes recovery Job; the shares are not archived.
+
 ## Native recovery
 
 Bazarr native recovery stops only the selected service and archives its config directory

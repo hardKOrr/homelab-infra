@@ -1,0 +1,21 @@
+---
+# Replace the target's config PVC through the shared Kubernetes recovery Job. The NFS
+# media shares are not part of the archive. Deploy republishes the restored API key.
+- name: Bazarr Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Bazarr
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1313) }}:{{ restore_target_config.app.pgid | default(1313) }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        Bazarr's configuration, API key, language profiles and database from its config
+        volume; the shared media is not included
+      verify:
+        - >-
+          Open the Bazarr URL and verify the restored settings and language profiles, then
+          run Deploy so the restored API key is published.

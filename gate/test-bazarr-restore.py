@@ -59,7 +59,7 @@ def run_hook(hook, stage, port, extra_tasks=()):
 
 
 def check_swap(server):
-    swap = swap_inputs("bazarr")
+    swap = swap_inputs("bazarr", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}

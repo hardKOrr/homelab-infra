@@ -1,6 +1,8 @@
 ---
-# Deploy Bazarr on the estate-resolved media stack. Wire Media Stack connects its
-# Sonarr and Radarr peers after this play records the media registry entry.
+# Deploy Bazarr on the estate-resolved media stack, or on Kubernetes when
+# `hosting.method: kubernetes` selects the cluster adapter. Wire Media Stack connects the
+# Docker instance's Sonarr and Radarr peers after the registry entry is recorded; a
+# Kubernetes instance has no stack host to discover, so it is not wired there.
 
 - name: "Bazarr | Provision"
   hosts: localhost
@@ -32,6 +34,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: bazarr
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Derive the published Bazarr hostname
+      ansible.builtin.set_fact:
+        bazarr_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        bazarr_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain) }}"
   tasks:
     - name: Find or create the media stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
@@ -39,6 +50,7 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
     - name: Attach Bazarr media paths to the stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
@@ -46,7 +58,28 @@
         attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
         attach_mounts_owner: >-
           {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
-      when: app_config.app.mounts | default([], true) | length > 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - app_config.app.mounts | default([], true) | length > 0
+
+- name: "Bazarr | Prepare Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Resolve Bazarr's existing media shares for Kubernetes
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-media-nfs.yml
+      vars:
+        k8s_media_mounts: "{{ app_config.app.mounts | default([], true) }}"
+      when:
+        - app_config.hosting.method == 'kubernetes'
+        - app_config.app.mounts | default([], true) | length > 0
+    - name: Refresh inventory for cluster access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open Bazarr's declared access from the Kubernetes node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Bazarr | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -72,6 +105,26 @@
     - name: Deploy Bazarr
       ansible.builtin.include_role:
         name: bazarr
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "Bazarr | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Deploy Bazarr into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: bazarr
+        tasks_from: kubernetes
+      vars:
+        bazarr_fqdn: "{{ hostvars['localhost'].bazarr_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Bazarr | Record facts and wire"
   hosts: localhost
@@ -84,6 +137,7 @@
         name: homelabinfra_infra
       failed_when: false
     - name: Record the Bazarr media registry entry
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -99,20 +153,28 @@
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: "{{ _bazarr_deploy_host.app_config.routing.estate | default('') }}"
+        resolve_estate_name: "{{ _bazarr_cfg.routing.estate | default('') }}"
   vars:
-    _bazarr_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _bazarr_k8s: "{{ hostvars['localhost'].app_config.hosting.method == 'kubernetes' }}"
+    _bazarr_cfg: "{{ hostvars['localhost'].app_config }}"
+    _bazarr_deploy_host: >-
+      {{ {} if _bazarr_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _bazarr_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _bazarr_deploy_host.app_config.app.port }}"
-    wiring_subdomain: "{{ _bazarr_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _bazarr_k8s | bool
+         else _bazarr_deploy_host.ansible_host }}
+    wiring_upstream_port: "{{ 80 if _bazarr_k8s | bool else _bazarr_cfg.app.port }}"
+    wiring_subdomain: "{{ _bazarr_cfg.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Bazarr ({{ instance }})"
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/"
     wiring_auth_group: homelab-users
-    wiring_identity_mode: "{{ _bazarr_deploy_host.app_config.routing.identity | default('forward_auth') }}"
-    wiring_access: "{{ _bazarr_deploy_host.app_config.routing.access | default('internal') }}"
+    wiring_identity_mode: "{{ _bazarr_cfg.routing.identity | default('forward_auth') }}"
+    wiring_access: "{{ _bazarr_cfg.routing.access | default('internal') }}"
   tasks:
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:
@@ -139,11 +201,21 @@
         - homelabinfra_infra.dns.provider | default('none') != 'none'
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: not (_bazarr_k8s | bool)
+    - name: Record Bazarr on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([]) | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ wiring_domain }}/"
+      when: _bazarr_k8s | bool
     - name: Report the media-stack follow-up
       ansible.builtin.debug:
         msg: >-
           {{ instance }} is registered in the media registry. Run Wire Media Stack
           to connect it to the selected Sonarr and Radarr instances.
+      when: not (_bazarr_k8s | bool)
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

@@ -1,0 +1,132 @@
+---
+# Resolve the NFS source of each media mount that is already attached to the Proxmox node,
+# so a Kubernetes workload can mount the same shares at the same container paths through
+# prepare-media-volumes.yml, and open the cluster nodes' egress to those NFS servers.
+# Run on localhost, before open-app-access.yml; it only reads the node and sets facts.
+#
+# Inputs:
+#   k8s_media_mounts      [{host, path}] as in infrastructure.media_storage.mounts
+#   k8s_media_rule_prefix prefix for the firewall rule names (default: the instance name)
+#
+# Sets:
+#   k8s_media_nfs         [{path, server, export}]: `path` is the container path of the
+#                         mount, `server` an IPv4 address, `export` the share's absolute path
+#   app_config.firewall.egress gains one TCP/2049 rule per NFS server, sequenced before the
+#                         base block policy, for the cluster-node alias
+
+- name: Kubernetes media NFS | Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../proxmox/register-nodes.yml
+
+- name: Kubernetes media NFS | Read each mount's source on the configured Proxmox node
+  ansible.builtin.command:
+    argv: [findmnt, --json, --target, "{{ item.host }}", --output, "SOURCE,FSTYPE,TARGET,OPTIONS"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  register: _k8s_media_findmnt
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ k8s_media_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Kubernetes media NFS | Require every mount to be an existing NFSv4 share
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - (item.stdout | from_json).filesystems[0].fstype in ['nfs', 'nfs4']
+      - (item.stdout | from_json).filesystems[0].source is match('^[^:]+:/.*$')
+      - (item.stdout | from_json).filesystems[0].options is search('(^|,)vers=4(\.|,|$)')
+    fail_msg: >-
+      Kubernetes media mounts must each resolve to an existing NFSv4 share on the
+      configured Proxmox node.
+  no_log: true
+  loop: "{{ _k8s_media_findmnt.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: Kubernetes media NFS | Resolve each distinct NFS server to IPv4
+  ansible.builtin.command:
+    argv: [getent, ahostsv4, "{{ item }}"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  register: _k8s_media_getent
+  changed_when: false
+  no_log: true
+  loop: >-
+    {{ _k8s_media_findmnt.results
+       | map(attribute='stdout') | map('from_json')
+       | map(attribute='filesystems') | map('first')
+       | map(attribute='source') | map('regex_replace', ':.*$', '') | unique | list }}
+
+- name: Kubernetes media NFS | Require each NFS service to answer from the Proxmox node
+  ansible.builtin.wait_for:
+    host: "{{ (item.stdout_lines | first).split() | first }}"
+    port: 2049
+    state: started
+    connect_timeout: 3
+    timeout: 5
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  changed_when: false
+  no_log: true
+  loop: "{{ _k8s_media_getent.results }}"
+  loop_control:
+    label: NFS server
+
+- name: Kubernetes media NFS | Build the resolved share list
+  ansible.builtin.set_fact:
+    k8s_media_nfs: >-
+      {%- set addr = {} -%}
+      {%- for r in _k8s_media_getent.results -%}
+      {%- set _ = addr.update({r.item: (r.stdout_lines | first).split() | first}) -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for r in _k8s_media_findmnt.results -%}
+      {%- set fs = (r.stdout | from_json).filesystems | first -%}
+      {%- set src = fs.source.split(':', 1) -%}
+      {%- set rel = r.item.host | regex_replace('^' ~ (fs.target | regex_escape) ~ '/?', '') -%}
+      {%- set export = src[1].rstrip('/') ~ (('/' ~ rel.lstrip('/')) if rel | length > 0 else '') -%}
+      {%- set _ = out.append({'path': r.item.path, 'server': addr[src[0]],
+                              'export': export if export | length > 0 else '/'}) -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true
+
+- name: Kubernetes media NFS | Resolve the egress sequence before the base block policy
+  ansible.builtin.set_fact:
+    _k8s_media_sequence: >-
+      {%- set blocks = (homelabinfra_infra.firewall.base.rules | default([])
+          | selectattr('action', 'equalto', 'block') | selectattr('sequence', 'defined')
+          | map(attribute='sequence') | map('int') | list)
+         if homelabinfra_infra.firewall.base.enabled | default(false) | bool else [] -%}
+      {{ (blocks | min - 1) if blocks | length > 0
+         else (homelabinfra_infra.firewall.sequence | default(1000) | int) }}
+
+- name: Kubernetes media NFS | Require a positive sequence before the base policy
+  ansible.builtin.assert:
+    that: _k8s_media_sequence | int > 0
+    fail_msg: >-
+      The media NFS exception needs a positive firewall sequence before the configured
+      block policy. Adjust that policy's sequence and redeploy.
+
+- name: Kubernetes media NFS | Add NFS access for the cluster nodes to the app's firewall rules
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'firewall': {'egress': _k8s_media_egress}}, recursive=True) }}
+  vars:
+    _k8s_media_prefix: "{{ k8s_media_rule_prefix | default(instance) }}-media-nfs-"
+    _k8s_media_servers: "{{ k8s_media_nfs | map(attribute='server') | unique | list }}"
+    _k8s_media_egress: >-
+      {{ (app_config.firewall.egress | default([], true)
+          | rejectattr('name', 'match', '^' ~ (_k8s_media_prefix | regex_escape)) | list)
+         + _k8s_media_rules }}
+    _k8s_media_rules: >-
+      {%- set rules = [] -%}
+      {%- for server in _k8s_media_servers -%}
+      {%- set _ = rules.append({'name': _k8s_media_prefix ~ loop.index0, 'protocol': 'TCP',
+                                'port': '2049', 'destination': server,
+                                'sequence': _k8s_media_sequence | int}) -%}
+      {%- endfor -%}
+      {{ rules }}
+  no_log: true
