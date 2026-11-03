@@ -67,6 +67,23 @@ def main():
     assert "tasks/kubernetes/recovery-restore.yml" in restore_job["ansible.builtin.include_tasks"]
     assert restore_job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
+    # A fresh target has a different canonical key. Restore must publish the archived
+    # key itself so final Deploy converges, but a preview must not change credentials.
+    assert includes(kubernetes, "kubernetes-key.yml")
+    publish = next(t for t in shared if "kubernetes-key.yml" in str(t.get("ansible.builtin.include_tasks")))
+    assert publish["when"] == "_application_restore_complete | default(false) | bool"
+    assert publish["vars"]["bazarr_key_instance"] == "{{ restore_target }}"
+    assert "restore_target_config.routing.subdomain" in publish["vars"]["bazarr_key_fqdn"]
+    key = read_yaml("ansible/roles/bazarr/tasks/kubernetes-key.yml")
+    read = key[0]["ansible.builtin.command"]["argv"]
+    assert "deployment/{{ bazarr_key_instance | default(instance) }}" in read
+    verify = next(t for t in key if "ansible.builtin.uri" in t)
+    assert verify["ansible.builtin.uri"]["headers"]["Host"] == "{{ bazarr_key_fqdn | default(bazarr_fqdn) }}"
+    store = key[-1]
+    assert "tasks/bitwarden/upsert-item.yml" in store["ansible.builtin.include_tasks"]
+    assert store["vars"]["vault_item_name"] == "homelab-infra/media/{{ bazarr_key_instance | default(instance) }}"
+    assert key.index(verify) < key.index(store)
+
 
 if __name__ == "__main__":
     main()
