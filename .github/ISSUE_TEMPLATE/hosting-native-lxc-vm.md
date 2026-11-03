@@ -37,8 +37,8 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 
 ## Requirement sets
 
-- S1 (code): When R1–R6 are met, the worker shall hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- S2 (execution): When R7 is met, the worker shall hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
-- S3 (execution): When R8, R9 and R10 are met, the worker shall post done. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
+- [ ] S1 (code): When R1–R6 are met, the worker shall tick S1 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
+- [ ] S2 (execution): When R7 is met, the worker shall tick S2 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
+- [ ] S3 (execution): When R8, R9 and R10 are met, the worker shall tick S3 and post done. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
 
 **Result:** one issue comment: passed, failed, or impossible with the reason (R11); the tested SHA, the Ansible results, the recovery-point reference (placeholders for private parts) and the PR.
