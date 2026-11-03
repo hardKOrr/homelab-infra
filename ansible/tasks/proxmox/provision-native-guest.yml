@@ -58,6 +58,7 @@
         name: "{{ homelabinfra_instance.lxc.hostname }}"
         groups: "deploy_{{ instance }}"
         ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+        proxmox_vmtype: lxc  # the inventory has not seen a new guest; shared mount tasks read this
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         _native_guest_guest_type: "{{ _native_guest_guest_type }}"
@@ -143,6 +144,7 @@
         name: "{{ homelabinfra_instance.vm.name }}"
         groups: "deploy_{{ instance }}"
         ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+        proxmox_vmtype: qemu
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         _native_guest_guest_type: "{{ _native_guest_guest_type }}"

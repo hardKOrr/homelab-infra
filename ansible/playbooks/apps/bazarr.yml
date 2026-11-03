@@ -1,6 +1,7 @@
 ---
-# Deploy Bazarr on the estate-resolved media stack, or on Kubernetes when
-# `hosting.method: kubernetes` selects the cluster adapter. Wire Media Stack connects the
+# Deploy Bazarr on the estate-resolved media stack, on a native LXC or VM when
+# `hosting.method: native`, or on Kubernetes when `hosting.method: kubernetes` selects
+# the cluster adapter. Wire Media Stack connects the
 # Docker instance's Sonarr and Radarr peers after the registry entry is recorded; a
 # Kubernetes instance has no stack host to discover, so it is not wired there.
 
@@ -51,6 +52,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: bazarr
+      when: app_config.hosting.method == 'native'
     - name: Attach Bazarr media paths to the stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
@@ -60,6 +68,16 @@
           {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
       when:
         - app_config.hosting.method == 'docker'
+        - app_config.app.mounts | default([], true) | length > 0
+    - name: Attach Bazarr media paths to the native guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
+        attach_mounts_owner: >-
+          {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
+      when:
+        - app_config.hosting.method == 'native'
         - app_config.app.mounts | default([], true) | length > 0
 
 - name: "Bazarr | Prepare Kubernetes"
@@ -102,10 +120,11 @@
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Bazarr
       ansible.builtin.include_role:
         name: bazarr
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Bazarr | Deploy on Kubernetes"
   hosts: localhost
@@ -137,7 +156,7 @@
         name: homelabinfra_infra
       failed_when: false
     - name: Record the Bazarr media registry entry
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"

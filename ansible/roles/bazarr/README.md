@@ -4,6 +4,11 @@ Bazarr defaults to Docker on the `media` VM stack. An instance can select a
 Docker LXC stack through the [instance example](../../../config.example/apps/bazarr.example.yml);
 stack provisioning, media mounts and wiring use the same shared operations for both guest types.
 
+With `hosting.method: native` Bazarr runs from the pinned upstream `bazarr.zip` release
+(`app.native_version`) in a virtualenv under a systemd unit, on a dedicated LXC or VM chosen
+by `proxmox.guest_type`; `app.image` pins the same version for Docker. `restore-guest.yml`
+serves both guest kinds.
+
 With `hosting.method: kubernetes` Bazarr runs in its own namespace: the config volume
 uses the cluster's default StorageClass, and each `app.mounts` entry is mounted from the
 NFS export the Proxmox node already uses, at the same container path, through

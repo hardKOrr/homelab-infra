@@ -11,3 +11,10 @@
 # stack: media-lxc
 # To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
 # stack line). app.mounts are mounted from their existing NFS exports at the same paths.
+# To run Bazarr natively on its own guest instead of Docker, set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc     # or vm; both use the same install and systemd service
+# Native installation uses upstream's Linux release:
+# https://wiki.bazarr.media/Getting-Started/Installation/Linux/linux/

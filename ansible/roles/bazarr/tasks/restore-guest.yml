@@ -1,5 +1,6 @@
 ---
-# Restore one application-consistent Bazarr config archive through the shared swap.
+# Restore one application-consistent Bazarr config archive through the shared swap, on a
+# Docker stack host or a native guest.
 
 - name: Bazarr restore | Assert the restore contract
   ansible.builtin.assert:
@@ -16,7 +17,7 @@
 - name: Bazarr restore | Preview or replace the config directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.config_path }}"
@@ -24,6 +25,6 @@
         group: "{{ app_config.app.pgid }}"
         mode: "0750"
     recovery_swap_stop_services: ["{{ instance }}"]
-    recovery_swap_compose_project: "/opt/{{ instance }}"
+    recovery_swap_compose_project: "{{ bazarr_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

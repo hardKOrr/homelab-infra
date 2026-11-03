@@ -20,7 +20,7 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/bazarr.yml")["bazarr_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     client = defaults["backup"]["client"]
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
@@ -30,7 +30,7 @@ def main():
     docker = plays["Bazarr | Deploy"]
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "bazarr"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in docker["tasks"]
     )
     kube = plays["Bazarr | Deploy on Kubernetes"]
@@ -61,7 +61,7 @@ def main():
     assert "'mount_path': share.path" in shares and "'read_only': false" in shares
 
     restore = read_yaml("ansible/roles/bazarr/tasks/restore.yml")
-    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-docker.yml")
+    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     shared = read_yaml("ansible/roles/bazarr/tasks/restore-kubernetes.yml")
     restore_job = shared[0]
     assert "tasks/kubernetes/recovery-restore.yml" in restore_job["ansible.builtin.include_tasks"]

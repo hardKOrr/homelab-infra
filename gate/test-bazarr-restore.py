@@ -59,12 +59,13 @@ def run_hook(hook, stage, port, extra_tasks=()):
 
 
 def check_swap(server):
-    swap = swap_inputs("bazarr", "restore-docker.yml")
+    swap = swap_inputs("bazarr", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
     assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
-    assert swap["recovery_swap_compose_project"] == "/opt/{{ instance }}"
+    assert swap["recovery_swap_compose_project"] == "{{ bazarr_project_dir }}"
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method }}"
     with tempfile.TemporaryDirectory() as directory:
         stage = Path(directory)
         result = run_hook("staged", stage, server.server_port)
@@ -90,6 +91,7 @@ def main():
     try:
         # Deploy and Restore must read the same nested YAML credential.
         deploy = yaml.safe_load((repo / "ansible/roles/bazarr/tasks/main.yml").read_text())
+        ready = next(t for t in deploy if t["name"] == "Read the generated Bazarr configuration")["until"]
         restore = yaml.safe_load((role / "tasks/restore-staged.yml").read_text())
         for tasks, extract_name, guard_name in [
             (deploy, "Extract the Bazarr API key", "Assert Bazarr generated an API key"),
@@ -106,7 +108,9 @@ def main():
                         "hosts": "localhost", "gather_facts": False,
                         "vars": {"_bazarr_config": {"content": base64.b64encode(
                             config.encode()).decode()}},
-                        "tasks": [extract, {"ansible.builtin.assert": {
+                        "tasks": ([{"ansible.builtin.assert": {"that": [
+                            f"({ready}) == {bool(expected)}",
+                        ]}}] if tasks is deploy else []) + [extract, {"ansible.builtin.assert": {
                             "that": [f"_bazarr_api_key == '{expected}'"]}}, {
                             "block": [guard, {"ansible.builtin.assert": {"that": [bool(expected)]}}],
                             "rescue": [{"ansible.builtin.assert": {"that": [
