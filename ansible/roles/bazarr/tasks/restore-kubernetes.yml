@@ -1,6 +1,6 @@
 ---
 # Replace the target's config PVC through the shared Kubernetes recovery Job. The NFS
-# media shares are not part of the archive. Deploy republishes the restored API key.
+# media shares are not part of the archive. Publish the restored API key after the shared restore starts the target.
 - name: Bazarr Kubernetes restore | Restore the config volume
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
   vars:
@@ -18,4 +18,12 @@
       verify:
         - >-
           Open the Bazarr URL and verify the restored settings and language profiles, then
-          run Deploy so the restored API key is published.
+          confirm the restored API key works.
+
+- name: Bazarr Kubernetes restore | Verify and publish the restored API key
+  ansible.builtin.include_tasks: kubernetes-key.yml
+  vars:
+    bazarr_key_instance: "{{ restore_target }}"
+    bazarr_key_fqdn: >-
+      {{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
+  when: _application_restore_complete | default(false) | bool

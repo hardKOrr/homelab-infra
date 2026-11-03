@@ -49,61 +49,8 @@
       - "deployment/{{ instance }}"
     k8s_wait_timeout: 600
 
-- name: Bazarr Kubernetes | Read the generated configuration
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - --namespace
-      - "{{ k8s_namespace }}"
-      - exec
-      - "deployment/{{ instance }}"
-      - --
-      - cat
-      - /config/config/config.yaml
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _bazarr_k8s_config
-  until: _bazarr_k8s_config.rc == 0
-  retries: 30
-  delay: 2
-  changed_when: false
-  no_log: true
-
-- name: Bazarr Kubernetes | Extract and verify the API key
-  ansible.builtin.set_fact:
-    _bazarr_api_key: >-
-      {{ ((_bazarr_k8s_config.stdout | from_yaml).auth | default({})).apikey | default('') }}
-  no_log: true
-
-- name: Bazarr Kubernetes | Assert Bazarr generated an API key
-  ansible.builtin.assert:
-    that: _bazarr_api_key | length > 0
-  no_log: true
-
-- name: Bazarr Kubernetes | Verify the authenticated settings API
-  ansible.builtin.uri:
-    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/system/settings"
-    headers:
-      Host: "{{ bazarr_fqdn }}"
-      X-API-KEY: "{{ _bazarr_api_key }}"
-      Accept: application/json
-    status_code: 200
-  register: _bazarr_settings
-  until: _bazarr_settings.status | default(0) == 200
-  retries: 30
-  delay: 2
-  changed_when: false
-  no_log: true
-
-- name: Bazarr Kubernetes | Store the API key
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/media/{{ instance }}"
-    vault_item_fields:
-      api_key: "{{ _bazarr_api_key }}"
-    vault_item_secret_fields: [api_key]
-  no_log: true
+- name: Bazarr Kubernetes | Verify and publish the running API key
+  ansible.builtin.include_tasks: kubernetes-key.yml
 
 - name: Bazarr Kubernetes | Schedule its application-consistent backup
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
