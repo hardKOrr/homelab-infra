@@ -28,6 +28,14 @@
     fail_msg: Native applications require a dedicated owned guest, not a shared guest or template.
   loop: "{{ _existing_hosts }}"
 
+- name: Native guest | Keep the existing host's node for downstream operations
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': hostvars[_existing_hosts[0]].proxmox_node
+         }}, recursive=True) }}
+  when: _existing_hosts | length > 0
+
 - name: Native guest | Reuse the existing host
   ansible.builtin.add_host:
     name: "{{ _existing_hosts[0] }}"

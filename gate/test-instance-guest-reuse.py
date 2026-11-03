@@ -40,6 +40,11 @@ def guest(name="ntfy", vmtype="lxc", tags=None):
 
 def run_case(guests, expected=None, failure=None, guest_type=""):
     assert ANSIBLE_PLAYBOOK, "ansible-playbook executable is not configured"
+    provision = yaml.safe_load(
+        (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
+    )
+    keep_node = next(task for task in provision if task["name"] ==
+                     "Native guest | Keep the existing host's node for downstream operations")
     with tempfile.TemporaryDirectory(prefix="homelab-instance-guest.") as directory:
         root = Path(directory)
         tagged = {
@@ -58,7 +63,10 @@ def run_case(guests, expected=None, failure=None, guest_type=""):
             }
         }
         (root / "inventory.yml").write_text(yaml.safe_dump(inventory), encoding="utf-8")
-        variables = {"resolve_guest_instance": "ntfy"}
+        variables = {
+            "resolve_guest_instance": "ntfy",
+            "homelabinfra_config": {"proxmox": {"node": "pve-b", "storage": "keep-storage"}},
+        }
         if guest_type:
             variables["resolve_guest_type"] = guest_type
         (root / "resolve.yml").write_text(yaml.safe_dump([{
@@ -68,6 +76,13 @@ def run_case(guests, expected=None, failure=None, guest_type=""):
             "tasks": [
                 {"ansible.builtin.include_tasks": str(RESOLVER)},
                 {"ansible.builtin.assert": {"that": [f"resolve_guest_hosts == {expected!r}"]}},
+                {"ansible.builtin.set_fact": {"_existing_hosts": "{{ resolve_guest_hosts }}"}},
+                keep_node,
+                {"ansible.builtin.assert": {"that": [
+                    "homelabinfra_config.proxmox.node == "
+                    "('pve-a' if resolve_guest_hosts | length > 0 else 'pve-b')",
+                    "homelabinfra_config.proxmox.storage == 'keep-storage'",
+                ]}},
             ],
         }]), encoding="utf-8")
         result = subprocess.run(
