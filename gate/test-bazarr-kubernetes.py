@@ -21,6 +21,9 @@ def main():
     defaults = read_yaml("ansible/vars/app-defaults/bazarr.yml")["bazarr_defaults"]
     assert defaults["hosting"]["method"] == "docker"
     assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    client = defaults["backup"]["client"]
+    for key in ("image", "key_url", "repository", "suite", "component"):
+        assert client.get(key), f"backup.client.{key} missing"
 
     playbook = read_yaml("ansible/playbooks/apps/bazarr.yml")
     plays = {play["name"]: play for play in playbook}
