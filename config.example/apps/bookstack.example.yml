@@ -26,3 +26,9 @@ backup:
 # /config data (page attachments, images, themes and generated state). Use the generated
 # Backup BookStack and Restore BookStack jobs; neither operation changes the shared
 # backend guest or any other database.
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.services-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: services-lxc

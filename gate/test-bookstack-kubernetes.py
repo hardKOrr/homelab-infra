@@ -88,7 +88,7 @@ def check_defaults_and_dispatch():
         (ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text(encoding="utf-8")
     )["bookstack_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
