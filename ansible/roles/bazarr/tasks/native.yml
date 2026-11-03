@@ -1,0 +1,141 @@
+---
+# Bazarr's Linux install: the bazarr.zip release unpacked beside a virtualenv holding its
+# requirements.txt (https://wiki.bazarr.media/Getting-Started/Installation/Linux/linux/).
+# Each version has its own directory and virtualenv, so a failed upgrade leaves the
+# running install in place; the marker is written last.
+- name: Bazarr | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Bazarr | Install native prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, unzip, python3, python3-venv, python3-dev, build-essential, libxml2-dev, libxslt1-dev, ffmpeg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Bazarr | Create the native system group
+  ansible.builtin.group:
+    name: "{{ bazarr_native_user }}"
+    gid: "{{ app_config.app.pgid }}"
+    system: true
+
+- name: Bazarr | Create the native system account
+  ansible.builtin.user:
+    name: "{{ bazarr_native_user }}"
+    uid: "{{ app_config.app.puid }}"
+    group: "{{ bazarr_native_user }}"
+    home: "{{ app_config.app.config_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Bazarr | Create the native directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ bazarr_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.config_path }}", owner: "{{ bazarr_native_user }}", mode: "0750"}
+
+- name: Bazarr | Check the native install marker
+  ansible.builtin.stat:
+    path: "{{ bazarr_native_dir }}/.installed"
+  register: _bazarr_native_installed
+
+- name: Bazarr | Install the pinned release
+  when: not _bazarr_native_installed.stat.exists
+  block:
+    - name: Bazarr | Download the pinned release
+      ansible.builtin.get_url:
+        url: "https://github.com/morpheus65535/bazarr/releases/download/v{{ app_config.app.native_version }}/bazarr.zip"
+        dest: "/var/cache/bazarr-{{ app_config.app.native_version }}.zip"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Bazarr | Clear a partial unpack
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: ["{{ bazarr_native_dir }}", "{{ bazarr_native_venv }}"]
+
+    - name: Bazarr | Create the release directory
+      ansible.builtin.file:
+        path: "{{ bazarr_native_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Bazarr | Unpack the release
+      ansible.builtin.unarchive:
+        src: "/var/cache/bazarr-{{ app_config.app.native_version }}.zip"
+        dest: "{{ bazarr_native_dir }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: u=rwX,go=rX
+
+    - name: Bazarr | Install the Python requirements
+      ansible.builtin.pip:
+        requirements: "{{ bazarr_native_dir }}/requirements.txt"
+        virtualenv: "{{ bazarr_native_venv }}"
+        virtualenv_command: python3 -m venv
+
+    - name: Bazarr | Record the completed install
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ bazarr_native_dir }}/.installed"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart native bazarr
+
+- name: Bazarr | Render the native service
+  ansible.builtin.template:
+    src: bazarr.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart native bazarr
+
+- name: Bazarr | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Bazarr | Apply pending native restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Bazarr | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ instance | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Bazarr | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

@@ -4,3 +4,9 @@
     project_src: "/opt/{{ instance }}"
     state: present
     recreate: always
+
+- name: Restart native bazarr
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true

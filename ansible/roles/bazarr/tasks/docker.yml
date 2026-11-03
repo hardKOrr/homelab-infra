@@ -1,0 +1,31 @@
+---
+- name: Create Bazarr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "/opt/{{ instance }}"
+    - "{{ app_config.app.config_path }}"
+
+- name: Write the Bazarr Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart bazarr
+
+- name: Pull the Bazarr image
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+    policy: missing
+  changed_when: false
+
+- name: Start Bazarr
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending Bazarr restarts
+  ansible.builtin.meta: flush_handlers

@@ -16,15 +16,6 @@
       - _bazarr_kind in media_wiring.kinds
       - media_wiring.kinds[_bazarr_kind].role == 'subtitles'
 
-- name: Create Bazarr directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    mode: "0750"
-  loop:
-    - "/opt/{{ instance }}"
-    - "{{ app_config.app.config_path }}"
-
 - name: Verify media paths are present on the stack host
   ansible.builtin.stat:
     path: "{{ item.path }}"
@@ -37,27 +28,13 @@
     fail_msg: "{{ item.item.path }} is not present on the media stack host."
   loop: "{{ _bazarr_mount_checks.results }}"
 
-- name: Write the Bazarr Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "/opt/{{ instance }}/docker-compose.yml"
-    mode: "0640"
-  notify: Restart bazarr
+- name: Deploy the Docker service
+  ansible.builtin.include_tasks: docker.yml
+  when: app_config.hosting.method == 'docker'
 
-- name: Pull the Bazarr image
-  community.docker.docker_compose_v2_pull:
-    project_src: "/opt/{{ instance }}"
-    policy: missing
-  changed_when: false
-
-- name: Start Bazarr
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending Bazarr restarts
-  ansible.builtin.meta: flush_handlers
+- name: Deploy the native service
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method == 'native'
 
 - name: Read the generated Bazarr configuration
   ansible.builtin.slurp:

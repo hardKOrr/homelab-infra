@@ -1,0 +1,5 @@
+---
+bazarr_project_dir: "/opt/{{ instance }}"
+bazarr_native_user: bazarr
+bazarr_native_dir: "{{ bazarr_project_dir }}/bazarr-{{ app_config.app.native_version }}"
+bazarr_native_venv: "{{ bazarr_project_dir }}/venv-{{ app_config.app.native_version }}"

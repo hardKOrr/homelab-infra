@@ -1,0 +1,20 @@
+[Unit]
+Description=Bazarr ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ bazarr_native_user }}
+Group={{ bazarr_native_user }}
+WorkingDirectory={{ bazarr_native_dir }}
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+ExecStart={{ bazarr_native_venv }}/bin/python {{ bazarr_native_dir }}/bazarr.py --no-update --config {{ app_config.app.config_path }} --port {{ app_config.app.port }}
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -5,17 +5,17 @@
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Bazarr restore | Use the Docker restore swap
-  ansible.builtin.include_tasks: restore-docker.yml
+- name: Bazarr restore | Use the guest restore swap
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('docker')) == 'docker'
+    | default(app_config.hosting.method | default('docker')) in ['docker', 'native']
 
 - name: Bazarr restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
     that: >-
       restore_target_config.hosting.method
-      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'native', 'kubernetes']
     fail_msg: >-
-      Bazarr recovery supports hosting.method docker or kubernetes; refusing to mutate a
+      Bazarr recovery supports hosting.method docker, native or kubernetes; refusing to mutate a
       target hosted by an unsupported method.

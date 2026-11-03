@@ -2,7 +2,7 @@
 bazarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
   recovery:
@@ -13,7 +13,10 @@ bazarr_defaults:
 
   app:
     media_kind: bazarr
-    image: "lscr.io/linuxserver/bazarr:latest"
+    # One exact upstream version for both methods: the Docker image tag and the native
+    # bazarr.zip release.
+    image: "lscr.io/linuxserver/bazarr:v1.6.2-ls370"
+    native_version: "1.6.2"
     port: 6767
     # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
     storage: 2
@@ -23,6 +26,14 @@ bazarr_defaults:
     mounts: >-
       {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts
          | default([], true) }}
+  # Used only when hosting.method is native.
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 1024
+    disk_volume:
+      size: 8
+
   routing:
     subdomain: bazarr
     proxy: internal
