@@ -1,6 +1,6 @@
 ---
 # Deploy BookStack through the hosting method selected by hosting.method. Existing configs
-# keep Docker on the services VM; Kubernetes has no per-app guest.
+# keep Docker on the services VM; Docker on an LXC is selected by an LXC stack; Kubernetes has no per-app guest.
 #
 # The named MariaDB/MySQL backend must already be deployed. Database provisioning records
 # its generated role password before either application backend receives it.
@@ -126,6 +126,10 @@
     - name: Bootstrap the Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy BookStack
       ansible.builtin.include_role:
         name: bookstack
