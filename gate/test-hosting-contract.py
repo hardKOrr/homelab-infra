@@ -24,6 +24,7 @@ METHODS = {"docker", "kubernetes", "native"}
 EXTRA_IMPLEMENTED = {
     "actual-budget": {"docker-lxc"},
     "authentik": {"docker-lxc"},
+    "bazarr": {"docker-lxc"},
     "mariadb": {"native-vm"},
 }
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
@@ -242,6 +243,8 @@ def main():
     check_rendered_defaults(expected_by_slug)
     check_unsupported_fails_before_state_change()
     check_mariadb_vm_instance_override()
+    result = run_ansible("hosting-bazarr.yml")
+    assert result.returncode == 0, result.stdout + result.stderr
     print(f"Hosting contract passed for {len(paths)} app defaults and preflight refusal.")
 
 
