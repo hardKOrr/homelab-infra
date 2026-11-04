@@ -7,7 +7,7 @@
 comfyui_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
 
   recovery:
@@ -33,6 +33,8 @@ comfyui_defaults:
     accelerator: cuda
     image: ghcr.io/ai-dock/comfyui:latest-cuda
     port: 8188
+    # Storage claim size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 100
     service_name: comfyui
     # A blank mapping name is deliberate: the deploy must name the dedicated GPU
     # declaration in proxmox.devices. No device is selected automatically.
@@ -63,3 +65,9 @@ comfyui_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

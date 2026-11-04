@@ -1,0 +1,37 @@
+---
+# Restore one ComfyUI archive (models and user state) on a Docker guest through the shared
+# swap. The storage root stays root's; Deploy's storage-ownership.yml gives its directories
+# to the runtime user.
+- name: ComfyUI restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      ComfyUI restore needs a PBS-backed application recovery contract. Keep overwrite=false
+      to list snapshots before selecting one.
+
+- name: ComfyUI restore | Preview or replace the storage tree
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.storage_path }}"
+        owner: 0
+        group: 0
+        mode: "0750"
+    recovery_swap_stop_services: [comfyui]
+    recovery_swap_compose_project: "{{ comfyui_project_dir }}"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/storage-ownership.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/system_stats"
+    recovery_swap_health_status: [200, 302]
+    recovery_swap_health_follow_redirects: none
+    recovery_swap_health_retries: >-
+      {{ comfyui_cpu_http_retries
+         if app_config.app.accelerator | default('cuda') == 'cpu'
+         else comfyui_http_retries }}
+    recovery_swap_health_delay: "{{ comfyui_http_delay }}"
