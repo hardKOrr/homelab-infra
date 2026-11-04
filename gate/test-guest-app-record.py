@@ -111,8 +111,9 @@ def main():
         assert "['_' ~ instance]" in create_identity
 
         wire = next(play for play in plays if play["name"] == f"{display} | Wire")
-        wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM")
+        wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM" if app == "ollama" else f"Record {display} on its Docker guest")
         assert wire_record["vars"]["record_guest_kind"] == "docker"
+        assert "when" not in wire_record
 
     helper = load_helper()
     resources = [

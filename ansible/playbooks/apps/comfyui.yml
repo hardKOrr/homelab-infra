@@ -178,11 +178,10 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record ComfyUI on its dedicated Docker VM
+    - name: Record ComfyUI on its Docker guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_kind: docker
-      when: _comfyui_deploy_host.app_config.stack | default('', true) | length == 0
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
