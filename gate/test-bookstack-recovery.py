@@ -29,6 +29,7 @@ RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 REMOVE = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
 BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
+BOOKSTACK_DOCKER = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/docker.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
@@ -142,12 +143,12 @@ def check_admin_email_contract():
 
 
 def check_backup_scheduler_contract():
-    names = [task.get("name") for task in BOOKSTACK_ROLE]
-    install = next(task for task in BOOKSTACK_ROLE
+    names = [task.get("name") for task in BOOKSTACK_DOCKER]
+    install = next(task for task in BOOKSTACK_DOCKER
                    if task.get("name") == "BookStack | Install cron for recovery scheduling")
-    service = next(task for task in BOOKSTACK_ROLE
+    service = next(task for task in BOOKSTACK_DOCKER
                    if task.get("name") == "BookStack | Ensure cron is running for recovery scheduling")
-    schedule = next(task for task in BOOKSTACK_ROLE
+    schedule = next(task for task in BOOKSTACK_DOCKER
                     if task.get("name") == "BookStack | Schedule application-consistent backup")
     assert install["ansible.builtin.apt"] == {"name": "cron", "state": "present"}
     assert service["ansible.builtin.service"] == {"name": "cron", "state": "started", "enabled": True}
@@ -164,8 +165,8 @@ def check_restore_contract():
     assert swap["recovery_swap_archives"] == ["database.pxar", "storage.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _bookstack_restore_data_path }}", "source": "storage",
-        "owner": "{{ app_config.app.puid }}", "group": "{{ app_config.app.pgid }}", "mode": "0750"}]
-    deployed = next(task for task in BOOKSTACK_ROLE
+        "owner": "{{ bookstack_owner }}", "group": "{{ bookstack_group }}", "mode": "0750"}]
+    deployed = next(task for task in BOOKSTACK_DOCKER
                     if task.get("name") == "BookStack | Create project and durable data directories")
     assert {"path": "{{ app_config.app.data_path }}", "owner": "{{ app_config.app.puid }}",
             "group": "{{ app_config.app.pgid }}", "mode": "0750"} in deployed["loop"], \
@@ -174,7 +175,9 @@ def check_restore_contract():
         "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
     assert swap["recovery_swap_backup_id"] == swap["recovery_swap_pre_restore_backup_id"] \
         == "{{ _bookstack_restore_backup_id }}"
-    assert swap["recovery_swap_stop_services"] == ["bookstack"]
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method }}"
+    assert swap["recovery_swap_stop_services"] == \
+        "{{ bookstack_native_services if bookstack_native | bool else ['bookstack'] }}"
     assert swap["recovery_swap_health_url"].endswith("/login")
     restore = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/restore.yml").read_text())
     age = next(task for task in restore if "require-recent-pre-restore-point" in
@@ -251,7 +254,33 @@ def check_backup(case):
             assert subprocess.run([str(RECOVERY), mode], env=environment, capture_output=True).returncode == 2
 
 
+def check_native_contract():
+    """Native backup uses the shared PBS backup and database dump, and the archives the
+    Docker helper writes, so one restore reads either; the install is the pinned manual one."""
+    backup = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/backup.yml").read_text())
+    run = next(task for task in backup if "pbs-client-backup" in
+               str(task.get("ansible.builtin.include_tasks", "")) or "block" in task)
+    run = next(t for t in run["block"] if "pbs-client-backup" in str(t.get("ansible.builtin.include_tasks", "")))
+    assert run["vars"]["pbs_client_runtime"] == "native"
+    assert [a["name"] for a in run["vars"]["pbs_client_archives"]] == ["database.pxar", "storage.pxar"]
+    hook = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/backup-quiesced.yml").read_text())[0]
+    assert "tasks/database/dump.yml" in hook["ansible.builtin.include_tasks"]
+    assert hook["vars"]["database_client_runtime"] == "native"
+    assert hook["vars"]["database_dump_file"].endswith("/database.sql"), "restore reads database/database.sql"
+    native = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/native.yml").read_text())
+    block = next(task for task in native if task.get("name") == "BookStack | Install the pinned release")["block"]
+    clone = next(t for t in block if "ansible.builtin.git" in t)["ansible.builtin.git"]
+    assert clone["version"] == "v{{ app_config.app.native_version }}"
+    assert BOOKSTACK_DEFAULTS["app"]["native_version"] == "26.05.3"
+    assert BOOKSTACK_DEFAULTS["app"]["image"].endswith("version-v26.05.3")
+    composer = next(t for t in block if "ansible.builtin.command" in t)["ansible.builtin.command"]["argv"]
+    assert composer[:3] == ["composer", "install", "--no-dev"]
+    client = (ROOT / "ansible/tasks/database/run-client.yml").read_text()
+    assert "_database_client_runtime == 'native'" in client
+
+
 def main():
+    check_native_contract()
     check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()

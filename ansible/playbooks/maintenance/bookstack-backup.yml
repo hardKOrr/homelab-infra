@@ -1,7 +1,7 @@
 ---
-# Run BookStack's application-consistent recovery helper on the hosting backend selected
-# for this instance. Both the scheduled and on-demand Kubernetes paths use the same
-# CronJob pod template; both backends briefly stop only this BookStack instance.
+# Run BookStack's application-consistent backup on the hosting backend selected for this
+# instance: the recovery helper on Docker, the role's backup task on a native guest, or the
+# deployed CronJob on Kubernetes. Each briefly stops only this BookStack instance.
 
 - name: "BookStack Backup | Resolve"
   hosts: localhost
@@ -27,6 +27,10 @@
           {{ _app_defaults.bookstack_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+        _bookstack_merged_config: >-
+          {{ _app_defaults.bookstack_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
       no_log: true
     - ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -40,6 +44,18 @@
         resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
         resolve_stack_app_instance: "{{ instance }}"
       when: app_config.hosting.method == 'docker'
+
+    - name: Resolve the native guest
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        app: bookstack
+        resolve_app_target_kinds: [native]
+      when: app_config.hosting.method == 'native'
+
+    - name: Keep the merged BookStack config
+      ansible.builtin.set_fact:
+        app_config: "{{ _bookstack_merged_config }}"
+      when: app_config.hosting.method == 'native'
 
     - name: Resolve the PBS target for a Kubernetes backup
       ansible.builtin.include_tasks: ../../tasks/backup/resolve-pbs-target.yml
@@ -69,6 +85,21 @@
       changed_when: true
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
+- name: "BookStack Backup | Run on a native guest"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Run the native BookStack backup
+      ansible.builtin.include_role:
+        name: bookstack
+        tasks_from: backup
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
+
 - name: "BookStack Backup | Notify"
   hosts: localhost
   gather_facts: false
@@ -87,6 +118,9 @@
         (app_config.hosting.method == 'docker'
          and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0)
         or
+        (app_config.hosting.method == 'native'
+         and hostvars[groups['apptarget_' ~ instance][0]]._application_backup_complete | default(false) | bool)
+        or
         (app_config.hosting.method == 'kubernetes'
          and bookstack_backup_result.rc | default(1) == 0)
     - name: Fail if BookStack backup did not complete
@@ -94,6 +128,9 @@
         that: >-
           (app_config.hosting.method == 'docker'
            and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_backup_result.rc | default(1) == 0)
+          or
+          (app_config.hosting.method == 'native'
+           and hostvars[groups['apptarget_' ~ instance][0]]._application_backup_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'
            and bookstack_backup_result.rc | default(1) == 0)

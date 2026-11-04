@@ -88,7 +88,8 @@ def check_defaults_and_dispatch():
         (ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text(encoding="utf-8")
     )["bookstack_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == [
+        "docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
@@ -130,7 +131,8 @@ def check_defaults_and_dispatch():
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "bookstack-kubernetes"
         and task["ansible.builtin.include_role"].get("tasks_from") == "restore.yml"
-        for task in restore[2]["tasks"]
+        for task in next(play for play in restore
+                         if play["name"] == "BookStack Restore | Run on Kubernetes")["tasks"]
     )
 
     remove = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())

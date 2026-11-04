@@ -1,0 +1,59 @@
+---
+# Create the initial administrator once, over either hosting method. The caller sets
+# nothing; bookstack_artisan and its chdir/user (defaults/main.yml) are the method's artisan
+# command.
+
+# BookStack's supported create-admin command updates the known default account on a new
+# install and returns 2 when a non-default admin already exists. The marker is deliberately
+# non-secret and lives in /config, so a missing Vaultwarden password cannot silently mint a
+# replacement that does not unlock the existing account.
+- name: BookStack | Check administrator initialization marker
+  ansible.builtin.stat:
+    path: "{{ bookstack_admin_marker }}"
+  register: _bookstack_admin_marker
+
+- name: BookStack | Read administrator initialization marker
+  ansible.builtin.slurp:
+    src: "{{ bookstack_admin_marker }}"
+  register: _bookstack_admin_marker_content
+  when: _bookstack_admin_marker.stat.exists
+
+- name: BookStack | Validate administrator credentials after initialization
+  ansible.builtin.assert:
+    that: >-
+      ((homelabinfra_vault.apps | default({})).get(instance, {}).admin_password | default('', true) | length > 0
+      or not _bookstack_admin_marker.stat.exists)
+      and (not _bookstack_admin_marker.stat.exists
+      or _bookstack_admin_marker_content.content | b64decode | trim == app_config.app.admin_user)
+    fail_msg: >-
+      BookStack {{ instance }} is already initialized but its administrator password is
+      missing from Vaultwarden item homelab-infra/apps/{{ instance }}, or app.admin_user
+      no longer matches the initial administrator recorded in {{ bookstack_admin_marker }}.
+      Restore the Vaultwarden item and original admin_user before rerunning the deploy.
+  no_log: true
+
+- name: BookStack | Initialize the administrator without printing credentials
+  ansible.builtin.command:
+    argv: >-
+      {{ bookstack_artisan + ['bookstack:create-admin', '--initial',
+         '--email=' ~ app_config.app.admin_user, '--name=' ~ app_config.app.admin_name,
+         '--password=' ~ _bookstack_admin_password] }}
+    chdir: "{{ bookstack_artisan_chdir }}"
+  become_user: "{{ bookstack_artisan_user }}"
+  register: _bookstack_admin_create
+  changed_when: _bookstack_admin_create.rc == 0
+  failed_when: _bookstack_admin_create.rc not in [0, 2]
+  no_log: true
+  when: not _bookstack_admin_marker.stat.exists
+
+- name: BookStack | Record administrator initialization
+  ansible.builtin.copy:
+    dest: "{{ bookstack_admin_marker }}"
+    content: "{{ app_config.app.admin_user }}\n"
+    owner: "{{ bookstack_owner }}"
+    group: "{{ bookstack_group }}"
+    mode: "0600"
+  when:
+    - not _bookstack_admin_marker.stat.exists
+    - _bookstack_admin_create.rc | default(2) == 0
+  no_log: true

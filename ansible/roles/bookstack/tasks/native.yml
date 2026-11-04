@@ -1,0 +1,193 @@
+---
+# BookStack's manual install: a `git clone` of the release at the pinned tag and
+# `composer install --no-dev`, served by nginx and PHP-FPM
+# (https://www.bookstackapp.com/docs/admin/installation/#manual-installation).
+# Each version has its own release directory, so a failed upgrade leaves the running one in
+# place; the install marker is written last. Uploads and themes live in app.data_path, which
+# the recovery archive covers; the environment file stays in the project directory.
+- name: BookStack | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: BookStack | Install native prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git, unzip, composer, nginx, php-cli, php-fpm, php-curl, php-gd, php-mbstring, php-mysql, php-xml, php-zip]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: BookStack | Name the PHP-FPM unit
+  ansible.builtin.include_tasks: php-version.yml
+
+- name: BookStack | Create the project and durable data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ bookstack_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.data_path }}", owner: "{{ bookstack_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/public-uploads", owner: "{{ bookstack_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/storage-uploads", owner: "{{ bookstack_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/themes", owner: "{{ bookstack_native_user }}", mode: "0750"}
+
+- name: BookStack | Render environment file
+  ansible.builtin.template:
+    src: bookstack.env.j2
+    dest: "{{ bookstack_env_file }}"
+    owner: root
+    group: "{{ bookstack_native_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart native BookStack
+
+- name: BookStack | Check the native install marker
+  ansible.builtin.stat:
+    path: "{{ bookstack_native_release }}/.installed"
+  register: _bookstack_native_installed
+
+- name: BookStack | Install the pinned release
+  when: not _bookstack_native_installed.stat.exists
+  block:
+    - name: BookStack | Clear a partial install
+      ansible.builtin.file:
+        path: "{{ bookstack_native_release }}"
+        state: absent
+
+    - name: BookStack | Clone the pinned release
+      ansible.builtin.git:
+        repo: https://github.com/BookStackApp/BookStack.git
+        dest: "{{ bookstack_native_release }}"
+        version: "v{{ app_config.app.native_version }}"
+        depth: 1
+
+    - name: BookStack | Drop the release's own state directories
+      ansible.builtin.file:
+        path: "{{ bookstack_native_release }}/{{ item }}"
+        state: absent
+      loop: [public/uploads, storage/uploads, themes]
+
+    - name: BookStack | Replace the release's state directories with the durable ones
+      ansible.builtin.file:
+        path: "{{ bookstack_native_release }}/{{ item.link }}"
+        src: "{{ item.target }}"
+        state: link
+        force: true
+      loop:
+        - {link: .env, target: "{{ bookstack_env_file }}"}
+        - {link: public/uploads, target: "{{ app_config.app.data_path }}/public-uploads"}
+        - {link: storage/uploads, target: "{{ app_config.app.data_path }}/storage-uploads"}
+        - {link: themes, target: "{{ app_config.app.data_path }}/themes"}
+
+    - name: BookStack | Install the PHP dependencies
+      ansible.builtin.command:
+        argv: [composer, install, --no-dev, --no-interaction, --prefer-dist, --optimize-autoloader]
+        chdir: "{{ bookstack_native_release }}"
+      environment:
+        COMPOSER_ALLOW_SUPERUSER: "1"
+        COMPOSER_HOME: /var/cache/composer
+      changed_when: true
+
+    - name: BookStack | Give the web user the writable directories
+      ansible.builtin.file:
+        path: "{{ bookstack_native_release }}/{{ item }}"
+        state: directory
+        owner: "{{ bookstack_native_user }}"
+        group: "{{ bookstack_native_user }}"
+        recurse: true
+      loop: [storage, bootstrap/cache]
+
+    - name: BookStack | Record the completed install
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ bookstack_native_release }}/.installed"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart native BookStack
+
+- name: BookStack | Point current at the pinned release
+  ansible.builtin.file:
+    src: "{{ bookstack_native_release }}"
+    dest: "{{ bookstack_native_current }}"
+    state: link
+    force: true
+  notify: Restart native BookStack
+
+- name: BookStack | Render the nginx site
+  ansible.builtin.template:
+    src: bookstack-nginx.conf.j2
+    dest: "/etc/nginx/sites-available/{{ instance }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart native BookStack
+
+- name: BookStack | Enable the nginx site and drop the distribution default
+  ansible.builtin.file:
+    path: "/etc/nginx/sites-enabled/{{ item.name }}"
+    src: "{{ item.src | default(omit) }}"
+    state: "{{ item.state }}"
+  loop:
+    - {name: default, state: absent}
+    - {name: "{{ instance }}", state: link, src: "/etc/nginx/sites-available/{{ instance }}"}
+  notify: Restart native BookStack
+
+- name: BookStack | Apply the schema migrations
+  ansible.builtin.command:
+    argv: [php, artisan, migrate, --force]
+    chdir: "{{ bookstack_native_current }}"
+  become_user: "{{ bookstack_native_user }}"
+  register: _bookstack_migrate
+  changed_when: "'Nothing to migrate' not in _bookstack_migrate.stdout"
+
+- name: BookStack | Enable and start the web services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ bookstack_native_services }}"
+
+- name: BookStack | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: BookStack | Wait for login endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/login"
+    status_code: 200
+  register: _bookstack_health
+  until: _bookstack_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: BookStack | Initialize the administrator
+  ansible.builtin.include_tasks: admin.yml
+
+- name: BookStack | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ bookstack_native_services | map('quote') | join(' ') }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: BookStack | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec tail -n "${1:-50}" {{ (bookstack_native_current ~ '/storage/logs/laravel.log') | quote }}
+    owner: root
+    group: root
+    mode: "0755"

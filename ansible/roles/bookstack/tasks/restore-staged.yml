@@ -1,0 +1,17 @@
+---
+# restore-swap.yml staged hook, checked on a native guest only: refuse an archive that does not hold the
+# native layout (a Docker backup keeps LinuxServer's /config tree), before anything stops.
+- name: BookStack restore | Look for the native upload directories
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/storage/{{ item }}"
+  loop: [public-uploads, storage-uploads, themes]
+  register: _bookstack_restore_layout
+  when: bookstack_native | bool
+
+- name: BookStack restore | Require the native layout
+  ansible.builtin.assert:
+    that: _bookstack_restore_layout.results | map(attribute='stat.isdir', default=false) | select | list | length == 3
+    fail_msg: >-
+      The selected recovery point is not a native BookStack backup (its storage archive
+      lacks public-uploads, storage-uploads and themes). Restore it onto a Docker instance.
+  when: bookstack_native | bool

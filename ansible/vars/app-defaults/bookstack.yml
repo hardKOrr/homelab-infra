@@ -1,10 +1,10 @@
 ---
-# Default configuration for BookStack on the services Docker stack. The application
-# database is deliberately external: deploy the named MariaDB/MySQL backend first.
+# Default configuration for BookStack on the services Docker stack, or on a native guest.
+# The application database is deliberately external: deploy the named MariaDB/MySQL backend first.
 bookstack_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
 
@@ -15,6 +15,8 @@ bookstack_defaults:
     # LinuxServer's version-v tag tracks the upstream BookStack point release without
     # floating on latest (verified against the linuxserver/bookstack package registry).
     image: lscr.io/linuxserver/bookstack:version-v26.05.3
+    # The same release for hosting.method native: a git clone of this tag.
+    native_version: "26.05.3"
     port: 6875
     container_port: 80
     puid: 1000
@@ -32,6 +34,14 @@ bookstack_defaults:
     # accidental change on a later deploy.
     admin_user: admin@example.invalid
     admin_name: Homelab Admin
+
+  # Used only when hosting.method is native. PHP's composer install needs the memory.
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
 
   routing:
     subdomain: bookstack

@@ -1,7 +1,7 @@
 ---
 # Restore BookStack's named database and /config tree from one PBS point (database.pxar,
 # storage.pxar) through the shared swap. Run by playbooks/maintenance/bookstack-restore.yml
-# on the Docker host. A plan lists or previews the point and changes nothing; an overwrite
+# on the Docker host or the native guest. A plan lists or previews the point and changes nothing; an overwrite
 # needs a distinct pre-restore point of this instance, taken within the last hour, and a
 # failure after the stop puts the original tree and database back and starts BookStack.
 
@@ -30,22 +30,27 @@
     recovery_pre_restore_backup_id: "{{ _bookstack_restore_backup_id }}"
   when: restore_overwrite | bool
 
+- name: BookStack restore | Name the native services
+  ansible.builtin.include_tasks: php-version.yml
+  when: bookstack_native | bool
+
 - name: BookStack restore | Preview or replace the /config tree and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_backup_id: "{{ _bookstack_restore_backup_id }}"
     recovery_swap_pre_restore_backup_id: "{{ _bookstack_restore_backup_id }}"
     recovery_swap_archives: [database.pxar, storage.pxar]
     recovery_swap_paths:
       - path: "{{ _bookstack_restore_data_path }}"
         source: storage
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
+        owner: "{{ bookstack_owner }}"
+        group: "{{ bookstack_group }}"
         mode: "0750"
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: database/database.sql
-    recovery_swap_stop_services: [bookstack]
+    recovery_swap_stop_services: "{{ bookstack_native_services if bookstack_native | bool else ['bookstack'] }}"
     recovery_swap_compose_project: "{{ bookstack_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/login"
