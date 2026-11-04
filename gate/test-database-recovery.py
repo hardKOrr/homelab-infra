@@ -30,6 +30,10 @@ CLIENT = DATABASE / "scripts/database-client.sh"
 # Each shim logs its argv (one line) and stdin to $LOG, then plays its engine's part.
 SHIM = """#!/bin/sh
 name=$(basename "$0")
+if [ "$*" = --help ]; then
+  [ "${NO_GTID_OPTION:-0}" = 1 ] || echo '  --set-gtid-purged[=name]'
+  exit 0
+fi
 printf '%s %s\\n' "$name" "$(printf '%s' "$*" | tr '\\n' ' ')" >> "$LOG"
 case "$name" in
   pg_dump)
@@ -105,6 +109,16 @@ def check_postgresql():
         assert result.returncode != 0
         assert not any(call.startswith("psql ") for call in calls), (
             "a failed render must never reach psql")
+
+
+def check_mysql_with_mariadb_dump_client():
+    """A native guest's mysqldump is MariaDB's, which lacks --set-gtid-purged."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        dump = work / "app.sql"
+        result, calls = run_client("mysql", "dump", dump, work, DB_PORT="3306", NO_GTID_OPTION="1")
+        assert result.returncode == 0, result.stderr
+        assert calls[0].startswith("mysqldump ") and "--set-gtid-purged" not in calls[0]
 
 
 def check_mysql_compatible(engine, dump_command, client):
@@ -327,6 +341,7 @@ def main():
     check_postgresql()
     check_mysql_compatible("mariadb", "mariadb-dump", "mariadb")
     check_mysql_compatible("mysql", "mysqldump", "mysql")
+    check_mysql_with_mariadb_dump_client()
     check_inspect_reads_only()
     check_client_refuses_unsafe_input()
     check_ownership_guard()

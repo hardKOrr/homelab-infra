@@ -6,3 +6,20 @@ bookstack_admin_marker: "{{ app_config.app.data_path }}/.homelab-infra-admin"
 bookstack_recovery_config_dir: /etc/homelab-infra/bookstack
 bookstack_recovery_config: "{{ bookstack_recovery_config_dir }}/{{ instance }}.env"
 bookstack_recovery_script: /usr/local/sbin/homelab-infra-bookstack-recovery
+
+# Native hosting (native.yml): one release directory per pinned version beside a `current`
+# link; durable state sits in app.data_path and the environment file in the project directory.
+bookstack_native: "{{ app_config.hosting.method == 'native' }}"
+bookstack_native_user: www-data
+bookstack_native_release: "{{ bookstack_project_dir }}/bookstack-{{ app_config.app.native_version }}"
+bookstack_native_current: "{{ bookstack_project_dir }}/current"
+bookstack_owner: "{{ bookstack_native_user if bookstack_native | bool else app_config.app.puid }}"
+bookstack_group: "{{ bookstack_native_user if bookstack_native | bool else app_config.app.pgid }}"
+
+# The artisan command (admin.yml) and the user and directory it runs as.
+bookstack_artisan: >-
+  {{ ['php', bookstack_native_current ~ '/artisan'] if bookstack_native | bool else
+     ['docker', 'compose', '--project-directory', bookstack_project_dir, 'exec', '-T',
+      'bookstack', 'php', '/app/www/artisan'] }}
+bookstack_artisan_chdir: "{{ bookstack_native_current if bookstack_native | bool else '/' }}"
+bookstack_artisan_user: "{{ bookstack_native_user if bookstack_native | bool else 'root' }}"

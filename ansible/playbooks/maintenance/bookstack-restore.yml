@@ -36,6 +36,10 @@
           {{ _app_defaults.bookstack_defaults
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+        _bookstack_merged_config: >-
+          {{ _app_defaults.bookstack_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
       no_log: true
     - ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -56,6 +60,18 @@
         resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
         resolve_stack_app_instance: "{{ instance }}"
       when: app_config.hosting.method == 'docker'
+
+    - name: Resolve the native guest
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        app: bookstack
+        resolve_app_target_kinds: [native]
+      when: app_config.hosting.method == 'native'
+
+    - name: Keep the merged BookStack config
+      ansible.builtin.set_fact:
+        app_config: "{{ _bookstack_merged_config }}"
+      when: app_config.hosting.method == 'native'
 
 - name: "BookStack Restore | Run on Docker"
   hosts: "bookstack_recovery_{{ instance | default('_instance_unset') }}"
@@ -82,6 +98,32 @@
           {{ _application_restore_complete | default(false) | bool
              or not (overwrite | default(false) | bool) }}
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "BookStack Restore | Run on a native guest"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Plan or perform the BookStack restore
+      ansible.builtin.include_role:
+        name: bookstack
+        tasks_from: restore
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+        restore_overwrite: "{{ overwrite | default(false) | bool }}"
+        restore_snapshot: "{{ snapshot | default('') }}"
+        restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
+        restore_destination: existing
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
+
+    - name: Record the completed BookStack plan or restore
+      ansible.builtin.set_fact:
+        bookstack_restore_complete: >-
+          {{ _application_restore_complete | default(false) | bool
+             or not (overwrite | default(false) | bool) }}
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
 
 - name: "BookStack Restore | Run on Kubernetes"
   hosts: localhost
@@ -111,6 +153,8 @@
         (overwrite | default(false) | bool)
         and ((app_config.hosting.method == 'docker'
               and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
+             or (app_config.hosting.method == 'native'
+                 and hostvars[groups['apptarget_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
              or (app_config.hosting.method == 'kubernetes'
                  and bookstack_restore_result.rc | default(1) == 0))
     - name: Fail if BookStack restore did not complete
@@ -118,6 +162,9 @@
         that: >-
           (app_config.hosting.method == 'docker'
            and hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
+          or
+          (app_config.hosting.method == 'native'
+           and hostvars[groups['apptarget_' ~ instance][0]].bookstack_restore_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'
            and bookstack_restore_result.rc | default(1) == 0)

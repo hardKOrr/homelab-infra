@@ -1,0 +1,12 @@
+---
+# Remove App hook, run after the web services stop on a native guest. The release tree,
+# nginx site and environment file go with delete_data; data_path is deleted by Remove.
+- name: BookStack remove | Delete the project directory and nginx site
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/opt/{{ instance }}"
+    - "/etc/nginx/sites-enabled/{{ instance }}"
+    - "/etc/nginx/sites-available/{{ instance }}"
+  when: _rm_delete_data | bool

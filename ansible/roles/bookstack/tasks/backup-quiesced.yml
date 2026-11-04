@@ -1,0 +1,9 @@
+---
+# Runs inside the shared PBS backup while BookStack is stopped, before the upload.
+- name: BookStack backup | Dump the named database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_client_runtime: native
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _bookstack_backup_scratch.path }}/database.sql"

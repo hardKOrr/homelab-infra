@@ -1,0 +1,9 @@
+---
+# Remove App hook, run on a native guest before the services stop: BookStack is served by
+# nginx and PHP-FPM, not a unit named for the instance.
+- name: BookStack remove | Name the PHP-FPM unit
+  ansible.builtin.include_tasks: php-version.yml
+
+- name: BookStack remove | Stop the web services
+  ansible.builtin.set_fact:
+    _rm_service_names: "{{ bookstack_native_services }}"

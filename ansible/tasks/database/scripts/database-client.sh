@@ -85,7 +85,10 @@ mysql_compatible() {
   if [ "$DB_ENGINE" = mariadb ]; then
     client=mariadb dump=mariadb-dump extra="--routines --events"
   else
-    client=mysql dump=mysqldump extra=--set-gtid-purged=OFF
+    client=mysql dump=mysqldump extra=
+    # Oracle's mysqldump takes this; the MariaDB-provided one a native guest installs
+    # (Debian ships no Oracle client) does not.
+    if "$dump" --help 2>/dev/null | grep -q -- --set-gtid-purged; then extra=--set-gtid-purged=OFF; fi
   fi
   umask 077
   printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport=%s\n' \

@@ -1,0 +1,18 @@
+---
+# Name the PHP-FPM unit and the services a native backup or restore quiesces: the web
+# server and PHP-FPM. Tolerates a guest without PHP, so Remove still resolves its units.
+#
+# Sets: bookstack_php_fpm_service, bookstack_native_services
+- name: BookStack | Read the installed PHP version
+  ansible.builtin.command:
+    argv: [php, -r, "echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;"]
+  register: _bookstack_php_version
+  changed_when: false
+  failed_when: false
+
+- name: BookStack | Name the PHP-FPM unit and the quiesced services
+  ansible.builtin.set_fact:
+    bookstack_php_fpm_service: >-
+      {{ 'php' ~ _bookstack_php_version.stdout ~ '-fpm' if _bookstack_php_version.rc == 0 else '' }}
+    bookstack_native_services: >-
+      {{ ['nginx'] + (['php' ~ _bookstack_php_version.stdout ~ '-fpm'] if _bookstack_php_version.rc == 0 else []) }}

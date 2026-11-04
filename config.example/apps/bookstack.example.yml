@@ -32,3 +32,11 @@ backup:
 # hosting:
 #   method: docker
 # stack: services-lxc
+
+# To run BookStack natively (nginx and PHP-FPM, from BookStack's manual install) on its own
+# guest instead of Docker, drop the stack line and set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc     # or vm; both use the same install
+# Native backups are on-demand (Backup BookStack) and cover the same database dump and data.

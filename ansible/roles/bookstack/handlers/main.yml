@@ -3,3 +3,9 @@
   community.docker.docker_compose_v2:
     project_src: "{{ bookstack_project_dir }}"
     state: restarted
+
+- name: Restart native BookStack
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ bookstack_native_services }}"

@@ -1,8 +1,12 @@
 ---
-# Run scripts/database-client.sh once with Docker on the current host. Called by dump.yml,
-# verify-dump.yml and restore.yml after resolve-app-database.yml.
+# Run scripts/database-client.sh once on the current host: with Docker in the server-matched
+# client image, or, for a native guest that has no Docker, directly with the distribution's
+# client package. Called by dump.yml, verify-dump.yml and restore.yml after
+# resolve-app-database.yml.
 #
 # Inputs:
+#   database_client_runtime   optional docker | native; default `recovery_swap_runtime`
+#                             (the restore swap's service kind), else docker
 #   database_client_action    dump | verify | restore
 #   database_client_file      absolute path on the current host; its directory is mounted
 #   database_client_password  the application login's password (not used by verify)
@@ -11,24 +15,16 @@
 
 - name: Database client | Run {{ database_client_action }}
   ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --network=host
-      - --entrypoint=/bin/sh
-      - "--volume={{ database_client_file | dirname }}:/work{{ '' if database_client_action == 'dump' else ':ro' }}"
-      - "--volume={{ database_client_script }}:/usr/local/bin/database-client.sh:ro"
-      - --env=DB_ENGINE
-      - --env=DB_HOST
-      - --env=DB_PORT
-      - --env=DB_NAME
-      - --env=DB_USER
-      - --env=DB_PASSWORD
-      - "{{ database_app_target.client_image }}"
-      - /usr/local/bin/database-client.sh
-      - "{{ database_client_action }}"
-      - "/work/{{ database_client_file | basename }}"
+    argv: >-
+      {{ [database_client_script, database_client_action, database_client_file]
+         if _database_client_runtime == 'native' else
+         ['docker', 'run', '--rm', '--network=host', '--entrypoint=/bin/sh',
+          '--volume=' ~ (database_client_file | dirname) ~ ':/work' ~ ('' if database_client_action == 'dump' else ':ro'),
+          '--volume=' ~ database_client_script ~ ':/usr/local/bin/database-client.sh:ro',
+          '--env=DB_ENGINE', '--env=DB_HOST', '--env=DB_PORT', '--env=DB_NAME',
+          '--env=DB_USER', '--env=DB_PASSWORD', database_app_target.client_image,
+          '/usr/local/bin/database-client.sh', database_client_action,
+          '/work/' ~ (database_client_file | basename)] }}
   environment:
     DB_ENGINE: "{{ database_app_target.provider }}"
     DB_HOST: "{{ database_app_target.host }}"

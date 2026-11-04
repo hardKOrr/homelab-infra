@@ -1,0 +1,22 @@
+{{ ansible_managed | comment }}
+# BookStack's documented nginx layout: the public directory behind PHP-FPM.
+server {
+    listen {{ app_config.app.port }};
+    server_name _;
+    root {{ bookstack_native_current }}/public;
+    index index.php;
+    client_max_body_size 50M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/{{ bookstack_php_fpm_service }}.sock;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

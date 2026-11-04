@@ -1,0 +1,21 @@
+---
+# restore-swap.yml staged hook: refuse a recovery point written by the other hosting method
+# before anything stops. A native point holds public-uploads, storage-uploads and themes at
+# its storage root; a Docker point holds LinuxServer's /config tree, with none of them.
+- name: BookStack restore | Look for the native upload directories
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/storage/{{ item }}"
+  loop: [public-uploads, storage-uploads, themes]
+  register: _bookstack_restore_layout
+
+- name: BookStack restore | Require this hosting method's layout
+  ansible.builtin.assert:
+    that: >-
+      (_bookstack_restore_layout.results | map(attribute='stat.isdir', default=false)
+       | select | list | length == 3) == (bookstack_native | bool)
+      and (bookstack_native | bool
+           or _bookstack_restore_layout.results | map(attribute='stat.exists') | select | list | length == 0)
+    fail_msg: >-
+      The selected recovery point was written by the other hosting method (native points
+      hold public-uploads, storage-uploads and themes; Docker points hold LinuxServer's
+      /config tree). Restore it onto an instance with the same hosting method.
