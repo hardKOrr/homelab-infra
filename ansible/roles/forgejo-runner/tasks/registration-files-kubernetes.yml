@@ -28,6 +28,8 @@
       - sh
       - "{{ forgejo_runner_k8s_data_dir }}/.homelab-infra-registered"
       - "{{ forgejo_runner_k8s_data_dir }}/.runner"
+    # Keep the framing exact: each file follows an @@FILE@@ line.
+    strip_empty_ends: false
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _forgejo_runner_k8s_files
@@ -35,8 +37,6 @@
   retries: 30
   delay: 5
   changed_when: false
-  # Keep the framing exact: each file follows an @@FILE@@ line.
-  strip_empty_ends: false
   no_log: true
   when: _forgejo_runner_k8s_deployment.stdout | length > 0
 

@@ -25,7 +25,8 @@ def check_saved_file_framing():
     """Run the in-pod reader on populated and missing files and parse it as the role does."""
     read, expose = read_yaml(ROLE / "tasks/registration-files-kubernetes.yml")[1:3]
     command = read["ansible.builtin.command"]
-    assert read["strip_empty_ends"] is False
+    assert command["strip_empty_ends"] is False
+    assert "strip_empty_ends" not in read
     argv = command["argv"]
     script = argv[len(argv) - argv[::-1].index("-c")]
     facts = expose["ansible.builtin.set_fact"]
