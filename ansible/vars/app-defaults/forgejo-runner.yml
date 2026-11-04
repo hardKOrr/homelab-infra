@@ -4,7 +4,7 @@
 forgejo_runner_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: services
   app:

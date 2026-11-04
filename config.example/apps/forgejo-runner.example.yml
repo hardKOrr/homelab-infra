@@ -17,3 +17,9 @@ backup:
 # deregistration uses runner_api_token for a user-scoped registration or admin_api_token
 # for a global registration from the named Forgejo Vaultwarden item; neither credential
 # is accepted from tracked configuration.
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.forgejo-runner-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: forgejo-runner-lxc
