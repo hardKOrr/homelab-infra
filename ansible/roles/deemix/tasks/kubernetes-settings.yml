@@ -1,0 +1,56 @@
+---
+# Through the ingress address (the app has no other API route): own the one setting
+# Lidarr needs and sign in with the ARL. An empty configured ARL keeps the restored one
+# that Deemix already holds on the config volume.
+- name: Deemix Kubernetes | Read the current settings
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/getSettings"
+    headers:
+      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
+    return_content: true
+  register: _dmx_k8s_settings
+  until: _dmx_k8s_settings.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Deemix Kubernetes | Enable the folder structure required by Lidarr
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/saveSettings"
+    method: POST
+    headers:
+      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
+    body_format: json
+    body:
+      settings: "{{ _dmx_k8s_settings.json.settings | combine({'createSingleFolder': true}) }}"
+      spotifySettings: "{{ _dmx_k8s_settings.json.spotifySettings | default({}) }}"
+    status_code: 200
+  when: not (_dmx_k8s_settings.json.settings.createSingleFolder | default(false) | bool)
+  no_log: true
+
+- name: Deemix Kubernetes | Sign in to Deezer with the configured ARL
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/loginArl"
+    method: POST
+    headers:
+      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
+    body_format: json
+    body:
+      arl: "{{ app_config.app.arl }}"
+    status_code: 200
+    timeout: 120
+  register: _dmx_k8s_login
+  changed_when: false
+  when: app_config.app.arl | default('', true) | length > 0
+  no_log: true
+
+- name: Deemix Kubernetes | Require Deemix to authenticate the ARL
+  ansible.builtin.assert:
+    that:
+      - _dmx_k8s_login.json.status | default(0) | int in [1, 2, 3]
+      - _dmx_k8s_login.json.user is defined
+      - _dmx_k8s_login.json.user is not none
+    fail_msg: "Deemix could not sign in with the stored Deezer ARL. Verify the ARL and retry Deploy."
+  when: app_config.app.arl | default('', true) | length > 0
+  no_log: true

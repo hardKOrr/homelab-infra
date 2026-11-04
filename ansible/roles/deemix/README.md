@@ -14,3 +14,14 @@ route still uses its declared Authentik access path. Deploy preserves an existin
 or restored `.arl` when the configured ARL is empty, and publishes that effective
 value to the canonical media credential for Lidarr. A non-empty configured ARL
 rotates the file and restarts Deemix.
+
+## Kubernetes
+
+With `hosting.method: kubernetes` Deemix gets a namespace of its own, with the config volume on
+the cluster's default StorageClass, and `app.download_path` is mounted from the NFS share
+that holds it at `/downloads`, the Docker container path, through
+`tasks/resolve-kubernetes-media.yml` and `tasks/kubernetes/prepare-media-volumes.yml`.
+Deploy sets Lidarr's folder-structure setting and signs in with the ARL through the
+ingress address. The cluster instance is not discovered by Wire Media Stack. Its backup
+CronJob and restore Job come from the shared Kubernetes recovery files; the download share
+is not archived.

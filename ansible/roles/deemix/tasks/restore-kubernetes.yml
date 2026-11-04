@@ -1,0 +1,18 @@
+---
+# Replace the target's config PVC through the shared Kubernetes recovery Job. The NFS
+# download share is not part of the archive.
+- name: Deemix Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Deemix
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1313) }}:{{ restore_target_config.app.pgid | default(1313) }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        Deemix's settings and Deezer ARL from its config volume; downloads are not included
+      verify:
+        - Open the Deemix URL and verify the restored settings and Deezer sign-in.
