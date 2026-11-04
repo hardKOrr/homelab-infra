@@ -101,6 +101,10 @@ spec:
             requests:
               cpu: "2"
               memory: 4Gi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ instance }}-storage
 ---
 apiVersion: v1
 kind: Service

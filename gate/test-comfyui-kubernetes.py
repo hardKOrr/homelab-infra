@@ -77,6 +77,10 @@ def main():
         "custom_nodes": "/workspace/storage/custom_nodes",
         "input": "/workspace/storage/input", "output": "/workspace/storage/output",
     }, mounts
+    volumes = {v["name"]: v for v in pod["volumes"]}
+    for container in pod["initContainers"] + pod["containers"]:
+        for mount in container["volumeMounts"]:
+            assert volumes[mount["name"]]["persistentVolumeClaim"]["claimName"] == "comfy-storage"
     assert "nvidia" not in text and "gpu" not in text.lower()
     assert docs["Ingress"]["spec"]["rules"][0]["host"] == "comfy.example.test"
     print("ComfyUI Kubernetes hosting passed.")
