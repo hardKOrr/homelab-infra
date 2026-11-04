@@ -169,7 +169,7 @@ def check_login_api():
 
 
 def check_admin_binding_scope():
-    play_vars = DEEMIX_PLAYBOOK[2]["vars"]
+    play_vars = next(p for p in DEEMIX_PLAYBOOK if p["name"] == "Deemix | Record facts and wire")["vars"]
     assert "wiring_auth_users" in play_vars
     assert "sso.admin_user" in play_vars["wiring_auth_users"]
     play_text = str(DEEMIX_PLAYBOOK)

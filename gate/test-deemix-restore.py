@@ -17,7 +17,7 @@ ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 def check_swap():
     """Deemix supplies its paths and health URL; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("deemix")
+    swap = swap_inputs("deemix", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}

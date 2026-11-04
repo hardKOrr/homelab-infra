@@ -1,0 +1,46 @@
+---
+# Run on localhost before the cluster deploy: find the declared media mount that holds
+# app.download_path, create the download directory on the Proxmox node, and resolve that
+# mount as a NFS share for Kubernetes. The pod mounts the download directory itself at
+# /downloads, the container path the Docker stack binds it to.
+- name: Deemix Kubernetes media | Find the mount that holds the download path
+  ansible.builtin.set_fact:
+    _dmx_k8s_mount: >-
+      {%- set dl = app_config.app.download_path | regex_replace('/+$', '') -%}
+      {%- set found = [] -%}
+      {%- for m in (app_config.app.mounts | default(app_config.media_storage.mounts | default([]), true)
+                    | sort(attribute='path', reverse=true)) -%}
+      {%- set root = m.path | regex_replace('/+$', '') -%}
+      {%- if not found and (dl == root or dl.startswith(root ~ '/')) -%}
+      {%- set _ = found.append({'host': m.host | regex_replace('/+$', ''), 'path': m.path,
+                                'rel': dl[(root | length):]}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ found | first | default({}) }}
+
+- name: Deemix Kubernetes media | Require the download path to be inside a declared mount
+  ansible.builtin.assert:
+    that: _dmx_k8s_mount | length > 0
+    fail_msg: >-
+      app.download_path {{ app_config.app.download_path }} is not inside any media_storage
+      mount, so Kubernetes has no share to mount it from.
+
+- name: Deemix Kubernetes media | Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: Deemix Kubernetes media | Ensure the download directory exists on the node
+  ansible.builtin.file:
+    path: "{{ _dmx_k8s_mount.host }}{{ _dmx_k8s_mount.rel }}"
+    state: directory
+    mode: "0775"
+    owner: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
+    group: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+
+- name: Deemix Kubernetes media | Resolve the download directory's NFS share
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts:
+      - host: "{{ _dmx_k8s_mount.host }}{{ _dmx_k8s_mount.rel }}"
+        path: /downloads

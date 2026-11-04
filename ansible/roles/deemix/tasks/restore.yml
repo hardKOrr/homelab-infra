@@ -1,28 +1,19 @@
 ---
-# Restore one application-consistent Deemix config archive through the shared swap.
+- name: Deemix restore | Use the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Deemix restore | Assert the restore contract
+- name: Deemix restore | Use the config directory swap
+  ansible.builtin.include_tasks: restore-docker.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'docker'
+
+- name: Deemix restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
-    that:
-      - app_config.backup.enabled | default(false) | bool
-      - app_config.backup.application_consistent | default(false) | bool
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
-      - homelabinfra_infra.backups is defined
-    fail_msg: >-
-      Deemix restore needs a PBS-backed application recovery contract. Keep
-      overwrite=false to list snapshots before selecting one.
-
-- name: Deemix restore | Preview or replace the config directory
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: docker
-    recovery_swap_archives: [data.pxar]
-    recovery_swap_paths:
-      - path: "{{ app_config.app.config_path }}"
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
-        mode: "0750"
-    recovery_swap_stop_services: ["{{ instance }}"]
-    recovery_swap_compose_project: "{{ deemix_project_dir }}"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
+    fail_msg: Deemix recovery supports hosting.method docker or kubernetes.

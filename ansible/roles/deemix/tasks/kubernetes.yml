@@ -1,0 +1,59 @@
+---
+# Deemix on Kubernetes: its config lives on a default-StorageClass PVC and its download
+# directory is the existing NFS share mounted at /downloads, as on Docker. The playbook's
+# prepare play has already resolved the share into k8s_media_nfs.
+- name: Deemix Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Deemix Kubernetes | Prepare the download volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'downloads', 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: Deemix Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ deemix_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: deemix_k8s_node
+    label: Kubernetes node
+
+- name: Deemix Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Deemix Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _deemix_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Deemix Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _deemix_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Deemix Kubernetes | Apply the settings and sign-in
+  ansible.builtin.include_tasks: kubernetes-settings.yml
+
+- name: Deemix Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Deemix's settings and Deezer ARL from its config volume; downloads are not included

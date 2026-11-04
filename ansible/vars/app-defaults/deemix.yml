@@ -5,7 +5,7 @@
 deemix_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
 
@@ -45,6 +45,9 @@ deemix_defaults:
     # enables downloads or rotates the cookie.
     arl: ""
 
+    # Config volume size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 1
+
     puid: 1313
     pgid: 1313
 
@@ -73,3 +76,9 @@ deemix_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

@@ -1,0 +1,89 @@
+---
+# Own the one setting Lidarr needs in the config file (saveSettings reads query strings,
+# which would stringify every value) and sign in with the ARL. An empty configured ARL keeps the restored one
+# that Deemix already holds on the config volume.
+- name: Deemix Kubernetes | Set the folder structure Lidarr requires
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - sh
+      - -ec
+      - |
+        config=/config/config.json
+        if jq -e '.createSingleFolder == true' "$config" >/dev/null; then
+          echo unchanged
+        else
+          temporary=$(mktemp /config/.settings.XXXXXX)
+          trap 'rm -f "$temporary"' EXIT
+          jq '.createSingleFolder = true' "$config" > "$temporary"
+          cat "$temporary" > "$config"
+          echo changed
+        fi
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _dmx_k8s_settings
+  until: _dmx_k8s_settings.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: "'changed' == _dmx_k8s_settings.stdout | trim"
+  no_log: true
+
+- name: Deemix Kubernetes | Restart Deemix to read the changed settings
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, restart, "deployment/{{ instance }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: _dmx_k8s_settings is changed
+
+- name: Deemix Kubernetes | Wait for the restarted pod
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, status, "deployment/{{ instance }}", --timeout=300s]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: false
+  when: _dmx_k8s_settings is changed
+
+- name: Deemix Kubernetes | Verify the setting through the settings API
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/getSettings"
+    headers:
+      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
+    return_content: true
+  register: _dmx_k8s_verify
+  until: _dmx_k8s_verify.status | default(0) == 200 and _dmx_k8s_verify.json.settings.createSingleFolder | default(false) | bool
+  retries: 30
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Deemix Kubernetes | Sign in to Deezer with the configured ARL
+  ansible.builtin.uri:
+    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/loginArl"
+    method: POST
+    headers:
+      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
+    body_format: json
+    body:
+      arl: "{{ app_config.app.arl }}"
+    status_code: 200
+    timeout: 120
+  register: _dmx_k8s_login
+  changed_when: false
+  when: app_config.app.arl | default('', true) | length > 0
+  no_log: true
+
+- name: Deemix Kubernetes | Require Deemix to authenticate the ARL
+  ansible.builtin.assert:
+    that:
+      - _dmx_k8s_login.json.status | default(0) | int in [1, 2, 3]
+      - _dmx_k8s_login.json.user is defined
+      - _dmx_k8s_login.json.user is not none
+    fail_msg: "Deemix could not sign in with the stored Deezer ARL. Verify the ARL and retry Deploy."
+  when: app_config.app.arl | default('', true) | length > 0
+  no_log: true
