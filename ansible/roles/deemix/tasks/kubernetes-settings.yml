@@ -1,32 +1,63 @@
 ---
-# Through the ingress address (the app has no other API route): own the one setting
-# Lidarr needs and sign in with the ARL. An empty configured ARL keeps the restored one
+# Own the one setting Lidarr needs in the config file (saveSettings reads query strings,
+# which would stringify every value) and sign in with the ARL. An empty configured ARL keeps the restored one
 # that Deemix already holds on the config volume.
-- name: Deemix Kubernetes | Read the current settings
+- name: Deemix Kubernetes | Set the folder structure Lidarr requires
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - node
+      - -e
+      - |
+        const f = '/config/config.json';
+        const c = JSON.parse(require('fs').readFileSync(f, 'utf8'));
+        if (c.createSingleFolder === true) { console.log('unchanged'); }
+        else {
+          c.createSingleFolder = true;
+          require('fs').writeFileSync(f, JSON.stringify(c));
+          console.log('changed');
+        }
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _dmx_k8s_settings
+  until: _dmx_k8s_settings.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: "'changed' == _dmx_k8s_settings.stdout | trim"
+  no_log: true
+
+- name: Deemix Kubernetes | Restart Deemix to read the changed settings
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, restart, "deployment/{{ instance }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: _dmx_k8s_settings is changed
+
+- name: Deemix Kubernetes | Wait for the restarted pod
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, status, "deployment/{{ instance }}", --timeout=300s]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: false
+  when: _dmx_k8s_settings is changed
+
+- name: Deemix Kubernetes | Verify the setting through the settings API
   ansible.builtin.uri:
     url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/getSettings"
     headers:
       Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
     return_content: true
-  register: _dmx_k8s_settings
-  until: _dmx_k8s_settings.status | default(0) == 200
+  register: _dmx_k8s_verify
+  until: _dmx_k8s_verify.status | default(0) == 200 and _dmx_k8s_verify.json.settings.createSingleFolder | default(false) | bool
   retries: 30
   delay: 5
   changed_when: false
-  no_log: true
-
-- name: Deemix Kubernetes | Enable the folder structure required by Lidarr
-  ansible.builtin.uri:
-    url: "http://{{ k8s_cluster_facts.ingress_vip }}/api/saveSettings"
-    method: POST
-    headers:
-      Host: "{{ deemix_settings_fqdn | default(deemix_fqdn) }}"
-    body_format: json
-    body:
-      settings: "{{ _dmx_k8s_settings.json.settings | combine({'createSingleFolder': true}) }}"
-      spotifySettings: "{{ _dmx_k8s_settings.json.spotifySettings | default({}) }}"
-    status_code: 200
-  when: not (_dmx_k8s_settings.json.settings.createSingleFolder | default(false) | bool)
   no_log: true
 
 - name: Deemix Kubernetes | Sign in to Deezer with the configured ARL
