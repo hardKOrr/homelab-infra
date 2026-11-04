@@ -1,7 +1,9 @@
 ---
 # Deploy ComfyUI as Docker on its own VM. The dedicated PCIe GPU is assigned to this VM
 # only; ComfyUI is not placed on the shared ai-stack LXC and the play never selects a free
-# device automatically. An instance that sets `stack:` instead lands on that stack's host,
+# device automatically. With `hosting.method: native` it runs from ComfyUI's manual install
+# on its own LXC or VM (`proxmox.guest_type`), in CPU mode. An instance that sets `stack:`
+# instead lands on that stack's host,
 # so a stack with guest_type: lxc runs CPU-mode ComfyUI as Docker on an LXC. With
 # `hosting.method: kubernetes` it runs in CPU mode on the cluster and no guest is made.
 #
@@ -54,6 +56,15 @@
       ansible.builtin.set_fact:
         comfyui_fqdn: >-
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain) }}
+    - name: Assert the native accelerator
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - app_config.app.accelerator | default('cuda') == 'cpu'
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native ComfyUI runs in CPU mode (app.accelerator: cpu, or use Docker on a VM for
+          the dedicated GPU) and needs proxmox.guest_type: lxc or vm in its instance config.
     - name: Assert the VM, accelerator, and model-storage contract
       when: app_config.hosting.method == 'docker'
       ansible.builtin.assert:
@@ -77,6 +88,14 @@
       when:
         - app_config.hosting.method == 'docker'
         - app_config.stack | default('', true) | length == 0
+
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: comfyui
+      when: app_config.hosting.method == 'native'
 
     - name: Find or create the Docker stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
@@ -127,11 +146,12 @@
     - name: Ensure Docker is installed on the VM
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy ComfyUI
       ansible.builtin.include_role:
         name: comfyui
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "ComfyUI | Deploy on Kubernetes"
   hosts: localhost
@@ -226,7 +246,7 @@
     - name: Record ComfyUI on its Docker guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_kind: docker
+        record_guest_kind: "{{ 'native' if _comfyui_cfg.hosting.method == 'native' else 'docker' }}"
       when: not (_comfyui_k8s | bool)
 
     - name: Record ComfyUI on the Kubernetes nodes

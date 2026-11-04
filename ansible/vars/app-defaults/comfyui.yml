@@ -7,7 +7,7 @@
 comfyui_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -17,6 +17,13 @@ comfyui_defaults:
       restore_playbook: restore-app.yml
 
   proxmox:
+    # The lxc block applies only to hosting.method native with proxmox.guest_type: lxc,
+    # which a native instance must set; the vm block is the Docker VM and the native VM.
+    lxc:
+      cores: 4
+      memory: 8192
+      disk_volume:
+        size: 128
     vm:
       cores: 8
       memory: 16384
@@ -31,7 +38,13 @@ comfyui_defaults:
 
   app:
     accelerator: cuda
-    image: ghcr.io/ai-dock/comfyui:latest-cuda
+    # Exact releases: the AI-Dock image tag (Docker) and the upstream ComfyUI release tag
+    # `v<native_version>` that the native method clones. They are separate version schemes.
+    image: ghcr.io/ai-dock/comfyui:v2-cuda-12.1.1-base-22.04-v0.2.7
+    native_version: "0.44.0"
+    # The native service's own account; the Docker image's uid/gid below are not used.
+    native_uid: 1500
+    native_gid: 1500
     port: 8188
     # Storage claim size in Gi on Kubernetes (the cluster's default StorageClass).
     storage: 100

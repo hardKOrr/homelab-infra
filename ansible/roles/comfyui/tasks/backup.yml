@@ -30,9 +30,9 @@
 - name: ComfyUI backup | Quiesce ComfyUI and archive models and configuration to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method }}"
     pbs_client_compose_project: "{{ comfyui_project_dir }}"
-    pbs_client_stop_services: [comfyui]
+    pbs_client_stop_services: ["{{ comfyui_service }}"]
     pbs_client_archives:
       - name: data.pxar
         path: "{{ app_config.app.storage_path }}"

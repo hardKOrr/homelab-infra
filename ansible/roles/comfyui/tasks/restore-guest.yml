@@ -1,7 +1,7 @@
 ---
-# Restore one ComfyUI archive (models and user state) on a Docker guest through the shared
-# swap. The storage root stays root's; Deploy's storage-ownership.yml gives its directories
-# to the runtime user.
+# Restore one ComfyUI archive (models and user state) on a Docker or native guest through
+# the shared swap. Docker keeps the storage root root's; the native service owns it.
+# Deploy's storage-ownership.yml gives the subdirectories to the runtime user.
 - name: ComfyUI restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
@@ -17,14 +17,14 @@
 - name: ComfyUI restore | Preview or replace the storage tree
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.storage_path }}"
-        owner: 0
-        group: 0
+        owner: "{{ 0 if app_config.hosting.method == 'docker' else comfyui_owner_uid }}"
+        group: "{{ 0 if app_config.hosting.method == 'docker' else comfyui_owner_gid }}"
         mode: "0750"
-    recovery_swap_stop_services: [comfyui]
+    recovery_swap_stop_services: ["{{ comfyui_service }}"]
     recovery_swap_compose_project: "{{ comfyui_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/storage-ownership.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/system_stats"

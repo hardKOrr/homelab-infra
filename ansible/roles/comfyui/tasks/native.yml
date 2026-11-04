@@ -1,0 +1,156 @@
+---
+# ComfyUI's manual install for Linux: a git clone of the pinned release tag with its
+# requirements installed by pip (https://github.com/comfyanonymous/ComfyUI#manual-install-windows-linux).
+# CPU mode only: a native guest is not given the dedicated GPU. torch comes from PyTorch's
+# CPU wheel index first, so requirements.txt finds it satisfied. Each version has its own
+# clone and virtualenv, so a failed upgrade leaves the running install in place; the
+# marker is written last. All state lives under app.storage_path via --base-directory.
+- name: ComfyUI | Assert the native method's accelerator and storage layout
+  ansible.builtin.assert:
+    that:
+      - app_config.app.accelerator | default('cuda') == 'cpu'
+      - app_config.app.models_path == app_config.app.storage_path ~ '/models'
+      - app_config.app.config_path == app_config.app.storage_path ~ '/user'
+      - app_config.app.custom_nodes_path == app_config.app.storage_path ~ '/custom_nodes'
+      - app_config.app.input_path == app_config.app.storage_path ~ '/input'
+      - app_config.app.output_path == app_config.app.storage_path ~ '/output'
+    fail_msg: >-
+      Native ComfyUI runs in CPU mode (app.accelerator: cpu) with its models, user,
+      custom_nodes, input and output directories directly below app.storage_path.
+
+- name: ComfyUI | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: ComfyUI | Install native prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git, python3, python3-venv, python3-dev, python3-packaging, build-essential, libgl1, libglib2.0-0]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: ComfyUI | Create the native system group
+  ansible.builtin.group:
+    name: "{{ comfyui_native_user }}"
+    gid: "{{ app_config.app.native_gid }}"
+    system: true
+
+- name: ComfyUI | Create the native system account
+  ansible.builtin.user:
+    name: "{{ comfyui_native_user }}"
+    uid: "{{ app_config.app.native_uid }}"
+    group: "{{ comfyui_native_user }}"
+    home: "{{ comfyui_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: ComfyUI | Create the project directory and storage tree
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ comfyui_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.storage_path }}", owner: "{{ comfyui_native_user }}", mode: "0750"}
+
+- name: ComfyUI | Give the storage tree to the native account
+  ansible.builtin.include_tasks: storage-ownership.yml
+
+- name: ComfyUI | Check the native install marker
+  ansible.builtin.stat:
+    path: "{{ comfyui_native_dir }}/.installed"
+  register: _comfyui_native_installed
+
+- name: ComfyUI | Install the pinned release
+  when: not _comfyui_native_installed.stat.exists
+  block:
+    - name: ComfyUI | Clear a partial install
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: ["{{ comfyui_native_dir }}", "{{ comfyui_native_venv }}"]
+
+    - name: ComfyUI | Clone the pinned release
+      ansible.builtin.git:
+        repo: https://github.com/comfyanonymous/ComfyUI.git
+        dest: "{{ comfyui_native_dir }}"
+        version: "v{{ app_config.app.native_version }}"
+        depth: 1
+
+    # Debian's bundled pip can reject normalized wheel names (typing-extensions versus
+    # typing_extensions), then attempt a source build whose backend is absent from the
+    # CPU-only index. Bootstrap a current, pinned resolver from PyPI first.
+    - name: ComfyUI | Bootstrap the native virtualenv installer
+      ansible.builtin.pip:
+        name: pip==26.3
+        virtualenv: "{{ comfyui_native_venv }}"
+        virtualenv_command: python3 -m venv
+
+    - name: ComfyUI | Install PyTorch from the CPU wheel index
+      ansible.builtin.pip:
+        name: [torch, torchvision, torchaudio]
+        virtualenv: "{{ comfyui_native_venv }}"
+        virtualenv_command: python3 -m venv
+        extra_args: --index-url https://download.pytorch.org/whl/cpu
+
+    - name: ComfyUI | Install the Python requirements
+      ansible.builtin.pip:
+        requirements: "{{ comfyui_native_dir }}/requirements.txt"
+        virtualenv: "{{ comfyui_native_venv }}"
+
+    - name: ComfyUI | Record the completed install
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ comfyui_native_dir }}/.installed"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart native ComfyUI
+
+- name: ComfyUI | Render the native service
+  ansible.builtin.template:
+    src: comfyui.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart native ComfyUI
+
+- name: ComfyUI | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: ComfyUI | Apply pending native restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: ComfyUI | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ instance | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: ComfyUI | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

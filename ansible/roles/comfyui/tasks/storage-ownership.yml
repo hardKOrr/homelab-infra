@@ -1,12 +1,15 @@
 ---
-# Compose mounts each of these into the container, where ComfyUI runs unprivileged.
+# Compose mounts each of these into the container, where ComfyUI runs unprivileged; the
+# native service reads the same directories as its own account.
 - name: ComfyUI storage | Give the mounted directories to the app's runtime user
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ app_config.app.run_uid }}"
-    group: "{{ app_config.app.run_gid }}"
-    mode: "u=rwX,g=rX,o="
+    owner: "{{ comfyui_owner_uid }}"
+    group: "{{ comfyui_owner_gid }}"
+    # Native uploads use atomic 0600 files; keep the modes the app creates so a
+    # saved workflow does not make every subsequent Deploy change permissions.
+    mode: "{{ 'u=rwX,g=rX,o=' if app_config.hosting.method == 'docker' else omit }}"
     recurse: true
   loop:
     - "{{ app_config.app.models_path }}"

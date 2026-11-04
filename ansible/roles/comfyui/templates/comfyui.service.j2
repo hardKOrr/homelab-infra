@@ -1,0 +1,22 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=ComfyUI ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ comfyui_native_user }}
+Group={{ comfyui_native_user }}
+WorkingDirectory={{ comfyui_native_dir }}
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+RuntimeDirectory={{ instance }}
+ExecStart={{ comfyui_native_venv }}/bin/python {{ comfyui_native_dir }}/main.py --cpu --listen 0.0.0.0 --port {{ app_config.app.port }} --base-directory {{ app_config.app.storage_path }} --temp-directory /run/{{ instance }}
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

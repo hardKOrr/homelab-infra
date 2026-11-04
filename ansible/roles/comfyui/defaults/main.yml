@@ -8,3 +8,12 @@ comfyui_http_delay: 5
 # init container ownership; Docker reads app.run_uid and app.run_gid from the config).
 comfyui_run_uid: "{{ app_config.app.run_uid | default(1000) }}"
 comfyui_run_gid: "{{ app_config.app.run_gid | default(1111) }}"
+# Native: one install per version, so a failed upgrade leaves the running one in place.
+comfyui_native_user: comfyui
+comfyui_native_dir: "{{ comfyui_project_dir }}/ComfyUI-{{ app_config.app.native_version }}"
+comfyui_native_venv: "{{ comfyui_project_dir }}/venv-{{ app_config.app.native_version }}"
+# The service the recovery operations stop: the Compose service, or the systemd unit.
+comfyui_service: "{{ instance if app_config.hosting.method == 'native' else 'comfyui' }}"
+# Owner of the files under storage_path in the running service.
+comfyui_owner_uid: "{{ app_config.app.native_uid if app_config.hosting.method == 'native' else comfyui_run_uid }}"
+comfyui_owner_gid: "{{ app_config.app.native_gid if app_config.hosting.method == 'native' else comfyui_run_gid }}"

@@ -3,3 +3,9 @@
   community.docker.docker_compose_v2:
     project_src: "{{ comfyui_project_dir }}"
     state: restarted
+
+- name: Restart native ComfyUI
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true

@@ -64,11 +64,12 @@ def current_combination(slug, defaults):
     elif "tasks/kubernetes/open-app-access.yml" in source or "kubernetes.core." in source:
         # A native app may add Kubernetes as an opt-in path. Its existing guest
         # creation remains the default; a Kubernetes-only app has no native create task.
+        # A Docker-default app that adds the native method (ComfyUI) keeps its Docker path.
         if any(path in source for path in (
             "tasks/proxmox/lxc-create.yml",
             "tasks/proxmox/vm-create.yml",
-            "name: _template-native",
-        )):
+        )) or ("name: _template-native" in source
+               and defaults.get("hosting", {}).get("method") == "native"):
             method = "native"
             proxmox = defaults.get("proxmox", {})
             guest_type = (
@@ -77,13 +78,13 @@ def current_combination(slug, defaults):
                 or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
             )
         elif re.search(r"community\.docker\.|docker_compose_v2|docker_container", source):
-            # Docker on the app's own guest with Kubernetes as an opt-in path (ComfyUI).
+            # Docker on the app's own guest with Kubernetes as an opt-in path (ComfyUI);
+            # its proxmox.vm block is the Docker VM, and proxmox.guest_type is native-only.
             method = "docker"
             proxmox = defaults.get("proxmox", {})
             guest_type = (
-                proxmox.get("guest_type")
-                or proxmox.get("type")
-                or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
+                "vm" if isinstance(proxmox.get("vm"), dict)
+                else proxmox.get("guest_type") or proxmox.get("type") or "lxc"
             )
         else:
             method = "kubernetes"
