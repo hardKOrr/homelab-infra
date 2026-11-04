@@ -24,7 +24,7 @@
       - --
       - sh
       - -c
-      - 'for f in "$@"; do if [ -s "$f" ]; then cat "$f"; fi; printf "\n---\n"; done'
+      - 'for f in "$@"; do printf "@@FILE@@\n"; if [ -s "$f" ]; then cat "$f"; printf "\n"; fi; done'
       - sh
       - "{{ forgejo_runner_k8s_data_dir }}/.homelab-infra-registered"
       - "{{ forgejo_runner_k8s_data_dir }}/.runner"
@@ -35,14 +35,16 @@
   retries: 30
   delay: 5
   changed_when: false
+  # Keep the framing exact: each file follows an @@FILE@@ line.
+  strip_empty_ends: false
   no_log: true
   when: _forgejo_runner_k8s_deployment.stdout | length > 0
 
 - name: Forgejo Runner | Expose the saved files in the same shape as a host read
   ansible.builtin.set_fact:
     _forgejo_runner_registration_marker_file:
-      content: "{{ (_forgejo_runner_k8s_files.stdout.split('\n---\n')[0] | trim) | b64encode }}"
+      content: "{{ (_forgejo_runner_k8s_files.stdout.split('@@FILE@@\n')[1] | trim) | b64encode }}"
     _forgejo_runner_registration_record_file:
-      content: "{{ (_forgejo_runner_k8s_files.stdout.split('\n---\n')[1] | trim or '{}') | b64encode }}"
+      content: "{{ (_forgejo_runner_k8s_files.stdout.split('@@FILE@@\n')[2] | trim or '{}') | b64encode }}"
   when: _forgejo_runner_k8s_deployment.stdout | length > 0
   no_log: true

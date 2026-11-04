@@ -2,6 +2,10 @@
 """Check Forgejo Runner's Docker default and its Kubernetes hosting contract."""
 
 from pathlib import Path
+import subprocess
+import tempfile
+
+import jinja2
 
 import yaml
 
@@ -15,6 +19,40 @@ def read_yaml(path):
 
 def includes(tasks, target):
     return any(target in str(task.get("ansible.builtin.include_tasks", "")) for task in tasks)
+
+
+def check_saved_file_framing():
+    """Run the in-pod reader on populated and missing files and parse it as the role does."""
+    read, expose = read_yaml(ROLE / "tasks/registration-files-kubernetes.yml")[1:3]
+    command = read["ansible.builtin.command"]
+    assert read["strip_empty_ends"] is False
+    argv = command["argv"]
+    script = argv[len(argv) - argv[::-1].index("-c")]
+    facts = expose["ansible.builtin.set_fact"]
+    env = jinja2.Environment()
+    env.filters["b64encode"] = lambda v: __import__("base64").b64encode(v.encode()).decode()
+    with tempfile.TemporaryDirectory() as directory:
+        marker, record = Path(directory, "marker"), Path(directory, "runner")
+        for saved, want_marker, want_record in (
+            (True, "v1:abc", '{\n  "id": 7\n}'),
+            (False, "", "{}"),
+        ):
+            for path in (marker, record):
+                path.unlink(missing_ok=True)
+            if saved:
+                marker.write_text("v1:abc\n")
+                record.write_text('{\n  "id": 7\n}\n')
+            out = subprocess.run(["sh", "-c", script, "sh", str(marker), str(record)],
+                                 capture_output=True, text=True, check=True).stdout
+            # Ansible's command module strips trailing blank lines unless told otherwise.
+            ctx = {"_forgejo_runner_k8s_files": {"stdout": out}}
+            got = {
+                key: __import__("base64").b64decode(
+                    env.from_string(value["content"]).render(**ctx)).decode()
+                for key, value in facts.items() if isinstance(value, dict)
+            }
+            assert got["_forgejo_runner_registration_marker_file"] == want_marker, got
+            assert got["_forgejo_runner_registration_record_file"] == want_record, got
 
 
 def main():
@@ -45,6 +83,8 @@ def main():
     for name in ("files", "clear"):
         for method in ("host", "kubernetes"):
             assert (ROLE / f"tasks/registration-{name}-{method}.yml").is_file()
+
+    check_saved_file_framing()
 
     manifest = (ROLE / "templates/manifest.yaml.j2").read_text()
     for needle in (
