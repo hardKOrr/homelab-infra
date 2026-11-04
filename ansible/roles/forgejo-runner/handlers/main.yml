@@ -3,3 +3,13 @@
   community.docker.docker_compose_v2:
     project_src: "{{ forgejo_runner_project_dir }}"
     state: restarted
+  when: (app_config.hosting.method | default('docker')) != 'kubernetes'
+
+# Listens on the same topic so one notification restarts whichever method hosts the runner.
+- name: Restart Forgejo Runner on Kubernetes
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, restart, "deployment/{{ instance }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  listen: Restart Forgejo Runner
+  when: (app_config.hosting.method | default('docker')) == 'kubernetes'

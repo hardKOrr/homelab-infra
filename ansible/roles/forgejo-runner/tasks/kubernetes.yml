@@ -1,0 +1,57 @@
+---
+# Forgejo Runner on Kubernetes: one Deployment whose pod runs the runner beside a
+# privileged Docker-in-Docker sidecar. Its registration state lives on a default-
+# StorageClass PVC; the token is copied from Vaultwarden into the namespace as a Secret.
+# The runner serves no port, so there is no Service, Ingress or route.
+- name: Forgejo Runner Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Forgejo Runner Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Forgejo Runner Kubernetes | Reconcile and record the registration
+  ansible.builtin.include_tasks: registration.yml
+
+- name: Forgejo Runner Kubernetes | Sync the registration token into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      runner-token: "{{ _forgejo_runner_token }}"
+  no_log: true
+
+- name: Forgejo Runner Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _forgejo_runner_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Forgejo Runner Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _forgejo_runner_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Forgejo Runner Kubernetes | Apply a pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Forgejo Runner Kubernetes | Wait for the runner to be running
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", rollout, status, "deployment/{{ instance }}", --timeout=300s]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: false
+
+- name: Forgejo Runner Kubernetes | Schedule its backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+          owner: "1000:1000"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the runner's saved registration and configuration; job workspaces and the
+        Docker image cache are not included

@@ -1,0 +1,22 @@
+---
+# The entrypoint registers again on a pod restart once the saved identity is gone.
+- name: Forgejo Runner | Clear stale registration files in the pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - -c
+      - runner
+      - --
+      - rm
+      - -f
+      - "{{ forgejo_runner_k8s_data_dir }}/.runner"
+      - "{{ forgejo_runner_k8s_data_dir }}/.homelab-infra-registered"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: true
+  when: _forgejo_runner_k8s_deployment.stdout | length > 0

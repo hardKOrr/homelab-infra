@@ -1,0 +1,23 @@
+---
+# Read the saved registration files from the runner's data directory on the stack host.
+- name: Forgejo Runner | Check saved registration files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ app_config.app.registration_marker_path }}"
+    - "{{ app_config.app.registration_runner_path }}"
+  register: _forgejo_runner_registration_files
+
+- name: Forgejo Runner | Read registration marker
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.registration_marker_path }}"
+  register: _forgejo_runner_registration_marker_file
+  when: _forgejo_runner_registration_files.results[0].stat.exists
+  no_log: true
+
+- name: Forgejo Runner | Read saved runner identity
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.registration_runner_path }}"
+  register: _forgejo_runner_registration_record_file
+  when: _forgejo_runner_registration_files.results[1].stat.exists
+  no_log: true

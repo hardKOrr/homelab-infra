@@ -23,3 +23,8 @@ backup:
 # hosting:
 #   method: docker
 # stack: forgejo-runner-lxc
+
+# To run on the Kubernetes cluster instead, use the cluster method. The runner keeps its
+# registration on a default-StorageClass volume and runs Docker as a privileged sidecar.
+# hosting:
+#   method: kubernetes
