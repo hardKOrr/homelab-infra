@@ -7,7 +7,9 @@
     state: directory
     owner: "{{ comfyui_owner_uid }}"
     group: "{{ comfyui_owner_gid }}"
-    mode: "u=rwX,g=rX,o="
+    # Native uploads use atomic 0600 files; keep the modes the app creates so a
+    # saved workflow does not make every subsequent Deploy change permissions.
+    mode: "{{ 'u=rwX,g=rX,o=' if app_config.hosting.method == 'docker' else omit }}"
     recurse: true
   loop:
     - "{{ app_config.app.models_path }}"
