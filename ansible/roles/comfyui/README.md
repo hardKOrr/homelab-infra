@@ -29,6 +29,16 @@ replacing files already in persistent storage. Custom nodes, inputs, outputs, an
 also stay under `app.storage_path`, which the application-consistent PBS archive covers.
 The GPU is hardware and must be rebound after VM recovery; it is not part of the archive.
 
+## Native
+
+With `hosting.method: native` and `proxmox.guest_type: lxc` or `vm` (required in the
+instance config) ComfyUI runs in CPU mode as a systemd unit on its own guest. `native.yml`
+clones the release tag `v<app.native_version>` and pip-installs its requirements into a
+per-version virtualenv, with PyTorch from the CPU wheel index. `--base-directory` points at
+`app.storage_path`, so the five directories keep the Docker layout and the same `data`
+archive. There is no AI-Dock login on this method. `restore-guest.yml` serves Docker and
+native; `app.image` and `app.native_version` are separate version schemes.
+
 ## Kubernetes
 
 With `hosting.method: kubernetes` ComfyUI runs in CPU mode only (`app.accelerator: cpu`

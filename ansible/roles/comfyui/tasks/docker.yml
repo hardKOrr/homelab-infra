@@ -1,0 +1,79 @@
+---
+# Docker: the GPU checks, the Compose project and its pulled image.
+# The PCI attach seam proves that the exact GPU belongs to this VM. In CUDA mode these
+# checks prove the guest can use it before Compose starts: PCI assignment alone is not a
+# CUDA health check. CPU mode skips the NVIDIA checks and uses no GPU Compose requests.
+- name: ComfyUI | Verify the passed-through NVIDIA GPU is visible
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=name, --format=csv,noheader]
+  register: _comfyui_nvidia_smi
+  changed_when: false
+  failed_when: false
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
+
+- name: ComfyUI | Assert the passed-through GPU is usable in the guest
+  ansible.builtin.assert:
+    that:
+      - _comfyui_nvidia_smi.rc == 0
+      - _comfyui_nvidia_smi.stdout | trim | length > 0
+    fail_msg: >-
+      The ComfyUI VM does not report an NVIDIA GPU through nvidia-smi. Verify the exact PCI
+      device assignment, guest driver, console recovery, and VM reboot before deploying.
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
+
+- name: ComfyUI | Verify Docker exposes the NVIDIA runtime
+  ansible.builtin.command:
+    argv: [docker, info, --format, "{{ '{{json .Runtimes}}' }}"]
+  register: _comfyui_docker_info
+  changed_when: false
+  failed_when: false
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
+
+- name: ComfyUI | Assert Docker has the NVIDIA Container Toolkit runtime
+  ansible.builtin.assert:
+    that:
+      - _comfyui_docker_info.rc == 0
+      - _comfyui_docker_info.stdout is search('nvidia')
+    fail_msg: >-
+      Docker does not expose the NVIDIA runtime in {{ instance }}. Install/configure the
+      NVIDIA Container Toolkit in the GPU guest before deploying ComfyUI.
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
+
+- name: ComfyUI | Create the project and storage root directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ comfyui_project_dir }}"
+    - "{{ app_config.app.storage_path }}"
+
+- name: ComfyUI | Give the mounted directories to the app's runtime user
+  ansible.builtin.include_tasks: storage-ownership.yml
+
+- name: ComfyUI | Preserve existing user data before mounting persistent storage
+  ansible.builtin.include_tasks: migrate-user-data.yml
+
+- name: ComfyUI | Render the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ comfyui_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart ComfyUI
+
+- name: ComfyUI | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ comfyui_project_dir }}"
+
+- name: ComfyUI | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ comfyui_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: ComfyUI | Apply pending restart
+  ansible.builtin.meta: flush_handlers

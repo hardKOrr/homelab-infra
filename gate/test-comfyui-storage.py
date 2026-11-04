@@ -32,18 +32,20 @@ def main():
 
     ownership = yaml.safe_load((ROLE / "tasks/storage-ownership.yml").read_text())[0]
     file_args = ownership["ansible.builtin.file"]
-    assert file_args["owner"] == "{{ app_config.app.run_uid }}"
-    assert file_args["group"] == "{{ app_config.app.run_gid }}"
+    assert file_args["owner"] == "{{ comfyui_owner_uid }}"
+    assert file_args["group"] == "{{ comfyui_owner_gid }}"
     assert file_args["recurse"] is True
     assert "x" not in file_args["mode"].split(",")[0], "files must not become executable"
     owned = {re.search(r"app\.(\w+_path)", item).group(1) for item in ownership["loop"]}
     assert owned == mounted, f"mounted {sorted(mounted)} but owned {sorted(owned)}"
 
-    assert "include_tasks: storage-ownership.yml" in (ROLE / "tasks/main.yml").read_text()
+    assert "include_tasks: storage-ownership.yml" in (ROLE / "tasks/docker.yml").read_text()
     # The restore swap installs the tree as root, then hands the mounts back before the start.
-    swap = swap_inputs("comfyui", "restore-docker.yml")
+    swap = swap_inputs("comfyui", "restore-guest.yml")
     assert swap["recovery_swap_replaced_hook"] == "{{ role_path }}/tasks/storage-ownership.yml"
-    assert [(p["owner"], p["group"]) for p in swap["recovery_swap_paths"]] == [(0, 0)]
+    assert [(p["owner"], p["group"]) for p in swap["recovery_swap_paths"]] == [
+        ("{{ 0 if app_config.hosting.method == 'docker' else comfyui_owner_uid }}",
+         "{{ 0 if app_config.hosting.method == 'docker' else comfyui_owner_gid }}")]
 
     print("ComfyUI storage: every mounted directory belongs to the runtime user after deploy and restore")
 

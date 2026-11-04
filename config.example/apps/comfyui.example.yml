@@ -13,7 +13,7 @@
 
 app:
   accelerator: cuda # set to cpu for a CPU-only deployment
-  image: ghcr.io/ai-dock/comfyui:latest-cuda
+  image: ghcr.io/ai-dock/comfyui:v2-cuda-12.1.1-base-22.04-v0.2.7
   # CPU-only image: ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52
   port: 8188
   gpu_device: comfyui-gpu # replace with the key in proxmox.devices
@@ -39,7 +39,14 @@ app:
 # hosting:
 #   method: kubernetes
 
+# To run ComfyUI natively on its own guest (CPU mode only), set accelerator: cpu above and
+# uncomment this and set guest_type under proxmox: (required: lxc or vm). The service installs upstream's
+# manual install: https://github.com/comfyanonymous/ComfyUI#manual-install-windows-linux
+# hosting:
+#   method: native
+
 proxmox:
+  # guest_type: lxc # native only: lxc or vm
   # network: shared
   # ip_address: 192.168.1.90
   # vm:

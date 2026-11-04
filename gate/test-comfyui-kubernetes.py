@@ -22,7 +22,7 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/comfyui.yml")["comfyui_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["app"]["storage"] > 0
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
@@ -37,7 +37,7 @@ def main():
     deploy = plays["ComfyUI | Deploy"]["tasks"]
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "comfyui"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in deploy
     )
     assert any(
@@ -54,7 +54,7 @@ def main():
     assert archive == {"name": "data", "claim": "{{ instance }}-storage"}, archive
 
     restore = read_yaml("ansible/roles/comfyui/tasks/restore.yml")
-    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-docker.yml")
+    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml("ansible/roles/comfyui/tasks/restore-kubernetes.yml")[0]
     assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-storage"

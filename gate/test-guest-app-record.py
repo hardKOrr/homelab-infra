@@ -112,7 +112,10 @@ def main():
 
         wire = next(play for play in plays if play["name"] == f"{display} | Wire")
         wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM" if app == "ollama" else f"Record {display} on its Docker guest")
-        assert wire_record["vars"]["record_guest_kind"] == "docker"
+        assert wire_record["vars"]["record_guest_kind"] == (
+            "docker" if app != "comfyui" else
+            "{{ 'native' if _comfyui_cfg.hosting.method == 'native' else 'docker' }}"
+        )
         # ComfyUI also runs on Kubernetes; its Docker record is skipped there only.
         assert wire_record.get("when") == ("not (_comfyui_k8s | bool)" if app == "comfyui" else None)
 

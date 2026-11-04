@@ -1,11 +1,12 @@
 ---
-# Compose mounts each of these into the container, where ComfyUI runs unprivileged.
+# Compose mounts each of these into the container, where ComfyUI runs unprivileged; the
+# native service reads the same directories as its own account.
 - name: ComfyUI storage | Give the mounted directories to the app's runtime user
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ app_config.app.run_uid }}"
-    group: "{{ app_config.app.run_gid }}"
+    owner: "{{ comfyui_owner_uid }}"
+    group: "{{ comfyui_owner_gid }}"
     mode: "u=rwX,g=rX,o="
     recurse: true
   loop:

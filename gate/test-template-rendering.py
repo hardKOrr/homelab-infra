@@ -1724,7 +1724,7 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         )
         return yaml.safe_load(rendered)["services"]["comfyui"]
 
-    role_tasks = yaml.safe_load(read("ansible/roles/comfyui/tasks/main.yml"))
+    role_tasks = [t for f in ("docker", "main") for t in yaml.safe_load(read(f"ansible/roles/comfyui/tasks/{f}.yml"))]
     cpu = service("cpu")
     assert cpu["image"] == (
         "ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52"
