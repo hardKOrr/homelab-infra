@@ -1,0 +1,122 @@
+---
+# The release binary (https://forgejo.org/docs/latest/admin/actions/runner-installation/)
+# pinned to one version and checksum, run by systemd through the same registration
+# entrypoint the Docker method uses. Called from the playbook on the native guest.
+- name: Forgejo Runner | Assert the native method's architecture
+  ansible.builtin.assert:
+    that: ansible_facts.architecture == 'x86_64'
+    fail_msg: The native Forgejo runner binary is pinned for amd64 only.
+
+- name: Forgejo Runner | Create the native system group
+  ansible.builtin.group:
+    name: "{{ forgejo_runner_native_user }}"
+    system: true
+
+- name: Forgejo Runner | Create the native system account
+  ansible.builtin.user:
+    name: "{{ forgejo_runner_native_user }}"
+    group: "{{ forgejo_runner_native_user }}"
+    home: "{{ app_config.app.data_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Forgejo Runner | Create project directory
+  ansible.builtin.file:
+    path: "{{ forgejo_runner_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Forgejo Runner | Create runner data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "{{ forgejo_runner_native_user }}"
+    group: "{{ forgejo_runner_native_user }}"
+    mode: "0750"
+
+- name: Forgejo Runner | Download the pinned binary
+  ansible.builtin.get_url:
+    url: >-
+      https://code.forgejo.org/forgejo/runner/releases/download/v{{ app_config.app.native_version }}/forgejo-runner-{{
+      app_config.app.native_version }}-linux-amd64
+    dest: "{{ forgejo_runner_native_bin }}"
+    checksum: "sha256:{{ app_config.app.native_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Reconcile and record the registration
+  ansible.builtin.include_tasks: registration.yml
+
+- name: Forgejo Runner | Render registration environment
+  ansible.builtin.template:
+    src: runner.env.j2
+    dest: "{{ forgejo_runner_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Install idempotent registration entrypoint
+  ansible.builtin.copy:
+    src: register-and-run.sh
+    dest: "{{ forgejo_runner_entrypoint }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Render the native service
+  ansible.builtin.template:
+    src: forgejo-runner.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Forgejo Runner | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Forgejo Runner | Check that the runner service stays running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ instance }}"]
+  register: _forgejo_runner_active
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: _forgejo_runner_active.rc == 0
+
+- name: Forgejo Runner | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ instance | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Forgejo Runner | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

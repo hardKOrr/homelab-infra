@@ -28,3 +28,10 @@ backup:
 # registration on a default-StorageClass volume and runs Docker as a privileged sidecar.
 # hosting:
 #   method: kubernetes
+
+# To run the pinned runner binary natively on its own LXC (or set guest_type: vm for a VM),
+# uncomment these. Jobs then run on the guest itself under the label app.native_labels.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

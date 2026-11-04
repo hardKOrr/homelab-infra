@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Forgejo Runner ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ forgejo_runner_native_user }}
+Group={{ forgejo_runner_native_user }}
+WorkingDirectory={{ app_config.app.data_path }}
+EnvironmentFile={{ forgejo_runner_env_file }}
+Environment="FORGEJO_RUNNER_DATA_DIR={{ app_config.app.data_path }}"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart={{ forgejo_runner_entrypoint }}
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

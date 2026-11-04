@@ -71,7 +71,15 @@ def main():
     assert stack["when"] == "app_config.hosting.method == 'docker'"
     assert includes(plays["Forgejo Runner | Prepare Kubernetes"]["tasks"], "tasks/kubernetes/open-app-access.yml")
     deploy = plays["Forgejo Runner | Deploy"]["tasks"]
-    assert all("hostvars['localhost'].app_config.hosting.method == 'docker'" in str(t.get("when")) for t in deploy)
+    docker_deploy = next(t for t in deploy if t["name"] == "Deploy Forgejo Runner")
+    assert docker_deploy["when"] == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+    native_deploy = next(t for t in deploy if t["name"] == "Deploy Forgejo Runner natively")
+    assert native_deploy["ansible.builtin.include_role"]["tasks_from"] == "native"
+    assert native_deploy["when"] == "hostvars['localhost'].app_config.hosting.method == 'native'"
+    assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
+    # One exact upstream version for the image and the pinned native binary.
+    assert defaults["app"]["image"].endswith(":" + defaults["app"]["native_version"])
+    assert len(defaults["app"]["native_sha256"]) == 64
     kube = plays["Forgejo Runner | Deploy on Kubernetes"]["tasks"][0]
     assert kube["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
     assert kube["when"] == "app_config.hosting.method == 'kubernetes'"
