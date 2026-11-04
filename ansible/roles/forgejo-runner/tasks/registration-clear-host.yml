@@ -1,0 +1,8 @@
+---
+- name: Forgejo Runner | Clear stale local registration files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ app_config.app.registration_runner_path }}"
+    - "{{ app_config.app.registration_marker_path }}"

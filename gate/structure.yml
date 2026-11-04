@@ -41,7 +41,7 @@ size:
   ansible/playbooks/maintenance/status.yml: 558
   ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367
   ansible/roles/emby/tasks/main.yml: 334
-  ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 360
+  ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 338
   ansible/roles/jellyfin/tasks/main.yml: 383
   ansible/roles/k3s_cluster/tasks/storage.yml: 365
   ansible/roles/mautic/tasks/docker.yml: 352

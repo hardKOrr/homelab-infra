@@ -1,0 +1,36 @@
+---
+# Registration steps shared by the Docker and Kubernetes methods: the token from
+# Vaultwarden, reconciliation against Forgejo, then the item's registration metadata.
+- name: Forgejo Runner | Read the registration token from Vaultwarden
+  ansible.builtin.set_fact:
+    _forgejo_runner_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).runner_token
+         | default('', true) }}
+  no_log: true
+
+- name: Forgejo Runner | Assert the registration token is from Vaultwarden
+  ansible.builtin.assert:
+    that: _forgejo_runner_token | length > 0
+    fail_msg: >-
+      Runner token for {{ instance }} is unavailable. Create a token for the named
+      runner in Forgejo and store it as runner_token in Vaultwarden item
+      homelab-infra/apps/{{ instance }}; do not add it to tracked configuration.
+  no_log: true
+
+- name: Forgejo Runner | Reconcile the saved registration against Forgejo
+  ansible.builtin.include_tasks: reconcile-registration.yml
+
+- name: Forgejo Runner | Store registration metadata in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: forgejo-runner
+      instance: "{{ instance }}"
+      forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+      forgejo_url: "{{ app_config.app.forgejo_url }}"
+      runner_name: "{{ app_config.app.runner_name }}"
+      runner_token: "{{ _forgejo_runner_token }}"
+    vault_item_secret_fields: [runner_token]
+  no_log: true

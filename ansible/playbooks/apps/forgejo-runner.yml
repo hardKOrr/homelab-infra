@@ -68,6 +68,19 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
+- name: "Forgejo Runner | Prepare Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Refresh inventory for cluster access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open the runner's declared access from the Kubernetes node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Forgejo Runner | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -84,22 +97,48 @@
   tasks:
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
-      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Deploy Forgejo Runner
       ansible.builtin.include_role:
         name: forgejo-runner
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+- name: "Forgejo Runner | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Deploy Forgejo Runner into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: forgejo-runner
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
 
 - name: "Forgejo Runner | Record"
   hosts: localhost
   gather_facts: false
   vars:
-    _runner_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _runner_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if hostvars['localhost'].app_config.hosting.method == 'docker'
+         else hostvars['localhost'] }}
   tasks:
     - name: Record Forgejo Runner on its stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_names: ["{{ _runner_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_names: >-
+          {{ [_runner_host.inventory_hostname]
+             if hostvars['localhost'].app_config.hosting.method == 'docker'
+             else (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list) }}
+        record_guest_kind: "{{ 'docker' if hostvars['localhost'].app_config.hosting.method == 'docker' else 'kubernetes' }}"
         record_guest_url: ""
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

@@ -4,7 +4,7 @@
 forgejo_runner_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: services
   app:
@@ -20,6 +20,9 @@ forgejo_runner_defaults:
     registration_scope: admin
     runner_name: "{{ instance }}"
     labels: "docker:docker://docker.io/library/alpine:3.20"
+    # Docker-in-Docker image, run as a privileged sidecar when hosting.method is kubernetes.
+    dind_image: docker:27-dind
+    storage: 1
   routing:
     proxy: none
     access: internal

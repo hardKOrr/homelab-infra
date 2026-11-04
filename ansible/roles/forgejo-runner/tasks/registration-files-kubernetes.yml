@@ -1,0 +1,48 @@
+---
+# Read the saved registration files from the running runner pod's data volume. A missing
+# Deployment is a first deploy with nothing saved; an existing Deployment whose pod cannot
+# be read fails rather than being mistaken for an empty volume.
+- name: Forgejo Runner | Check for the runner Deployment
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, "deployment/{{ instance }}", --ignore-not-found, -o, name]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _forgejo_runner_k8s_deployment
+  changed_when: false
+
+- name: Forgejo Runner | Read the saved registration files from the pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - -c
+      - runner
+      - --
+      - sh
+      - -c
+      - 'for f in "$@"; do if [ -s "$f" ]; then cat "$f"; fi; printf "\n---\n"; done'
+      - sh
+      - "{{ forgejo_runner_k8s_data_dir }}/.homelab-infra-registered"
+      - "{{ forgejo_runner_k8s_data_dir }}/.runner"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _forgejo_runner_k8s_files
+  until: _forgejo_runner_k8s_files.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+  no_log: true
+  when: _forgejo_runner_k8s_deployment.stdout | length > 0
+
+- name: Forgejo Runner | Expose the saved files in the same shape as a host read
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_marker_file:
+      content: "{{ (_forgejo_runner_k8s_files.stdout.split('\n---\n')[0] | trim) | b64encode }}"
+    _forgejo_runner_registration_record_file:
+      content: "{{ (_forgejo_runner_k8s_files.stdout.split('\n---\n')[1] | trim or '{}') | b64encode }}"
+  when: _forgejo_runner_k8s_deployment.stdout | length > 0
+  no_log: true
