@@ -7,6 +7,14 @@
     that: ansible_facts.architecture == 'x86_64'
     fail_msg: The native Forgejo runner binary is pinned for amd64 only.
 
+# Upstream requires Git for workflows that fetch actions or check out code.
+- name: Forgejo Runner | Install Git
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Forgejo Runner | Create the native system group
   ansible.builtin.group:
     name: "{{ forgejo_runner_native_user }}"

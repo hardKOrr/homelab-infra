@@ -84,6 +84,11 @@ def main():
     assert kube["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
     assert kube["when"] == "app_config.hosting.method == 'kubernetes'"
 
+    native = read_yaml(ROLE / "tasks/native.yml")
+    git = next(t for t in native if t.get("ansible.builtin.apt", {}).get("name") == "git")
+    assert git["ansible.builtin.apt"]["state"] == "present"
+    assert native.index(git) < next(i for i, t in enumerate(native) if "ansible.builtin.systemd" in t)
+
     tasks = read_yaml(ROLE / "tasks/kubernetes.yml")
     for shared in ("resolve-cluster", "ensure-namespace", "sync-secret", "apply-manifest", "recovery-backup"):
         assert includes(tasks, f"tasks/kubernetes/{shared}.yml"), shared
