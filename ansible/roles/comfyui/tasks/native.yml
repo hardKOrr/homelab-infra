@@ -84,6 +84,15 @@
         version: "v{{ app_config.app.native_version }}"
         depth: 1
 
+    # Debian's bundled pip can reject normalized wheel names (typing-extensions versus
+    # typing_extensions), then attempt a source build whose backend is absent from the
+    # CPU-only index. Bootstrap a current, pinned resolver from PyPI first.
+    - name: ComfyUI | Bootstrap the native virtualenv installer
+      ansible.builtin.pip:
+        name: pip==26.3
+        virtualenv: "{{ comfyui_native_venv }}"
+        virtualenv_command: python3 -m venv
+
     - name: ComfyUI | Install PyTorch from the CPU wheel index
       ansible.builtin.pip:
         name: [torch, torchvision, torchaudio]
