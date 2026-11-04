@@ -41,7 +41,7 @@ def main():
 
     assert "include_tasks: storage-ownership.yml" in (ROLE / "tasks/main.yml").read_text()
     # The restore swap installs the tree as root, then hands the mounts back before the start.
-    swap = swap_inputs("comfyui")
+    swap = swap_inputs("comfyui", "restore-docker.yml")
     assert swap["recovery_swap_replaced_hook"] == "{{ role_path }}/tasks/storage-ownership.yml"
     assert [(p["owner"], p["group"]) for p in swap["recovery_swap_paths"]] == [(0, 0)]
 

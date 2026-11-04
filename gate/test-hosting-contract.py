@@ -76,6 +76,15 @@ def current_combination(slug, defaults):
                 or proxmox.get("type")
                 or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
             )
+        elif re.search(r"community\.docker\.|docker_compose_v2|docker_container", source):
+            # Docker on the app's own guest with Kubernetes as an opt-in path (ComfyUI).
+            method = "docker"
+            proxmox = defaults.get("proxmox", {})
+            guest_type = (
+                proxmox.get("guest_type")
+                or proxmox.get("type")
+                or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
+            )
         else:
             method = "kubernetes"
             guest_type = ""

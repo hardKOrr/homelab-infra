@@ -1,0 +1,45 @@
+---
+# ComfyUI on Kubernetes (CPU mode only): one Deployment whose single default-StorageClass
+# claim holds the same models/, user/, custom_nodes/, input/ and output/ tree as the Docker
+# storage_path, so the recovery point restores on either hosting method.
+- name: ComfyUI Kubernetes | Require CPU mode and a CPU image
+  ansible.builtin.assert:
+    that:
+      - app_config.app.accelerator | default('cuda') == 'cpu'
+      - app_config.app.image is not search('cuda')
+    fail_msg: >-
+      ComfyUI on Kubernetes runs in CPU mode. Set app.accelerator: cpu and select the CPU
+      AI-Dock image (see config.example/apps/comfyui.example.yml); a GPU is not passed to
+      the cluster.
+
+- name: ComfyUI Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: ComfyUI Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: ComfyUI Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _comfyui_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: ComfyUI Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _comfyui_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 900
+
+- name: ComfyUI Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        ComfyUI's models, custom nodes, inputs, outputs and user workflows in one
+        application-consistent recovery point

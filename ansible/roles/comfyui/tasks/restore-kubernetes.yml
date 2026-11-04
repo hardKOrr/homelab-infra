@@ -1,0 +1,21 @@
+---
+# The shared restore Job replaces the whole PVC root. The archive keeps the Docker layout
+# (models/, user/, custom_nodes/, input/, output/), so a point restores on either method.
+- name: ComfyUI Kubernetes restore | Restore the model and user storage volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: ComfyUI
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+          owner: "{{ comfyui_run_uid }}:{{ comfyui_run_gid }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        ComfyUI's models, custom nodes, inputs, outputs and user workflows in one
+        application-consistent recovery point
+      verify:
+        - >-
+          Open the instance URL, sign in through the AI-Dock login and verify the expected
+          model files, saved workflows and generated outputs.

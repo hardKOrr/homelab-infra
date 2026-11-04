@@ -29,5 +29,17 @@ replacing files already in persistent storage. Custom nodes, inputs, outputs, an
 also stay under `app.storage_path`, which the application-consistent PBS archive covers.
 The GPU is hardware and must be rebound after VM recovery; it is not part of the archive.
 
+## Kubernetes
+
+With `hosting.method: kubernetes` ComfyUI runs in CPU mode only (`app.accelerator: cpu`
+and the CPU image) as one Deployment in its own namespace. A single claim from the
+cluster's default StorageClass (`app.storage`, Gi) is mounted by subpath as the Docker
+role's five directories, so the `data` recovery point has the same layout on both methods.
+Backup and restore use the shared Kubernetes recovery Job; there is no database.
+
+CUDA mode on Kubernetes would need a dedicated GPU passed through to one k3s node VM
+(as for the Docker VM), the NVIDIA driver and container toolkit on that node, and the
+NVIDIA device plugin so pods can request `nvidia.com/gpu`; it is not built.
+
 For CUDA, declare the exact PCI device; both modes declare the model-storage path and keep
 node console recovery access.

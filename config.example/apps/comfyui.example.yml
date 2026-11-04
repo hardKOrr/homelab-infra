@@ -32,6 +32,13 @@ app:
 #   method: docker
 # stack: comfyui-lxc
 
+# To run on the Kubernetes cluster instead (CPU mode only), set accelerator: cpu and the
+# CPU image above, and uncomment this; drop stack and proxmox.vm. One claim from the
+# default StorageClass (app.storage, in Gi) holds the same models/user/custom_nodes/
+# input/output tree.
+# hosting:
+#   method: kubernetes
+
 proxmox:
   # network: shared
   # ip_address: 192.168.1.90
