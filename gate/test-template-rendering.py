@@ -1808,7 +1808,8 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
                     return found
         return None
 
-    provision = playbook[0]["tasks"]
+    provision = yaml.safe_load(read("ansible/roles/comfyui/tasks/provision-vm.yml"))
+    assert playbook[0]["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "provision-vm"
     cloud_template = find_task(provision, "Ensure the Debian cloud-init template exists")
     clone = find_task(provision, "Clone the ComfyUI VM from the cloud-init template")
     attach = find_task(provision, "Attach the named ComfyUI PCI device")

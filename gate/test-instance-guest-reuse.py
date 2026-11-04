@@ -138,6 +138,8 @@ def check_playbooks_use_it():
             f"{playbook.relative_to(ROOT)}: select the instance's own guest with "
             "tasks/proxmox/resolve-instance-guest.yml, which also finds a guest Remove kept"
         )
+        if "tasks_from: provision-vm" in text:
+            text += (ROOT / "ansible/roles/comfyui/tasks/provision-vm.yml").read_text()
         if "name: _template-native" in text:
             text += (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
         if "tasks/proxmox/resolve-instance-guest.yml" in text:

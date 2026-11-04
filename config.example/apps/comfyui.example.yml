@@ -25,6 +25,13 @@ app:
   input_path: /opt/comfyui/storage/input
   output_path: /opt/comfyui/storage/output
 
+# To use Docker on an LXC (CPU mode only; a GPU needs a VM), set accelerator: cpu above,
+# uncomment these instance overrides and set infrastructure.stacks.comfyui-lxc.guest_type:
+# lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: comfyui-lxc
+
 proxmox:
   # network: shared
   # ip_address: 192.168.1.90
