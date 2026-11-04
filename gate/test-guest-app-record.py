@@ -86,6 +86,10 @@ def main():
     for app, display in (("ollama", "Ollama"), ("comfyui", "ComfyUI")):
         plays = yaml.safe_load((ROOT / f"ansible/playbooks/apps/{app}.yml").read_text())
         provision = next(play for play in plays if play["name"] == f"{display} | Provision")
+        if app == "comfyui":  # its dedicated-VM provisioning lives in a role task file
+            provision = {"tasks": yaml.safe_load(
+                (ROOT / "ansible/roles/comfyui/tasks/provision-vm.yml").read_text()
+            )}
         task_named(provision["tasks"], f"Resolve the tagged or uniquely named owned {display} VM")
         existing_host = task_named(
             provision["tasks"], "Add the existing VM to the deploy group"
@@ -95,7 +99,7 @@ def main():
             provision["tasks"], f"Record {display} VM identity before application deployment"
         )
         assert predeploy_record["ansible.builtin.include_tasks"].endswith(
-            "../../tasks/proxmox/record-app-on-guest.yml"
+            "tasks/proxmox/record-app-on-guest.yml"
         )
         assert predeploy_record["vars"]["record_guest_kind"] == "docker"
         assert predeploy_record["vars"]["record_guest_require_success"] is True
@@ -107,8 +111,9 @@ def main():
         assert "['_' ~ instance]" in create_identity
 
         wire = next(play for play in plays if play["name"] == f"{display} | Wire")
-        wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM")
+        wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM" if app == "ollama" else f"Record {display} on its Docker guest")
         assert wire_record["vars"]["record_guest_kind"] == "docker"
+        assert "when" not in wire_record
 
     helper = load_helper()
     resources = [
