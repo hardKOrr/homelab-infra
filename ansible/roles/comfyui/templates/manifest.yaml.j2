@@ -41,6 +41,8 @@ spec:
         app.kubernetes.io/component: app
     spec:
       automountServiceAccountToken: false
+      # AI-Dock expects COMFYUI_PORT to be numeric; Service links inject a tcp:// URL.
+      enableServiceLinks: false
       initContainers:
         # AI-Dock starts as root and drops to its runtime user; each directory must exist
         # and belong to that user, as storage-ownership.yml does for Docker.

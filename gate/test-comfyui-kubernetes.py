@@ -71,6 +71,7 @@ def main():
     assert "storageClassName" not in pvc["spec"], "must use the cluster default StorageClass"
     assert pvc["spec"]["resources"]["requests"]["storage"] == "50Gi"
     pod = docs["Deployment"]["spec"]["template"]["spec"]
+    assert pod["enableServiceLinks"] is False, "Service links override AI-Dock's COMFYUI_PORT"
     mounts = {m["subPath"]: m["mountPath"] for m in pod["containers"][0]["volumeMounts"]}
     assert mounts == {
         "models": "/workspace/storage/models", "user": "/opt/ComfyUI/user",
