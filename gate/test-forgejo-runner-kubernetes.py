@@ -61,6 +61,9 @@ def main():
     assert defaults["hosting"]["method"] == "docker"
     assert "kubernetes" in defaults["hosting"]["supported"]
     assert defaults["routing"] == {"proxy": "none", "access": "internal", "identity": "none"}
+    # The shared backup scheduler renders these required inputs even in a stateless drill.
+    assert defaults["backup"]["retention_days"] > 0
+    assert {"image", "key_url", "repository", "suite", "component"} <= defaults["backup"]["client"].keys()
 
     plays = {play["name"]: play for play in read_yaml(REPO / "ansible/playbooks/apps/forgejo-runner.yml")}
     provision = plays["Forgejo Runner | Provision"]["tasks"]

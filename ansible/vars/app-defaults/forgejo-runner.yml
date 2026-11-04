@@ -30,3 +30,10 @@ forgejo_runner_defaults:
   backup:
     enabled: true
     schedule: "0 3 * * *"
+    retention_days: 14
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
