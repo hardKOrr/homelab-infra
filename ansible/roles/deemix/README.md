@@ -25,3 +25,12 @@ Deploy sets Lidarr's folder-structure setting and signs in with the ARL through 
 ingress address. The cluster instance is not discovered by Wire Media Stack. Its backup
 CronJob and restore Job come from the shared Kubernetes recovery files; the download share
 is not archived.
+
+## Native
+
+With `hosting.method: native` (`proxmox.guest_type: lxc` or `vm`) Deemix runs as the
+`deemix-server-linux-amd64` binary from the upstream package that the image's Dockerfile
+downloads, at the version and sha256 pinned in `app.native_version` and `app.native_sha256`
+(the image tag pins the same version). `templates/deemix.service.j2` sets the environment
+the image's start script sets. Backup and restore use the shared PBS client and restore swap
+with the same `config_path` archive as Docker.

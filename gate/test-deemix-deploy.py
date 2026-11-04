@@ -16,7 +16,7 @@ import task_parts
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-DEPLOY = yaml.safe_load((ROOT / "ansible/roles/deemix/tasks/main.yml").read_text())
+DEPLOY = [t for f in ("main", "configure") for t in yaml.safe_load((ROOT / f"ansible/roles/deemix/tasks/{f}.yml").read_text())]
 AUTHENTIK = task_parts.inline(ROOT / "ansible/tasks/wiring/authentik.yml")
 DEEMIX_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/deemix.yml").read_text())
 
