@@ -1,0 +1,83 @@
+---
+# The static deemix-server binary that the image's Dockerfile downloads
+# (https://gitlab.com/Bockiii/deemix-docker/-/blob/master/Dockerfile), pinned to one
+# version and checksum, run by systemd with the environment the image's start script sets.
+# Each version has its own file, so a failed upgrade leaves the running binary in place.
+- name: Deemix | Assert the native method's architecture
+  ansible.builtin.assert:
+    that: ansible_facts.architecture == 'x86_64'
+    fail_msg: The native Deemix binary is pinned for amd64 only.
+
+- name: Deemix | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Deemix | Create the native system group
+  ansible.builtin.group:
+    name: "{{ deemix_native_user }}"
+    gid: "{{ app_config.app.pgid }}"
+    system: true
+
+- name: Deemix | Create the native system account
+  ansible.builtin.user:
+    name: "{{ deemix_native_user }}"
+    uid: "{{ app_config.app.puid }}"
+    group: "{{ deemix_native_user }}"
+    home: "{{ app_config.app.config_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Deemix | Download the pinned binary
+  ansible.builtin.get_url:
+    url: >-
+      https://gitlab.com/api/v4/projects/Bockiii%2Fdeemix-docker/packages/generic/{{
+      app_config.app.native_version }}/{{ app_config.app.native_version }}/deemix-server-linux-amd64
+    dest: "{{ deemix_native_bin }}"
+    checksum: "sha256:{{ app_config.app.native_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart deemix
+
+- name: Deemix | Render the native service
+  ansible.builtin.template:
+    src: deemix.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart deemix
+
+- name: Deemix | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Deemix | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ instance | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deemix | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

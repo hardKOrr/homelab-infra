@@ -45,3 +45,10 @@ app:
 # hosting:
 #   method: docker
 # stack: media-lxc
+
+# To run the pinned deemix-server binary natively on its own LXC (or set guest_type: vm
+# for a VM), uncomment these; drop stack. The media_storage mounts attach to that guest.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

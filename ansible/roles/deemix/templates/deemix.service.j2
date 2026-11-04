@@ -1,0 +1,30 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Deemix ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ deemix_native_user }}
+Group={{ deemix_native_user }}
+WorkingDirectory=/
+# The same settings the image's start script exports. Deemix expects a trailing slash.
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="DEEMIX_DATA_DIR={{ app_config.app.config_path | regex_replace('/+$', '') }}/"
+Environment="DEEMIX_MUSIC_DIR={{ app_config.app.download_path | regex_replace('/+$', '') }}/"
+Environment="DEEMIX_SERVER_PORT={{ app_config.app.port }}"
+Environment="DEEMIX_HOST=0.0.0.0"
+Environment="DEEMIX_SINGLE_USER=true"
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+Environment="{{ key }}={{ value }}"
+{% endfor %}
+ExecStart={{ deemix_native_bin }}
+Restart=on-failure
+RestartSec=5
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

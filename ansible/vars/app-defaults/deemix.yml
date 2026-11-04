@@ -5,7 +5,7 @@
 deemix_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
 
@@ -22,9 +22,14 @@ deemix_defaults:
 
     # registry.gitlab.com/bockiii/deemix-docker is the actively maintained
     # continuation of the original deemix web UI. DEEMIX_SINGLE_USER (set
-    # unconditionally in the Compose template) makes the login applied through
-    # Deemix's login API shared server-wide instead of per visitor.
-    image: "registry.gitlab.com/bockiii/deemix-docker:latest"
+    # unconditionally in the Compose template and the native unit) makes the login
+    # applied through Deemix's login API shared server-wide instead of per visitor.
+    # One exact upstream version for both methods: the image tag and the
+    # deemix-server-linux-amd64 package that the image's Dockerfile downloads. The
+    # native method verifies native_sha256 (amd64 only).
+    image: "registry.gitlab.com/bockiii/deemix-docker:2022.12.14-r222.5d447b6035"
+    native_version: "2022.12.14-r222.5d447b6035"
+    native_sha256: "9c4ef8b57a478b9f7af8d4643ac9eb983cf46eac0d83f0e41f0b3bae8bd303b8"
     port: 6595
     container_port: 6595
 
@@ -50,6 +55,14 @@ deemix_defaults:
 
     puid: 1313
     pgid: 1313
+
+  # Used only when hosting.method is native.
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 1024
+    disk_volume:
+      size: 8
 
   routing:
     subdomain: deemix

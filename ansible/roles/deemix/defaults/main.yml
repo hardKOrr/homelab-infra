@@ -9,3 +9,7 @@ deemix_project_dir: "/opt/{{ instance }}"
 # starts. A first run also has to read the seeded .arl file.
 deemix_webui_retries: 30
 deemix_webui_delay: 5
+
+# Native: one binary per version, so a failed upgrade leaves the running one in place.
+deemix_native_user: deemix
+deemix_native_bin: "{{ deemix_project_dir }}/deemix-server-{{ app_config.app.native_version }}"

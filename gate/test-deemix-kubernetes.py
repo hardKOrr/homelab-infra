@@ -31,7 +31,7 @@ def main():
     docker = plays["Deemix | Deploy"]
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "deemix"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in docker["pre_tasks"] + docker.get("tasks", [])
     )
     kube = plays["Deemix | Deploy on Kubernetes"]
@@ -86,7 +86,7 @@ def main():
         assert sorted(p.name for p in Path(directory).iterdir()) == ["config.json"]
 
     restore = read_yaml("ansible/roles/deemix/tasks/restore.yml")
-    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-docker.yml")
+    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml("ansible/roles/deemix/tasks/restore-kubernetes.yml")[0]
     assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"

@@ -6,14 +6,14 @@
     | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
 - name: Deemix restore | Use the config directory swap
-  ansible.builtin.include_tasks: restore-docker.yml
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('docker')) == 'docker'
+    | default(app_config.hosting.method | default('docker')) in ['docker', 'native']
 
 - name: Deemix restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
     that: >-
       restore_target_config.hosting.method
-      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
-    fail_msg: Deemix recovery supports hosting.method docker or kubernetes.
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'native', 'kubernetes']
+    fail_msg: Deemix recovery supports hosting.method docker, native or kubernetes.

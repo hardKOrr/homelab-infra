@@ -1,20 +1,17 @@
 ---
 # Deploy Deemix — the media stack's Deezer download client for Lidarr's
-# plugins-branch integration. Docker on LXC (PATH A) on the media host.
+# plugins-branch integration. Docker on the media host (PATH A), or with
+# `hosting.method: native` the static deemix-server binary on its own LXC or VM.
 #
-# Usage:
-#   ansible-playbook -i inventory/ playbooks/apps/deemix.yml -e instance=deemix
-#   ansible-playbook -i inventory/ playbooks/apps/deemix.yml -e instance=deemix-4k
-#
-# The `instance` parameter is the unique name for this deployment. It becomes the
-# hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
-# the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+# Usage: ansible-playbook -i inventory/ playbooks/apps/deemix.yml -e instance=deemix
+# The instance name is the hostname, Caddy subdomain, Authentik slug and Kuma monitor name;
+# config/apps/<instance>.yml, when present, is merged over the defaults.
 #
 # To enable downloads, store a current Deezer ARL as the hidden `arl` field of
 # Vaultwarden item homelab-infra/apps/<instance> — see roles/deemix/tasks/main.yml
 # for why this platform never generates one. Settings-only use leaves ARL empty.
 #
-# Docker (default) records the `media` registry key that wire-media-stack.yml reads;
+# Docker and native record the `media` registry key that wire-media-stack.yml reads;
 # `hosting.method: kubernetes` runs it in the cluster and is not wired there.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
@@ -66,8 +63,7 @@
       vars:
         hosting_app_slug: deemix
   tasks:
-    # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
-    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    # PATH A: DOCKER APP — a container on a shared stack host, found or created by tag.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -76,22 +72,31 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: deemix
+      when: app_config.hosting.method == 'native'
+
     # ── Storage the lab already provides ──────────────────────────────────────
-    # A download client gets all of media_storage so imports hardlink.
-    - name: Resolve the storage this app needs on the stack host
+    - name: Resolve the storage this app needs (all of media_storage, so imports hardlink)
       ansible.builtin.set_fact:
         _dmx_host_mounts: >-
           {{ app_config.app.mounts
              | default((app_config.media_storage | default({})).mounts | default([]), true) }}
 
-    - name: Attach the lab's storage to the stack host
+    - name: Attach the lab's storage to the stack host or native guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: >-
+          {{ homelabinfra_instance.stack.hostname if app_config.hosting.method == 'docker'
+             else groups['deploy_' ~ instance][0] }}
         attach_mounts_list: "{{ _dmx_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _dmx_host_mounts | length > 0
 
 - name: "Deemix | Prepare Kubernetes"
@@ -131,7 +136,6 @@
       failed_when: false
 
   tasks:
-    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
@@ -142,12 +146,12 @@
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-    # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Deemix
       ansible.builtin.include_role:
         name: deemix
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Deemix | Deploy on Kubernetes"
   hosts: localhost
@@ -186,15 +190,12 @@
 
     # Topology only (CONTRACT.md §3); the ARL lives in homelab-infra/media/<instance>.
     - name: Record the media registry entry
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: not (_dmx_k8s | bool)
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: media
-        # Built as an expression, never as a literal `"{{ instance }}":` key —
-        # Ansible does not template a YAML MAPPING KEY, so that spelling writes the
-        # entry under the literal string `{{ instance }}` and every app overwrites
-        # the one before it (execution 67, 2026-08-09).
+        # An expression, not a literal `"{{ instance }}":` key: Ansible does not template keys.
         generated_facts_data: >-
           {{ {instance: {'app': _dmx_deploy_host.deemix_media_kind,
                          'host': _dmx_deploy_host.deemix_media_host}} }}
@@ -269,6 +270,8 @@
 
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: "{{ 'native' if _dmx_cfg.hosting.method == 'native' else 'docker' }}"
       when: not (_dmx_k8s | bool)
 
     - name: Record Deemix on the Kubernetes nodes

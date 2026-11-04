@@ -40,7 +40,6 @@ size:
   ansible/playbooks/maintenance/restore-pdm.yml: 360
   ansible/playbooks/maintenance/status.yml: 558
   ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367
-  ansible/roles/deemix/tasks/main.yml: 353
   ansible/roles/emby/tasks/main.yml: 334
   ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 360
   ansible/roles/jellyfin/tasks/main.yml: 383

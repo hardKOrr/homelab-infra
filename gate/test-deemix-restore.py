@@ -17,7 +17,7 @@ ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 def check_swap():
     """Deemix supplies its paths and health URL; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("deemix", "restore-docker.yml")
+    swap = swap_inputs("deemix", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
@@ -31,7 +31,7 @@ def check_backup():
     tasks = yaml.safe_load((repo / "ansible/roles/deemix/tasks/backup.yml").read_text())
     upload = next(t for t in tasks if t["name"] == "Deemix backup | Quiesce Deemix and archive its config to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ app_config.hosting.method }}"
     assert upload["vars"]["pbs_client_compose_project"] == "{{ deemix_project_dir }}"
     assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
     assert upload["vars"]["pbs_client_archives"] == [
