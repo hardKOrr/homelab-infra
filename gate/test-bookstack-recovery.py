@@ -275,6 +275,8 @@ def check_native_contract():
     assert BOOKSTACK_DEFAULTS["app"]["image"].endswith("version-v26.05.3")
     composer = next(t for t in block if "ansible.builtin.command" in t)["ansible.builtin.command"]["argv"]
     assert composer[:3] == ["composer", "install", "--no-dev"]
+    hook = (ROOT / "ansible/roles/bookstack/tasks/restore-staged.yml").read_text()
+    assert "bookstack_native | bool)" in hook and "when:" not in hook, "checked on both runtimes"
     client = (ROOT / "ansible/tasks/database/run-client.yml").read_text()
     assert "_database_client_runtime == 'native'" in client
 
