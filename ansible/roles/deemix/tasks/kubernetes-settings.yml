@@ -12,17 +12,19 @@
       - exec
       - "deployment/{{ instance }}"
       - --
-      - node
-      - -e
+      - sh
+      - -ec
       - |
-        const f = '/config/config.json';
-        const c = JSON.parse(require('fs').readFileSync(f, 'utf8'));
-        if (c.createSingleFolder === true) { console.log('unchanged'); }
-        else {
-          c.createSingleFolder = true;
-          require('fs').writeFileSync(f, JSON.stringify(c));
-          console.log('changed');
-        }
+        config=/config/config.json
+        if jq -e '.createSingleFolder == true' "$config" >/dev/null; then
+          echo unchanged
+        else
+          temporary=$(mktemp /config/.settings.XXXXXX)
+          trap 'rm -f "$temporary"' EXIT
+          jq '.createSingleFolder = true' "$config" > "$temporary"
+          cat "$temporary" > "$config"
+          echo changed
+        fi
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _dmx_k8s_settings
