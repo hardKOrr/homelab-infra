@@ -47,7 +47,7 @@
     owner: root
     group: root
     mode: "0644"
-    content: >-
+    content: >
       deb [signed-by={{ _pbs_client_install_pin.keyring }}]
       {{ _pbs_client_install.repository }} {{ _pbs_client_install_suite }}
       {{ _pbs_client_install.component }}
@@ -87,7 +87,7 @@
     owner: root
     group: root
     mode: "0644"
-    content: >-
+    content: >
       deb [signed-by={{ _pbs_client_install_pin.keyring }}]
       {{ _pbs_client_install.repository }} {{ _pbs_client_install_suite }}
       {{ _pbs_client_install.component }}

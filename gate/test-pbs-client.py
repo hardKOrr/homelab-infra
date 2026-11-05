@@ -26,12 +26,33 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+
+from ansible.modules.apt_repository import SourcesList
+from jinja2 import Template
 
 import yaml
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 pins = yaml.safe_load((repo / "ansible/vars/pbs-client.yml").read_text())["pbs_client_defaults"]
+# Ansible's apt_repository writer terminates each entry with a newline. Match it so adding
+# another repository (for a native database client) leaves PBS Deploy converged.
+install_tasks = yaml.safe_load((repo / "ansible/tasks/backup/pbs-client-install.yml").read_text())
+source_task = next(t for t in install_tasks if t["name"].endswith("Configure the signed client repository"))
+with tempfile.TemporaryDirectory() as source_dir:
+    source_file = Path(source_dir) / "pbs.list"
+    content = Template(source_task["ansible.builtin.copy"]["content"], keep_trailing_newline=True).render(
+        _pbs_client_install_pin={"keyring": "/usr/share/keyrings/pbs.gpg"},
+        _pbs_client_install={"repository": "https://download.proxmox.com/debian/pbs-client", "component": "main"},
+        _pbs_client_install_suite="trixie")
+    source_file.write_text(content)
+    sources = SourcesList.__new__(SourcesList)
+    sources.module = SimpleNamespace(atomic_move=os.replace)
+    sources.files, sources.files_mapping, sources.new_repos = {}, {}, set()
+    sources.load(str(source_file))
+    sources.save()
+    assert source_file.read_text() == content, "apt_repository rewrites the PBS repository entry"
 
 FAKE_CLIENT = r'''#!/usr/bin/env python3
 import json, os, sys, time
