@@ -84,5 +84,6 @@ install = (role / "tasks/native-install.yml").read_text()
 removed = [line for line in install.splitlines() if "rm -rf" in line and "/opt/frigate" in line]
 assert removed == ["      rm -rf /opt/frigate/frigate /opt/frigate/migrations /opt/frigate/web"], removed
 assert "frigate_project_dir" not in install
+assert "src-{{ app_config.app.native_version" in (role / "defaults/main.yml").read_text()
 
 print("Frigate native renders its units and config and uses the shared backup and restore")

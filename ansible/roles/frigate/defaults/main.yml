@@ -7,7 +7,7 @@ frigate_http_delay: 5
 # in frigate_native_build and the install replaces only upstream's code under /opt/frigate.
 # The stamp names the version the tree was built from.
 frigate_native_build: /var/lib/frigate-native
-frigate_native_src: "{{ frigate_native_build }}/src"
+frigate_native_src: "{{ frigate_native_build }}/src-{{ app_config.app.native_version | default('') }}"
 frigate_native_venv: "{{ frigate_native_build }}/venv"
 frigate_native_node: "{{ frigate_native_build }}/node"
 frigate_native_stamp: "/opt/frigate/.built-{{ app_config.app.native_version | default('') }}"
