@@ -1,11 +1,13 @@
 ---
 # Home Assistant is Docker on a dedicated Debian VM, or Docker on the home-assistant-lxc
-# stack LXC when the instance sets stack: home-assistant-lxc. A USB coordinator on the VM
-# uses a dedicated mapping; on the LXC it uses the shared LXC seam.
+# stack LXC when the instance sets stack: home-assistant-lxc, or a pod on the k3s cluster
+# with hosting.method: kubernetes. A USB coordinator on the VM uses a dedicated mapping;
+# on the LXC it uses the shared LXC seam; on Kubernetes it is attached to the first cluster
+# node and the pod is pinned there.
 home_assistant_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
 
   recovery:
@@ -33,6 +35,11 @@ home_assistant_defaults:
     port: 8123
     config_path: "/opt/{{ instance }}/config"
     initial_configuration: {}
+    # Kubernetes only: the config volume size in GiB (default StorageClass), and the pod
+    # network that may present X-Forwarded-For (the ingress controller's pod). Used to seed
+    # configuration.yaml on a fresh instance that sets no initial_configuration.
+    config_storage: 2
+    kubernetes_trusted_proxies: ["10.42.0.0/16"]
     # An empty mapping disables passthrough. When set, it must name an operator-defined
     # dedicated mapping and the path must match the coordinator's guest node.
     usb_mapping: ""
@@ -55,3 +62,13 @@ home_assistant_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

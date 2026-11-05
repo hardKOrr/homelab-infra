@@ -1,0 +1,21 @@
+---
+# The shared restore Job replaces the whole config PVC root (the data.pxar layout the
+# Docker method archives): configuration.yaml, secrets.yaml, .storage and the database.
+- name: Home Assistant Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Home Assistant
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "0:0"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the Home Assistant config directory (configuration, automations, integrations and
+        the recorder database) in one application-consistent recovery point
+      verify:
+        - >-
+          Sign in at the instance URL and verify the restored dashboards, automations and
+          history.
