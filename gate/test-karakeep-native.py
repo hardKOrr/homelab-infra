@@ -58,3 +58,20 @@ dispatch = (role / "tasks/restore.yml").read_text()
 assert "restore-guest.yml" in dispatch and "'native'" in dispatch
 
 print("Karakeep native renders its configuration and uses the shared backup and restore")
+
+# The role's working directory must stay out of the install script's /opt/karakeep tree,
+# including for the documented instance name `karakeep`.
+with tempfile.TemporaryDirectory() as directory:
+    playbook = Path(directory) / "dirs.yml"
+    playbook.write_text(yaml.safe_dump([{
+        "hosts": "localhost", "gather_facts": False,
+        "vars": {"instance": "karakeep", "app_config": {"hosting": {"method": "native"}}},
+        "roles": [],
+        "tasks": [{"ansible.builtin.include_vars": {"file": str(role / "defaults/main.yml")}},
+                  {"ansible.builtin.assert": {"that": [
+                      "karakeep_project_dir == '/opt/homelab-karakeep'",
+                      "not karakeep_native_script_dir.startswith('/opt/karakeep/')"]}}]}]))
+    result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                            text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+print("Karakeep native keeps its working directory outside /opt/karakeep")
