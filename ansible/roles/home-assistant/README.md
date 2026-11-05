@@ -24,6 +24,18 @@ Include `default_config: {}` and, behind Caddy, `http.use_x_forwarded_for: true`
 `http.trusted_proxies` listing the proxy's address. Deploy never replaces an existing
 file; subsequent configuration belongs to Home Assistant and travels in its backup.
 
+## Native
+
+With `hosting.method: native` and `proxmox.guest_type: lxc` or `vm`, Home Assistant runs on
+its own guest from a virtual environment built from the pinned upstream source release
+(`app.native_version`, checksum `app.native_sha256`) under the `<instance>` systemd unit.
+Upstream documents only the OS and Container installs, so the build installs the
+release's pinned requirements and the source into a standalone Python of the version the
+release requires, and Home Assistant installs integration requirements itself on first
+use. The config directory is the single recovery archive, backed up and restored through
+the shared PBS client and restore swap with the unit as the quiesced service. A USB
+coordinator reaches a VM by its dedicated mapping and an LXC by the shared LXC seam.
+
 ## Kubernetes
 
 With `hosting.method: kubernetes` Home Assistant is one pod in the app's namespace. `app.config_storage`

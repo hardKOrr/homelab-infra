@@ -50,3 +50,11 @@ backup:
 #   http:
 #     use_x_forwarded_for: true
 #     trusted_proxies: [192.0.2.10]
+
+# To run Home Assistant natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides and drop stack. Upstream's source release is built in a virtual
+# environment under systemd; app.port stays 8123.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

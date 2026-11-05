@@ -1,4 +1,9 @@
----
 home_assistant_project_dir: "/opt/{{ instance }}"
 home_assistant_compose_file: "{{ home_assistant_project_dir }}/docker-compose.yml"
 home_assistant_secrets_file: "{{ app_config.app.config_path }}/secrets.yaml"
+# Native: the interpreter, source and venv live beside the config directory, which is the
+# only recovery unit. The stamp ties the venv to native_version.
+home_assistant_native_dir: "{{ home_assistant_project_dir }}/native"
+home_assistant_native_src: "{{ home_assistant_native_dir }}/src-{{ app_config.app.native_version | default('') }}"
+home_assistant_native_venv: "{{ home_assistant_native_dir }}/venv-{{ app_config.app.native_version | default('') }}"
+home_assistant_native_stamp: "{{ home_assistant_native_venv }}/.built"

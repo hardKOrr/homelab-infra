@@ -1,7 +1,8 @@
 ---
-# Deploy Home Assistant as Docker on its own VM (stack: home-assistant-lxc: on an LXC), or
-# as a pod on the k3s cluster (hosting.method: kubernetes). A Zigbee coordinator uses a Proxmox USB resource mapping, never a raw vendor:product pair;
-# an empty mapping disables passthrough. See ansible/roles/home-assistant/README.md.
+# Deploy Home Assistant as Docker on its own VM (stack: home-assistant-lxc: on an LXC), as
+# a pod on the k3s cluster (hosting.method: kubernetes), or natively on its own LXC or VM
+# (hosting.method: native with proxmox.guest_type). A Zigbee coordinator uses a Proxmox USB
+# resource mapping, never a raw vendor:product pair; an empty mapping disables passthrough. See ansible/roles/home-assistant/README.md.
 
 - name: "Home Assistant | Provision"
   hosts: localhost
@@ -45,6 +46,20 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: home-assistant
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (app_config.stack | default('', true) | length) == 0
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+          - >-
+            (app_config.app.usb_mapping | default('', true) | length == 0)
+            or (app_config.app.usb_device_path | default('') is match('^/dev/'))
+        fail_msg: >-
+          Native Home Assistant runs on its own guest: set no stack and set
+          proxmox.guest_type to lxc or vm in the instance config. When usb_mapping is set,
+          usb_device_path must name the coordinator's serial node.
+
     - name: Assert the explicit VM and optional USB contract
       when: app_config.hosting.method == 'docker'
       ansible.builtin.assert:
@@ -69,6 +84,40 @@
             name: home-assistant
             tasks_from: kubernetes
         - name: Skip the guest plays
+          ansible.builtin.meta: end_play
+
+    - name: Deploy Home Assistant natively and skip the Docker VM path
+      when: app_config.hosting.method == 'native'
+      block:
+        - name: Provision or reuse the native guest
+          ansible.builtin.include_role:
+            name: _template-native
+            tasks_from: provision
+          vars:
+            native_guest_network_app: home-assistant
+
+        - name: Attach the optional Zigbee USB mapping to the native VM
+          ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
+          vars:
+            usb_passthrough_guest: "{{ groups['deploy_' ~ instance][0] }}"
+            usb_passthrough_device:
+              mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+          when:
+            - app_config.app.usb_mapping | default('', true) | length > 0
+            - _native_guest_guest_type == 'vm'
+
+        - name: Bind the optional Zigbee USB device into the native LXC
+          ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough-lxc.yml
+          vars:
+            usb_lxc_guest: "{{ groups['deploy_' ~ instance][0] }}"
+            usb_lxc_device:
+              mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+              serial_path: "{{ app_config.app.usb_device_path }}"
+          when:
+            - app_config.app.usb_mapping | default('', true) | length > 0
+            - _native_guest_guest_type == 'lxc'
+
+        - name: Skip the Docker VM path
           ansible.builtin.meta: end_play
 
     - name: Provision on the opt-in stack host, or fall through to the dedicated VM
@@ -148,7 +197,7 @@
       failed_when: false
 
   tasks:
-    - name: Bootstrap the Home Assistant VM
+    - name: Bootstrap the Home Assistant guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
@@ -158,6 +207,7 @@
     - name: Ensure Docker is installed on the VM
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy Home Assistant
       ansible.builtin.include_role:
@@ -239,7 +289,10 @@
         record_guest_names: >-
           {{ (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list)
              if _ha_k8s | bool else [groups['deploy_' ~ instance][0]] }}
-        record_guest_kind: "{{ 'kubernetes' if _ha_k8s | bool else 'docker' }}"
+        record_guest_kind: >-
+          {{ 'kubernetes' if _ha_k8s | bool
+             else 'native' if hostvars['localhost'].app_config.hosting.method == 'native'
+             else 'docker' }}
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
