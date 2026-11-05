@@ -31,7 +31,7 @@ def walk(tasks):
 def main():
     defaults = load('ansible/vars/app-defaults/forgejo.yml')['forgejo_defaults']
     assert defaults['hosting']['method'] == 'docker'
-    assert defaults['hosting']['supported'] == ['docker-vm', 'kubernetes']
+    assert defaults['hosting']['supported'] == ['docker-vm', 'docker-lxc', 'kubernetes']
     variables = {'instance': 'forgejo', 'forgejo_fqdn': 'forgejo.example.test',
                  'app_config': defaults, '_forgejo_k8s_env': {'USER_UID': '1000'}}
     env_vars = variables | {'ansible_managed': 'Ansible managed',
