@@ -41,7 +41,7 @@
             'lfs': rebase('lfs', 'PATH', app_data + '/lfs' if restoring else target + '/git/lfs'),
             'log': rebase('log', 'ROOT_PATH', target + '/gitea/log'),
         }))
-      - "{{ forgejo_app_ini }}"
+      - "{{ forgejo_data_path }}/gitea/conf/app.ini"
       - "{{ forgejo_source_data_path | default(forgejo_data_path) }}"
       - "{{ forgejo_data_path }}"
       - "{{ forgejo_restore_paths | default(false) | bool }}"
@@ -77,7 +77,8 @@
 
 - name: Forgejo | Write the managed app.ini settings
   community.general.ini_file:
-    path: "{{ forgejo_app_ini }}"
+    path: "{{ forgejo_data_path }}/gitea/conf/app.ini"
+    create: false
     section: "{{ item.section | default(omit, true) }}"
     option: "{{ item.option }}"
     value: "{{ item.value }}"

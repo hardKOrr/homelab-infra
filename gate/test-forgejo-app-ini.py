@@ -35,7 +35,7 @@ ROOT_PATH = /data/gitea/log
 """
 
 
-def main(source_prefix, implicit=False):
+def main(source_prefix, implicit=False, source_exists=True):
     with tempfile.TemporaryDirectory() as directory:
         base = Path(directory)
         ini = base / "data/gitea/conf/app.ini"
@@ -44,6 +44,11 @@ def main(source_prefix, implicit=False):
         if implicit:
             source = source.split('APP_DATA_PATH')[0]
         ini.write_text(source.replace("= /data/", "= " + source_prefix + "/"))
+        source_ini = base / "source-data/gitea/conf/app.ini"
+        source_bytes = SOURCE.encode()
+        if source_exists:
+            source_ini.parent.mkdir(parents=True)
+            source_ini.write_bytes(source_bytes)
         play = base / "play.yml"
         play.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,
@@ -51,9 +56,10 @@ def main(source_prefix, implicit=False):
                 "forgejo_native_user": subprocess.run(["id", "-un"], text=True, capture_output=True).stdout.strip(),
                 "forgejo_source_data_path": source_prefix,
                 "forgejo_restore_paths": True,
-                "forgejo_app_ini": str(ini), "forgejo_data_path": str(base / "data"),
+                "forgejo_app_ini": "{{ app_config.app.data_path }}/gitea/conf/app.ini",
+                "forgejo_data_path": str(base / "data"),
                 "forgejo_fqdn": "dst.example.test",
-                "app_config": {"app": {"port": 3100, "ssh_port": 2322}},
+                "app_config": {"app": {"data_path": str(base / "source-data"), "port": 3100, "ssh_port": 2322}},
                 "forgejo_ini_database": {"host": "dst-db", "port": 5433, "name": "dstdb",
                                          "user": "dstuser", "password": "dstpass"}},
             "handlers": [{"name": "Restart Forgejo", "ansible.builtin.debug": {"msg": "restart"}}],
@@ -80,10 +86,14 @@ def main(source_prefix, implicit=False):
                                 text=True, capture_output=True, check=False)
         assert repeat.returncode == 0, repeat.stdout + repeat.stderr
         assert "changed=0 " in repeat.stdout, repeat.stdout
+        if source_exists:
+            assert source_ini.read_bytes() == source_bytes, "source instance configuration changed"
+        else:
+            assert not source_ini.exists(), "restore created a stray source configuration"
 
     print("Forgejo app.ini reconciliation checks passed")
 
 
 main("/data")
 main("/opt/source/data")
-main("/data", implicit=True)
+main("/data", implicit=True, source_exists=False)
