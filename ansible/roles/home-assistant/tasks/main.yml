@@ -18,6 +18,7 @@
       - >-
         (app_config.app.usb_mapping | default('', true) | length == 0)
         or (app_config.app.usb_device_path | default('') is match('^/dev/'))
+        or (app_config.stack | default('', true) | length > 0)
       - _ha_integration_credentials is mapping
     fail_msg: >-
       When configured, Home Assistant's Proxmox USB mapping requires its guest serial

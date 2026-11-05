@@ -37,3 +37,10 @@ backup:
   # retention_days: 14
   # datastore: REPLACE_WITH_PBS_DATASTORE
   # backup_id: ""
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.home-assistant-lxc.guest_type: lxc in config/infrastructure.yml.
+# A usb_mapping there must be declared mode: shared; the LXC gets /dev/bus/usb bound.
+# hosting:
+#   method: docker
+# stack: home-assistant-lxc

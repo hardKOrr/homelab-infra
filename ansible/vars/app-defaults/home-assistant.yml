@@ -1,10 +1,11 @@
 ---
-# Home Assistant is Docker on a dedicated Debian VM. The VM boundary is required by
-# the dedicated USB/Zigbee mapping; Docker itself is the ordinary application runtime.
+# Home Assistant is Docker on a dedicated Debian VM, or Docker on the home-assistant-lxc
+# stack LXC when the instance sets stack: home-assistant-lxc. A USB coordinator on the VM
+# uses a dedicated mapping; on the LXC it uses the shared LXC seam.
 home_assistant_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
 
   recovery:

@@ -1,0 +1,34 @@
+---
+# Provision step for a Home Assistant that selects a stack (stack: home-assistant-lxc):
+# the stack host replaces the dedicated VM. Included by playbooks/apps/home-assistant.yml.
+- name: Assert the only stack is the opt-in LXC stack
+  ansible.builtin.assert:
+    that: app_config.stack | default('home-assistant-lxc', true) == 'home-assistant-lxc'
+    fail_msg: >-
+      Home Assistant runs on its own VM, or on Docker on an LXC with
+      stack: home-assistant-lxc; no other stack is supported.
+  when: app_config.stack | default('', true) | length > 0
+
+- name: Find or create the Home Assistant stack host
+  ansible.builtin.import_tasks: ../../../tasks/stack/find-or-create-host.yml
+  vars:
+    stack_name: "{{ app_config.stack }}"
+    stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+    deploy_group: "deploy_{{ instance }}"
+  when: app_config.stack | default('', true) | length > 0
+
+# An LXC cannot take a Proxmox USB mapping as a VM does; the shared LXC seam binds the
+# mapped device node instead (declared mode: shared in config/proxmox.yml).
+- name: Bind the optional USB coordinator into the stack LXC
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-usb-passthrough-lxc.yml
+  vars:
+    usb_lxc_guest: "{{ homelabinfra_instance.stack.hostname }}"
+    usb_lxc_device:
+      mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+  when:
+    - app_config.app.usb_mapping | default('', true) | length > 0
+    - hostvars[homelabinfra_instance.stack.hostname].proxmox_vmtype | default('') == 'lxc'
+
+- name: Skip the dedicated VM path for a stack-hosted instance
+  ansible.builtin.meta: end_play
+  when: app_config.stack | default('', true) | length > 0

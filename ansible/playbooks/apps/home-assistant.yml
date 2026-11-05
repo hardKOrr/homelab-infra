@@ -1,10 +1,7 @@
 ---
-# Deploy Home Assistant as Docker on its own VM. A Zigbee coordinator can be assigned
-# through a dedicated Proxmox USB resource mapping; an empty mapping disables passthrough.
-# USB devices are never selected by a raw vendor:product pair or exposed through an LXC bind.
-#
-# When USB is configured, the mapping must already exist and be declared `mode: dedicated`
-# in config/proxmox.yml, and usb_device_path must name the guest serial path.
+# Deploy Home Assistant as Docker on its own VM (stack: home-assistant-lxc: on an LXC).
+# A Zigbee coordinator uses a Proxmox USB resource mapping, never a raw vendor:product pair;
+# an empty mapping disables passthrough. See ansible/roles/home-assistant/README.md.
 
 - name: "Home Assistant | Provision"
   hosts: localhost
@@ -63,6 +60,9 @@
           untagged device.
 
   tasks:
+    - name: Provision on the opt-in stack host, or fall through to the dedicated VM
+      ansible.builtin.include_tasks: ../../roles/home-assistant/tasks/provision-stack.yml
+
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
@@ -300,7 +300,7 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record Home Assistant on its dedicated VM
+    - name: Record Home Assistant on its dedicated VM or stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
 
     - name: Fail if anything could not be wired
