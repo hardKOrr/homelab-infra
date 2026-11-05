@@ -40,18 +40,18 @@
     owner: root
     group: root
     mode: "0755"
-  loop: ["{{ frigate_native_src }}", "{{ frigate_native_node }}", /usr/local/go2rtc/bin, /usr/local/tempio/bin, /usr/lib/ffmpeg/8.0]
+  loop: ["{{ frigate_native_build }}", "{{ frigate_native_src }}", "{{ frigate_native_node }}", /usr/local/go2rtc/bin, /usr/local/tempio/bin, /usr/lib/ffmpeg/8.0]
 
 - name: Frigate native | Download the pinned source release
   ansible.builtin.get_url:
     url: "https://github.com/blakeblackshear/frigate/archive/refs/tags/v{{ app_config.app.native_version }}.tar.gz"
-    dest: "{{ frigate_project_dir }}/frigate-{{ app_config.app.native_version }}.tar.gz"
+    dest: "{{ frigate_native_build }}/frigate-{{ app_config.app.native_version }}.tar.gz"
     checksum: "sha256:{{ app_config.app.native_sha256 }}"
     mode: "0644"
 
 - name: Frigate native | Unpack the source
   ansible.builtin.unarchive:
-    src: "{{ frigate_project_dir }}/frigate-{{ app_config.app.native_version }}.tar.gz"
+    src: "{{ frigate_native_build }}/frigate-{{ app_config.app.native_version }}.tar.gz"
     dest: "{{ frigate_native_src }}"
     remote_src: true
     extra_opts: [--strip-components=1]
@@ -60,7 +60,7 @@
 - name: Frigate native | Download the pinned prebuilt assets
   ansible.builtin.get_url:
     url: "{{ item.value.url }}"
-    dest: "{{ frigate_project_dir }}/{{ item.value.url | basename }}"
+    dest: "{{ frigate_native_build }}/{{ item.value.url | basename }}"
     checksum: "sha256:{{ item.value.sha256 }}"
     mode: "0644"
   loop: "{{ app_config.app.native_assets | dict2items }}"
@@ -69,7 +69,7 @@
 
 - name: Frigate native | Place the single-file assets
   ansible.builtin.copy:
-    src: "{{ frigate_project_dir }}/{{ app_config.app.native_assets[item.asset].url | basename }}"
+    src: "{{ frigate_native_build }}/{{ app_config.app.native_assets[item.asset].url | basename }}"
     dest: "{{ item.dest }}"
     remote_src: true
     owner: root
@@ -85,7 +85,7 @@
 
 - name: Frigate native | Unpack the pinned ffmpeg
   ansible.builtin.unarchive:
-    src: "{{ frigate_project_dir }}/{{ app_config.app.native_assets.ffmpeg.url | basename }}"
+    src: "{{ frigate_native_build }}/{{ app_config.app.native_assets.ffmpeg.url | basename }}"
     dest: /usr/lib/ffmpeg/8.0
     remote_src: true
     extra_opts: [--strip-components=1]
@@ -94,7 +94,7 @@
 
 - name: Frigate native | Unpack the pinned Node.js used only for the web build
   ansible.builtin.unarchive:
-    src: "{{ frigate_project_dir }}/{{ app_config.app.native_assets.node.url | basename }}"
+    src: "{{ frigate_native_build }}/{{ app_config.app.native_assets.node.url | basename }}"
     dest: "{{ frigate_native_node }}"
     remote_src: true
     extra_opts: [--strip-components=1]
@@ -126,7 +126,7 @@
       pip install --upgrade pip wheel setuptools
       pip install -r {{ frigate_native_src }}/docker/main/requirements.txt
       pip install -r {{ frigate_native_src }}/docker/main/requirements-wheels.txt
-      mkdir -p {{ frigate_project_dir }}/pysqlite && cd {{ frigate_project_dir }}/pysqlite
+      mkdir -p {{ frigate_native_build }}/pysqlite && cd {{ frigate_native_build }}/pysqlite
       bash {{ frigate_native_src }}/docker/main/build_pysqlite3.sh
       pip install /wheels/pysqlite3*.whl
       touch {{ frigate_native_venv }}/.frigate-{{ app_config.app.native_version }}
@@ -145,8 +145,8 @@
       npm run build
       mv dist/BASE_PATH/monacoeditorwork/* dist/assets/
       rm -rf dist/BASE_PATH
-      rm -rf /opt/frigate
       mkdir -p /opt/frigate
+      rm -rf /opt/frigate/frigate /opt/frigate/migrations /opt/frigate/web
       cp -a {{ frigate_native_src }}/frigate {{ frigate_native_src }}/migrations /opt/frigate/
       cp -a dist /opt/frigate/web
       cp {{ frigate_native_src }}/labelmap.txt /labelmap.txt

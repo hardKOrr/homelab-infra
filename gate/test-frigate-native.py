@@ -73,4 +73,16 @@ assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
 dispatch = (role / "tasks/restore.yml").read_text()
 assert "restore-guest.yml" in dispatch and "'native'" in dispatch
 
+# With the default instance name the project and config directories are inside upstream's
+# fixed /opt/frigate: build paths must stay outside it, and the install may remove only
+# upstream's code there.
+role_defaults = yaml.safe_load((role / "defaults/main.yml").read_text())
+for name in ("frigate_native_build", "frigate_native_src", "frigate_native_venv", "frigate_native_node"):
+    assert not role_defaults[name].startswith("/opt/"), name
+assert defaults["app"]["config_path"] == "/opt/{{ instance }}/config"
+install = (role / "tasks/native-install.yml").read_text()
+removed = [line for line in install.splitlines() if "rm -rf" in line and "/opt/frigate" in line]
+assert removed == ["      rm -rf /opt/frigate/frigate /opt/frigate/migrations /opt/frigate/web"], removed
+assert "frigate_project_dir" not in install
+
 print("Frigate native renders its units and config and uses the shared backup and restore")
