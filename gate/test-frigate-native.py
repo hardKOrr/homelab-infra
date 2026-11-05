@@ -33,6 +33,11 @@ def render():
                 "vars": {"item": {"name": unit, "after": "", "needs": "x.service" if unit == "frigate" else ""}}})
             tasks.append({"ansible.builtin.template": {
                 "src": str(role / f"templates/native-{unit}.sh.j2"), "dest": str(root / f"{unit}.sh")}})
+        tasks.extend([
+            {"ansible.builtin.include_tasks": str(role / "tasks/remove-units.yml")},
+            {"ansible.builtin.assert": {"that": [
+                "_rm_service_names == ['frigate', 'frigate-nginx', 'frigate-go2rtc']"]}},
+        ])
         playbook = root / "render.yml"
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,

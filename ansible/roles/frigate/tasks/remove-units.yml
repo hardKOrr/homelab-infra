@@ -1,0 +1,5 @@
+---
+# Feed all native units to the shared removal flow before it deletes their config.
+- name: Frigate remove | Stop all native services
+  ansible.builtin.set_fact:
+    _rm_service_names: ["{{ instance }}", "{{ instance }}-nginx", "{{ instance }}-go2rtc"]
