@@ -1,6 +1,6 @@
 # Frigate deployment and recovery
 
-Frigate runs in the dedicated `stack-frigate` Docker-on-VM guest. Select
+Frigate runs in the dedicated `stack-frigate` Docker-on-VM guest, or on Docker on an LXC (CPU-only) when configured with `stack: frigate-lxc`. Select
 `app.detector: coral` for the existing accelerator setup or `app.detector: cpu` for a
 device-free instance. CPU mode requires empty `gpu_device`, `igpu_render_node`,
 `coral_usb_mapping` and `hwaccel_args` values; the playbook does not inspect or bind device
