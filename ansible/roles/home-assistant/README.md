@@ -18,3 +18,8 @@ detach procedure through a separately authorized operation.
 Integration credentials are read from the hidden `integration_credentials` JSON field in
 `homelab-infra/apps/<instance>` and rendered to a root-only `secrets.yaml`. They are never
 accepted in `config/apps/<instance>.yml` or printed by Ansible.
+
+`app.initial_configuration` optionally seeds `configuration.yaml` on a fresh instance.
+Include `default_config: {}` and, behind Caddy, `http.use_x_forwarded_for: true` with
+`http.trusted_proxies` listing the proxy's address. Deploy never replaces an existing
+file; subsequent configuration belongs to Home Assistant and travels in its backup.

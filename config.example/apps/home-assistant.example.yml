@@ -44,3 +44,9 @@ backup:
 # hosting:
 #   method: docker
 # stack: home-assistant-lxc
+# On a fresh instance behind Caddy, add under app (substitute its actual address):
+# initial_configuration:
+#   default_config: {}
+#   http:
+#     use_x_forwarded_for: true
+#     trusted_proxies: [192.0.2.10]

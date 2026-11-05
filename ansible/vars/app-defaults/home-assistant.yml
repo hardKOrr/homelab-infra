@@ -32,6 +32,7 @@ home_assistant_defaults:
     image: ghcr.io/home-assistant/home-assistant:stable
     port: 8123
     config_path: "/opt/{{ instance }}/config"
+    initial_configuration: {}
     # An empty mapping disables passthrough. When set, it must name an operator-defined
     # dedicated mapping and the path must match the coordinator's guest node.
     usb_mapping: ""
