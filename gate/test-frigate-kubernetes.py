@@ -27,6 +27,15 @@ def render(text, variables):
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/frigate.yml"))["frigate_defaults"]
 assert defaults["hosting"]["method"] == "docker"
 assert defaults["app"]["config_storage"] > 0 and defaults["app"]["media_storage"] > 0
+assert defaults["backup"]["client"] == {
+    "image": "buildpack-deps:bookworm-curl",
+    "key_url": "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg",
+    "repository": "http://download.proxmox.com/debian/pbs-client",
+    "suite": "bookworm",
+    "component": "main",
+}
+assert defaults["backup"]["timeout_seconds"] > 0 and defaults["backup"]["scratch_size"] > 0
+assert defaults["backup"]["encryption"] == "none"
 
 playbook = yaml.safe_load(read("ansible/playbooks/apps/frigate.yml"))
 provision = playbook[0]
