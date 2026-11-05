@@ -28,6 +28,7 @@
       - autoconf
       - build-essential
       - ca-certificates
+      - clang
       - curl
       - ffmpeg
       - iputils-ping
