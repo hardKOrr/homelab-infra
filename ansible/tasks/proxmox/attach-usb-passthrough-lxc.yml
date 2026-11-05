@@ -10,7 +10,9 @@
 #
 # Inputs:
 #   usb_lxc_guest   - LXC guest hostname
-#   usb_lxc_device  - {mapping: "frigate-coral"}
+#   usb_lxc_device  - {mapping: "frigate-coral"}; optional serial_path (for example
+#                     /dev/ttyUSB0) binds the mapped device's tty node instead of the raw
+#                     bus node, after proving the mapping's device owns exactly that node
 #
 # The mapping must be declared under homelabinfra_config.proxmox.devices with mode: shared
 # and the mapping identifier in its identifiers list. This is the LXC counterpart to the
@@ -128,6 +130,39 @@
       {{ homelabinfra_config.proxmox.node }}. Reconnect the named device and retry; this
       platform does not substitute another USB device.
 
+- name: LXC USB passthrough | Resolve the mapped device's serial node
+  ansible.builtin.shell: >-
+    set -eu;
+    sysdev="/sys/bus/usb/devices/{{ _usb_lxc_mapping_entries[0].port }}";
+    for d in "$sysdev":*/ttyUSB* "$sysdev":*/ttyACM* "$sysdev":*/tty/ttyACM* "$sysdev":*/tty/ttyUSB*;
+    do test -e "$d" && echo "/dev/$(basename "$d")"; done
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_lxc_serial
+  changed_when: false
+  failed_when: false
+  when: usb_lxc_device.serial_path | default('', true) | length > 0
+  vars:
+    _usb_lxc_mapping_entries: >-
+      {{ (_usb_lxc_mapping.stdout | from_json).map | default([])
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
+
+- name: LXC USB passthrough | Assert the mapped device owns exactly the declared serial node
+  ansible.builtin.assert:
+    that: _usb_lxc_serial.stdout_lines | default([]) == [usb_lxc_device.serial_path]
+    fail_msg: >-
+      USB mapping {{ usb_lxc_device.mapping }} exposes serial node(s)
+      {{ _usb_lxc_serial.stdout_lines | default([]) | join(', ') | default('none', true) }},
+      not {{ usb_lxc_device.serial_path }}. Fix the declared device path.
+  when: usb_lxc_device.serial_path | default('', true) | length > 0
+
+- name: LXC USB passthrough | Select the node to bind
+  ansible.builtin.set_fact:
+    _usb_lxc_bind_path: >-
+      {{ usb_lxc_device.serial_path if usb_lxc_device.serial_path | default('', true) | length > 0
+         else _usb_lxc_path.stdout | trim }}
+
 - name: LXC USB passthrough | Read every LXC configuration
   ansible.builtin.command:
     cmd: "pct config {{ item.vmid }}"
@@ -143,7 +178,7 @@
     _usb_lxc_holders: >-
       {{ _usb_lxc_holders | default([]) +
          ([item.item.vmid | string] if
-          ((_usb_lxc_path.stdout | trim) in
+          (_usb_lxc_bind_path in
            (item.stdout_lines | select('match', '^dev[0-9]+:')
             | map('regex_replace', '^dev[0-9]+:\s*path=([^,]+).*$', '\\1') | list))
           else []) }}
@@ -164,6 +199,6 @@
   vars:
     shared_device_guest: "{{ usb_lxc_guest }}"
     shared_device_list:
-      - host: "{{ _usb_lxc_path.stdout | trim }}"
+      - host: "{{ _usb_lxc_bind_path }}"
         identity: "{{ usb_lxc_device.mapping }}"
         mode: "0666"

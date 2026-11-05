@@ -19,6 +19,7 @@
     usb_lxc_guest: "{{ inventory_hostname }}"
     usb_lxc_device:
       mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+      serial_path: "{{ app_config.app.usb_device_path }}"
   when:
     - app_config.app.usb_mapping | default('', true) | length > 0
     - app_config.stack | default('', true) | length > 0

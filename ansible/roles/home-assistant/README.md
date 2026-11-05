@@ -7,7 +7,8 @@ mapping must be declared dedicated and the guest device path must name its seria
 
 With `stack: home-assistant-lxc` (and `infrastructure.stacks.home-assistant-lxc.guest_type: lxc`)
 it runs the same Compose project on that stack's Docker LXC instead; the USB mapping must then
-be declared shared and `/dev/bus/usb` is bound into the container.
+be declared shared; the seam checks that the mapped device owns exactly `usb_device_path` and
+binds that serial node through the LXC and into the container.
 
 On an existing instance, clearing `usb_mapping` removes the Compose device bind on the
 next deploy but does not detach a Proxmox assignment already on the VM. Keep the mapping

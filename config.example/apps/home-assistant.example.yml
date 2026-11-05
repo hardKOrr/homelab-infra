@@ -40,7 +40,7 @@ backup:
 
 # To use Docker on an LXC, uncomment these instance overrides and set
 # infrastructure.stacks.home-assistant-lxc.guest_type: lxc in config/infrastructure.yml.
-# A usb_mapping there must be declared mode: shared; the LXC gets /dev/bus/usb bound.
+# A usb_mapping there must be declared mode: shared, and usb_device_path must be the mapped coordinator's serial node.
 # hosting:
 #   method: docker
 # stack: home-assistant-lxc

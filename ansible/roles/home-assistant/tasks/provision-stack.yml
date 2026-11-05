@@ -25,6 +25,7 @@
     usb_lxc_guest: "{{ homelabinfra_instance.stack.hostname }}"
     usb_lxc_device:
       mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+      serial_path: "{{ app_config.app.usb_device_path }}"
   when:
     - app_config.app.usb_mapping | default('', true) | length > 0
     - hostvars[homelabinfra_instance.stack.hostname].proxmox_vmtype | default('') == 'lxc'

@@ -13,9 +13,7 @@ services:
     devices:
       # Only the exact serial node for the mapped coordinator enters the container.
       # The Proxmox mapping is the physical-device identity; this is its guest path.
-      # On an LXC the shared USB seam binds the mapped device under /dev/bus/usb.
-{% set _ha_usb_path = '/dev/bus/usb' if (app_config.stack | default('', true)) | length > 0 else app_config.app.usb_device_path %}
-      - "{{ _ha_usb_path }}:{{ _ha_usb_path }}"
+      - "{{ app_config.app.usb_device_path }}:{{ app_config.app.usb_device_path }}"
 {% endif %}
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8123/ || exit 1"]
