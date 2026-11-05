@@ -1,0 +1,165 @@
+{#
+  Frigate on Kubernetes, CPU-only: no camera, Coral or GPU is reachable from the cluster.
+  The config PVC holds config.yml and frigate.db, the same data.pxar layout as the Docker
+  recovery points. The media PVC is not part of the application recovery unit.
+  config.yml is seeded once from the ConfigMap and never overwritten afterwards, as the
+  Docker method does with force: false.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-seed
+  labels:
+{{ labels }}
+data:
+  config.yml: |
+{{ _frigate_seed_config | indent(4, true) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.config_storage }}Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-media
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.media_storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      initContainers:
+        - name: seed-config
+          image: {{ app_config.app.image }}
+          command:
+            - sh
+            - -c
+            - test -f /config/config.yml || cp /seed/config.yml /config/config.yml
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: seed
+              mountPath: /seed
+      containers:
+        - name: frigate
+          image: {{ app_config.app.image }}
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+          ports:
+            - name: web
+              containerPort: 8971
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /media/frigate
+            - name: shm
+              mountPath: /dev/shm
+          # Port 8971 is authenticated; this onboarding endpoint stays public.
+          startupProbe:
+            httpGet:
+              path: /api/auth/first_time_login
+              port: web
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/auth/first_time_login
+              port: web
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/auth/first_time_login
+              port: web
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+        - name: media
+          persistentVolumeClaim:
+            claimName: {{ instance }}-media
+        - name: seed
+          configMap:
+            name: {{ instance }}-seed
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ app_config.app.shm_size | regex_replace('m$', 'Mi') }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: web
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ frigate_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

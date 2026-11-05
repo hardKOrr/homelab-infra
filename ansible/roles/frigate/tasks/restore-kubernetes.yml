@@ -1,0 +1,20 @@
+---
+# The shared restore Job replaces the whole config PVC root: config.yml and frigate.db.
+- name: Frigate Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Frigate
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "0:0"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        config.yml and the SQLite database frigate.db in one application-consistent
+        recovery point; recordings are not included
+      verify:
+        - >-
+          Sign in at the instance URL and verify the restored configuration, then the
+          expected events and review items in the Frigate database.

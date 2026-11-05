@@ -1,0 +1,34 @@
+---
+# Restore one Frigate config/database archive through the shared swap. The staged
+# config.yml and frigate.db must be complete and the database intact before Frigate stops.
+
+- name: Frigate restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - not (restore_overwrite | bool) or restore_pre_restore_point | default('', true) | length > 0
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Frigate restore needs its PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots; overwrite requires a fresh target recovery point.
+
+- name: Frigate restore | Preview or replace the config directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: 0
+        group: 0
+        mode: "0750"
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ frigate_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+    recovery_swap_health_retries: "{{ frigate_http_retries | default(60) }}"
+    recovery_swap_health_delay: "{{ frigate_http_delay | default(5) }}"

@@ -35,6 +35,14 @@ database, then keeps the original directory beside the live path on the same fil
 until the restored service passes health checks. Any later failure puts the original
 directory back and starts it.
 
+## Kubernetes
+
+With `hosting.method: kubernetes` Frigate runs CPU-only in the app's namespace: no camera
+credentials, Coral, GPU or MQTT user (Deploy refuses them). `config_storage` and
+`media_storage` size two default-StorageClass claims; only the config claim (`config.yml`
+and `frigate.db`) is in the `data` recovery archive, backed up by the shared CronJob and
+restored by the shared Job. `config.yml` is seeded once and then belongs to Frigate.
+
 ## Recovery procedure
 
 1. Restore or create the `stack-frigate` guest and restore its declared recording-storage
