@@ -1,0 +1,54 @@
+---
+# CPU-only Frigate on the k3s cluster. Cameras, MQTT authentication, Coral and GPU
+# decode need credentials or devices the cluster cannot give, so they stay Docker-only.
+
+- name: Frigate | Assert the Kubernetes scope
+  ansible.builtin.assert:
+    that:
+      - app_config.app.detector == 'cpu'
+      - app_config.app.cameras | default({}) | length == 0
+      - app_config.app.mqtt.username | default('', true) | length == 0
+      - app_config.app.retention_days | int > 0
+      - app_config.app.gpu_device | default('', true) | length == 0
+      - app_config.app.igpu_render_node | default('', true) | length == 0
+      - app_config.app.coral_usb_mapping | default('', true) | length == 0
+      - app_config.app.hwaccel_args | default('', true) | length == 0
+    fail_msg: >-
+      Frigate on Kubernetes is CPU-only: set app.detector: cpu, leave the GPU, render node,
+      Coral and hardware-decode values empty, and declare no cameras or MQTT user.
+
+- name: Frigate | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Frigate | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Frigate | Render the seed config
+  ansible.builtin.set_fact:
+    _frigate_mqtt_password: ""
+    _frigate_seed_config: "{{ lookup('ansible.builtin.template', 'config.yml.j2') }}"
+
+- name: Frigate | Render the Kubernetes workload
+  ansible.builtin.set_fact:
+    _frigate_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Frigate | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _frigate_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 900
+
+- name: Frigate | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        config.yml and the SQLite database frigate.db in one application-consistent
+        recovery point; recordings are not included

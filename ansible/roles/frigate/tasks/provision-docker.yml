@@ -1,0 +1,92 @@
+---
+# Docker-only provisioning for Frigate: recording storage, device passthrough and the
+# inputs forwarded to the stack host. Included by playbooks/apps/frigate.yml.
+
+- name: Resolve the declared Frigate recording mount
+  ansible.builtin.set_fact:
+    _frigate_recording_mount: >-
+      {{ (app_config.recording_storage.mounts
+          | selectattr('path', 'equalto', app_config.app.recordings_path)
+          | list | first) | default({}) }}
+  when: app_config.app.recordings_path | default('', true) | length > 0
+
+- name: Assert the recording path maps to exactly one existing-storage declaration
+  ansible.builtin.assert:
+    that:
+      - _frigate_recording_mount | length > 0
+      - _frigate_recording_mount.host | default('') | length > 0
+    fail_msg: >-
+      app.recordings_path must match the path of one
+      infrastructure.frigate_storage.mounts entry. Storage is mounted by the lab;
+      this playbook does not create or format it.
+  when: app_config.app.recordings_path | default('', true) | length > 0
+
+- name: Check free space for the declared recording-retention floor
+  ansible.builtin.command:
+    argv: [df, -Pk, "{{ _frigate_recording_mount.host }}"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _frigate_recording_df
+  changed_when: false
+  when: app_config.app.recordings_path | default('', true) | length > 0
+
+- name: Assert the recording mount meets the retention floor
+  ansible.builtin.assert:
+    that:
+      - (_frigate_recording_df.stdout_lines | last | split() | length) >= 4
+      - ((_frigate_recording_df.stdout_lines | last | split())[3] | int)
+        >= (app_config.app.minimum_free_gb | int * 1024 * 1024)
+    fail_msg: >-
+      {{ _frigate_recording_mount.host }} has less than
+      {{ app_config.app.minimum_free_gb }} GiB free for {{ app_config.app.retention_days }}
+      days of recording retention.
+  when: app_config.app.recordings_path | default('', true) | length > 0
+
+- name: Attach Frigate's existing recording storage with the platform owner mapping
+  ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+  vars:
+    attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+    attach_mounts_list: "{{ app_config.recording_storage.mounts }}"
+    attach_mounts_nodes:
+      - "{{ hostvars[homelabinfra_instance.stack.hostname].proxmox_node }}"
+  when: app_config.app.recordings_path | default('', true) | length > 0
+
+- name: Verify the passed-through render node is present inside the Frigate VM
+  ansible.builtin.stat:
+    path: "{{ app_config.app.igpu_render_node }}"
+  delegate_to: "{{ homelabinfra_instance.stack.hostname }}"
+  register: _frigate_render_node
+  when: app_config.app.detector == 'coral'
+
+- name: Require the VM's render node to be a device
+  ansible.builtin.assert:
+    that: _frigate_render_node.stat.ischr | default(false)
+    fail_msg: >-
+      {{ app_config.app.igpu_render_node }} is not a device inside the Frigate VM.
+      Check its dedicated PCI resource mapping and guest iGPU driver.
+  when: app_config.app.detector == 'coral'
+
+- name: Attach the declared Coral through its dedicated USB mapping
+  ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
+  vars:
+    usb_passthrough_guest: "{{ homelabinfra_instance.stack.hostname }}"
+    usb_passthrough_device:
+      mapping: "{{ app_config.app.coral_usb_mapping }}"
+  when: app_config.app.detector == 'coral'
+
+# Only Coral mode receives a USB path. CPU-only mode leaves both device paths empty.
+- name: Forward the resolved Frigate inputs to its guest
+  ansible.builtin.add_host:
+    name: "{{ homelabinfra_instance.stack.hostname }}"
+    groups: "deploy_{{ instance }}"
+    ansible_host: "{{ hostvars[homelabinfra_instance.stack.hostname].ansible_host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    app_config: >-
+      {{ app_config | combine({
+           'app': {'coral_usb_device_path':
+             '/dev/bus/usb' if app_config.app.detector == 'coral' else ''}
+         }, recursive=True) }}
+    homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+    homelabinfra_stack_host_created: >-
+      {{ hostvars[homelabinfra_instance.stack.hostname].homelabinfra_stack_host_created
+         | default(false) }}
+  changed_when: false

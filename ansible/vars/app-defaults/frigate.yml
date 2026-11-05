@@ -28,6 +28,10 @@ frigate_defaults:
     minimum_free_gb: 256
     retention_days: 7
     shm_size: "256m"
+    # Kubernetes claims on the default StorageClass (GiB): the config and database volume
+    # that native recovery archives, and the recording volume it does not.
+    config_storage: 2
+    media_storage: 20
     # A deployment must name the dedicated GPU declaration from proxmox.devices.
     # The render node is a path inside the VM after PCI passthrough, not a host bind.
     gpu_device: ""

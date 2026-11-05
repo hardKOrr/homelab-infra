@@ -96,95 +96,30 @@
               | selectattr('value.identifiers', 'contains', app_config.app.coral_usb_mapping | default(''))
               | map(attribute='key') | list)
              if app_config.app.detector == 'coral' else [] }}
+      when: app_config.hosting.method == 'docker'
 
-    - name: Resolve the declared Frigate recording mount
-      ansible.builtin.set_fact:
-        _frigate_recording_mount: >-
-          {{ (app_config.recording_storage.mounts
-              | selectattr('path', 'equalto', app_config.app.recordings_path)
-              | list | first) | default({}) }}
-      when: app_config.app.recordings_path | default('', true) | length > 0
-
-    - name: Assert the recording path maps to exactly one existing-storage declaration
-      ansible.builtin.assert:
-        that:
-          - _frigate_recording_mount | length > 0
-          - _frigate_recording_mount.host | default('') | length > 0
-        fail_msg: >-
-          app.recordings_path must match the path of one
-          infrastructure.frigate_storage.mounts entry. Storage is mounted by the lab;
-          this playbook does not create or format it.
-      when: app_config.app.recordings_path | default('', true) | length > 0
-
-    - name: Check free space for the declared recording-retention floor
-      ansible.builtin.command:
-        argv: [df, -Pk, "{{ _frigate_recording_mount.host }}"]
-      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-      register: _frigate_recording_df
-      changed_when: false
-      when: app_config.app.recordings_path | default('', true) | length > 0
-
-    - name: Assert the recording mount meets the retention floor
-      ansible.builtin.assert:
-        that:
-          - (_frigate_recording_df.stdout_lines | last | split() | length) >= 4
-          - ((_frigate_recording_df.stdout_lines | last | split())[3] | int)
-            >= (app_config.app.minimum_free_gb | int * 1024 * 1024)
-        fail_msg: >-
-          {{ _frigate_recording_mount.host }} has less than
-          {{ app_config.app.minimum_free_gb }} GiB free for {{ app_config.app.retention_days }}
-          days of recording retention.
-      when: app_config.app.recordings_path | default('', true) | length > 0
-
-    - name: Attach Frigate's existing recording storage with the platform owner mapping
-      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+    - name: Resolve the estate and published hostname
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
-        attach_mounts_list: "{{ app_config.recording_storage.mounts }}"
-        attach_mounts_nodes:
-          - "{{ hostvars[homelabinfra_instance.stack.hostname].proxmox_node }}"
-      when: app_config.app.recordings_path | default('', true) | length > 0
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+      when: app_config.hosting.method == 'kubernetes'
 
-    - name: Verify the passed-through render node is present inside the Frigate VM
-      ansible.builtin.stat:
-        path: "{{ app_config.app.igpu_render_node }}"
-      delegate_to: "{{ homelabinfra_instance.stack.hostname }}"
-      register: _frigate_render_node
-      when: app_config.app.detector == 'coral'
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
 
-    - name: Require the VM's render node to be a device
-      ansible.builtin.assert:
-        that: _frigate_render_node.stat.ischr | default(false)
-        fail_msg: >-
-          {{ app_config.app.igpu_render_node }} is not a device inside the Frigate VM.
-          Check its dedicated PCI resource mapping and guest iGPU driver.
-      when: app_config.app.detector == 'coral'
-
-    - name: Attach the declared Coral through its dedicated USB mapping
-      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
+    - name: Deploy Frigate on Kubernetes
+      ansible.builtin.include_role:
+        name: frigate
+        tasks_from: kubernetes
       vars:
-        usb_passthrough_guest: "{{ homelabinfra_instance.stack.hostname }}"
-        usb_passthrough_device:
-          mapping: "{{ app_config.app.coral_usb_mapping }}"
-      when: app_config.app.detector == 'coral'
+        frigate_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      when: app_config.hosting.method == 'kubernetes'
 
-    # Only Coral mode receives a USB path. CPU-only mode leaves both device paths empty.
-    - name: Forward the resolved Frigate inputs to its guest
-      ansible.builtin.add_host:
-        name: "{{ homelabinfra_instance.stack.hostname }}"
-        groups: "deploy_{{ instance }}"
-        ansible_host: "{{ hostvars[homelabinfra_instance.stack.hostname].ansible_host }}"
-        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-        app_config: >-
-          {{ app_config | combine({
-               'app': {'coral_usb_device_path':
-                 '/dev/bus/usb' if app_config.app.detector == 'coral' else ''}
-             }, recursive=True) }}
-        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
-        homelabinfra_stack_host_created: >-
-          {{ hostvars[homelabinfra_instance.stack.hostname].homelabinfra_stack_host_created
-             | default(false) }}
-      changed_when: false
+    - name: Provision Frigate recording storage, devices and guest inputs
+      ansible.builtin.include_tasks: ../../roles/frigate/tasks/provision-docker.yml
+      when: app_config.hosting.method == 'docker'
 
 - name: "Frigate | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -217,6 +152,7 @@
     - name: Deploy Frigate
       ansible.builtin.include_role:
         name: frigate
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "Frigate | Wire"
   hosts: localhost
@@ -234,14 +170,18 @@
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
         resolve_estate_name: >-
-          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
-             | default('') }}
+          {{ _frigate_deploy_host.app_config.routing.estate | default('') }}
 
   vars:
-    _frigate_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _frigate_k8s: "{{ hostvars['localhost'].app_config.hosting.method == 'kubernetes' }}"
+    _frigate_deploy_host: >-
+      {{ hostvars['localhost'] if _frigate_k8s | bool
+         else hostvars[groups['deploy_' ~ instance][0]] }}
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _frigate_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _frigate_deploy_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _frigate_k8s | bool
+         else _frigate_deploy_host.ansible_host }}
+    wiring_upstream_port: "{{ 80 if _frigate_k8s | bool else _frigate_deploy_host.app_config.app.port }}"
     wiring_subdomain: >-
       {{ _frigate_deploy_host.app_config.routing.subdomain | default(instance, true) }}
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
@@ -280,8 +220,13 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record Frigate on its dedicated Docker guest
+    - name: Record Frigate on its dedicated Docker guest or Kubernetes nodes
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list)
+             if _frigate_k8s | bool else [groups['deploy_' ~ instance][0]] }}
+        record_guest_kind: "{{ 'kubernetes' if _frigate_k8s | bool else 'docker' }}"
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

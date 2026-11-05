@@ -103,7 +103,7 @@ def test_public_health_endpoints():
     assert uri["return_content"] is False
     assert task["no_log"] is False
     # The shared swap waits for a 200 without reading the body.
-    assert swap_inputs("frigate")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
+    assert swap_inputs("frigate", "restore-docker.yml")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
 
 
 def test_deploy_preflight():
@@ -139,7 +139,7 @@ def test_deploy_preflight():
 
 
 def check_restore_swap():
-    swap = swap_inputs("frigate")
+    swap = swap_inputs("frigate", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": 0, "group": 0, "mode": "0750"}
     assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
