@@ -35,18 +35,22 @@ ROOT_PATH = /data/gitea/log
 """
 
 
-def main(source_prefix):
+def main(source_prefix, implicit=False):
     with tempfile.TemporaryDirectory() as directory:
         base = Path(directory)
         ini = base / "data/gitea/conf/app.ini"
         ini.parent.mkdir(parents=True)
-        ini.write_text(SOURCE.replace("= /data/", "= " + source_prefix + "/"))
+        source = SOURCE
+        if implicit:
+            source = source.split('APP_DATA_PATH')[0]
+        ini.write_text(source.replace("= /data/", "= " + source_prefix + "/"))
         play = base / "play.yml"
         play.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,
             "vars": {
                 "forgejo_native_user": subprocess.run(["id", "-un"], text=True, capture_output=True).stdout.strip(),
                 "forgejo_source_data_path": source_prefix,
+                "forgejo_restore_paths": True,
                 "forgejo_app_ini": str(ini), "forgejo_data_path": str(base / "data"),
                 "forgejo_fqdn": "dst.example.test",
                 "app_config": {"app": {"port": 3100, "ssh_port": 2322}},
@@ -69,9 +73,9 @@ def main(source_prefix):
         assert cfg["security"]["SECRET_KEY"] == "keep-me"
         assert cfg["DEFAULT"]["WORK_PATH"] == str(base / "data")
         assert cfg["repository"]["ROOT"] == str(base / "data/gitea/data/forgejo-repositories")
-        assert cfg["lfs"]["PATH"] == str(base / "data/git/lfs")
+        assert cfg["lfs"]["PATH"] == str(base / ("data/gitea/data/lfs" if implicit else "data/git/lfs"))
         assert cfg["log"]["ROOT_PATH"] == str(base / "data/gitea/log")
-        assert server["APP_DATA_PATH"] == str(base / "data/gitea")
+        assert server["APP_DATA_PATH"] == str(base / ("data/gitea/data" if implicit else "data/gitea"))
         repeat = subprocess.run([str(ANSIBLE), "-i", "localhost,", "-c", "local", str(play)],
                                 text=True, capture_output=True, check=False)
         assert repeat.returncode == 0, repeat.stdout + repeat.stderr
@@ -82,3 +86,4 @@ def main(source_prefix):
 
 main("/data")
 main("/opt/source/data")
+main("/data", implicit=True)

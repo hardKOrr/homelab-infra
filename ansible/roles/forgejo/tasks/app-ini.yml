@@ -11,7 +11,7 @@
       - -c
       - |
         import configparser, json, pathlib, sys
-        ini, source, target = sys.argv[1:]
+        ini, source, target, restoring = sys.argv[1:]
         cfg = configparser.ConfigParser(interpolation=None, strict=False)
         cfg.read_string('[DEFAULT]\n' + pathlib.Path(ini).read_text())
         prefixes = sorted({source, target, '/data'}, key=len, reverse=True)
@@ -31,15 +31,20 @@
                 except ValueError:
                     pass
             raise ValueError('Forgejo storage path is outside the archived data tree: ' + section + '.' + option)
+        # Container archives can omit all storage settings: Forgejo's work directory
+        # was /data/gitea, with app data below data/ and repositories below that.
+        restoring = restoring == 'True'
+        app_data = rebase('server', 'APP_DATA_PATH', rebase('DEFAULT', 'WORK_PATH', target + '/gitea') + '/data') if restoring else rebase('server', 'APP_DATA_PATH', target + '/gitea')
         print(json.dumps({
-            'app_data': rebase('server', 'APP_DATA_PATH', target + '/gitea'),
-            'repositories': rebase('repository', 'ROOT', target + '/git/repositories'),
-            'lfs': rebase('lfs', 'PATH', target + '/git/lfs'),
+            'app_data': app_data,
+            'repositories': rebase('repository', 'ROOT', app_data + '/forgejo-repositories' if restoring else target + '/git/repositories'),
+            'lfs': rebase('lfs', 'PATH', app_data + '/lfs' if restoring else target + '/git/lfs'),
             'log': rebase('log', 'ROOT_PATH', target + '/gitea/log'),
         }))
       - "{{ forgejo_app_ini }}"
       - "{{ forgejo_source_data_path | default(forgejo_data_path) }}"
       - "{{ forgejo_data_path }}"
+      - "{{ forgejo_restore_paths | default(false) | bool }}"
   register: _forgejo_storage_paths
   changed_when: false
   no_log: true

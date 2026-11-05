@@ -13,6 +13,7 @@
   vars:
     forgejo_fqdn: >-
       {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+    forgejo_restore_paths: true
     forgejo_source_data_path: "{{ hostvars['localhost'].app_config.app.data_path }}"
     forgejo_data_path: "{{ _forgejo_restore_data_path }}"
     forgejo_ini_database:
