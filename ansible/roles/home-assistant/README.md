@@ -33,6 +33,11 @@ CronJob writes it and the shared Job puts it back. `configuration.yaml` is seede
 so the ingress works), after which Home Assistant owns it. `secrets.yaml` is refreshed from a
 Secret at each pod start, so restart the pod after changing integration credentials.
 
+During first-run setup, confirm the imported HTTP server settings under Settings →
+System → Network within five minutes. Home Assistant otherwise reverts proxy trust and
+returns HTTP 400 through ingress; restore and confirm the proxy settings from direct
+access if the timer expires. See [Home Assistant HTTP settings](https://www.home-assistant.io/integrations/http/).
+
 A configured `usb_mapping` is attached to the first cluster node's VM and the pod is pinned
 to that node with the serial node bound in. That node cannot move the pod, and attaching may
 restart the VM.
