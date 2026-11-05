@@ -1,0 +1,170 @@
+{#
+  Home Assistant on Kubernetes. The config PVC holds the same directory the Docker method
+  archives as data.pxar. configuration.yaml is seeded once and then belongs to Home
+  Assistant; secrets.yaml is refreshed from the Secret on every pod start.
+  A configured USB coordinator pins the pod to the node it is attached to and binds that
+  one serial node into the container. Host-network discovery (mDNS, SSDP) does not cross
+  the pod network.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set usb = app_config.app.usb_mapping | default('', true) | length > 0 %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-seed
+  labels:
+{{ labels }}
+data:
+  configuration.yaml: |
+{{ _ha_seed_configuration | indent(4, true) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.config_storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+{% if usb %}
+      nodeSelector:
+        kubernetes.io/hostname: {{ _ha_usb_node }}
+{% endif %}
+      initContainers:
+        - name: seed-config
+          image: {{ app_config.app.image }}
+          command:
+            - sh
+            - -c
+            - >-
+              test -f /config/configuration.yaml || cp /seed/configuration.yaml /config/configuration.yaml;
+              test -f /config/automations.yaml || printf '[]\n' > /config/automations.yaml;
+              cp /secrets/secrets.yaml /config/secrets.yaml && chmod 600 /config/secrets.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: seed
+              mountPath: /seed
+            - name: secrets
+              mountPath: /secrets
+      containers:
+        - name: home-assistant
+          image: {{ app_config.app.image }}
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+          ports:
+            - name: web
+              containerPort: 8123
+{% if usb %}
+          # The device cgroup only admits the node to a privileged container.
+          securityContext:
+            privileged: true
+{% endif %}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+{% if usb %}
+            - name: coordinator
+              mountPath: {{ app_config.app.usb_device_path }}
+{% endif %}
+          startupProbe:
+            httpGet:
+              path: /
+              port: web
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /
+              port: web
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: web
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+        - name: seed
+          configMap:
+            name: {{ instance }}-seed
+        - name: secrets
+          secret:
+            secretName: {{ instance }}-integration
+{% if usb %}
+        - name: coordinator
+          hostPath:
+            path: {{ app_config.app.usb_device_path }}
+            type: CharDevice
+{% endif %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: web
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ home_assistant_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

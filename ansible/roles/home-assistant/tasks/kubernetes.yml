@@ -1,0 +1,75 @@
+---
+# Home Assistant on the k3s cluster. Called from playbooks/apps/home-assistant.yml on
+# localhost when hosting.method is kubernetes.
+
+- name: Home Assistant | Resolve the estate and published hostname
+  ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+- name: Home Assistant | Refresh inventory for Kubernetes access
+  ansible.builtin.meta: refresh_inventory
+
+- name: Home Assistant | Resolve integration credentials
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Home Assistant | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+# A USB coordinator reaches the pod only through a cluster node: the Proxmox mapping goes to
+# the first node's VM, and the pod is pinned to that node by the manifest.
+- name: Home Assistant | Attach the optional USB resource mapping to the pod's node
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-usb-passthrough.yml
+  vars:
+    usb_passthrough_guest: "{{ k8s_api_host }}"
+    usb_passthrough_device:
+      mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+  when: app_config.app.usb_mapping | default('', true) | length > 0
+
+- name: Home Assistant | Open declared cluster firewall access
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Home Assistant | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Home Assistant | Sync integration secrets into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-integration"
+    k8s_secret_data:
+      secrets.yaml: "{{ lookup('ansible.builtin.template', 'secrets.yaml.j2') }}"
+  no_log: true
+
+# Behind the ingress Home Assistant refuses forwarded requests unless the proxy network is
+# trusted, so a fresh instance without an initial_configuration gets a minimal http block.
+- name: Home Assistant | Render the seed configuration and workload
+  ansible.builtin.set_fact:
+    home_assistant_fqdn: >-
+      {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+    _ha_usb_node: "{{ k8s_api_host }}"
+    _ha_seed_configuration: "{{ lookup('ansible.builtin.template', 'configuration.yaml.j2') }}"
+
+- name: Home Assistant | Render the Kubernetes workload
+  ansible.builtin.set_fact:
+    _ha_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Home Assistant | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _ha_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Home Assistant | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the Home Assistant config directory (configuration, automations, integrations and
+        the recorder database) in one application-consistent recovery point

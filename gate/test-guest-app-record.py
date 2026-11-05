@@ -76,7 +76,10 @@ def main():
         "ansible.builtin.add_host"
     ]
     assert existing_add_host["proxmox_vmid"] == "{{ hostvars[_ha_existing_hosts[0]].proxmox_vmid }}"
-    add_host = task_named(ha_provision["tasks"], "Add the new VM to the deploy group")[
+    ha_vm_tasks = yaml.safe_load(
+        (ROOT / "ansible/roles/home-assistant/tasks/provision-vm.yml").read_text()
+    )
+    add_host = task_named(ha_vm_tasks, "Add the new VM to the deploy group")[
         "ansible.builtin.add_host"
     ]
     assert add_host["proxmox_vmid"] == "{{ homelabinfra_instance.vm.vmid }}"

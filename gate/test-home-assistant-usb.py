@@ -10,7 +10,7 @@ from ansible.template import Templar
 
 ROOT = Path(__file__).resolve().parent.parent
 PLAYBOOK = ROOT / "ansible/playbooks/apps/home-assistant.yml"
-ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/main.yml"
+ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/credentials.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
 INSTANCE_EXAMPLE = ROOT / "config.example/apps/home-assistant.example.yml"
@@ -135,7 +135,7 @@ def main():
 
     role_tasks = load_yaml(ROLE_TASKS)[0]
     role_assertion = task_named(
-        role_tasks, "Home Assistant | Assert the optional VM device contract reached the role"
+        role_tasks, "Home Assistant | Assert the optional device contract reached the role"
     )["ansible.builtin.assert"]["that"]
     assert any("_ha_integration_credentials is mapping" in check for check in role_assertion)
     role_usb_condition = next(

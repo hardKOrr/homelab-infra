@@ -1,0 +1,10 @@
+{% if app_config.app.initial_configuration | default({}) | length > 0 %}
+{{ app_config.app.initial_configuration | to_nice_yaml }}
+{% else %}
+default_config: {}
+http:
+  use_x_forwarded_for: true
+  trusted_proxies: {{ app_config.app.kubernetes_trusted_proxies | to_json }}
+# The automation editor writes this file; default_config does not load it itself.
+automation: !include automations.yaml
+{% endif %}
