@@ -60,3 +60,9 @@ backup:
 # Recovery: the VM PBS snapshot covers config; the external recording-storage owner must
 # snapshot/restore its mount separately before Frigate is redeployed. See
 # ansible/roles/frigate/README.md.
+
+# To use Docker on an LXC (CPU-only: no Coral or GPU), uncomment these instance overrides
+# and set infrastructure.stacks.frigate-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: frigate-lxc

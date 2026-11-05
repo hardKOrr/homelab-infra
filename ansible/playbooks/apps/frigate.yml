@@ -54,7 +54,7 @@
     - name: Assert Frigate has an explicit detector and recording-storage contract
       ansible.builtin.assert:
         that:
-          - app_config.stack == 'frigate'
+          - app_config.stack in ['frigate', 'frigate-lxc']
           - app_config.app.detector in ['cpu', 'coral']
           - app_config.app.retention_days | int > 0
           - >-
@@ -84,7 +84,7 @@
           or adopts devices or storage.
 
   tasks:
-    - name: Find or create the dedicated Frigate Docker-on-VM host
+    - name: Find or create the dedicated Frigate Docker host (VM, or LXC with frigate-lxc)
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
@@ -212,6 +212,7 @@
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy Frigate
       ansible.builtin.include_role:
