@@ -1,6 +1,6 @@
 ---
 # Restore Forgejo's PostgreSQL database and full local data tree from one data.pxar
-# through the shared swap. On any failure after the stop the swap puts the original data
+# through the shared swap, on a Docker stack host or a native guest. On any failure after the stop the swap puts the original data
 # directory and database back and starts Forgejo.
 
 - name: Forgejo restore | Resolve target database and persistent data
@@ -66,18 +66,19 @@
 - name: Forgejo restore | Preview or replace the data directory and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ _forgejo_restore_data_path }}"
         source: data/forgejo
-        owner: 1000
-        group: 1000
+        owner: "{{ forgejo_data_owner }}"
+        group: "{{ forgejo_data_owner }}"
         mode: "0750"
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: data/database/forgejo.dump
-    recovery_swap_stop_services: [forgejo]
+    recovery_swap_stop_services: ["{{ forgejo_service }}"]
     recovery_swap_compose_project: "{{ forgejo_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/healthz"

@@ -27,7 +27,8 @@ catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
 hook_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup-quiesced.yml").read_text())
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
-forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/docker.yml").read_text()
+forgejo_tasks_source = "".join((repo / f"ansible/roles/forgejo/tasks/{name}.yml").read_text().removeprefix("---\n")
+                               for name in ("prepare", "docker", "admin"))
 
 
 def fixture_tasks(tasks, root):
@@ -151,8 +152,8 @@ def static_contract():
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
     assert "client" not in defaults["backup"], "the shared client owns its pins"
     [upload] = included(backup_source, "pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "docker"
-    assert upload["vars"]["pbs_client_stop_services"] == ["forgejo"]
+    assert upload["vars"]["pbs_client_runtime"] == "{{ app_config.hosting.method }}"
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ forgejo_service }}"]
     assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
     assert upload["vars"]["pbs_client_backup_args"] == ["--all-file-systems", "true"]
     assert upload["vars"]["pbs_client_backup_mounts"] == [{
@@ -268,15 +269,15 @@ def check_hook():
 
 
 def check_restore_swap():
-    swap = swap_inputs("forgejo", "restore-docker.yml")
-    assert swap["recovery_swap_runtime"] == "docker"
+    swap = swap_inputs("forgejo", "restore-guest.yml")
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _forgejo_restore_data_path }}", "source": "data/forgejo",
-        "owner": 1000, "group": 1000, "mode": "0750"}]
+        "owner": "{{ forgejo_data_owner }}", "group": "{{ forgejo_data_owner }}", "mode": "0750"}]
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "data/database/forgejo.dump"}
-    assert swap["recovery_swap_stop_services"] == ["forgejo"]
+    assert swap["recovery_swap_stop_services"] == ["{{ forgejo_service }}"]
     assert swap["recovery_swap_compose_project"] == "{{ forgejo_project_dir }}"
     assert swap["recovery_swap_health_url"] == "http://localhost:{{ app_config.app.port }}/api/healthz"
     with tempfile.TemporaryDirectory() as directory:
@@ -294,14 +295,14 @@ def check_restore_swap():
 
 def check_install():
     """Deploy finishes Forgejo's install: lock, a new install's secret key, one administrator."""
-    tasks = {task.get("name"): task for task in yaml.safe_load(forgejo_tasks_source)}
+    tasks = {task.get("name"): task for task in yaml.safe_load(forgejo_tasks_source) if "name" in task}
     env = (repo / "ansible/roles/forgejo/templates/forgejo.env.j2").read_text()
     assert "FORGEJO__security__INSTALL_LOCK=true" in env and "SECRET_KEY" not in env
     seed = tasks["Forgejo | Seed a new install's secret key"]
     assert seed["when"] == "not _forgejo_app_ini.stat.exists", "an existing app.ini keeps its key"
     assert "notify" not in seed, "the key lands before the first start"
-    [restart] = yaml.safe_load((repo / "ansible/roles/forgejo/handlers/main.yml").read_text())
-    assert restart["when"] == "not (_forgejo_start.changed | default(false))", \
+    restart = yaml.safe_load((repo / "ansible/roles/forgejo/handlers/main.yml").read_text())[0]
+    assert "not (_forgejo_start.changed | default(false))" in restart["when"], \
         "never restart a container Start service just created (a new install's schema creation)"
     assert tasks["Forgejo | Start service"]["register"] == "_forgejo_start"
     create = tasks["Forgejo | Create the administrator"]

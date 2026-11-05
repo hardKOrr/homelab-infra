@@ -293,6 +293,28 @@ def check_client_image_matches_server():
         assert image.strip() == expected, (provider, image)
 
 
+def check_native_client_matches_server():
+    install = task_named(tasks(DATABASE / "install-client.yml"),
+                         "Database client | Install the engine's client package for the native runtime")
+    run = task_named(tasks(DATABASE / "run-client.yml"),
+                     "Database client | Run {{ database_client_action }}")
+    for provider, major, package in (
+        ("postgresql", "16", "postgresql-client-16"),
+        ("postgresql", "17", "postgresql-client-17"),
+        ("mariadb", "10.11", "mariadb-client"),
+        ("mysql", "8.4", "mariadb-client"),
+    ):
+        variables = {"database_app_target": {"provider": provider, "server_version": major},
+                     "ansible_env": {"PATH": "/usr/bin:/bin"}}
+        assert render(install["ansible.builtin.apt"]["name"], variables) == package
+        for runtime in ("native", "docker"):
+            variables["_database_client_runtime"] = runtime
+            path = render(run["environment"]["PATH"], variables)
+            expected = (f"/usr/lib/postgresql/{major}/bin:/usr/bin:/bin"
+                        if runtime == "native" and provider == "postgresql" else "/usr/bin:/bin")
+            assert path == expected, (provider, runtime, path)
+
+
 def check_remove_wiring():
     remove = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
     unwire = remove[0]
@@ -347,6 +369,7 @@ def main():
     check_ownership_guard()
     check_destructive_files_use_the_guard()
     check_client_image_matches_server()
+    check_native_client_matches_server()
     check_remove_wiring()
     print("database recovery: dump, restore and drop per engine, ownership guard and Remove wiring passed")
 

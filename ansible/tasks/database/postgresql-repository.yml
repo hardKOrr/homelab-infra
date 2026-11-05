@@ -1,0 +1,21 @@
+---
+# PGDG packages for version-matched native clients and the PostgreSQL backend.
+- name: PostgreSQL repository | Install repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, gnupg]
+    state: present
+    update_cache: true
+
+- name: PostgreSQL repository | Install the PGDG signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+    mode: "0644"
+
+- name: PostgreSQL repository | Configure the PGDG repository
+  ansible.builtin.apt_repository:
+    repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+    filename: postgresql
+    state: present
+    update_cache: true
+

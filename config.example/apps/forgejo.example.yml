@@ -24,3 +24,10 @@ backup:
 # hosting:
 #   method: docker
 # stack: forgejo-lxc
+
+# To run the pinned Forgejo binary natively on its own LXC (or set guest_type: vm for a
+# VM), uncomment these instance overrides and drop stack.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

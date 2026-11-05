@@ -1,5 +1,7 @@
 ---
-# Deploy Forgejo with PostgreSQL and a direct, explicitly published Git SSH port.
+# Deploy Forgejo with PostgreSQL and a direct, explicitly published Git SSH port: Docker on
+# a stack host (default), `hosting.method: native` the pinned binary on its own LXC or VM,
+# or `kubernetes`.
 - name: "Forgejo | Provision"
   hosts: localhost
   become: false
@@ -66,6 +68,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: forgejo
+      when: app_config.hosting.method == 'native'
 
 - name: "Forgejo | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -80,9 +89,11 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
-      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
+        - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
@@ -92,6 +103,7 @@
         name: forgejo
       vars:
         forgejo_fqdn: "{{ hostvars['localhost'].forgejo_fqdn }}"
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Forgejo | Deploy on Kubernetes"
   hosts: localhost
@@ -117,13 +129,13 @@
       vars:
         firewall_inbound_ports:
           forgejo-ssh: "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Forgejo | Wire"
   hosts: localhost
   gather_facts: false
   vars:
-    _forgejo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method == 'docker' else {} }}"
+    _forgejo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method in ['docker', 'native'] else {} }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip if app_config.hosting.method == 'kubernetes'
@@ -171,9 +183,9 @@
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _forgejo_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_kind: "{{ 'native' if app_config.hosting.method == 'native' else 'docker' }}"
         record_guest_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}"
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
     - name: Record Forgejo on each Kubernetes node
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:

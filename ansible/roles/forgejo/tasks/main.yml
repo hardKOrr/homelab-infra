@@ -6,3 +6,7 @@
 - name: Forgejo | Deploy on Docker
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('docker') == 'docker'
+
+- name: Forgejo | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('docker') == 'native'

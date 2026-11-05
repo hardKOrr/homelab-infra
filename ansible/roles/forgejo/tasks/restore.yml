@@ -1,3 +1,6 @@
 ---
 - name: Forgejo restore | Dispatch to the target hosting method
-  ansible.builtin.include_tasks: "restore-{{ restore_target_config.hosting.method | default(app_config.hosting.method | default('docker')) }}.yml"
+  ansible.builtin.include_tasks:
+    file: >-
+      restore-{{ 'kubernetes' if (restore_target_config.hosting.method | default(app_config.hosting.method | default('docker'))) == 'kubernetes'
+                 else 'guest' }}.yml

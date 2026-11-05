@@ -56,28 +56,12 @@
       version ({{ _postgresql_existing_conf_paths | join(', ') }}).
       Migrate or retire that cluster before selecting PostgreSQL 16.
 
-- name: PostgreSQL | Install repository prerequisites
-  ansible.builtin.apt:
-    name: [ca-certificates, gnupg]
-    state: present
-    update_cache: true
+- name: PostgreSQL | Configure the package repository
+  ansible.builtin.include_tasks: ../../../tasks/database/postgresql-repository.yml
 
 - name: PostgreSQL | Install the pinned PBS client when backups are enabled
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when: app_config.backup.enabled | default(false) | bool
-
-- name: PostgreSQL | Install the PGDG signing key
-  ansible.builtin.get_url:
-    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
-    dest: /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
-    mode: "0644"
-
-- name: PostgreSQL | Configure the PGDG repository
-  ansible.builtin.apt_repository:
-    repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
-    filename: postgresql
-    state: present
-    update_cache: true
 
 - name: PostgreSQL | Install server and client dependencies
   ansible.builtin.apt:
