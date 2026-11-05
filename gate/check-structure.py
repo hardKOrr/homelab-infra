@@ -46,12 +46,7 @@ README_SKIP = ("ansible/roles/", ".github", ".claude", "gate/fixtures/")
 REACH_SKIP = {
     "CLAUDE.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/ISSUE_TEMPLATE/hosting-docker-lxc.md",
-    ".github/ISSUE_TEMPLATE/hosting-docker-lxc-vm.md",
-    ".github/ISSUE_TEMPLATE/hosting-kubernetes.md",
-    ".github/ISSUE_TEMPLATE/hosting-native-lxc.md",
-    ".github/ISSUE_TEMPLATE/hosting-native-lxc-vm.md",
-    ".github/ISSUE_TEMPLATE/hosting-native-vm.md",
+    ".github/ISSUE_TEMPLATE/hosting.md",
 }
 LINK = re.compile(r"\]\((<[^>]+>|[^)\s#]+)")
 
