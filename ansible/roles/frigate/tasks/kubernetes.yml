@@ -20,6 +20,9 @@
 - name: Frigate | Resolve the cluster and its API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 
+- name: Frigate | Open declared cluster firewall access
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
 - name: Frigate | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 

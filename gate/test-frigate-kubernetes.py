@@ -26,6 +26,7 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/frigate.yml"))["frigate_defaults"]
 assert defaults["hosting"]["method"] == "docker"
+assert "kubernetes" in defaults["hosting"]["supported"]
 assert defaults["app"]["config_storage"] > 0 and defaults["app"]["media_storage"] > 0
 assert defaults["backup"]["client"] == {
     "image": "buildpack-deps:bookworm-curl",
@@ -82,6 +83,8 @@ assert "test -f /config/config.yml" in pod["initContainers"][0]["command"][-1]
 assert objects[("Ingress", "frigate")]["spec"]["rules"][0]["host"] == "frigate.example.test"
 
 tasks = yaml.safe_load(read(f"{ROLE}/tasks/kubernetes.yml"))
+assert any(t.get("ansible.builtin.include_tasks") == "../../../tasks/kubernetes/open-app-access.yml"
+           for t in tasks)
 backup = next(t for t in tasks if "recovery-backup.yml" in t.get("ansible.builtin.include_tasks", ""))
 assert backup["vars"]["k8s_recovery"]["archives"] == [{"name": "data", "claim": "{{ instance }}-config"}]
 assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]
