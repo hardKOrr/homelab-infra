@@ -2,8 +2,8 @@
 # Install scripts/database-client.sh on the current host. run-client.yml uses it, and a
 # host recovery script runs it the same way: in database_app_target.client_image with
 # the file's directory mounted at /work (see run-client.yml for the exact Docker call).
-# For the native runtime (see run-client.yml) it also installs the engine's client package
-# and runs the script directly.
+# Native PostgreSQL uses the server's major, including its versioned binary directory;
+# a newer distribution client can emit SQL an older server cannot load.
 #
 # Sets:
 #   database_client_script  its path on the current host
@@ -29,9 +29,16 @@
     group: root
     mode: "0755"
 
+- name: Database client | Configure PGDG for the native PostgreSQL client
+  ansible.builtin.include_tasks: postgresql-repository.yml
+  when:
+    - _database_client_runtime == 'native'
+    - database_app_target.provider == 'postgresql'
+
 - name: Database client | Install the engine's client package for the native runtime
   ansible.builtin.apt:
-    name: "{{ 'postgresql-client' if database_app_target.provider == 'postgresql' else 'mariadb-client' }}"
+    name: "{{ 'postgresql-client-' ~ database_app_target.server_version
+         if database_app_target.provider == 'postgresql' else 'mariadb-client' }}"
     state: present
     update_cache: true
     cache_valid_time: 3600

@@ -1,7 +1,7 @@
 ---
 # Run scripts/database-client.sh once on the current host: with Docker in the server-matched
-# client image, or, for a native guest that has no Docker, directly with the distribution's
-# client package. Called by dump.yml, verify-dump.yml and restore.yml after
+# client image, or, for a native guest that has no Docker, directly with a version-matched
+# PostgreSQL client (MariaDB/MySQL use the distribution client). Called by dump.yml, verify-dump.yml and restore.yml after
 # resolve-app-database.yml.
 #
 # Inputs:
@@ -26,6 +26,10 @@
           '/usr/local/bin/database-client.sh', database_client_action,
           '/work/' ~ (database_client_file | basename)] }}
   environment:
+    PATH: >-
+      {{ ('/usr/lib/postgresql/' ~ database_app_target.server_version ~ '/bin:'
+          if _database_client_runtime == 'native' and database_app_target.provider == 'postgresql' else '')
+         ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}
     DB_ENGINE: "{{ database_app_target.provider }}"
     DB_HOST: "{{ database_app_target.host }}"
     DB_PORT: "{{ database_app_target.port }}"
