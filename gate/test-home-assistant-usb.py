@@ -124,6 +124,15 @@ def main():
     mapping_value = attach["vars"]["usb_passthrough_device"]["mapping"]
     assert render(mapping_value, null_mapping_vars) == ""
 
+    # A default VM with a USB mapping must not reach the stack host lookup.
+    stack_tasks = load_yaml(ROLE_TASKS.parent / "provision-stack.yml")[0]
+    lxc_attach = task_named(stack_tasks, "Bind the optional USB coordinator into the stack LXC")
+    vm_usb = {"app_config": {"app": {"usb_mapping": "coordinator"}}, "hostvars": {}}
+    assert all(
+        condition_result(c, vm_usb) is False for c in lxc_attach["when"][:1]
+    ), "the stack guard must be evaluated first and be false for a VM"
+    assert lxc_attach["when"][0].startswith("app_config.stack")
+
     role_tasks = load_yaml(ROLE_TASKS)[0]
     role_assertion = task_named(
         role_tasks, "Home Assistant | Assert the optional VM device contract reached the role"
