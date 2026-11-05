@@ -60,12 +60,19 @@
     - _dusbl_entries | length == 1
     - _dusbl_entries[0].port | default('') | length > 0
 
+- name: LXC USB detach | Select the node to detach
+  ansible.builtin.set_fact:
+    _dusbl_bind_path: >-
+      {{ usb_lxc_device.serial_path if usb_lxc_device.serial_path | default('', true) | length > 0
+         else _dusbl_path.stdout | default('') | trim }}
+  when: _dusbl_path.rc | default(1) == 0
+
 - name: LXC USB detach | Detach only the project-owned mapped device
   ansible.builtin.include_tasks: detach-shared-device.yml
   vars:
     shared_device_guest: "{{ usb_lxc_guest }}"
     shared_device_list:
-      - host: "{{ _dusbl_path.stdout | trim }}"
+      - host: "{{ _dusbl_bind_path }}"
   when:
     - _dusbl_path.rc | default(1) == 0
     - _dusbl_path.stdout | default('') | trim is match('^/dev/bus/usb/[0-9]{3}/[0-9]{3}$')

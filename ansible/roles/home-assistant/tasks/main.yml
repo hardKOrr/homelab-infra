@@ -36,6 +36,18 @@
     - "{{ home_assistant_project_dir }}"
     - "{{ app_config.app.config_path }}"
 
+# Home Assistant owns this file after initialization, including after a restore.
+- name: Home Assistant | Seed optional initial configuration
+  ansible.builtin.copy:
+    content: "{{ app_config.app.initial_configuration | to_nice_yaml }}"
+    dest: "{{ app_config.app.config_path }}/configuration.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+    force: false
+  when: app_config.app.initial_configuration | default({}) | length > 0
+  notify: Restart Home Assistant
+
 - name: Home Assistant | Store integration credentials in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:

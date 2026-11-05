@@ -37,3 +37,16 @@ backup:
   # retention_days: 14
   # datastore: REPLACE_WITH_PBS_DATASTORE
   # backup_id: ""
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.home-assistant-lxc.guest_type: lxc in config/infrastructure.yml.
+# A usb_mapping there must be declared mode: shared, and usb_device_path must be the mapped coordinator's serial node.
+# hosting:
+#   method: docker
+# stack: home-assistant-lxc
+# On a fresh instance behind Caddy, add under app (substitute its actual address):
+# initial_configuration:
+#   default_config: {}
+#   http:
+#     use_x_forwarded_for: true
+#     trusted_proxies: [192.0.2.10]

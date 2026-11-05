@@ -119,6 +119,13 @@ stack_defaults:
     memory: 4096
     disk_size: 32
 
+  # Home Assistant's opt-in Docker LXC host (stack: home-assistant-lxc).
+  home-assistant-lxc:
+    guest_type: lxc
+    cores: 2
+    memory: 4096
+    disk_size: 32
+
   # Immich's server and OpenVINO worker share a host, while originals and thumbnails
   # live on the explicitly declared media mount rather than the stack rootfs.
   photos:
