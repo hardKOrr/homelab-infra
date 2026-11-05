@@ -156,7 +156,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
   points for new applications. Roles with a README: [authentik](roles/authentik/README.md),
   [bazarr](roles/bazarr/README.md), [caddy](roles/caddy/README.md),
   [comfyui](roles/comfyui/README.md), [deemix](roles/deemix/README.md),
-  [forgejo](roles/forgejo/README.md), [frigate](roles/frigate/README.md),
+  [forgejo](roles/forgejo/README.md), [forgejo-runner](roles/forgejo-runner/README.md), [frigate](roles/frigate/README.md),
   [home-assistant](roles/home-assistant/README.md), [mariadb](roles/mariadb/README.md),
   [navidrome](roles/navidrome/README.md), [observability](roles/observability/README.md),
   [ollama](roles/ollama/README.md), [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md),

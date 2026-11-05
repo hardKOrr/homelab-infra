@@ -4,11 +4,15 @@
 forgejo_runner_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
   app:
-    image: data.forgejo.org/forgejo/runner:13
+    # One exact upstream version for both methods: the image tag and the release binary the
+    # native method downloads (amd64 only) and verifies against native_sha256.
+    image: data.forgejo.org/forgejo/runner:13.2.1
+    native_version: "13.2.1"
+    native_sha256: bb369fe1ecb50fdc983c0b1d993f19b0920df6e5864511892b3cdbf16d858b34
     data_path: "/opt/{{ instance }}/data"
     registration_config_path: "/opt/{{ instance }}/data/runner-config.yml"
     registration_runner_path: "/opt/{{ instance }}/data/.runner"
@@ -20,9 +24,20 @@ forgejo_runner_defaults:
     registration_scope: admin
     runner_name: "{{ instance }}"
     labels: "docker:docker://docker.io/library/alpine:3.20"
+    # The native guest runs no Docker engine, so jobs run directly on it under the runner's
+    # account (https://forgejo.org/docs/latest/admin/actions/runner-installation/).
+    native_labels: "docker:host"
     # Docker-in-Docker image, run as a privileged sidecar when hosting.method is kubernetes.
     dind_image: docker:27-dind
     storage: 1
+  # Used only when hosting.method is native.
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+
   routing:
     proxy: none
     access: internal

@@ -3,7 +3,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ forgejo_runner_project_dir }}"
     state: restarted
-  when: (app_config.hosting.method | default('docker')) != 'kubernetes'
+  when: (app_config.hosting.method | default('docker')) == 'docker'
 
 # Listens on the same topic so one notification restarts whichever method hosts the runner.
 - name: Restart Forgejo Runner on Kubernetes
@@ -13,3 +13,11 @@
   become: true
   listen: Restart Forgejo Runner
   when: (app_config.hosting.method | default('docker')) == 'kubernetes'
+
+- name: Restart native Forgejo Runner
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart Forgejo Runner
+  when: (app_config.hosting.method | default('docker')) == 'native'

@@ -4,3 +4,6 @@ forgejo_runner_env_file: "{{ forgejo_runner_project_dir }}/runner.env"
 forgejo_runner_entrypoint: "{{ forgejo_runner_project_dir }}/register-and-run.sh"
 # Where the Kubernetes pod mounts the runner's data volume.
 forgejo_runner_k8s_data_dir: /data
+# Native: the unprivileged account that runs the daemon, and the pinned binary's path.
+forgejo_runner_native_user: forgejo-runner
+forgejo_runner_native_bin: /usr/local/bin/forgejo-runner
