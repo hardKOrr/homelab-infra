@@ -165,6 +165,8 @@
     cmd: |
       set -euo pipefail
       export PATH={{ frigate_native_node }}/bin:$PATH
+      # The web bundle exceeds Node's default 2 GiB heap; leave room for the OS.
+      export NODE_OPTIONS=--max-old-space-size=3072
       cd {{ frigate_native_src }}/web
       npm install
       npm run build
