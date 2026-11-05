@@ -4,6 +4,46 @@
 # forgejo_data_path and forgejo_ini_database {host, port, name, user, password}. Restore
 # runs it too, so a restored app.ini never keeps the source instance's database, hostname,
 # ports or paths.
+- name: Forgejo | Rebase the existing storage paths within the archived data tree
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import configparser, json, pathlib, sys
+        ini, source, target = sys.argv[1:]
+        cfg = configparser.ConfigParser(interpolation=None, strict=False)
+        cfg.read_string('[DEFAULT]\n' + pathlib.Path(ini).read_text())
+        prefixes = sorted({source, target, '/data'}, key=len, reverse=True)
+        def rebase(section, option, fallback):
+            value = cfg.get(section, option, fallback='')
+            if not value:
+                return fallback
+            path = pathlib.PurePosixPath(value)
+            if not path.is_absolute():
+                base = cfg.get('server', 'APP_DATA_PATH', fallback=target + '/gitea')
+                path = pathlib.PurePosixPath(base) / path
+            if '..' in path.parts:
+                raise ValueError('Forgejo storage path must stay inside its data tree')
+            for prefix in prefixes:
+                try:
+                    return str(pathlib.PurePosixPath(target) / path.relative_to(prefix))
+                except ValueError:
+                    pass
+            raise ValueError('Forgejo storage path is outside the archived data tree: ' + section + '.' + option)
+        print(json.dumps({
+            'app_data': rebase('server', 'APP_DATA_PATH', target + '/gitea'),
+            'repositories': rebase('repository', 'ROOT', target + '/git/repositories'),
+            'lfs': rebase('lfs', 'PATH', target + '/git/lfs'),
+            'log': rebase('log', 'ROOT_PATH', target + '/gitea/log'),
+        }))
+      - "{{ forgejo_app_ini }}"
+      - "{{ forgejo_source_data_path | default(forgejo_data_path) }}"
+      - "{{ forgejo_data_path }}"
+  register: _forgejo_storage_paths
+  changed_when: false
+  no_log: true
+
 - name: Forgejo | List the managed app.ini settings
   ansible.builtin.set_fact:
     _forgejo_ini_settings:
@@ -22,10 +62,10 @@
       - {section: server, option: SSH_PORT, value: "{{ app_config.app.ssh_port }}"}
       - {section: server, option: SSH_LISTEN_PORT, value: "{{ app_config.app.ssh_port }}"}
       - {section: server, option: START_SSH_SERVER, value: "true"}
-      - {section: server, option: APP_DATA_PATH, value: "{{ forgejo_data_path }}/gitea"}
-      - {section: repository, option: ROOT, value: "{{ forgejo_data_path }}/git/repositories"}
-      - {section: lfs, option: PATH, value: "{{ forgejo_data_path }}/git/lfs"}
-      - {section: log, option: ROOT_PATH, value: "{{ forgejo_data_path }}/gitea/log"}
+      - {section: server, option: APP_DATA_PATH, value: "{{ (_forgejo_storage_paths.stdout | from_json).app_data }}"}
+      - {section: repository, option: ROOT, value: "{{ (_forgejo_storage_paths.stdout | from_json).repositories }}"}
+      - {section: lfs, option: PATH, value: "{{ (_forgejo_storage_paths.stdout | from_json).lfs }}"}
+      - {section: log, option: ROOT_PATH, value: "{{ (_forgejo_storage_paths.stdout | from_json).log }}"}
       - {section: actions, option: ENABLED, value: "true"}
       - {section: actions, option: DEFAULT_ACTIONS_URL, value: "https://data.forgejo.org"}
   no_log: true
