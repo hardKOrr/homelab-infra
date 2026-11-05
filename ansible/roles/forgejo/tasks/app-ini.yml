@@ -1,32 +1,33 @@
 ---
 # Reconcile the app.ini settings Deploy owns, as the Docker image's start script does from
-# forgejo.env on every start. Inputs: forgejo_ini_database {host, port, name, user,
-# password}, forgejo_data_path, and forgejo_ini_scope: `all` (Deploy) or `restore` (only the database, run
-# user and paths, so a restored app.ini never points at the source instance's database).
+# forgejo.env on every start; secrets and everything else stay. Inputs: forgejo_fqdn,
+# forgejo_data_path and forgejo_ini_database {host, port, name, user, password}. Restore
+# runs it too, so a restored app.ini never keeps the source instance's database, hostname,
+# ports or paths.
 - name: Forgejo | List the managed app.ini settings
   ansible.builtin.set_fact:
     _forgejo_ini_settings:
-      - {scope: restore, section: null, option: RUN_USER, value: "{{ forgejo_native_user }}"}
-      - {scope: restore, section: null, option: WORK_PATH, value: "{{ forgejo_data_path }}"}
-      - {scope: restore, section: security, option: INSTALL_LOCK, value: "true"}
-      - {scope: restore, section: database, option: DB_TYPE, value: postgres}
-      - {scope: restore, section: database, option: HOST, value: "{{ forgejo_ini_database.host }}:{{ forgejo_ini_database.port }}"}
-      - {scope: restore, section: database, option: NAME, value: "{{ forgejo_ini_database.name }}"}
-      - {scope: restore, section: database, option: USER, value: "{{ forgejo_ini_database.user }}"}
-      - {scope: restore, section: database, option: PASSWD, value: "{{ forgejo_ini_database.password }}"}
-      - {scope: all, section: server, option: DOMAIN, value: "{{ forgejo_fqdn }}"}
-      - {scope: all, section: server, option: ROOT_URL, value: "https://{{ forgejo_fqdn }}/"}
-      - {scope: all, section: server, option: HTTP_PORT, value: "{{ app_config.app.port }}"}
-      - {scope: all, section: server, option: SSH_DOMAIN, value: "{{ forgejo_fqdn }}"}
-      - {scope: all, section: server, option: SSH_PORT, value: "{{ app_config.app.ssh_port }}"}
-      - {scope: all, section: server, option: SSH_LISTEN_PORT, value: "{{ app_config.app.ssh_port }}"}
-      - {scope: all, section: server, option: START_SSH_SERVER, value: "true"}
-      - {scope: restore, section: server, option: APP_DATA_PATH, value: "{{ forgejo_data_path }}/gitea"}
-      - {scope: restore, section: repository, option: ROOT, value: "{{ forgejo_data_path }}/git/repositories"}
-      - {scope: restore, section: lfs, option: PATH, value: "{{ forgejo_data_path }}/git/lfs"}
-      - {scope: restore, section: log, option: ROOT_PATH, value: "{{ forgejo_data_path }}/gitea/log"}
-      - {scope: all, section: actions, option: ENABLED, value: "true"}
-      - {scope: all, section: actions, option: DEFAULT_ACTIONS_URL, value: "https://data.forgejo.org"}
+      - {section: null, option: RUN_USER, value: "{{ forgejo_native_user }}"}
+      - {section: null, option: WORK_PATH, value: "{{ forgejo_data_path }}"}
+      - {section: security, option: INSTALL_LOCK, value: "true"}
+      - {section: database, option: DB_TYPE, value: postgres}
+      - {section: database, option: HOST, value: "{{ forgejo_ini_database.host }}:{{ forgejo_ini_database.port }}"}
+      - {section: database, option: NAME, value: "{{ forgejo_ini_database.name }}"}
+      - {section: database, option: USER, value: "{{ forgejo_ini_database.user }}"}
+      - {section: database, option: PASSWD, value: "{{ forgejo_ini_database.password }}"}
+      - {section: server, option: DOMAIN, value: "{{ forgejo_fqdn }}"}
+      - {section: server, option: ROOT_URL, value: "https://{{ forgejo_fqdn }}/"}
+      - {section: server, option: HTTP_PORT, value: "{{ app_config.app.port }}"}
+      - {section: server, option: SSH_DOMAIN, value: "{{ forgejo_fqdn }}"}
+      - {section: server, option: SSH_PORT, value: "{{ app_config.app.ssh_port }}"}
+      - {section: server, option: SSH_LISTEN_PORT, value: "{{ app_config.app.ssh_port }}"}
+      - {section: server, option: START_SSH_SERVER, value: "true"}
+      - {section: server, option: APP_DATA_PATH, value: "{{ forgejo_data_path }}/gitea"}
+      - {section: repository, option: ROOT, value: "{{ forgejo_data_path }}/git/repositories"}
+      - {section: lfs, option: PATH, value: "{{ forgejo_data_path }}/git/lfs"}
+      - {section: log, option: ROOT_PATH, value: "{{ forgejo_data_path }}/gitea/log"}
+      - {section: actions, option: ENABLED, value: "true"}
+      - {section: actions, option: DEFAULT_ACTIONS_URL, value: "https://data.forgejo.org"}
   no_log: true
 
 - name: Forgejo | Write the managed app.ini settings
@@ -38,7 +39,7 @@
     owner: "{{ forgejo_native_user }}"
     group: "{{ forgejo_native_user }}"
     mode: "0640"
-  loop: "{{ _forgejo_ini_settings | selectattr('scope', 'in', ['restore', forgejo_ini_scope]) | list }}"
+  loop: "{{ _forgejo_ini_settings }}"
   loop_control:
     label: "{{ item.section | default('DEFAULT', true) }}.{{ item.option }}"
   no_log: true

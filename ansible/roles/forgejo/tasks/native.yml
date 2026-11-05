@@ -65,7 +65,6 @@
 - name: Forgejo | Reconcile the managed app.ini settings
   ansible.builtin.include_tasks: app-ini.yml
   vars:
-    forgejo_ini_scope: all
     forgejo_data_path: "{{ app_config.app.data_path }}"
     forgejo_ini_database:
       host: "{{ app_config.app.database_host }}"

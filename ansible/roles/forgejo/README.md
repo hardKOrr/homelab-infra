@@ -22,8 +22,8 @@ Docker and Kubernetes without regenerating Forgejo's application secret key.
 Set `hosting.method: native` with `proxmox.guest_type: lxc` or `vm` and Forgejo runs the
 release binary under systemd as the `git` user. `app.native_version` and `app.native_sha256`
 pin it; the image tag carries that same version. `app.ini` keeps the image's layout under `app.data_path`; Deploy reconciles its
-database, server and path settings each run (`tasks/app-ini.yml`), and restore points them
-at this instance's database before Forgejo starts. Git SSH is Forgejo's built-in server on
+database, server and path settings each run (`tasks/app-ini.yml`), and restore reapplies them
+at this instance's database, hostname and ports before Forgejo starts. Git SSH is Forgejo's built-in server on
 `app.ssh_port`. Backup, restore and the database dump use the shared PBS client, restore
 swap and database client with the native runtime.
 
