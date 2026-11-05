@@ -67,6 +67,7 @@ spec:
             - -c
             - >-
               test -f /config/configuration.yaml || cp /seed/configuration.yaml /config/configuration.yaml;
+              test -f /config/automations.yaml || printf '[]\n' > /config/automations.yaml;
               cp /secrets/secrets.yaml /config/secrets.yaml && chmod 600 /config/secrets.yaml
           volumeMounts:
             - name: config

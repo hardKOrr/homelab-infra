@@ -37,7 +37,7 @@ assert branch["when"] == "app_config.hosting.method == 'kubernetes'"
 # Templates resolve by basename only inside the role's context.
 assert branch["block"][0]["ansible.builtin.include_role"] == {
     "name": "home-assistant", "tasks_from": "kubernetes"}
-for name in ("manifest.yaml.j2", "secrets.yaml.j2"):
+for name in ("manifest.yaml.j2", "secrets.yaml.j2", "configuration.yaml.j2"):
     assert (ROOT / ROLE / "templates" / name).is_file()
 assert branch["block"][1]["ansible.builtin.meta"] == "end_play"
 assert provision["tasks"].index(branch) == 0
@@ -67,6 +67,20 @@ pod = deployment["spec"]["template"]["spec"]
 assert deployment["spec"]["strategy"]["type"] == "Recreate"
 assert "nodeSelector" not in pod and "securityContext" not in pod["containers"][0]
 assert all("hostPath" not in v for v in pod["volumes"])
+seed_command = pod["initContainers"][0]["command"][-1]
+assert "test -f /config/automations.yaml ||" in seed_command
+assert "printf '[]\\n' > /config/automations.yaml" in seed_command
+# The editor persists automations in a separate file that Home Assistant must load.
+seed = render(read(f"{ROLE}/templates/configuration.yaml.j2"), {"instance": "home-assistant", "app_config": {"app": defaults["app"]}})
+nodes = dict(yaml.compose(seed).value)
+seed_fields = {key.value: value for key, value in nodes.items()}
+assert seed_fields["automation"].tag == "!include"
+assert seed_fields["automation"].value == "automations.yaml"
+http_fields = {key.value: value for key, value in seed_fields["http"].value}
+assert http_fields["use_x_forwarded_for"].value == "true"
+custom = {"default_config": {}, "automation": []}
+assert yaml.safe_load(render(read(f"{ROLE}/templates/configuration.yaml.j2"), {
+    "instance": "home-assistant", "app_config": {"app": dict(defaults["app"], initial_configuration=custom)}})) == custom
 assert plain[("Ingress", "home-assistant")]["spec"]["rules"][0]["host"] == "home-assistant.example.test"
 
 usb = objects_for(True)[("Deployment", "home-assistant")]["spec"]["template"]["spec"]

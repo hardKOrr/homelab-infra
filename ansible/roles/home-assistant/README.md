@@ -32,6 +32,8 @@ CronJob writes it and the shared Job puts it back. `configuration.yaml` is seede
 (`initial_configuration`, or a minimal `http` block trusting `app.kubernetes_trusted_proxies`
 so the ingress works), after which Home Assistant owns it. `secrets.yaml` is refreshed from a
 Secret at each pod start, so restart the pod after changing integration credentials.
+The default seed includes the automation editor's `automations.yaml`; an explicit
+`initial_configuration` must include it to use editor-managed automations.
 
 During first-run setup, confirm the imported HTTP server settings under Settings →
 System → Network within five minutes. Home Assistant otherwise reverts proxy trust and
