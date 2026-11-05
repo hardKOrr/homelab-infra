@@ -74,7 +74,7 @@ def test_cpu_templates():
     defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/frigate.yml").read_text())["frigate_defaults"]
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["backup"]["application_consistent"] is True
-    role_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/main.yml").read_text())
+    role_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/docker.yml").read_text())
     render = next(task for task in role_tasks if task.get("name") == "Frigate | Render the redacted Compose project and application config")
     assert render["ansible.builtin.template"]["force"] == "{{ item.force | default(true) | bool }}"
     config_template = next(item for item in render["loop"]
@@ -83,7 +83,7 @@ def test_cpu_templates():
 
 
 def test_public_health_endpoints():
-    deploy_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/main.yml").read_text())
+    deploy_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/docker.yml").read_text())
 
     def find_task(tasks, name):
         for task in tasks:
@@ -103,7 +103,7 @@ def test_public_health_endpoints():
     assert uri["return_content"] is False
     assert task["no_log"] is False
     # The shared swap waits for a 200 without reading the body.
-    assert swap_inputs("frigate", "restore-docker.yml")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
+    assert swap_inputs("frigate", "restore-guest.yml")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
 
 
 def test_deploy_preflight():
@@ -139,7 +139,7 @@ def test_deploy_preflight():
 
 
 def check_restore_swap():
-    swap = swap_inputs("frigate", "restore-docker.yml")
+    swap = swap_inputs("frigate", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": 0, "group": 0, "mode": "0750"}
     assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
@@ -173,7 +173,7 @@ def check_backup():
     upload = next(t for t in backup_source
                   if t["name"] == "Frigate backup | Quiesce Frigate and archive its configuration and database to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ app_config.hosting.method }}"
     assert upload["vars"]["pbs_client_compose_project"] == "{{ frigate_project_dir }}"
     assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
     assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"

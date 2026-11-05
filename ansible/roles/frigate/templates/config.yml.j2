@@ -6,6 +6,15 @@ ffmpeg:
 
 tls:
   enabled: false
+{% if app_config.hosting.method | default('docker') == 'native' %}
+
+# Natively there is no container port map: listen on app.port, and keep the
+# unauthenticated internal API on the guest's loopback.
+networking:
+  listen:
+    internal: 127.0.0.1:5000
+    external: {{ app_config.app.port | int }}
+{% endif %}
 
 {% if app_config.app.detector == 'coral' %}
 detectors:

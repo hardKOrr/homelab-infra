@@ -1,5 +1,6 @@
 ---
-# Restore one Frigate config/database archive through the shared swap. The staged
+# Restore one Frigate config/database archive through the shared swap, on a Docker stack
+# host or a native guest. The staged
 # config.yml and frigate.db must be complete and the database intact before Frigate stops.
 
 - name: Frigate restore | Assert the restore contract
@@ -18,7 +19,7 @@
 - name: Frigate restore | Preview or replace the config directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.config_path }}"

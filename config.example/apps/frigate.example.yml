@@ -66,3 +66,17 @@ backup:
 # hosting:
 #   method: docker
 # stack: frigate-lxc
+
+# To run Frigate natively on its own LXC (or set guest_type: vm for a VM), CPU-only with no
+# cameras, MQTT user or recording mount, set these instance overrides and drop stack.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc
+# app:
+#   detector: cpu
+#   gpu_device: ""
+#   igpu_render_node: ""
+#   coral_usb_mapping: ""
+#   hwaccel_args: ""
+#   recordings_path: ""

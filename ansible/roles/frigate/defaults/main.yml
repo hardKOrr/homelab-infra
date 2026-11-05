@@ -1,3 +1,10 @@
 frigate_project_dir: "/opt/{{ instance }}"
 frigate_http_retries: 60
 frigate_http_delay: 5
+# Native: upstream's install tree and config/media paths are fixed (/opt/frigate, /config,
+# /media/frigate), so a native guest is dedicated to one Frigate. Build inputs live under
+# the project directory; the stamp names the version the tree was built from.
+frigate_native_src: "{{ frigate_project_dir }}/src"
+frigate_native_venv: "{{ frigate_project_dir }}/venv"
+frigate_native_node: "{{ frigate_project_dir }}/node"
+frigate_native_stamp: "/opt/frigate/.built-{{ app_config.app.native_version | default('') }}"

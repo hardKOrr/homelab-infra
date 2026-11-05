@@ -1,0 +1,15 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+mkdir -p /tmp/cache /etc/letsencrypt/www /etc/letsencrypt/live/frigate
+cert=/etc/letsencrypt/live/frigate
+if [ ! -f "$cert/privkey.pem" ] || [ ! -f "$cert/fullchain.pem" ]; then
+  openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+    -subj "/O=FRIGATE DEFAULT CERT/CN=*" \
+    -keyout "$cert/privkey.pem" -out "$cert/fullchain.pem" 2>/dev/null
+fi
+python3 /usr/local/nginx/get_nginx_settings.py |
+  tempio -template /usr/local/nginx/templates/base_path.gotmpl -out /usr/local/nginx/conf/base_path.conf
+python3 /usr/local/nginx/get_nginx_settings.py |
+  tempio -template /usr/local/nginx/templates/listen.gotmpl -out /usr/local/nginx/conf/listen.conf
+exec /usr/local/nginx/sbin/nginx

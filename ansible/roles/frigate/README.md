@@ -35,6 +35,22 @@ database, then keeps the original directory beside the live path on the same fil
 until the restored service passes health checks. Any later failure puts the original
 directory back and starts it.
 
+## Native
+
+Choose `hosting.method: native` and `proxmox.guest_type: lxc` or `vm`; Frigate then runs on a
+guest of its own, CPU-only: Deploy refuses a Coral, GPU, camera, MQTT user or
+`recordings_path` for this method. `app.native_version` pins the upstream source release
+(the image tag carries the same version) and `app.native_sha256` its archive; the other
+prebuilt pieces upstream's image downloads (Node.js for the web build, go2rtc, tempio,
+yq, ffmpeg, the CPU model) are pinned with their checksums in `app.native_assets`.
+`tasks/native-install.yml` builds nginx with Frigate's modules, sqlite-vec, pysqlite3, the
+Python environment and the web UI with upstream's own scripts, so the first Deploy takes a
+while; later Deploys skip every finished step. Upstream's s6 services run as three systemd
+units (`<instance>`, `<instance>-nginx`, `<instance>-go2rtc`). `/config` links to
+`app.config_path`; nginx serves `app.port` and keeps the unauthenticated internal API on
+loopback. Recovery archives the same config directory as Docker, through the shared
+backup and restore operations.
+
 ## Kubernetes
 
 With `hosting.method: kubernetes` Frigate runs CPU-only in the app's namespace: no camera

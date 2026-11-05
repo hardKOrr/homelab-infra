@@ -1,0 +1,10 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+mkdir -p /tmp/cache /dev/shm/logs
+# The libva build matches the ffmpeg's libavformat major, as upstream's service sets it.
+ffmpeg_path=$(python3 /usr/local/ffmpeg/get_ffmpeg_path.py)
+LIBAVFORMAT_VERSION_MAJOR=$("$ffmpeg_path" -version | grep -Po "libavformat\W+\K\d+")
+export LIBAVFORMAT_VERSION_MAJOR
+cd /opt/frigate
+exec python3 -u -m frigate

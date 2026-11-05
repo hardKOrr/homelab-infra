@@ -83,6 +83,20 @@
           infrastructure.frigate_storage mount with owner. The playbook never discovers
           or adopts devices or storage.
 
+    - name: Assert the native method's CPU-only, camera-less scope
+      ansible.builtin.assert:
+        that:
+          - app_config.app.detector == 'cpu'
+          - app_config.app.cameras | default({}) | length == 0
+          - app_config.app.mqtt.username | default('', true) | length == 0
+          - app_config.app.recordings_path | default('', true) | length == 0
+        fail_msg: >-
+          Native Frigate is CPU-only without cameras, MQTT user or recording mount: set
+          app.detector: cpu and leave the GPU, render node, Coral, hardware-decode and
+          recordings_path values empty. Devices and external storage do not reach native
+          guests yet.
+      when: app_config.hosting.method == 'native'
+
   tasks:
     - name: Find or create the dedicated Frigate Docker host (VM, or LXC with frigate-lxc)
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
@@ -117,6 +131,14 @@
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
       when: app_config.hosting.method == 'kubernetes'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: frigate
+      when: app_config.hosting.method == 'native'
+
     - name: Provision Frigate recording storage, devices and guest inputs
       ansible.builtin.include_tasks: ../../roles/frigate/tasks/provision-docker.yml
       when: app_config.hosting.method == 'docker'
@@ -137,9 +159,11 @@
       failed_when: false
 
   tasks:
-    - name: Bootstrap the Frigate VM
+    - name: Bootstrap the Frigate guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
-      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+      when:
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
+        - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
@@ -152,7 +176,7 @@
     - name: Deploy Frigate
       ansible.builtin.include_role:
         name: frigate
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Frigate | Wire"
   hosts: localhost
@@ -220,13 +244,16 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record Frigate on its dedicated Docker guest or Kubernetes nodes
+    - name: Record Frigate on its dedicated guest or Kubernetes nodes
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: >-
           {{ (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list)
              if _frigate_k8s | bool else [groups['deploy_' ~ instance][0]] }}
-        record_guest_kind: "{{ 'kubernetes' if _frigate_k8s | bool else 'docker' }}"
+        record_guest_kind: >-
+          {{ 'kubernetes' if _frigate_k8s | bool
+             else 'native' if hostvars['localhost'].app_config.hosting.method == 'native'
+             else 'docker' }}
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

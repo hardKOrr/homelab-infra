@@ -4,7 +4,7 @@
 frigate_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: frigate
 
@@ -15,7 +15,32 @@ frigate_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: "ghcr.io/blakeblackshear/frigate:stable"
+    # One exact upstream version for both methods: the image tag and the native build of
+    # the source release (https://github.com/blakeblackshear/frigate). native_sha256
+    # verifies that tag's source archive; native_assets are the prebuilt pieces the
+    # upstream image build downloads (docker/main/Dockerfile and install_deps.sh at the tag).
+    image: "ghcr.io/blakeblackshear/frigate:0.18.2"
+    native_version: "0.18.2"
+    native_sha256: e6af192d610f6f5fd26677aa509412620b2bc60216f6105b509ad57ec8dcf0c0
+    native_assets:
+      node:
+        url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.xz
+        sha256: df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
+      go2rtc:
+        url: https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_linux_amd64
+        sha256: 32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6
+      tempio:
+        url: https://github.com/home-assistant/tempio/releases/download/2021.09.0/tempio_amd64
+        sha256: b7b93ebfd24c1161cec7aecfad62ab51f2241149358cef354b86cdbc6a60546f
+      yq:
+        url: https://github.com/mikefarah/yq/releases/download/v4.48.2/yq_linux_amd64
+        sha256: 0ffc35320180d4911bc3a772934da508715e08af444cb33d4d43660065e25bcc
+      ffmpeg:
+        url: https://github.com/NickM-27/FFmpeg-Builds/releases/download/autobuild-2026-06-02-14-20/ffmpeg-n8.1.1-9-g58d4114d36-linux64-gpl-8.1.tar.xz
+        sha256: 9bac85054d351cdc89c0a4f45c8ea5c44df94009aabd964b719bbadd56aedae9
+      cpu_model:
+        url: https://github.com/google-coral/test_data/raw/release-frogfish/ssdlite_mobiledet_coco_qat_postprocess.tflite
+        sha256: 90bb33a634e041914cc1819aa5df99818e6c396c4d2db952c0fd7a9cffc4724f
     # app.port is the per-instance base host port. Blank auxiliary values derive from
     # it (+1 for RTSP and +2 for WebRTC) so a second instance only needs a new app.port.
     port: 8971
@@ -49,6 +74,14 @@ frigate_defaults:
       host: ""
       port: 1883
       username: ""
+
+  # Used only when hosting.method is native (CPU-only, no cameras or recording mount).
+  proxmox:
+    guest_type: lxc
+    cores: 4
+    memory: 4096
+    disk_volume:
+      size: 32
 
   routing:
     subdomain: frigate

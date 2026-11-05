@@ -3,3 +3,15 @@
   community.docker.docker_compose_v2:
     project_src: "{{ frigate_project_dir }}"
     state: restarted
+  when: app_config.hosting.method | default('docker') == 'docker'
+
+- name: Restart native Frigate
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: ["{{ instance }}-go2rtc", "{{ instance }}-nginx", "{{ instance }}"]
+  listen: Restart Frigate
+  when:
+    - app_config.hosting.method | default('docker') == 'native'
+    - not (_frigate_start.changed | default(false))

@@ -91,7 +91,7 @@ assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]
 
 dispatch = yaml.safe_load(read(f"{ROLE}/tasks/restore.yml"))
 assert {t.get("ansible.builtin.include_tasks") for t in dispatch} >= {
-    "restore-kubernetes.yml", "restore-docker.yml"}
+    "restore-kubernetes.yml", "restore-guest.yml"}
 restore = yaml.safe_load(read(f"{ROLE}/tasks/restore-kubernetes.yml"))
 shared = next(t for t in restore if "recovery-restore.yml" in t.get("ansible.builtin.include_tasks", ""))
 assert shared["vars"]["k8s_recovery"]["archives"] == [

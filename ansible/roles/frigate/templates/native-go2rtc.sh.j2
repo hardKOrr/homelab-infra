@@ -1,0 +1,12 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+mkdir -p /tmp/cache
+rm -f /dev/shm/go2rtc.yaml
+ffmpeg_path=$(python3 /usr/local/ffmpeg/get_ffmpeg_path.py)
+LIBAVFORMAT_VERSION_MAJOR=$("$ffmpeg_path" -version | grep -Po "libavformat\W+\K\d+")
+export LIBAVFORMAT_VERSION_MAJOR
+python3 /usr/local/go2rtc/create_config.py
+homekit=/config/go2rtc_homekit.yml
+[ -f "$homekit" ] || : > "$homekit"
+exec /usr/local/go2rtc/bin/go2rtc -config="$homekit" -config=/dev/shm/go2rtc.yaml
