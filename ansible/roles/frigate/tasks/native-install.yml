@@ -1,7 +1,7 @@
 ---
 # Build Frigate from the pinned source release the way docker/main/Dockerfile does, minus
 # the hardware stacks (Coral, GPU, OpenVINO, TensorRT): CPU detector only. Upstream's own
-# build scripts run unmodified from the downloaded source; each step is skipped once its
+# build scripts run from the downloaded source; each step is skipped once its
 # product exists, and the final stamp ties /opt/frigate to native_version.
 - name: Frigate native | Install build and runtime packages
   ansible.builtin.apt:
@@ -100,6 +100,30 @@
     extra_opts: [--strip-components=1]
     creates: "{{ frigate_native_node }}/bin/node"
 
+# Match upstream's Python minor version independently of the guest's system Python.
+- name: Frigate native | Unpack the pinned Python runtime
+  ansible.builtin.unarchive:
+    src: "{{ frigate_native_build }}/{{ app_config.app.native_assets.python.url | basename }}"
+    dest: "{{ frigate_native_build }}"
+    remote_src: true
+    creates: "{{ frigate_native_build }}/python/bin/python3.11"
+
+# Upstream assumes only Debian 12 has deb822 sources. Current native guests do too.
+- name: Frigate native | Detect apt source format in the upstream builds
+  ansible.builtin.replace:
+    path: "{{ frigate_native_src }}/docker/main/{{ item }}"
+    regexp: 'if \[\[ "\$VERSION_ID" == "12" \]\]; then'
+    replace: 'if [[ -f /etc/apt/sources.list.d/debian.sources ]]; then'
+  loop: [build_nginx.sh, build_sqlite_vec.sh]
+
+- name: Frigate native | Enable deb822 source packages only once
+  ansible.builtin.replace:
+    path: "{{ frigate_native_src }}/docker/main/{{ item }}"
+    regexp: >-
+      '/\^Types:/s/deb/& deb-src/'
+    replace: "'s/^Types: deb$/Types: deb deb-src/'"
+  loop: [build_nginx.sh, build_sqlite_vec.sh]
+
 # Upstream's nginx build (vod and secure-token modules, patched) and sqlite-vec scripts.
 - name: Frigate native | Build the pinned nginx with Frigate's modules
   ansible.builtin.command:
@@ -121,9 +145,9 @@
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      python3 -m venv {{ frigate_native_venv }}
+      {{ frigate_native_build }}/python/bin/python3.11 -m venv {{ frigate_native_venv }}
       export PATH={{ frigate_native_venv }}/bin:$PATH
-      pip install --upgrade pip wheel setuptools
+      pip install --upgrade pip wheel setuptools==77.0.3
       pip install -r {{ frigate_native_src }}/docker/main/requirements.txt
       pip install -r {{ frigate_native_src }}/docker/main/requirements-wheels.txt
       mkdir -p {{ frigate_native_build }}/pysqlite && cd {{ frigate_native_build }}/pysqlite

@@ -23,6 +23,9 @@ frigate_defaults:
     native_version: "0.18.2"
     native_sha256: e6af192d610f6f5fd26677aa509412620b2bc60216f6105b509ad57ec8dcf0c0
     native_assets:
+      python:
+        url: https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz
+        sha256: a87ee63646c8f8438b7af3954b2135ed2af91d033c631f12a8f20af903046d06
       node:
         url: https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.xz
         sha256: df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d

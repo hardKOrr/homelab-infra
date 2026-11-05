@@ -41,8 +41,9 @@ Choose `hosting.method: native` and `proxmox.guest_type: lxc` or `vm`; Frigate t
 guest of its own, CPU-only: Deploy refuses a Coral, GPU, camera, MQTT user or
 `recordings_path` for this method. `app.native_version` pins the upstream source release
 (the image tag carries the same version) and `app.native_sha256` its archive; the other
-prebuilt pieces upstream's image downloads (Node.js for the web build, go2rtc, tempio,
-yq, ffmpeg, the CPU model) are pinned with their checksums in `app.native_assets`.
+prebuilt pieces (Python 3.11 for upstream's TFLite wheel, Node.js for the web build,
+go2rtc, tempio, yq, ffmpeg, the CPU model) are pinned with their checksums in
+`app.native_assets`. The private Python runtime leaves the guest's system Python intact.
 `tasks/native-install.yml` builds nginx with Frigate's modules, sqlite-vec, pysqlite3, the
 Python environment and the web UI with upstream's own scripts, so the first Deploy takes a
 while; later Deploys skip every finished step. Upstream's s6 services run as three systemd
