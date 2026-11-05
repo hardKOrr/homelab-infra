@@ -95,6 +95,8 @@
       cd {{ home_assistant_native_src }}
       pip install --upgrade pip wheel
       pip install -r requirements.txt
+      # Release source archives omit generated translations required by onboarding.
+      python -m script.translations develop --all
       pip install --no-deps {{ home_assistant_native_src }}
       touch {{ home_assistant_native_stamp }}
     executable: /bin/bash
