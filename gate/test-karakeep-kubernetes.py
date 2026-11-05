@@ -25,7 +25,8 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/karakeep.yml"))["karakeep_defaults"]
 assert defaults["hosting"] == {
-    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}
+    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"],
+    "impossible": {}
 }
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"] == {
@@ -116,7 +117,7 @@ assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]
 restore_dispatch = yaml.safe_load(read("ansible/roles/karakeep/tasks/restore.yml"))
 assert any("restore-kubernetes.yml" == task.get("ansible.builtin.include_tasks")
            for task in restore_dispatch)
-assert any("restore-docker.yml" == task.get("ansible.builtin.include_tasks")
+assert any("restore-guest.yml" == task.get("ansible.builtin.include_tasks")
            for task in restore_dispatch)
 restore = yaml.safe_load(read("ansible/roles/karakeep/tasks/restore-kubernetes.yml"))
 shared_restore = next(task for task in restore
@@ -127,6 +128,6 @@ assert shared_restore["vars"]["k8s_recovery"]["archives"] == [{
 assert shared_restore["vars"]["k8s_recovery"]["stop"] == ["{{ restore_target }}"]
 
 assert "credentials.yml" in read("ansible/roles/karakeep/tasks/main.yml")
-assert "docker-compose.yml.j2" in read("ansible/roles/karakeep/tasks/main.yml")
+assert "docker-compose.yml.j2" in read("ansible/roles/karakeep/tasks/docker.yml")
 
 print("Karakeep keeps Docker as default and renders its Kubernetes workload and recovery dispatch")

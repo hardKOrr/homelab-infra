@@ -1,13 +1,26 @@
 ---
 # Default configuration for Karakeep — the self-hosted bookmark and read-later
-# application on the services Docker stack. Karakeep owns its SQLite database and
-# Meilisearch index; it does not need a platform database backend.
+# application on the services Docker stack, as a pod on the k3s cluster, or natively on
+# its own LXC or VM (hosting.method: native, stack: "" and an explicit
+# proxmox.guest_type). Karakeep owns its SQLite database and Meilisearch index; it does
+# not need a platform database backend.
 karakeep_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). The production Next.js build needs the memory.
+  proxmox:
+    cores: 4
+    memory: 6144
+    disk_volume:
+      size: 32
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -17,6 +30,13 @@ karakeep_defaults:
 
   app:
     image: ghcr.io/karakeep-app/karakeep:0.33.2
+    # Native: Karakeep's Debian 12/Ubuntu 24.04 install script
+    # (https://docs.karakeep.com/installation/debuntu) at the same release as the image.
+    # The script always installs the latest release, so Deploy pins its release and
+    # Meilisearch lookups with native_script_sha256 verifying the script.
+    native_version: "0.33.2"
+    native_script_sha256: 42904f6ee981bf518a5b93a4d868e73cdcc81111757ea6532f96c2c9bab74d18
+    native_meilisearch_version: "v1.41.0"
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
     meilisearch_image: getmeili/meilisearch:v1.41.0
     port: 3005

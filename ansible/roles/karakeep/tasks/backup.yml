@@ -1,5 +1,5 @@
 ---
-# One quiesced archive contains Karakeep's SQLite/assets volume and Meilisearch index.
+# One quiesced archive (Compose services or systemd units stopped) holds Karakeep's SQLite/assets volume and Meilisearch index.
 
 - name: Karakeep backup | Assert the backup contract
   ansible.builtin.assert:
@@ -13,7 +13,7 @@
 
 - name: Karakeep backup | Resolve its persistent paths
   ansible.builtin.set_fact:
-    _karakeep_backup_data_path: "{{ app_config.app.data_path }}"
+    _karakeep_backup_data_path: "{{ karakeep_data_path }}"
     _karakeep_backup_search_path: "{{ karakeep_meilisearch_data_path }}"
 
 - name: Karakeep backup | Assert the data paths do not overlap
@@ -83,9 +83,11 @@
     - name: Karakeep backup | Stop only this instance's services and push one data archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
         pbs_client_compose_project: "{{ karakeep_project_dir }}"
-        pbs_client_stop_services: [web, chrome, meilisearch]
+        pbs_client_stop_services: >-
+          {{ ['karakeep-web', 'karakeep-workers', 'karakeep-browser', 'meilisearch']
+             if karakeep_native | bool else ['web', 'chrome', 'meilisearch'] }}
         pbs_client_backup_args: [--all-file-systems, "true"]
         pbs_client_archives:
           - name: data.pxar

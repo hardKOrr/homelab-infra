@@ -1,7 +1,8 @@
 ---
-# Karakeep is a three-container application-native recovery unit. The web container
-# owns the SQLite database and assets under /data; Meilisearch owns its index under
-# /meili_data; Chrome is disposable runtime support and has no persistent state.
+# Karakeep is a three-container application-native recovery unit (Docker), or the same
+# web, workers, browser and Meilisearch services under systemd (native). The web
+# service owns the SQLite database and assets; Meilisearch owns its index; the browser is
+# disposable runtime support with no persistent state.
 
 - name: Karakeep | Create project directory
   ansible.builtin.file:
@@ -11,58 +12,13 @@
     group: root
     mode: "0750"
 
-- name: Karakeep | Create persistent application directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ karakeep_data_uid }}"
-    group: "{{ karakeep_data_gid }}"
-    mode: "0750"
-  loop:
-    - "{{ app_config.app.data_path }}"
-    - "{{ karakeep_meilisearch_data_path }}"
-
 - name: Karakeep | Resolve canonical application credentials
   ansible.builtin.include_tasks: credentials.yml
 
-- name: Karakeep | Render environment file
-  ansible.builtin.template:
-    src: karakeep.env.j2
-    dest: "{{ karakeep_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart Karakeep
+- name: Karakeep | Deploy on Docker
+  ansible.builtin.include_tasks: docker.yml
+  when: not (karakeep_native | bool)
 
-- name: Karakeep | Render Compose recovery unit
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ karakeep_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Karakeep
-
-- name: Karakeep | Pull images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ karakeep_project_dir }}"
-
-- name: Karakeep | Start recovery unit
-  community.docker.docker_compose_v2:
-    project_src: "{{ karakeep_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Karakeep | Apply pending restart
-  ansible.builtin.meta: flush_handlers
-
-- name: Karakeep | Wait for health endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/health"
-    status_code: 200
-  register: _karakeep_health
-  until: _karakeep_health.status | default(0) == 200
-  retries: 60
-  delay: 5
-  changed_when: false
+- name: Karakeep | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: karakeep_native | bool

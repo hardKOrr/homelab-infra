@@ -1,7 +1,16 @@
 ---
 karakeep_project_dir: "/opt/{{ instance }}"
 karakeep_env_file: "{{ karakeep_project_dir }}/karakeep.env"
-karakeep_meilisearch_data_path: "{{ karakeep_project_dir }}/meilisearch"
-# Numeric owner of the data and Meilisearch directories; Deploy and restore both apply it.
+karakeep_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+# Persistent state: Docker binds these paths into the containers; the native install
+# script fixes the first and its Meilisearch package the second.
+karakeep_data_path: "{{ '/var/lib/karakeep' if karakeep_native | bool else app_config.app.data_path }}"
+karakeep_meilisearch_data_path: >-
+  {{ '/var/lib/meilisearch/data' if karakeep_native | bool else karakeep_project_dir ~ '/meilisearch' }}
+# Numeric owner of the data and Meilisearch directories on Docker; Deploy and restore both
+# apply it. Natively the install script's karakeep and meilisearch users own them.
 karakeep_data_uid: 1000
 karakeep_data_gid: 1000
+karakeep_native_env_file: /etc/karakeep/karakeep.env
+karakeep_native_meili_config: /etc/meilisearch.toml
+karakeep_native_script_dir: "{{ karakeep_project_dir }}/native"

@@ -1,0 +1,159 @@
+---
+# Karakeep natively on an LXC or a VM: Karakeep's own Debian 12/Ubuntu 24.04 install
+# script (https://docs.karakeep.com/installation/debuntu), checksum-verified at the pinned
+# release tag, with its "latest" lookups replaced by the pinned Karakeep and Meilisearch
+# versions. The script installs the web, workers, browser and Meilisearch systemd
+# services; Deploy then owns their configuration so the generated credentials are the
+# canonical ones.
+# yt-dlp and monolith (link-archiving helpers) are fetched by the script at their latest
+# release; neither holds application state.
+- name: Karakeep native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: >-
+      Karakeep's install script supports Debian 12 and Ubuntu 24.04 on amd64 only.
+
+- name: Karakeep native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Karakeep native | Refresh the package index
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Karakeep native | Create the script directory
+  ansible.builtin.file:
+    path: "{{ karakeep_native_script_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Karakeep native | Download the pinned install script
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/karakeep-app/karakeep/v{{ app_config.app.native_version }}/karakeep-linux.sh"
+    dest: "{{ karakeep_native_script_dir }}/karakeep-linux.sh"
+    checksum: "sha256:{{ app_config.app.native_script_sha256 }}"
+    mode: "0600"
+
+- name: Karakeep native | Pin the script's release lookups
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      cd {{ karakeep_native_script_dir }}
+      sed -E \
+        -e 's|^(\s*RELEASE=).*releases/latest.*$|\1"{{ app_config.app.native_version }}"|' \
+        -e 's|releases/latest/download/meilisearch.deb|releases/download/{{ app_config.app.native_meilisearch_version }}/meilisearch.deb|' \
+        karakeep-linux.sh > pinned.sh.new
+      test "$(grep -c '^\s*RELEASE="{{ app_config.app.native_version }}"$' pinned.sh.new)" = 2
+      grep -q 'releases/download/{{ app_config.app.native_meilisearch_version }}/meilisearch.deb' pinned.sh.new
+      if cmp -s pinned.sh.new pinned.sh 2>/dev/null; then rm pinned.sh.new; else mv pinned.sh.new pinned.sh; echo changed; fi
+    executable: /bin/bash
+  register: _karakeep_pin
+  changed_when: "'changed' in _karakeep_pin.stdout"
+
+- name: Karakeep native | Read the installed release
+  ansible.builtin.slurp:
+    src: /opt/karakeep/version.txt
+  register: _karakeep_installed
+  failed_when: false
+
+# A partial install from a failed run has no version.txt; the script moves its source tree
+# into /opt/karakeep and fails if that directory already exists.
+- name: Karakeep native | Install Karakeep with the pinned script
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      rm -rf /opt/karakeep
+      bash {{ karakeep_native_script_dir }}/pinned.sh --no-color install
+    executable: /bin/bash
+    creates: /opt/karakeep/version.txt
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    TERM: xterm
+  async: 7200
+  poll: 30
+  register: _karakeep_install
+
+- name: Karakeep native | Update to the pinned release
+  ansible.builtin.shell:
+    cmd: bash {{ karakeep_native_script_dir }}/pinned.sh --no-color update
+    executable: /bin/bash
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    TERM: xterm
+  async: 7200
+  poll: 30
+  when:
+    - _karakeep_installed.content is defined
+    - (_karakeep_installed.content | b64decode | trim) != app_config.app.native_version
+
+- name: Karakeep native | Render the environment file
+  ansible.builtin.template:
+    src: native.env.j2
+    dest: "{{ karakeep_native_env_file }}"
+    owner: karakeep
+    group: karakeep
+    mode: "0600"
+  no_log: true
+  notify: Restart Karakeep
+
+- name: Karakeep native | Render the Meilisearch configuration
+  ansible.builtin.template:
+    src: meilisearch.toml.j2
+    dest: "{{ karakeep_native_meili_config }}"
+    owner: meilisearch
+    group: meilisearch
+    mode: "0600"
+  no_log: true
+  notify: Restart Karakeep
+
+- name: Karakeep native | Enable and start the services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: [meilisearch, karakeep-browser, karakeep-workers, karakeep-web]
+
+- name: Karakeep native | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Karakeep native | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/health"
+    status_code: 200
+  register: _karakeep_health
+  until: _karakeep_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Karakeep native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart meilisearch karakeep-browser karakeep-workers karakeep-web
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u karakeep-web -u karakeep-workers -u meilisearch -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

@@ -3,3 +3,12 @@
   community.docker.docker_compose_v2:
     project_src: "{{ karakeep_project_dir }}"
     state: restarted
+  when: not (karakeep_native | bool)
+
+- name: Restart native Karakeep
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: [meilisearch, karakeep-workers, karakeep-web]
+  listen: Restart Karakeep
+  when: karakeep_native | bool

@@ -112,7 +112,8 @@ def backup_check(case):
         (search / "original-index").write_text("original index\n")
         variables = {
             "instance": "karakeep", "karakeep_project_dir": str(root / "project"),
-            "karakeep_meilisearch_data_path": str(search), "homelabinfra_infra": {"backups": {}},
+            "karakeep_meilisearch_data_path": str(search), "karakeep_data_path": str(data),
+            "karakeep_native": False, "homelabinfra_infra": {"backups": {}},
             "app_config": {
                 "app": {"data_path": str(data)},
                 "backup": {"enabled": True, "application_consistent": True},
@@ -129,19 +130,24 @@ def backup_check(case):
 def check_restore_swap():
     """Karakeep supplies both directories from its one archive; gate/test-restore-swap.py
     proves the swap, rollback and ownership."""
-    swap = swap_inputs("karakeep", "restore-docker.yml")
-    owner = {"owner": "{{ karakeep_data_uid }}", "group": "{{ karakeep_data_gid }}", "mode": "0750"}
+    swap = swap_inputs("karakeep", "restore-guest.yml")
+    def owner(user):
+        return {"owner": "{{ '%s' if karakeep_native | bool else karakeep_data_uid }}" % user,
+                "group": "{{ '%s' if karakeep_native | bool else karakeep_data_gid }}" % user,
+                "mode": "0750"}
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [
-        {"path": "{{ app_config.app.data_path }}", "source": "data/data", **owner},
-        {"path": "{{ karakeep_meilisearch_data_path }}", "source": "data/meilisearch", **owner,
+        {"path": "{{ karakeep_data_path }}", "source": "data/data", **owner("karakeep")},
+        {"path": "{{ karakeep_meilisearch_data_path }}", "source": "data/meilisearch", **owner("meilisearch"),
          "allow_empty": True},
     ]
-    assert swap["recovery_swap_stop_services"] == ["web", "chrome", "meilisearch"]
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method | default('docker') }}"
+    assert "'karakeep-web'" in swap["recovery_swap_stop_services"]
+    assert "['web', 'chrome', 'meilisearch']" in swap["recovery_swap_stop_services"]
     assert swap["recovery_swap_compose_project"] == "{{ karakeep_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/api/health")
     # Deploy creates both directories with the same owner the restore applies.
-    deploy = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/main.yml").read_text())
+    deploy = yaml.safe_load((repo / "ansible/roles/karakeep/tasks/docker.yml").read_text())
     directories = next(t for t in deploy if t["name"] == "Karakeep | Create persistent application directories")
     assert directories["ansible.builtin.file"]["owner"] == "{{ karakeep_data_uid }}"
     assert directories["ansible.builtin.file"]["group"] == "{{ karakeep_data_gid }}"
@@ -151,7 +157,8 @@ def main():
     defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/karakeep.yml").read_text())
     config = defaults["karakeep_defaults"]
     assert config["hosting"]["method"] == "docker"
-    assert config["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert config["hosting"]["supported"] == [
+        "docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert any(item["protocol"] == "TCP" and item["port"] == 80
@@ -164,8 +171,9 @@ def main():
                        if task.get("name") == "Karakeep backup | Stop only this instance's services and push one data archive")
     assert backup_task["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
     backup_vars = backup_task["vars"]
-    assert backup_vars["pbs_client_runtime"] == "docker"
-    assert backup_vars["pbs_client_stop_services"] == ["web", "chrome", "meilisearch"]
+    assert backup_vars["pbs_client_runtime"] == "{{ app_config.hosting.method | default('docker') }}"
+    assert "['web', 'chrome', 'meilisearch']" in backup_vars["pbs_client_stop_services"]
+    assert "'karakeep-web'" in backup_vars["pbs_client_stop_services"]
     assert backup_vars["pbs_client_backup_args"] == ["--all-file-systems", "true"]
     # One data.pxar keeps the data/ and meilisearch/ layout of every earlier point.
     archive_root = backup_vars["pbs_client_archives"][0]["path"]
