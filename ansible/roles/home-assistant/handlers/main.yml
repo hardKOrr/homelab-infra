@@ -3,3 +3,14 @@
   community.docker.docker_compose_v2:
     project_src: "{{ home_assistant_project_dir }}"
     state: restarted
+  when: app_config.hosting.method | default('docker') == 'docker'
+
+- name: Restart native Home Assistant
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart Home Assistant
+  when:
+    - app_config.hosting.method | default('docker') == 'native'
+    - not (_ha_start.changed | default(false))

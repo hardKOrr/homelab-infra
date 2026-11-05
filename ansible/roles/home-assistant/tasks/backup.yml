@@ -1,6 +1,6 @@
 ---
 # Home Assistant's config directory contains its SQLite state, integrations, generated
-# secrets, and registry. Quiescing the one Compose service makes the directory an
+# secrets, and registry. Quiescing the one Compose service (or systemd unit) makes the directory an
 # application-consistent recovery unit rather than relying only on a crash-consistent VM
 # snapshot.
 - name: Home Assistant backup | Assert the recovery contract
@@ -31,9 +31,9 @@
 - name: Home Assistant backup | Quiesce Home Assistant and archive its config directory to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method }}"
     pbs_client_compose_project: "{{ home_assistant_project_dir }}"
-    pbs_client_stop_services: [homeassistant]
+    pbs_client_stop_services: "{{ ['homeassistant'] if app_config.hosting.method == 'docker' else [instance] }}"
     pbs_client_archives:
       - name: data.pxar
         path: "{{ app_config.app.config_path }}"

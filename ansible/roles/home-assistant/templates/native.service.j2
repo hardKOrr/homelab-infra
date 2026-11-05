@@ -1,0 +1,18 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Home Assistant ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ home_assistant_native_venv }}/bin/hass --config {{ app_config.app.config_path }}
+Restart=always
+RestartSec=5
+# Home Assistant needs time to write its state on stop (homeassistant/core.py:async_stop).
+TimeoutStopSec=240
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="PATH={{ home_assistant_native_venv }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,162 @@
+---
+# Home Assistant natively on an LXC or a VM: a virtual environment built from the pinned
+# upstream source release (https://github.com/home-assistant/core) under one systemd unit,
+# in place of the container image. Upstream documents only the OS and Container installs
+# (the Core install is unsupported since 2025.12), so this builds what the image builds:
+# the release's pinned requirements, then the source itself. Integration requirements are
+# installed by Home Assistant on demand, as in the container.
+- name: Home Assistant native | Assert the native build's architecture and port
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - app_config.app.port | int == 8123
+    fail_msg: >-
+      The native Home Assistant build downloads amd64 assets only, and the native unit
+      listens on upstream's default port 8123 (leave app.port unset).
+
+- name: Home Assistant native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Home Assistant native | Install build and runtime packages
+  ansible.builtin.apt:
+    name:
+      - autoconf
+      - build-essential
+      - ca-certificates
+      - clang
+      - curl
+      - ffmpeg
+      - iputils-ping
+      - libffi-dev
+      - libjpeg-dev
+      - libopenjp2-7-dev
+      - libpcap-dev
+      - libssl-dev
+      - libturbojpeg0
+      - libudev-dev
+      - tzdata
+      - xz-utils
+      - zlib1g-dev
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Home Assistant native | Create the build directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: ["{{ home_assistant_native_dir }}", "{{ home_assistant_native_src }}"]
+
+- name: Home Assistant native | Download the pinned source release
+  ansible.builtin.get_url:
+    url: "https://github.com/home-assistant/core/archive/refs/tags/{{ app_config.app.native_version }}.tar.gz"
+    dest: "{{ home_assistant_native_dir }}/core-{{ app_config.app.native_version }}.tar.gz"
+    checksum: "sha256:{{ app_config.app.native_sha256 }}"
+    mode: "0644"
+
+- name: Home Assistant native | Unpack the source
+  ansible.builtin.unarchive:
+    src: "{{ home_assistant_native_dir }}/core-{{ app_config.app.native_version }}.tar.gz"
+    dest: "{{ home_assistant_native_src }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "{{ home_assistant_native_src }}/pyproject.toml"
+
+# The release requires a newer Python than any Debian guest ships.
+- name: Home Assistant native | Download the pinned Python runtime
+  ansible.builtin.get_url:
+    url: "{{ app_config.app.native_python.url }}"
+    dest: "{{ home_assistant_native_dir }}/{{ app_config.app.native_python.url | basename }}"
+    checksum: "sha256:{{ app_config.app.native_python.sha256 }}"
+    mode: "0644"
+
+- name: Home Assistant native | Unpack the Python runtime
+  ansible.builtin.unarchive:
+    src: "{{ home_assistant_native_dir }}/{{ app_config.app.native_python.url | basename }}"
+    dest: "{{ home_assistant_native_dir }}"
+    remote_src: true
+    creates: "{{ home_assistant_native_dir }}/python/bin/python{{ app_config.app.native_python.version }}"
+
+- name: Home Assistant native | Install the pinned requirements and Home Assistant
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      {{ home_assistant_native_dir }}/python/bin/python{{ app_config.app.native_python.version }} -m venv {{ home_assistant_native_venv }}
+      export PATH={{ home_assistant_native_venv }}/bin:$PATH
+      cd {{ home_assistant_native_src }}
+      pip install --upgrade pip wheel
+      pip install -r requirements.txt
+      # Release source archives omit generated translations required by onboarding.
+      python -m script.translations develop --all
+      pip install --no-deps {{ home_assistant_native_src }}
+      touch {{ home_assistant_native_stamp }}
+    executable: /bin/bash
+    creates: "{{ home_assistant_native_stamp }}"
+  async: 7200
+  poll: 30
+  notify: Restart Home Assistant
+
+- name: Home Assistant native | Render the service
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Home Assistant
+
+- name: Home Assistant native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  register: _ha_start
+
+- name: Home Assistant native | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+# The first start installs the default integrations' requirements from the network.
+- name: Home Assistant native | Wait for the health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _ha_health
+  until: _ha_health.status | default(0) == 200
+  retries: 180
+  delay: 5
+  changed_when: false
+
+- name: Home Assistant native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ instance | quote }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Home Assistant native | Export the application URL
+  ansible.builtin.set_fact:
+    home_assistant_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

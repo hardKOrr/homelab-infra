@@ -26,7 +26,7 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/home-assistant.yml"))["home_assistant_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["config_storage"] > 0
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["encryption"] == "none"
 
@@ -99,7 +99,7 @@ assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]
 
 dispatch = yaml.safe_load(read(f"{ROLE}/tasks/restore.yml"))
 assert {t.get("ansible.builtin.include_tasks") for t in dispatch} >= {
-    "restore-kubernetes.yml", "restore-docker.yml"}
+    "restore-kubernetes.yml", "restore-guest.yml"}
 restore = yaml.safe_load(read(f"{ROLE}/tasks/restore-kubernetes.yml"))
 shared = next(t for t in restore if "recovery-restore.yml" in t.get("ansible.builtin.include_tasks", ""))
 assert shared["vars"]["k8s_recovery"]["archives"] == [

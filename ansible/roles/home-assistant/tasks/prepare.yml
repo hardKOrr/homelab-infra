@@ -1,0 +1,37 @@
+---
+# Inputs shared by every guest method: credentials, directories, seed config and secrets.
+- name: Home Assistant | Resolve integration credentials
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Home Assistant | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ home_assistant_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+
+# Home Assistant owns this file after initialization, including after a restore.
+- name: Home Assistant | Seed optional initial configuration
+  ansible.builtin.copy:
+    content: "{{ app_config.app.initial_configuration | to_nice_yaml }}"
+    dest: "{{ app_config.app.config_path }}/configuration.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+    force: false
+  when: app_config.app.initial_configuration | default({}) | length > 0
+  notify: Restart Home Assistant
+
+- name: Home Assistant | Render the hidden integration secrets
+  ansible.builtin.template:
+    src: secrets.yaml.j2
+    dest: "{{ home_assistant_secrets_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Home Assistant
