@@ -65,7 +65,9 @@
       when: app_config.hosting.method == 'kubernetes'
       block:
         - name: Deploy on the k3s cluster
-          ansible.builtin.include_tasks: ../../roles/home-assistant/tasks/kubernetes.yml
+          ansible.builtin.include_role:
+            name: home-assistant
+            tasks_from: kubernetes
         - name: Skip the guest plays
           ansible.builtin.meta: end_play
 

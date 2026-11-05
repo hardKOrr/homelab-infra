@@ -34,7 +34,11 @@ playbook = yaml.safe_load(read("ansible/playbooks/apps/home-assistant.yml"))
 provision, wire = playbook[0], playbook[-1]
 branch = next(t for t in provision["tasks"] if t.get("block") and "kubernetes" in t["when"])
 assert branch["when"] == "app_config.hosting.method == 'kubernetes'"
-assert "tasks/kubernetes.yml" in branch["block"][0]["ansible.builtin.include_tasks"]
+# Templates resolve by basename only inside the role's context.
+assert branch["block"][0]["ansible.builtin.include_role"] == {
+    "name": "home-assistant", "tasks_from": "kubernetes"}
+for name in ("manifest.yaml.j2", "secrets.yaml.j2"):
+    assert (ROOT / ROLE / "templates" / name).is_file()
 assert branch["block"][1]["ansible.builtin.meta"] == "end_play"
 assert provision["tasks"].index(branch) == 0
 vm = next(t for t in provision["pre_tasks"] if t["name"].startswith("Assert the explicit VM"))
