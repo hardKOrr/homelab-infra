@@ -2,3 +2,10 @@
 forgejo_project_dir: "/opt/{{ instance }}"
 forgejo_env_file: "{{ forgejo_project_dir }}/forgejo.env"
 forgejo_app_ini: "{{ app_config.app.data_path }}/gitea/conf/app.ini"
+# The stopped service: the Compose service (Docker) or the systemd unit (native).
+forgejo_service: "{{ instance if app_config.hosting.method | default('docker') == 'native' else 'forgejo' }}"
+# Docker runs Forgejo as uid 1000; the native account is the `git` system user.
+forgejo_data_owner: "{{ 'git' if app_config.hosting.method | default('docker') == 'native' else '1000' }}"
+# Native: one binary per version, so a failed upgrade leaves the running one in place.
+forgejo_native_user: git
+forgejo_native_bin: "{{ forgejo_project_dir }}/forgejo-{{ app_config.app.native_version | default('') }}"

@@ -1,0 +1,131 @@
+---
+# The release binary (https://forgejo.org/docs/latest/admin/installation/binary/) pinned
+# to one version and checksum, run by systemd as the `git` user. app.ini keeps the Docker
+# image's layout under app.data_path (gitea/ for configuration, git/ for repositories), so
+# the shared backup and restore archive the same tree. Each Deploy reconciles the managed
+# settings below in app.ini, as the image's start script does from forgejo.env.
+- name: Forgejo | Assert the native method's architecture
+  ansible.builtin.assert:
+    that: ansible_facts.architecture == 'x86_64'
+    fail_msg: The native Forgejo binary is pinned for amd64 only.
+
+# Forgejo requires Git for repository operations.
+- name: Forgejo | Install Git
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Forgejo | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Forgejo | Create the native system group
+  ansible.builtin.group:
+    name: "{{ forgejo_native_user }}"
+    system: true
+
+- name: Forgejo | Create the native system account
+  ansible.builtin.user:
+    name: "{{ forgejo_native_user }}"
+    group: "{{ forgejo_native_user }}"
+    home: "{{ app_config.app.data_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Forgejo | Create project directory
+  ansible.builtin.file:
+    path: "{{ forgejo_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Forgejo | Prepare data, credentials and configuration
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: Forgejo | Download the pinned binary
+  ansible.builtin.get_url:
+    url: >-
+      https://codeberg.org/forgejo/forgejo/releases/download/v{{ app_config.app.native_version }}/forgejo-{{
+      app_config.app.native_version }}-linux-amd64
+    dest: "{{ forgejo_native_bin }}"
+    checksum: "sha256:{{ app_config.app.native_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart Forgejo
+
+- name: Forgejo | Reconcile the managed app.ini settings
+  ansible.builtin.include_tasks: app-ini.yml
+  vars:
+    forgejo_ini_scope: all
+    forgejo_data_path: "{{ app_config.app.data_path }}"
+    forgejo_ini_database:
+      host: "{{ app_config.app.database_host }}"
+      port: "{{ app_config.app.database_port }}"
+      name: "{{ app_config.app.database.name }}"
+      user: "{{ app_config.app.database_user }}"
+      password: "{{ app_config.app.database_password }}"
+
+- name: Forgejo | Render the native service
+  ansible.builtin.template:
+    src: forgejo.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Forgejo
+
+- name: Forgejo | Enable and start the native service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  register: _forgejo_start
+
+- name: Forgejo | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Forgejo | Administrator and sign-in
+  ansible.builtin.include_tasks: admin.yml
+  vars:
+    forgejo_cli:
+      - runuser
+      - -u
+      - "{{ forgejo_native_user }}"
+      - --
+      - env
+      - "HOME={{ app_config.app.data_path }}"
+      - "GITEA_WORK_DIR={{ app_config.app.data_path }}"
+      - "GITEA_CUSTOM={{ app_config.app.data_path }}/gitea"
+      - "{{ forgejo_native_bin }}"
+
+- name: Forgejo | Install native restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-restart-app
+    content: |
+      #!/bin/sh
+      set -eu
+      exec systemctl restart {{ instance | quote }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Forgejo | Install native log helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-tail-applog
+    content: |
+      #!/bin/sh
+      set -eu
+      exec journalctl -u {{ instance | quote }} -n "${1:-50}" --no-pager
+    owner: root
+    group: root
+    mode: "0755"

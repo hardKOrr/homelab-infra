@@ -1,0 +1,40 @@
+---
+# Wait for Forgejo, create its administrator and sign in with it. Input: forgejo_cli, the argv prefix
+# that runs the `forgejo` binary as the git user (Docker exec or the native binary).
+- name: Forgejo | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/healthz"
+    status_code: 200
+  register: _forgejo_health
+  until: _forgejo_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Forgejo | List the administrators
+  ansible.builtin.command:
+    argv: "{{ forgejo_cli + ['admin', 'user', 'list', '--admin'] }}"
+  register: _forgejo_admins
+  changed_when: false
+
+- name: Forgejo | Create the administrator
+  ansible.builtin.command:
+    argv: >-
+      {{ forgejo_cli + ['admin', 'user', 'create', '--admin',
+         '--username', app_config.app.admin_user, '--email', app_config.app.admin_email,
+         '--password', _forgejo_admin_password, '--must-change-password=false'] }}
+  changed_when: true
+  no_log: true
+  # `admin user list` prints one "ID Username Email ..." row per administrator.
+  when: >-
+    _forgejo_admins.stdout is not search('(?m)^\d+\s+' ~ (app_config.app.admin_user | regex_escape) ~ '\s')
+
+- name: Forgejo | Sign in as the administrator
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v1/user"
+    url_username: "{{ app_config.app.admin_user }}"
+    url_password: "{{ _forgejo_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  changed_when: false
+  no_log: true

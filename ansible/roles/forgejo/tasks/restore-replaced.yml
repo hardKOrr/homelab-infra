@@ -1,0 +1,22 @@
+---
+# restore-swap.yml replaced hook (native): the restored app.ini holds the source instance's
+# database login and Docker paths. Point it at this instance's database before Forgejo starts.
+- name: Forgejo restore | Resolve this instance's database
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+  when: app_config.hosting.method == 'native'
+
+- name: Forgejo restore | Point the restored configuration at it
+  ansible.builtin.include_tasks: app-ini.yml
+  vars:
+    forgejo_ini_scope: restore
+    forgejo_data_path: "{{ _forgejo_restore_data_path }}"
+    forgejo_ini_database:
+      host: "{{ database_app_target.host }}"
+      port: "{{ database_app_target.port }}"
+      name: "{{ database_app_target.name }}"
+      user: "{{ database_app_target.role }}"
+      password: "{{ database_app_target.password }}"
+  when: app_config.hosting.method == 'native'

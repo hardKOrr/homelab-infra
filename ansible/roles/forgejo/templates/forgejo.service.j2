@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Forgejo ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ forgejo_native_user }}
+Group={{ forgejo_native_user }}
+WorkingDirectory={{ app_config.app.data_path }}
+Environment="HOME={{ app_config.app.data_path }}"
+Environment="GITEA_WORK_DIR={{ app_config.app.data_path }}"
+Environment="GITEA_CUSTOM={{ app_config.app.data_path }}/gitea"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+ExecStart={{ forgejo_native_bin }} web
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

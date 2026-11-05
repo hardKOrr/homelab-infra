@@ -2,7 +2,7 @@
 forgejo_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
 
@@ -13,7 +13,12 @@ forgejo_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: codeberg.org/forgejo/forgejo:16
+    # One exact upstream version for both methods: the image tag and the release binary
+    # (https://forgejo.org/docs/latest/admin/installation/binary/). The native method
+    # verifies native_sha256 (amd64 only), the published .sha256 of that binary.
+    image: codeberg.org/forgejo/forgejo:16.0.7
+    native_version: "16.0.7"
+    native_sha256: ca8ecb37da9210d5730c878308bf31e25b6b526a7294b263d07f6c8718af07b7
     storage: 10
     port: 3000
     ssh_port: 2222
@@ -29,6 +34,14 @@ forgejo_defaults:
       instance: postgresql-forgejo
       name: forgejo
       role: forgejo
+  # Used only when hosting.method is native.
+  proxmox:
+    guest_type: lxc
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+
   routing:
     subdomain: forgejo
     proxy: internal
