@@ -25,3 +25,9 @@ backup:
 # Recovery boundary: the services stack guest backup includes the Compose project, this
 # data path, and /opt/<instance>/meilisearch. Restore all of them together before starting
 # Karakeep; the SQLite database and its Meilisearch index are one application recovery unit.
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.services-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: services-lxc

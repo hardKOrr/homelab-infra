@@ -1,7 +1,8 @@
 ---
 # Deploy an instanced Karakeep bookmark and read-later service.
 #
-# Karakeep uses the services Docker stack and its own application-native SQLite database,
+# Karakeep uses the services Docker stack (a VM by default, an LXC when the instance names
+# an LXC stack) and its own application-native SQLite database,
 # Meilisearch index, local-user authentication, and generated credentials. It deliberately
 # does not provision or consume a platform database backend.
 
@@ -107,6 +108,10 @@
       when:
         - hostvars['localhost'].app_config.hosting.method == 'docker'
         - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Karakeep
       ansible.builtin.include_role:
         name: karakeep

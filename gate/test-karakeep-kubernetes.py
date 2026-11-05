@@ -25,7 +25,7 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/karakeep.yml"))["karakeep_defaults"]
 assert defaults["hosting"] == {
-    "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}
+    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}
 }
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"] == {
