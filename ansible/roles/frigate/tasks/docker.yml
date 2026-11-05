@@ -1,0 +1,45 @@
+---
+# Docker-on-VM/LXC deployment: the Compose project, then the pulled image.
+
+- name: Frigate | Render the redacted Compose project and application config
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+    force: "{{ item.force | default(true) | bool }}"
+  loop:
+    - {src: docker-compose.yml.j2, dest: "{{ frigate_project_dir }}/docker-compose.yml", mode: "0640"}
+    - {src: config.yml.j2, dest: "{{ app_config.app.config_path }}/config.yml", mode: "0600", force: false}
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+  notify: Restart Frigate
+
+- name: Frigate | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ frigate_project_dir }}"
+
+- name: Frigate | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ frigate_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Frigate | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Frigate | Wait for the public API endpoint
+  ansible.builtin.uri:
+    # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+    url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+    return_content: false
+    status_code: 200
+  register: _frigate_health
+  until: _frigate_health.status | default(0) == 200
+  retries: "{{ frigate_http_retries }}"
+  delay: "{{ frigate_http_delay }}"
+  changed_when: false
+  # This public endpoint returns no app secrets; keep the status visible for diagnosis.
+  no_log: false

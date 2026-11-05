@@ -1,0 +1,27 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Frigate {{ item.name }} ({{ instance }})
+After=network-online.target {{ item.after }}
+Wants=network-online.target
+{% if item.needs | length > 0 %}
+Wants={{ item.needs }}
+{% endif %}
+
+[Service]
+Type=simple
+ExecStart={{ frigate_project_dir }}/{{ item.name }}.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+{# Upstream's s6 environment (docker/main/Dockerfile). #}
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="PATH={{ frigate_native_venv }}/bin:/usr/local/go2rtc/bin:/usr/local/tempio/bin:/usr/local/nginx/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DEFAULT_FFMPEG_VERSION=8.0"
+Environment="INCLUDED_FFMPEG_VERSIONS=8.0"
+Environment="OPENCV_FFMPEG_LOGLEVEL=8"
+Environment="TF_CPP_MIN_LOG_LEVEL=3"
+Environment="TF_ENABLE_ONEDNN_OPTS=0"
+Environment="CONFIG_FILE=/config/config.yml"
+
+[Install]
+WantedBy=multi-user.target
