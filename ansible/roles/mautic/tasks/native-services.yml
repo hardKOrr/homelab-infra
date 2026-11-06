@@ -116,6 +116,8 @@
 - name: Mautic native | Wait for health endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/"
+    # TLS terminates at Caddy; Mautic redirects this local HTTP request to HTTPS.
+    follow_redirects: none
     status_code: [200, 302]
   register: _mautic_health
   until: _mautic_health.status | default(0) in [200, 302]

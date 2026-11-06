@@ -104,6 +104,7 @@
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/"
+    recovery_swap_health_follow_redirects: "{{ 'none' if mautic_native | bool else 'safe' }}"
     recovery_swap_health_status: [200, 302]
 
 - name: Mautic restore | Explain the selected read-only plan
