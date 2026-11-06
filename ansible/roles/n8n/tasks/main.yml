@@ -7,7 +7,9 @@
     state: directory
     owner: root
     group: root
-    mode: "0750"
+    # Natively the service user must traverse it: the default data path sits below it.
+    # The environment file keeps its own 0600 mode.
+    mode: "{{ '0755' if n8n_native | bool else '0750' }}"
 
 - name: n8n | Create the native service user
   ansible.builtin.include_tasks: native-user.yml
