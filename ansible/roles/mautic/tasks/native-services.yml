@@ -1,0 +1,146 @@
+---
+# Native Mautic, second half: Apache, the installer, and the worker and cron services.
+# Runs after native.yml has put the release in place.
+# Apache serves the release root; Mautic's own .htaccess rewrites need AllowOverride.
+- name: Mautic native | Listen on the application port only
+  ansible.builtin.copy:
+    dest: /etc/apache2/ports.conf
+    content: "Listen {{ app_config.app.port }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mautic
+
+- name: Mautic native | Render the Apache site
+  ansible.builtin.template:
+    src: mautic-apache.conf.j2
+    dest: /etc/apache2/sites-available/mautic.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mautic
+
+- name: Mautic native | Enable the rewrite and headers modules and the site; drop the default site
+  ansible.builtin.file:
+    path: "/etc/apache2/{{ item.path }}"
+    src: "{{ item.src | default(omit) }}"
+    state: "{{ item.state }}"
+  loop:
+    - {path: mods-enabled/rewrite.load, state: link, src: ../mods-available/rewrite.load}
+    - {path: mods-enabled/headers.load, state: link, src: ../mods-available/headers.load}
+    - {path: sites-enabled/mautic.conf, state: link, src: ../sites-available/mautic.conf}
+    - {path: sites-enabled/000-default.conf, state: absent}
+  loop_control:
+    label: "{{ item.path }}"
+  notify: Restart mautic
+
+- name: Mautic native | Check whether the application is already installed
+  ansible.builtin.stat:
+    path: "{{ mautic_project_dir }}/.installed"
+  register: _mautic_installed_marker
+
+# Mautic's schema and admin user are created once through its console installer, as on
+# Docker. A new release over an installed database migrates the schema instead.
+- name: Mautic native | Run the non-interactive installer
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - www-data
+      - --
+      - php
+      - bin/console
+      - mautic:install
+      - "https://{{ mautic_fqdn }}"
+      - "--admin_email={{ app_config.app.admin_user }}@{{ homelabinfra_infra.domain | default('invalid') }}"
+      - "--admin_password={{ _mautic_admin_password }}"
+      - --force
+    chdir: "{{ mautic_native_root }}"
+  no_log: true
+  when: not _mautic_installed_marker.stat.exists
+
+- name: Mautic native | Record installation complete
+  ansible.builtin.copy:
+    dest: "{{ mautic_project_dir }}/.installed"
+    content: "{{ ansible_date_time.iso8601 }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not _mautic_installed_marker.stat.exists
+
+- name: Mautic native | Migrate the schema after a release change
+  ansible.builtin.command:
+    argv: [runuser, -u, www-data, --, php, bin/console, doctrine:migrations:migrate, --no-interaction, --allow-no-migration]
+    chdir: "{{ mautic_native_root }}"
+  when:
+    - _mautic_installed_marker.stat.exists
+    - _mautic_native_swap is changed
+  changed_when: true
+  notify: Restart mautic
+
+- name: Mautic native | Install the cron loop
+  ansible.builtin.template:
+    src: mautic-cron.sh.j2
+    dest: /usr/local/bin/mautic-cron
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart mautic
+
+- name: Mautic native | Install the worker and cron services
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [mautic-worker, mautic-cron]
+  register: _mautic_native_units
+  notify: Restart mautic
+
+- name: Mautic native | Reload systemd after a unit change
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _mautic_native_units is changed
+
+- name: Mautic native | Enable and start the services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ mautic_native_services | reverse | list }}"
+
+- name: Mautic native | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Mautic native | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: [200, 302]
+  register: _mautic_health
+  until: _mautic_health.status | default(0) in [200, 302]
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Mautic native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart apache2 mautic-worker mautic-cron
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        journalctl -u mautic-worker -u mautic-cron -n "${1:-50}" --no-pager
+        tail -n "${1:-50}" /var/log/apache2/error.log
+  loop_control:
+    label: "{{ item.name }}"
