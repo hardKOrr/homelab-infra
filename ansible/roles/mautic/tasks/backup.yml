@@ -1,7 +1,7 @@
 ---
 # Capture Mautic's named MariaDB database and its complete persistent file tree as one
 # application-consistent PBS archive. Only this instance's web, cron and worker services
-# stop; the shared database guest and every sibling application stay available.
+# (containers or systemd units) stop; the shared database guest and every sibling application stay available.
 
 - name: Mautic backup | Resolve the named database and credentials
   ansible.builtin.set_fact:
@@ -84,9 +84,10 @@
     - name: Mautic backup | Stop this instance, dump its database and push one data archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
         pbs_client_compose_project: "{{ mautic_project_dir }}"
-        pbs_client_stop_services: [mautic_web, mautic_cron, mautic_worker]
+        pbs_client_stop_services: >-
+          {{ mautic_native_services if mautic_native | bool else ['mautic_web', 'mautic_cron', 'mautic_worker'] }}
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
         pbs_client_backup_id: "{{ _mautic_backup_id }}"
         # Mautic keeps exactly the two newest points.

@@ -1,6 +1,7 @@
 ---
 # Default configuration for Mautic — the marketing-automation platform, on the
-# services_stack Docker host. Users override specific values in config/apps/mautic.yml.
+# services_stack Docker host, as a pod on the k3s cluster, or natively on its own LXC or VM
+# (hosting.method: native and an explicit proxmox.guest_type). Users override specific values in config/apps/mautic.yml.
 # This file is git-managed — git pull may update these defaults.
 #
 # Mail and database backends are named instances, not private sidecars.
@@ -10,9 +11,21 @@
 mautic_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 3072
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -25,6 +38,10 @@ mautic_defaults:
     # variant's exemplified nginx.conf has known issues. Pinned to a point release, the
     # same reasoning as vars/app-defaults/odoo.yml's `odoo:18.0`.
     image: docker.io/mautic/mautic:6.0.6-apache
+    # Native: Mautic's release package at the same version as the image
+    # (https://docs.mautic.org/en/latest/getting_started/how_to_install_mautic.html).
+    native_version: "6.0.6"
+    native_sha256: 2feadc198a711e05ced68c829d677d8569e77c368ffc04353d8b1e34cecb3236
 
     database:
       provider: mariadb

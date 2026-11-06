@@ -1,0 +1,17 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Mautic queue worker ({{ instance }})
+After=network-online.target apache2.service
+Wants=network-online.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory={{ mautic_native_root }}
+# The three transports Deploy points at the database queue; the worker recycles hourly.
+ExecStart=/usr/bin/php bin/console messenger:consume email hit failed --time-limit=3600
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

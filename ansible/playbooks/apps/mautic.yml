@@ -1,5 +1,10 @@
 ---
 # Deploy an instanced Mautic marketing-automation service.
+#
+# Mautic uses the services Docker stack (a VM by default, an LXC when the instance names an
+# LXC stack), a pod on the k3s cluster (hosting.method: kubernetes), or its own LXC or VM
+# running Mautic's release package under Apache (hosting.method: native and
+# proxmox.guest_type).
 - name: "Mautic | Provision"
   hosts: localhost
   become: false
@@ -35,6 +40,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: mautic
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Mautic runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -72,6 +85,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: mautic
+      when: app_config.hosting.method == 'native'
+
 # Before Deploy: the declared access plus SMTP egress to the platform relay, which
 # Mautic needs to send mail (tasks/firewall/open-app-access.yml).
 - name: "Mautic | Open network access"
@@ -80,7 +101,7 @@
   vars:
     _mtc_fw_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}
     app_config: "{{ hostvars['localhost'].app_config }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _mtc_fw_host.ansible_host | default('') }}"
@@ -89,7 +110,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Mautic | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -104,10 +125,10 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
-        and hostvars['localhost'].app_config.hosting.method == 'docker'
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
@@ -117,7 +138,7 @@
         name: mautic
       vars:
         mautic_fqdn: "{{ hostvars['localhost'].mautic_fqdn }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Mautic | Deploy on Kubernetes"
   hosts: localhost
@@ -137,7 +158,7 @@
   vars:
     _mautic_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars['localhost'].homelabinfra_infra.kubernetes.ingress_vip
@@ -168,7 +189,7 @@
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
       when: homelabinfra_infra.dns.provider | default('none') != 'none'
-    - name: Record Mautic on its Docker host or every Kubernetes node
+    - name: Record Mautic on its guest or every Kubernetes node
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: >-
@@ -177,8 +198,7 @@
              if hostvars['localhost'].app_config.hosting.method == 'kubernetes'
              else [_mautic_host.inventory_hostname] }}
         record_guest_kind: >-
-          {{ 'kubernetes' if hostvars['localhost'].app_config.hosting.method == 'kubernetes'
-             else 'docker' }}
+          {{ hostvars['localhost'].app_config.hosting.method }}
         record_guest_url: "https://{{ hostvars['localhost'].mautic_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

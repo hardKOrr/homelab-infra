@@ -36,3 +36,11 @@ backup:
 # Recovery boundary: restore the MariaDB-mautic database and this instance's data
 # directory from the same recovery point. The MariaDB backend is shared and must not be
 # removed as part of Mautic removal.
+
+# To run Mautic natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Mautic's release package runs under Apache with a separate queue
+# worker and cron service; app.port still sets the web port.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

@@ -1,0 +1,16 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Mautic scheduled jobs ({{ instance }})
+After=network-online.target apache2.service
+Wants=network-online.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory={{ mautic_native_root }}
+ExecStart=/usr/local/bin/mautic-cron
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

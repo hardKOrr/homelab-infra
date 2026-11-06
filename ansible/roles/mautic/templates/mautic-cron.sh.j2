@@ -1,0 +1,11 @@
+#!/bin/sh
+{{ ansible_managed | comment }}
+# The jobs mautic/docker-mautic's crontab enables by default, run in sequence every 15
+# minutes as a service so a backup or restore stops them with the web process.
+cd {{ mautic_native_root }}
+while true; do
+  php bin/console mautic:segments:update || true
+  php bin/console mautic:campaigns:update || true
+  php bin/console mautic:campaigns:trigger || true
+  sleep 900
+done

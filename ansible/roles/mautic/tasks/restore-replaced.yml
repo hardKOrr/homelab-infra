@@ -70,3 +70,10 @@
   loop_control:
     label: "{{ item.key }}"
   no_log: true
+
+# Mautic compiles local.php into its cache; the restored file must not meet the old one.
+- name: Mautic restore | Clear the native cache
+  ansible.builtin.command:
+    argv: [find, "{{ mautic_native_root }}/var/cache", -mindepth, "1", -delete]
+    removes: "{{ mautic_native_root }}/var/cache"
+  when: mautic_native | default(false) | bool

@@ -1,4 +1,5 @@
 ---
+mautic_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
 mautic_project_dir: "/opt/{{ instance }}"
 
 # Laid out exactly as the upstream mautic/docker-mautic example volumes
@@ -7,8 +8,16 @@ mautic_project_dir: "/opt/{{ instance }}"
 # whole webroot would hide the image's own application code and its default config
 # directory under an empty host directory on first run; mounting only what Mautic itself
 # expects to persist (config, logs, media) leaves the image's code where the image put it.
+# Natively the release tree links the same four directories to these paths, so Docker and
+# native recovery points have one layout.
 mautic_config_dir: "{{ app_config.app.data_path }}/config"
 mautic_config_file: "{{ mautic_config_dir }}/local.php"
 mautic_logs_dir: "{{ app_config.app.data_path }}/logs"
 mautic_media_files_dir: "{{ app_config.app.data_path }}/media/files"
 mautic_media_images_dir: "{{ app_config.app.data_path }}/media/images"
+
+# Native: the release package is extracted here and replaced whole on a version change.
+mautic_native_root: /var/www/mautic
+mautic_native_work_dir: "{{ mautic_project_dir }}/native"
+# The services a native backup or restore stops, web first.
+mautic_native_services: [mautic-cron, mautic-worker, apache2]

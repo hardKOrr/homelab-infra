@@ -1,0 +1,9 @@
+---
+# Shared native removal stops the same web, worker and cron units as recovery.
+- name: Mautic remove | Load the native service names
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../roles/mautic/defaults/main.yml"
+
+- name: Mautic remove | Select every native service
+  ansible.builtin.set_fact:
+    _rm_service_names: "{{ mautic_native_services }}"

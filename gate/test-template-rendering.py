@@ -1267,7 +1267,7 @@ def navidrome_rendering():
 
 
 def mautic_rendering():
-    tasks = yaml.safe_load(read("ansible/roles/mautic/tasks/docker.yml"))
+    tasks = [t for f in ("config", "credentials") for t in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{f}.yml"))]
     converge = task_named(
         tasks, "Mautic | Converge platform-owned configuration fields"
     )
@@ -1285,7 +1285,7 @@ def mautic_rendering():
             "name": "Mautic",
         }
     }
-    for installed in (False, True):
+    for installed, native in ((False, False), (True, False), (False, True), (True, True)):
         for enabled in (False, True):
             for encryption, scheme in (
                 ("starttls", "smtp"),
@@ -1308,15 +1308,13 @@ def mautic_rendering():
                     "mautic_fqdn": "mautic.example.test",
                     "ansible_managed": "fixture",
                     "_mautic_installed_marker": {"stat": {"exists": installed}},
+                    "mautic_native": native,
                 }
                 fields = render(fields_expr, variables)
                 by_key = {f["key"]: f["value"] for f in fields}
-                assert (
-                    "db_driver" in by_key
-                ) == installed, "database sentinel must follow installation"
-                assert (
-                    "site_url" in by_key
-                ) == installed, "site URL must follow installation"
+                assert (by_key.get("messenger_dsn_hit") == "doctrine://default") == native, "native queue"
+                assert ("db_driver" in by_key) == installed, "database sentinel must follow installation"
+                assert ("site_url" in by_key) == installed, "site URL must follow installation"
                 assert "mailer_transport" not in by_key, "Mautic reads mailer_dsn"
                 seed = render(
                     read("ansible/roles/mautic/templates/local.php.j2"), variables
