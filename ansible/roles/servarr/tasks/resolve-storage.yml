@@ -1,6 +1,6 @@
 ---
-# Phase of main.yml: load the media wiring table and resolve the app kind, API version,
-# mounts and root folders. Imported in place; inputs are listed in main.yml.
+# Shared by main.yml and kubernetes-media.yml: load the media wiring table and resolve the app kind, API version,
+# mounts and root folders. Inputs are listed in main.yml.
 
 - name: Load the media wiring table
   ansible.builtin.include_vars:

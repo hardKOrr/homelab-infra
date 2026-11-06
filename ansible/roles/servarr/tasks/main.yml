@@ -1,6 +1,7 @@
 ---
 # servarr role — one Servarr application (Sonarr, Radarr, Lidarr, Readarr or
-# Prowlarr) as a Docker container on a stack host. Called from Play 2 of
+# Prowlarr) as a Docker container on a stack host, or on Kubernetes (kubernetes.yml).
+# Called from Play 2 of
 # playbooks/apps/<app>.yml. Target: the media host.
 #
 # ONE ROLE, FIVE APPS. These five are the same program with a different media
@@ -22,11 +23,27 @@
 # Exports (read by Play 3 to write the `media` registry key):
 #   servarr_media_kind, servarr_media_host, servarr_media_config_path
 
-- name: Resolve the app kind, API version and storage
-  ansible.builtin.import_tasks: main/resolve.yml
+# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and
+# the playbook's prepare play ran kubernetes-media.yml); every other phase is shared.
+- name: Resolve the cluster the app deploys to
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+  when: app_config.hosting.method == 'kubernetes'
 
-- name: Create directories, resolve the API key and start the app
-  ansible.builtin.import_tasks: main/start.yml
+- name: Resolve the app kind, API version and storage
+  ansible.builtin.import_tasks: resolve-storage.yml
+
+- name: Resolve where the app's API answers
+  ansible.builtin.import_tasks: main/endpoint.yml
+
+- name: Docker on the stack host
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Create directories, resolve the API key and start the app
+      ansible.builtin.import_tasks: main/start.yml
+
+- name: Kubernetes workload
+  ansible.builtin.include_tasks: kubernetes.yml
+  when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the app is usable
   ansible.builtin.import_tasks: main/verify.yml
@@ -44,6 +61,7 @@
 # stack wiring finds the key without the config.xml discovery pass. Stored after
 # the app has proven the key works, never before.
 - name: Store and verify the API key
+  when: app_config.hosting.method == 'docker'
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: "homelab-infra/media/{{ instance }}"
@@ -55,6 +73,7 @@
 # config_path is the HOST path, not the container's /config: it is what
 # wire-media-stack.yml slurps config.xml from when it falls back to discovery.
 - name: Export the media registry entry to the playbook
+  when: app_config.hosting.method == 'docker'
   ansible.builtin.set_fact:
     servarr_media_kind: "{{ _servarr_kind }}"
     servarr_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

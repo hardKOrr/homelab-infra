@@ -1,26 +1,16 @@
 ---
-# Deploy Lidarr — music management. Docker on LXC (PATH A) on the media
-# host.
+# Deploy Lidarr — music management. Docker on the media stack host, or on Kubernetes when
+# `hosting.method: kubernetes`. A Kubernetes instance has no stack host, so it records no
+# media registry entry and Wire Media Stack does not discover it.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/lidarr.yml -e instance=lidarr
 #   ansible-playbook -i inventory/ playbooks/apps/lidarr.yml -e instance=lidarr-lossless
 #
-# The `instance` parameter is the unique name for this deployment. It becomes the
-# hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
-# the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
-#
-# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
-# what closes the loop with slice 504: wire-media-stack.yml reads that key to find
-# this app, and reads the API key this deploy stored in
-# homelab-infra/media/<instance>. Nothing has to be declared by hand afterwards.
-#
-# This playbook drives the shared `servarr` role — see roles/servarr/tasks/main.yml
-# for why five apps share one role while each keeps its own playbook and job.
-
-# ── Play 1: Provision ──────────────────────────────────────────────────────────
-# Runs on localhost against the Proxmox API to find or create the stack host.
-# Adds the target host to a group for Play 2 to use.
+# `instance` names the deployment (hostname, Caddy subdomain, Authentik slug, Kuma
+# monitor); config/apps/<instance>.yml is merged over the defaults.
+# Play 3 records the `media` registry key (CONTRACT.md §3) that wire-media-stack.yml reads.
+# Drives the shared `servarr` role (roles/servarr/tasks/main.yml says why).
 - name: "Lidarr | Provision"
   hosts: localhost
   become: false
@@ -66,26 +56,30 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: lidarr
+
+    # The workload's ingress host must be the estate's published hostname.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published Lidarr hostname
+      ansible.builtin.set_fact:
+        servarr_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain
+             | default(homelabinfra_config.infrastructure.domain) }}
   tasks:
-    # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
     # The stack host is found (or created) by tag. The app is deployed in Play 2.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
-        # Placement is resolved from the stack AND the estate, so an estate-scoped app
-        # cannot land on another estate's stack host. See tasks/stack/find-or-create-host.yml.
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
-        # Per-instance group: add_host groups persist for the whole run, and
-        # bootstrap.yml chains app playbooks via import_playbook.
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
-    # ── Storage the lab already provides ──────────────────────────────────────
-    # The library and the download directory are mounted on the Proxmox node
-    # already. This attaches them to the stack host as Proxmox mountpoints at the
-    # same paths, so the containers can be given the same paths again. Nothing is
-    # created, exported or formatted — the lab owns its storage, the platform
-    # only reaches it.
+    # The lab's library and download directories are already mounted on the Proxmox
+    # node; this attaches them to the stack host at the same paths.
     - name: Resolve the storage this app needs on the stack host
       ansible.builtin.set_fact:
         _servarr_host_mounts: >-
@@ -99,22 +93,34 @@
       vars:
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ _servarr_host_mounts }}"
-        # Who this storage belongs to on both sides of the guest boundary. An
-        # unprivileged stack host cannot write a library owned by an id outside
-        # its own range, so this is what makes the mount usable rather than
-        # merely present.
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
-      when: _servarr_host_mounts | length > 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - _servarr_host_mounts | length > 0
+
+- name: "Lidarr | Prepare Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Resolve Lidarr's existing media shares and library folder for Kubernetes
+      ansible.builtin.include_role:
+        name: servarr
+        tasks_from: kubernetes-media
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Refresh inventory for cluster access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open Lidarr's declared access from the Kubernetes node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure Lidarr.
 - name: "Lidarr | Deploy"
-  # Per-instance group, not a shared one: add_host groups persist for the whole
-  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
-  # group would accumulate every earlier app's guest and run this role on all of
-  # them. The default() can only fire during --syntax-check — Play 1 has already
-  # asserted `instance` is defined by the time this pattern is resolved for real.
+  # Per-instance group: a shared one would accumulate every earlier app's guest.
+  # The default() can only fire during --syntax-check.
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -135,15 +141,11 @@
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
-    # Unconditional: its Ntfy notify hook depends on homelabinfra_infra.notifications,
-    # which does not exist yet when the first baseline guests are created. Running it
-    # every deploy is what gives them the hook once Ntfy is up.
+    # Unconditional, so a baseline guest gets its Ntfy hook once Ntfy is up.
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
-    # Unconditional, and deliberately not gated on homelabinfra_stack_host_created:
-    # that fact means "I created this host in THIS run", which is not the same
-    # question as "does this host have Docker".
+    # Unconditional: "created in this run" is not "has Docker".
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
@@ -154,51 +156,52 @@
         name: servarr
 
 
-# ── Play 3: Record facts + wire ────────────────────────────────────────────────
-# Registers the app in the media registry, then registers it with platform
-# services. Runs on localhost (API calls). All wiring tasks are idempotent.
+- name: "Lidarr | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Deploy Lidarr into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: servarr
+      when: app_config.hosting.method == 'kubernetes'
+
+
+# Play 3: record the media registry entry, then wire platform services (idempotent).
 - name: "Lidarr | Record facts and wire"
   hosts: localhost
   gather_facts: false
 
   pre_tasks:
-    # Load infra facts in this play rather than relying on Play 1's localhost fact.
-    # Tolerate absence: on a clean checkout /
-    # pre-bootstrap run there is no facts.yml, homelabinfra_infra stays undefined,
-    # and every provider when-condition below falls through to a silent no-op.
+    # Absent pre-bootstrap: every provider condition below then no-ops.
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         name: homelabinfra_infra
       failed_when: false
 
-    # The `media` key is instance-keyed, not role-keyed (CONTRACT.md §3): a lab
-    # runs several Lidarrs, so this merges one entry and leaves every sibling
-    # entry alone. Topology only — the API key lives in
-    # homelab-infra/media/<instance>, written by the role, because
-    # write-generated-facts.yml rejects credential-shaped fields outright.
+    # The `media` key is instance-keyed (CONTRACT.md §3). Topology only — the API key
+    # lives in homelab-infra/media/<instance>, written by the role.
     - name: Record the media registry entry
+      when: not (_lidarr_k8s | bool)
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: media
-        # Built as an expression, never as a literal `"{{ instance }}":` key —
-        # Ansible does not template a YAML MAPPING KEY, so that spelling wrote the
-        # entry under the literal string `{{ instance }}` and every app overwrote the
-        # one before it. The registry then held exactly one nameless app and
-        # wire-media-stack resolved nothing while reporting success (execution 67,
-        # 2026-08-09).
+        # An expression, never a literal `"{{ instance }}":` key: Ansible does not
+        # template a mapping key, so every app would overwrite one nameless entry.
         generated_facts_data: >-
           {{ {instance: {'app': _lidarr_deploy_host.servarr_media_kind,
                          'host': _lidarr_deploy_host.servarr_media_host,
                          'config_path': _lidarr_deploy_host.servarr_media_config_path}} }}
 
-    # Belt-and-braces only. The key just written is already in the live
-    # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there
-    # with set_fact — and this include_vars CANNOT override that, because set_fact
-    # outranks include_vars in Ansible's precedence order. It stays for a play that
-    # never loaded the registry at all; it is not what makes the wiring below see
-    # this deploy's own key.
+    # Belt-and-braces: include_vars cannot override the entry already merged by set_fact.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -206,36 +209,39 @@
       failed_when: false
 
     # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
-    # No-op for the default estate and for labs without a `domains:` map.
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: "{{ _lidarr_deploy_host.app_config.routing.estate | default('') }}"
+        resolve_estate_name: "{{ _lidarr_cfg.routing.estate | default('') }}"
 
   vars:
-    _lidarr_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _lidarr_k8s: "{{ hostvars['localhost'].app_config.hosting.method == 'kubernetes' }}"
+    _lidarr_cfg: "{{ hostvars['localhost'].app_config }}"
+    _lidarr_deploy_host: >-
+      {{ {} if _lidarr_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Do not rename them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _lidarr_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _lidarr_deploy_host.app_config.app.port }}"
-    wiring_subdomain: "{{ _lidarr_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _lidarr_k8s | bool
+         else _lidarr_deploy_host.ansible_host }}
+    wiring_upstream_port: "{{ 80 if _lidarr_k8s | bool else _lidarr_cfg.app.port }}"
+    wiring_subdomain: "{{ _lidarr_cfg.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Lidarr ({{ instance }})"
-    # /ping is Servarr's own unauthenticated liveness endpoint, so the monitor
-    # reports on the app rather than on whatever the identity layer returns for an
-    # unauthenticated request to the UI root.
+    # /ping is Servarr's own unauthenticated liveness endpoint.
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/ping"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
-    # forward_auth by default: the role configures the app with
-    # AuthenticationMethod External, so it runs no login of its own and the
-    # reverse proxy is the only thing in front of the UI. See
-    # vars/app-defaults/lidarr.yml.
-    wiring_identity_mode: "{{ _lidarr_deploy_host.app_config.routing.identity | default('forward_auth') }}"
-    wiring_access: "{{ _lidarr_deploy_host.app_config.routing.access | default('internal') }}"
+    # forward_auth: the app runs AuthenticationMethod External (vars/app-defaults/lidarr.yml).
+    wiring_identity_mode: "{{ _lidarr_cfg.routing.identity | default('forward_auth') }}"
+    wiring_access: "{{ _lidarr_cfg.routing.access | default('internal') }}"
 
   tasks:
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:
@@ -264,25 +270,30 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the
-    # UI shows what each host actually runs.
+    # Bookkeeping: stamps this instance onto the Proxmox guest.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: not (_lidarr_k8s | bool)
 
-    # App-to-app wiring is deliberately NOT done here. Lidarr's peers are the
-    # other media apps, and wiring them pairwise from each deploy would mean every
-    # app re-wiring the whole stack. playbooks/stacks/wire-media-stack.yml owns
-    # that, is idempotent, and now finds this app through the registry entry
-    # written above.
+    - name: Record Lidarr on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([]) | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ wiring_domain }}/"
+      when: _lidarr_k8s | bool
+
+    # App-to-app wiring belongs to playbooks/stacks/wire-media-stack.yml, which finds
+    # this app through the registry entry written above.
     - name: Report how to wire this app into the media stack
       ansible.builtin.debug:
         msg: >-
           {{ instance }} is registered in the media registry. Run the Wire Media
           Stack job to connect it to Prowlarr, the download clients and Bazarr.
+      when: not (_lidarr_k8s | bool)
 
-    # Last task in the play, deliberately. Wiring records what it could not do rather than
-    # aborting, so a failure in one provider does not strand the others; this is what stops
-    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    # Last task: wiring records what it could not do; this stops the run reporting success.
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

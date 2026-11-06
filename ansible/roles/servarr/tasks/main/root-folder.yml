@@ -27,6 +27,7 @@
   register: _servarr_root_check
   loop: "{{ _servarr_root_folders }}"
   failed_when: false
+  when: app_config.hosting.method == 'docker'
 
 - name: Assert the root folder is usable before configuring it
   ansible.builtin.assert:
@@ -43,6 +44,7 @@
   loop: "{{ _servarr_root_check.results }}"
   loop_control:
     label: "{{ item.item }}"
+  when: app_config.hosting.method == 'docker'
 
 # Lidarr and Readarr refuse a root folder that does not name a quality profile and
 # a metadata profile, so the ids have to be read from the app that is about to be
@@ -50,9 +52,8 @@
 # creates or reconciles profiles, and an operator's own choice in the UI stands.
 - name: Read the profiles a v1 root folder has to name
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/{{ item }}"
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/{{ item }}"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
     status_code: 200
   register: _servarr_profiles
   loop: [qualityprofile, metadataprofile]
@@ -86,9 +87,8 @@
 
 - name: Read the root folders the app already has
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/rootfolder"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
     status_code: 200
   register: _servarr_rootfolders
   changed_when: false
@@ -100,10 +100,9 @@
 # fire-and-forget rule the rest of the platform follows.
 - name: Configure the root folder
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/rootfolder"
     method: POST
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
     body_format: json
     # A bare path for Radarr and Sonarr — exactly what they took before — plus the
     # name and profile ids only where the app validates them. Nothing extra is sent

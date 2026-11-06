@@ -1,0 +1,93 @@
+---
+# A Servarr app on Kubernetes, included from main.yml after the cluster and endpoint are
+# resolved: its config lives on a default-StorageClass PVC and the
+# lab's media and download shares are the existing NFS exports, mounted at the same
+# container paths as on Docker (the playbook's prepare play resolved them into
+# k8s_media_nfs). The API key is declared through a Secret, so config.xml is never read.
+# main.yml then verifies the app, owns the library root folder and installs plugins.
+- name: Servarr Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+  when: k8s_media_nfs | default([]) | length > 0
+
+- name: Servarr Kubernetes | Default to no media volumes when none are declared
+  ansible.builtin.set_fact:
+    k8s_media_volumes: []
+    k8s_media_volume_mounts: []
+  when: k8s_media_nfs | default([]) | length == 0
+
+- name: Servarr Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ servarr_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: servarr_k8s_node
+    label: Kubernetes node
+  when: k8s_media_volumes | length > 0
+
+- name: Servarr Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# The canonical key is the media item Wire Media Stack reads. It is written before the
+# workload because the Secret is downstream of it: a rerun after a failed first run must
+# find the same key the Secret already holds, or the running pod would keep the old one.
+- name: Servarr Kubernetes | Resolve the API key
+  ansible.builtin.set_fact:
+    _servarr_api_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true)
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  no_log: true
+
+- name: Servarr Kubernetes | Store the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _servarr_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
+
+- name: Servarr Kubernetes | Sync the API key into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      api-key: "{{ _servarr_api_key }}"
+  no_log: true
+
+- name: Servarr Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _servarr_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Servarr Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _servarr_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Servarr Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        the app's configuration, API key and database from its config volume; the shared
+        media is not included

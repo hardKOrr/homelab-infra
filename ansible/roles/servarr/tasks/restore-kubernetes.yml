@@ -1,0 +1,20 @@
+---
+# Replace the target's config PVC through the shared Kubernetes recovery Job. The NFS media
+# shares are not part of the archive, and the target keeps the API key its Secret declares.
+- name: Servarr Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: "{{ app_config.app.media_kind | capitalize }}"
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid }}:{{ restore_target_config.app.pgid }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the app's configuration, API key and database from its config volume; the shared
+        media is not included
+      verify:
+        - >-
+          Open the app's URL and verify the restored library, settings and plugins.
