@@ -49,8 +49,8 @@
     group: "www-data"
     mode: "0640"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
-    line: >-
-      '{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},
+    # Mautic's config writer uses a tab; match it to avoid a restart on every Deploy.
+    line: "\t'{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},"
     insertbefore: "^\\);$"
   loop:
     - key: db_driver
