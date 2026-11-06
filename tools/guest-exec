@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """guest-exec — run a command as root inside a `_+lab` guest, found by vmid or name.
 
-  tools/lab/guest-exec mautic 'docker ps --format "{{.Names}} {{.Status}}"'
-  tools/lab/guest-exec 13040150 < check.sh      # script on stdin runs under bash -s
+  tools/guest-exec mautic 'docker ps --format "{{.Names}} {{.Status}}"'
+  tools/guest-exec 13040150 < check.sh      # script on stdin runs under bash -s
 
 Finds the guest's node itself and refuses any guest without the `_+lab` tag. An LXC runs
 through `pct exec` on its node (about a second). A VM has no guest agent and its root
@@ -10,7 +10,7 @@ key lives in Vaultwarden, so the command runs through runner-lab-run.sh and
 playbooks/maintenance/guest-exec.yml at --ref <git-ref> (default master; about 30s).
 Stdout and stderr come back merged for a VM. The exit code is the command's.
 
-  tools/lab/guest-exec [--ref <git-ref>] <vmid|name> [command | - ]
+  tools/guest-exec [--ref <git-ref>] <vmid|name> [command | - ]
 """
 import base64
 import os

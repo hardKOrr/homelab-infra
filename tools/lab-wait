@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """lab-wait — block until a lab-start job ends, then report it in one result.
 
-  tools/lab/lab-wait <name> [--timeout SECONDS] [--lines N]
-  tools/lab/lab-wait --log <file> --until <regex> [--timeout SECONDS]   # a log lab-start did not make
+  tools-wait <name> [--timeout SECONDS] [--lines N]
+  tools-wait --log <file> --until <regex> [--timeout SECONDS]   # a log lab-start did not make
 
 Blocks for at most 570 seconds whatever --timeout asks (default 570), so one call always
 returns inside a 10-minute tool limit. Prints the state, the elapsed time, recent error

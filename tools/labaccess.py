@@ -1,4 +1,4 @@
-"""Shared lab access for the tools/lab commands.
+"""Shared lab access for the tools commands.
 
 Private values come from $HOMELAB_LAB_DIR/lab-values.yml at run time; nothing private
 lives in this repository. Nodes are reached as root over SSH, the way runner-lab-run.sh

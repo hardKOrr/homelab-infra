@@ -1,6 +1,6 @@
 ---
 # Run one shell command as root on one owned guest. The transport behind
-# tools/lab/guest-exec for VMs: their SSH key lives in Vaultwarden, so the command goes
+# tools/guest-exec for VMs: their SSH key lives in Vaultwarden, so the command goes
 # through lab-run like any other playbook instead of a key on disk.
 #
 # Usage (through lab-run):

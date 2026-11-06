@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """lab-start — start a long command detached, logging to a job file. Then use lab-wait.
 
-  tools/lab/lab-start deploy -- "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/<app>.yml -e instance=<i>
-  tools/lab/lab-wait deploy
+  tools-start deploy -- "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/<app>.yml -e instance=<i>
+  tools-wait deploy
 
 The job writes $LAB_JOB_DIR/<name>.log (default /tmp/lab-jobs) and, when it ends,
 <name>.rc holding its exit code. The command survives the calling shell. A name that

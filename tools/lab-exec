@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """lab-exec — run a command inside the runner, or on a lab node.
 
-  tools/lab/lab-exec 'systemctl is-active rundeckd'
-  tools/lab/lab-exec < probe.sh                 # script on stdin runs under bash -s
-  tools/lab/lab-exec --node 'pvesh get /cluster/resources --type vm'
+  tools-exec 'systemctl is-active rundeckd'
+  tools-exec < probe.sh                 # script on stdin runs under bash -s
+  tools-exec --node 'pvesh get /cluster/resources --type vm'
 
 Runs as root. The exit code is the command's. Run long work through lab-start instead.
 """
