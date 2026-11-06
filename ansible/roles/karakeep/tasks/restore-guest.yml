@@ -1,6 +1,7 @@
 ---
-# Restore Karakeep's data.pxar, which holds the SQLite and assets directory (data/) and the
-# Meilisearch index (meilisearch/), through the shared swap. Both originals stay on their
+# Restore Karakeep's data.pxar on a Docker or a native guest. It holds the SQLite and
+# assets directory (data/) and the Meilisearch index (meilisearch/), restored through the
+# shared swap. Both originals stay on their
 # own filesystems until the replacement services pass Karakeep's health endpoint.
 
 - name: Karakeep restore | Assert the restore contract
@@ -18,21 +19,23 @@
 - name: Karakeep restore | Preview or replace the data and search index
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method | default('docker') }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
-      - path: "{{ app_config.app.data_path }}"
+      - path: "{{ karakeep_data_path }}"
         source: data/data
-        owner: "{{ karakeep_data_uid }}"
-        group: "{{ karakeep_data_gid }}"
+        owner: "{{ 'karakeep' if karakeep_native | bool else karakeep_data_uid }}"
+        group: "{{ 'karakeep' if karakeep_native | bool else karakeep_data_gid }}"
         mode: "0750"
       # The archived index may be empty, as it is before anything was indexed.
       - path: "{{ karakeep_meilisearch_data_path }}"
         source: data/meilisearch
-        owner: "{{ karakeep_data_uid }}"
-        group: "{{ karakeep_data_gid }}"
+        owner: "{{ 'meilisearch' if karakeep_native | bool else karakeep_data_uid }}"
+        group: "{{ 'meilisearch' if karakeep_native | bool else karakeep_data_gid }}"
         mode: "0750"
         allow_empty: true
-    recovery_swap_stop_services: [web, chrome, meilisearch]
+    recovery_swap_stop_services: >-
+      {{ ['karakeep-web', 'karakeep-workers', 'karakeep-browser', 'meilisearch']
+         if karakeep_native | bool else ['web', 'chrome', 'meilisearch'] }}
     recovery_swap_compose_project: "{{ karakeep_project_dir }}"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/health"

@@ -339,6 +339,7 @@ def main():
                     "backup": {"enabled": True, "application_consistent": True},
                 },
                 "karakeep_meilisearch_data_path": "/opt/test/meilisearch",
+                "karakeep_data_path": "/opt/test/data", "karakeep_native": False,
                 "restore_overwrite": False,
             }, "tasks": tasks,
         }]))

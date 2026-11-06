@@ -31,3 +31,12 @@ backup:
 # hosting:
 #   method: docker
 # stack: services-lxc
+
+# To run Karakeep natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Karakeep's Debian install script installs the pinned release as
+# systemd services; app.port still sets the web port.
+# hosting:
+#   method: native
+# stack: ""
+# proxmox:
+#   guest_type: lxc

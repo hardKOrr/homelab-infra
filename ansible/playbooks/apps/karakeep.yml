@@ -2,7 +2,9 @@
 # Deploy an instanced Karakeep bookmark and read-later service.
 #
 # Karakeep uses the services Docker stack (a VM by default, an LXC when the instance names
-# an LXC stack) and its own application-native SQLite database,
+# an LXC stack), a pod on the k3s cluster (hosting.method: kubernetes), or its own LXC or
+# VM running Karakeep's install script (hosting.method: native, stack: "" and
+# proxmox.guest_type). It keeps its own application-native SQLite database,
 # Meilisearch index, local-user authentication, and generated credentials. It deliberately
 # does not provision or consume a platform database backend.
 
@@ -41,6 +43,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: karakeep
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (app_config.stack | default('', true) | length) == 0
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Karakeep runs on its own guest: set stack to "" and proxmox.guest_type
+          to lxc or vm in the instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -60,6 +71,14 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: karakeep
+      when: app_config.hosting.method == 'native'
 
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
@@ -88,7 +107,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Karakeep | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -106,7 +125,7 @@
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when:
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
         - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
@@ -117,7 +136,7 @@
         name: karakeep
       vars:
         karakeep_fqdn: "{{ hostvars['localhost'].karakeep_fqdn }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Karakeep | Wire"
   hosts: localhost
@@ -125,17 +144,17 @@
   vars:
     _karakeep_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker'
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
             and groups.get('deploy_' ~ instance, []) | length > 0
          else hostvars['localhost'] }}
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ _karakeep_host.ansible_host
-         if _karakeep_host.app_config.hosting.method == 'docker'
+         if _karakeep_host.app_config.hosting.method in ['docker', 'native']
          else homelabinfra_infra.kubernetes.ingress_vip }}
     wiring_upstream_port: >-
       {{ _karakeep_host.app_config.app.port
-         if _karakeep_host.app_config.hosting.method == 'docker' else 80 }}
+         if _karakeep_host.app_config.hosting.method in ['docker', 'native'] else 80 }}
     wiring_subdomain: "{{ hostvars['localhost'].karakeep_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].karakeep_fqdn }}"
     wiring_app_display: "Karakeep ({{ instance }})"
@@ -166,11 +185,10 @@
       vars:
         record_guest_names: >-
           {{ [groups['deploy_' ~ instance][0]]
-             if _karakeep_host.app_config.hosting.method == 'docker'
+             if _karakeep_host.app_config.hosting.method in ['docker', 'native']
              else (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list) }}
         record_guest_kind: >-
-          {{ 'docker' if _karakeep_host.app_config.hosting.method == 'docker'
-             else 'kubernetes' }}
+          {{ _karakeep_host.app_config.hosting.method }}
         record_guest_url: "https://{{ hostvars['localhost'].karakeep_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

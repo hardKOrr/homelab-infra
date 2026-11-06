@@ -1,0 +1,7 @@
+{{ ansible_managed | comment }}
+env = "production"
+master_key = "{{ _karakeep_meili_master_key }}"
+db_path = "{{ karakeep_meilisearch_data_path }}"
+dump_dir = "/var/lib/meilisearch/dumps"
+snapshot_dir = "/var/lib/meilisearch/snapshots"
+no_analytics = true
