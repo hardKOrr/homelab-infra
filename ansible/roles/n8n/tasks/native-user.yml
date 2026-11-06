@@ -1,6 +1,6 @@
 ---
-# The service user and its user folder. n8n keeps its state in `<user folder>/.n8n`; that
-# is a link to app.data_path, which the recovery archive covers.
+# The service user and its user folder; main.yml links `<user folder>/.n8n` to
+# app.data_path once that directory exists.
 - name: n8n native | Create the service user
   ansible.builtin.user:
     name: "{{ n8n_native_user }}"
@@ -8,12 +8,3 @@
     home: "{{ n8n_native_home }}"
     create_home: true
     shell: /usr/sbin/nologin
-
-- name: n8n native | Link the user folder's .n8n to the durable data path
-  ansible.builtin.file:
-    path: "{{ n8n_native_home }}/.n8n"
-    src: "{{ app_config.app.data_path }}"
-    state: link
-    owner: "{{ n8n_native_user }}"
-    group: "{{ n8n_native_user }}"
-    follow: false
