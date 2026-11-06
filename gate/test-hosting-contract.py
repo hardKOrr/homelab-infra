@@ -33,6 +33,7 @@ EXTRA_IMPLEMENTED = {
     "home-assistant": {"docker-lxc"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},
+    "lidarr": {"docker-lxc"},
     "mariadb": {"native-vm"},
 }
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")

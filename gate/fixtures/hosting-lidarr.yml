@@ -26,37 +26,15 @@
           - _hosting_combination == 'docker-vm'
           - _hosting_stack_name == 'media'
 
-    - name: Write a capability declaration that lists Docker on an LXC
-      ansible.builtin.tempfile:
-        state: file
-        suffix: .yml
-      register: _tmp
-    - name: Fill it
-      ansible.builtin.copy:
-        dest: "{{ _tmp.path }}"
-        content: >-
-          {{ {'lidarr_defaults': _lidarr_defaults
-              | combine({'hosting': {'supported': ['docker-vm', 'docker-lxc']}}, recursive=True)}
-             | to_nice_yaml }}
-        mode: "0600"
-      register: _patched
-
     - name: Validate the drill configuration
       ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
       vars:
         hosting_app_config: >-
           {{ _lidarr_defaults
              | combine({'hosting': {'method': 'docker'}, 'stack': 'media-lxc'}, recursive=True) }}
-        # Lidarr lists docker-lxc only once its drill passes; validate against a copy that does.
-        hosting_app_defaults_file: "{{ _patched.dest }}"
 
     - name: Require the selected LXC stack
       ansible.builtin.assert:
         that:
           - _hosting_combination == 'docker-lxc'
           - _hosting_stack_name == 'media-lxc'
-
-    - name: Remove the temporary declaration
-      ansible.builtin.file:
-        path: "{{ _tmp.path }}"
-        state: absent
