@@ -38,3 +38,15 @@
         that:
           - _hosting_combination == 'docker-lxc'
           - _hosting_stack_name == 'services-lxc'
+
+    - name: Validate native Mautic on an LXC and on a VM
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _mautic_defaults
+             | combine({'hosting': {'method': 'native'}, 'proxmox': {'guest_type': item}}, recursive=True) }}
+      loop: [lxc, vm]
+
+    - name: Require the VM combination last
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-vm'

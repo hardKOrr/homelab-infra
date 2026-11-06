@@ -86,7 +86,7 @@
 - name: Mautic restore | Preview or replace the file tree and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method | default('docker') }}"
     recovery_swap_pre_restore_backup_id: "{{ _mautic_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
@@ -98,7 +98,8 @@
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: data/database/mautic.sql
-    recovery_swap_stop_services: [mautic_web, mautic_cron, mautic_worker]
+    recovery_swap_stop_services: >-
+      {{ mautic_native_services if mautic_native | bool else ['mautic_web', 'mautic_cron', 'mautic_worker'] }}
     recovery_swap_compose_project: "{{ mautic_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"

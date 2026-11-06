@@ -1,9 +1,44 @@
 ---
-# The Docker deployment remains Mautic's default. Kubernetes is selected explicitly in
-# the instance config and takes a separate adapter path through the same app role.
+# The Docker deployment remains Mautic's default. Native runs Mautic's release package on
+# its own guest; Kubernetes takes a separate adapter path through the same app role. Docker
+# and native share the data layout, credentials and local.php handling.
+- name: Mautic | Prepare and configure the Docker or native guest
+  when: app_config.hosting.method | default('docker') in ['docker', 'native']
+  block:
+    - name: Mautic | Create project directory
+      ansible.builtin.file:
+        path: "{{ mautic_project_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Mautic | Create writable volume directories for the web user
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0750"
+      loop:
+        - "{{ mautic_config_dir }}"
+        - "{{ mautic_logs_dir }}"
+        - "{{ mautic_media_files_dir }}"
+        - "{{ mautic_media_images_dir }}"
+
+    - name: Mautic | Resolve credentials
+      ansible.builtin.include_tasks: credentials.yml
+
+    - name: Mautic | Write the configuration
+      ansible.builtin.include_tasks: config.yml
+
 - name: Mautic | Deploy on Docker
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('docker') == 'docker'
+
+- name: Mautic | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('docker') == 'native'
 
 - name: Mautic | Deploy on Kubernetes
   ansible.builtin.include_tasks: kubernetes.yml

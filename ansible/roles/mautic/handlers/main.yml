@@ -3,3 +3,20 @@
   community.docker.docker_compose_v2:
     project_src: "{{ mautic_project_dir }}"
     state: restarted
+  when: not (mautic_native | bool)
+
+# Mautic compiles local.php into its cache, so a native restart starts from an empty one.
+- name: Clear the native Mautic cache
+  ansible.builtin.command:
+    argv: [find, "{{ mautic_native_root }}/var/cache", -mindepth, "1", -delete]
+    removes: "{{ mautic_native_root }}/var/cache"
+  listen: Restart mautic
+  when: mautic_native | bool
+
+- name: Restart native Mautic
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ mautic_native_services | reverse | list }}"
+  listen: Restart mautic
+  when: mautic_native | bool

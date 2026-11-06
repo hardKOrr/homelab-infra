@@ -21,8 +21,10 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_t
 catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 replaced_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-replaced.yml").read_text())
-deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/docker.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-docker.yml").read_text())
+deploy_source = (yaml.safe_load((repo / "ansible/roles/mautic/tasks/config.yml").read_text())
+                 + yaml.safe_load((repo / "ansible/roles/mautic/tasks/credentials.yml").read_text())
+                 + yaml.safe_load((repo / "ansible/roles/mautic/tasks/docker.yml").read_text()))
+restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-guest.yml").read_text())
 compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
 
@@ -34,7 +36,7 @@ def tasks_recursive(tasks):
 
 
 def check_restore_swap():
-    swap = swap_inputs("mautic", task_file="restore-docker.yml")
+    swap = swap_inputs("mautic", task_file="restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _mautic_restore_data_path }}", "source": "data/mautic",
@@ -42,7 +44,9 @@ def check_restore_swap():
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "data/database/mautic.sql"}
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _mautic_restore_target_backup_id }}"
-    assert swap["recovery_swap_stop_services"] == ["mautic_web", "mautic_cron", "mautic_worker"]
+    assert "app_config.hosting.method" in swap["recovery_swap_runtime"]
+    assert "mautic_native_services" in swap["recovery_swap_stop_services"]
+    assert "'mautic_web', 'mautic_cron', 'mautic_worker'" in swap["recovery_swap_stop_services"]
     assert swap["recovery_swap_compose_project"] == "{{ mautic_project_dir }}"
     assert swap["recovery_swap_health_status"] == [200, 302]
 
@@ -112,7 +116,8 @@ def check_restore_swap():
 def static_contract():
     config = defaults["mautic_defaults"]
     assert config["hosting"] == {
-        "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}}
+        "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"],
+        "impossible": {}}
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])
@@ -155,7 +160,9 @@ def static_contract():
     assert config["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
     upload = next(task for task in tasks_recursive(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
-    assert upload["vars"]["pbs_client_stop_services"] == ["mautic_web", "mautic_cron", "mautic_worker"]
+    assert "app_config.hosting.method" in upload["vars"]["pbs_client_runtime"]
+    assert "mautic_native_services" in upload["vars"]["pbs_client_stop_services"]
+    assert "'mautic_web', 'mautic_cron', 'mautic_worker'" in upload["vars"]["pbs_client_stop_services"]
     assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
     assert upload["vars"]["pbs_client_keep_daily"] == "", "Mautic keeps only the two newest points"
     assert upload["vars"]["pbs_client_backup_args"] == ["--all-file-systems", "true"]
@@ -163,6 +170,7 @@ def static_contract():
         "path": "{{ _mautic_backup_data_path }}", "target": "{{ _mautic_backup_root }}/mautic"}]
     hook = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup-quiesced.yml").read_text())
     assert hook[0]["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
+    assert "app_config.hosting.method" in hook[0]["vars"]["database_client_runtime"]
     assert hook[0]["vars"]["database_dump_file"] == "{{ _mautic_backup_root }}/database/mautic.sql"
     assert "mautic_config_file" in str(backup_source)
     assert "mautic_media_files_dir" in str(backup_source)

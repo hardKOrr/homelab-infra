@@ -4,6 +4,7 @@
 - name: Mautic backup | Dump the stopped instance's MariaDB database
   ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
   vars:
+    database_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     database_app_instance: "{{ instance }}"
     database_app_config: "{{ app_config.app.database }}"
     database_dump_file: "{{ _mautic_backup_root }}/database/mautic.sql"

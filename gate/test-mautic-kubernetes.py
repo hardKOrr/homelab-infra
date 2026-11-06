@@ -57,10 +57,10 @@ def render_manifest():
 
 def static_contract():
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
-    assert role_main[0]["ansible.builtin.include_tasks"] == "docker.yml"
-    assert role_main[0]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
-    assert role_main[1]["ansible.builtin.include_tasks"] == "kubernetes.yml"
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
+    assert role_main[1]["ansible.builtin.include_tasks"] == "docker.yml"
+    assert role_main[1]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
+    assert role_main[3]["ansible.builtin.include_tasks"] == "kubernetes.yml"
     assert "ingress_vip" in (ROOT / "ansible/playbooks/apps/mautic.yml").read_text()
 
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]

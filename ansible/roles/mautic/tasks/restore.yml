@@ -1,9 +1,9 @@
 ---
-- name: Mautic restore | Restore Docker state through the existing native path
-  ansible.builtin.include_tasks: restore-docker.yml
+- name: Mautic restore | Restore a Docker or native guest through the restore swap
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     (restore_target_config | default(app_config, true)).hosting.method
-    | default('docker') == 'docker'
+    | default('docker') in ['docker', 'native']
 
 - name: Mautic restore | Restore Kubernetes state through shared recovery Jobs
   ansible.builtin.include_tasks: restore-kubernetes.yml

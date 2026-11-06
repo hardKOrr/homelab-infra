@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+<VirtualHost *:{{ app_config.app.port }}>
+    DocumentRoot {{ mautic_native_root }}
+    <Directory {{ mautic_native_root }}>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
