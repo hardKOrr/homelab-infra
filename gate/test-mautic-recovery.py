@@ -105,7 +105,7 @@ def check_restore_swap():
 def static_contract():
     config = defaults["mautic_defaults"]
     assert config["hosting"] == {
-        "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}}
+        "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}}
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])

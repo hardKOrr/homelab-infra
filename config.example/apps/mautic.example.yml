@@ -10,6 +10,12 @@
 # Docker on a VM is the default. Uncomment to run this instance on the managed cluster.
 # hosting:
 #   method: kubernetes
+#
+# To use Docker on an LXC, set infrastructure.stacks.services-lxc.guest_type: lxc in
+# config/infrastructure.yml and uncomment:
+# hosting:
+#   method: docker
+# stack: services-lxc
 
 app:
   database:

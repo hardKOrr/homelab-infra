@@ -108,6 +108,10 @@
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
         and hostvars['localhost'].app_config.hosting.method == 'docker'
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Mautic
       ansible.builtin.include_role:
         name: mautic
