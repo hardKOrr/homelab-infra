@@ -10,14 +10,17 @@
 //
 // `step` runs its body and prints PASS or FAIL; after the first failure it screenshots the
 // page and skips the remaining steps. `text()` returns the page's visible text (cut at
-// 2000 characters). Every secret value is masked in the output. Exit 0 when all steps pass.
+// 2000 characters). Secret-named field values are masked in the output. Exit 0 when all steps pass.
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright-core');
 
 const [run, rawUrl] = process.argv.slice(2);
 const secrets = JSON.parse(fs.readFileSync(path.join(run, 'secrets.json'), 'utf8'));
-const masks = Object.values(secrets).map(String).filter((v) => v.length >= 4);
+// Mask the fields redact-config.sh treats as secret; a username stays readable.
+const masks = Object.entries(secrets)
+  .filter(([k, v]) => /token|secret|password|api_key|arl|key/i.test(k) && String(v).length >= 4)
+  .map(([, v]) => String(v));
 const say = (line) => console.log(masks.reduce((s, m) => s.split(m).join('***'), String(line)));
 
 (async () => {
