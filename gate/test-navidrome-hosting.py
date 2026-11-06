@@ -16,7 +16,7 @@ def read_yaml(path):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/navidrome.yml")["navidrome_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["hosting"]["impossible"] == {}
 
     playbook = read_yaml("ansible/playbooks/apps/navidrome.yml")
