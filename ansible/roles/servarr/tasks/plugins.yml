@@ -12,9 +12,8 @@
 
 - name: Plugins | Read the download-client schema
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/downloadclient/schema"
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/downloadclient/schema"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
   register: _servarr_schema
   changed_when: false
   no_log: true
@@ -32,10 +31,9 @@
   block:
     - name: Plugins | Queue each install
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/command"
+        url: "{{ _servarr_url }}/api/{{ _servarr_api }}/command"
         method: POST
-        headers:
-          X-Api-Key: "{{ _servarr_effective_key }}"
+        headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
         body_format: json
         body:
           name: InstallPlugin
@@ -51,9 +49,8 @@
 
     - name: Plugins | Wait for each install to finish
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/command/{{ cmd.json.id }}"
-        headers:
-          X-Api-Key: "{{ _servarr_effective_key }}"
+        url: "{{ _servarr_url }}/api/{{ _servarr_api }}/command/{{ cmd.json.id }}"
+        headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
       loop: "{{ _servarr_plugin_commands.results }}"
       loop_control:
         loop_var: cmd
@@ -69,19 +66,17 @@
     # A plugin loads at startup, so the new client appears only after a restart.
     - name: Plugins | Restart the app to load them
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/restart"
+        url: "{{ _servarr_url }}/api/{{ _servarr_api }}/system/restart"
         method: POST
-        headers:
-          X-Api-Key: "{{ _servarr_effective_key }}"
+        headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
         status_code: [200, 202, 204]
       changed_when: true
       no_log: true
 
     - name: Plugins | Wait for the app to answer again with the new clients
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/downloadclient/schema"
-        headers:
-          X-Api-Key: "{{ _servarr_effective_key }}"
+        url: "{{ _servarr_url }}/api/{{ _servarr_api }}/downloadclient/schema"
+        headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
         status_code: [200, 401, 502, 503, -1]
       register: _servarr_schema_after
       until: >-

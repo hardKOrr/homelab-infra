@@ -34,10 +34,13 @@
 #   3. the app reports an authentication method it actually chose, read from
 #      /api/<v>/config/host — the setup-page state that config.xml used to be
 #      asked about, asked of the running app instead.
+# On Kubernetes there is no host file: the key this deploy declared through the Secret is
+# the one in force, and the status call proves it.
 - name: Re-read config.xml after start (an app may have written its own key)
   ansible.builtin.slurp:
     src: "{{ app_config.app.config_path }}/config.xml"
   register: _servarr_config
+  when: app_config.hosting.method == 'docker'
   until: _servarr_config.content is defined
   retries: "{{ servarr_config_retries }}"
   delay: "{{ servarr_config_delay }}"
@@ -65,9 +68,8 @@
 
 - name: Query the app's own status endpoint
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/system/status"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
     # 401 is accepted here so the retry loop owns the wait and the assert below
     # owns the explanation. Letting uri fail on it produces "Status code was 401",
     # which says nothing about what to do next.
@@ -102,7 +104,8 @@
 
 - name: Call the status endpoint with no API key
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/system/status"
+    headers: "{{ _servarr_host_headers }}"
     status_code: [200, 401]
   register: _servarr_unauthenticated
   changed_when: false
@@ -122,9 +125,8 @@
 # port looks.
 - name: Read the authentication the app reports for itself
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/config/host"
-    headers:
-      X-Api-Key: "{{ _servarr_effective_key }}"
+    url: "{{ _servarr_url }}/api/{{ _servarr_api }}/config/host"
+    headers: "{{ _servarr_host_headers | combine({'X-Api-Key': _servarr_effective_key}) }}"
     status_code: 200
   register: _servarr_host_config
   changed_when: false

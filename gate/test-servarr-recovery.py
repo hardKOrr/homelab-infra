@@ -42,7 +42,7 @@ def check_backup_inputs(backup):
 
 def check_swap_inputs():
     """Servarr supplies its paths and hooks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("servarr")
+    swap = swap_inputs("servarr", "restore-docker.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
@@ -170,7 +170,8 @@ def main():
                 assert compose.read_text() == fresh
                 # Final Deploy's production key resolution must prefer the archive to a fresh vault key.
                 main_tasks = task_parts.inline(repo / "ansible/roles/servarr/tasks/main.yml")
-                resolve_key = next(t for t in main_tasks if t["name"] == "Resolve the API key")
+                flat = [inner for t in main_tasks for inner in [t, *t.get("block", [])]]
+                resolve_key = next(t for t in flat if t["name"] == "Resolve the API key")
                 run([resolve_key, {"ansible.builtin.assert": {"that": ["_servarr_api_key == 'archived-key'"]}}],
                     {"_servarr_config_existing": {"content": base64.b64encode(config_path.read_bytes()).decode()},
                      "homelabinfra_vault": {"media": {app: {"api_key": "fresh-key"}}}})

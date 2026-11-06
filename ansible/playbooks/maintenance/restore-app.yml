@@ -147,7 +147,7 @@
   tasks:
     - name: Restore the application
       ansible.builtin.include_role:
-        name: "{{ _ra_app }}"
+        name: "{{ recovery_capability.role | default(_ra_app, true) }}"
         tasks_from: "{{ recovery_capability.restore_role_task | default('restore') }}"
       vars:
         restore_target: "{{ _ra_target }}"

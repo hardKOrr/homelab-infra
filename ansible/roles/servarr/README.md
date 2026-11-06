@@ -20,3 +20,15 @@ Deploy keeps that key and the recovered application state.
 Restore requires both Compose API-key overrides before replacing state, and retains the
 original config directory beside the live path until verified recovery succeeds. A failed
 restore puts the original directory and Compose API-key overrides back and starts it.
+
+## Kubernetes
+
+Lidarr can run in its own namespace (`hosting.method: kubernetes`); `main.yml` includes
+`kubernetes.yml` for the workload and shares every other phase. Config sits on a PVC of the
+default StorageClass. Media and download mounts are the NFS exports the node already uses:
+`kubernetes-media.yml` resolves them (and creates the library root folder on the node) and
+`tasks/kubernetes/prepare-media-volumes.yml` mounts them at the Docker paths. The API key is
+taken from `homelab-infra/media/<instance>` (or generated) and reaches the pod as a Secret, so
+`config.xml` is never read; the verify, root-folder and plugin phases call the app through
+the ingress (`main/endpoint.yml`). A Kubernetes instance has no stack host and records no media
+registry entry. Backup and restore are the shared Kubernetes recovery Job over the config PVC.

@@ -1,0 +1,54 @@
+---
+# Run on localhost before the cluster deploy (the playbook's prepare play): resolve the
+# lab's media mounts as the NFS shares Kubernetes mounts at the same container paths, and
+# create this app's library root folder on the Proxmox node, which the pod cannot do
+# before the app starts. Sets k8s_media_nfs and opens the cluster nodes' NFS egress.
+- name: Servarr Kubernetes media | Resolve the app kind, storage and root folders
+  ansible.builtin.import_tasks: resolve-storage.yml
+
+- name: Servarr Kubernetes media | Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+  when: _servarr_root_folders | length > 0
+
+# The mount that holds each root folder, by longest matching container path.
+- name: Servarr Kubernetes media | Find the mount that holds each root folder
+  ansible.builtin.set_fact:
+    _servarr_k8s_root_dirs: >-
+      {%- set found = [] -%}
+      {%- for root in _servarr_root_folders -%}
+      {%- for m in (_servarr_mounts | sort(attribute='path', reverse=true)) -%}
+      {%- set base = m.path | regex_replace('/+$', '') -%}
+      {%- if not (found | selectattr('root', 'equalto', root) | list)
+             and (root == base or root.startswith(base ~ '/')) -%}
+      {%- set _ = found.append({'root': root,
+                                'dir': (m.host | regex_replace('/+$', '')) ~ root[(base | length):]}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ found }}
+
+- name: Servarr Kubernetes media | Require every root folder to be inside a declared mount
+  ansible.builtin.assert:
+    that: _servarr_k8s_root_dirs | length == _servarr_root_folders | length
+    fail_msg: >-
+      A library root folder is not inside any media_storage mount, so Kubernetes has no
+      share to mount it from.
+
+- name: Servarr Kubernetes media | Ensure each root folder exists on the node
+  ansible.builtin.file:
+    path: "{{ item.dir }}"
+    state: directory
+    mode: "0775"
+    owner: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
+    group: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  loop: "{{ _servarr_k8s_root_dirs }}"
+  loop_control:
+    label: "{{ item.root }}"
+
+- name: Servarr Kubernetes media | Resolve the mounts' NFS shares
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: "{{ _servarr_mounts }}"
+  when: _servarr_mounts | length > 0

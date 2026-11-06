@@ -1,0 +1,141 @@
+{# One Servarr app: its config volume and its existing NFS media shares, at the Docker container paths. #}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set container_port = app_config.app.container_port | default(app_config.app.port) %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | default(2) | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: app
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: {{ _servarr_kind }}
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: "{{ app_config.app.puid | default(1000) }}"
+            - name: PGID
+              value: "{{ app_config.app.pgid | default(1000) }}"
+            - name: TZ
+              value: {{ homelabinfra_config.timezone | default('UTC') | to_json }}
+            # Both spellings, as in the Docker stack: the key moved from <APP>__APIKEY to
+            # <APP>__AUTH__APIKEY across Servarr v3 to v4 and an unknown override is ignored.
+            - name: {{ _servarr_prefix }}__APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: api-key
+            - name: {{ _servarr_prefix }}__AUTH__APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: api-key
+            - name: {{ _servarr_prefix }}__AUTH__METHOD
+              value: {{ app_config.app.auth_method | default('External') | to_json }}
+            - name: {{ _servarr_prefix }}__AUTH__REQUIRED
+              value: {{ app_config.app.auth_required | default('Enabled') | to_json }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+            - name: {{ key | to_json }}
+              value: {{ value | string | to_json }}
+{% endfor %}
+          ports:
+            - name: http
+              containerPort: {{ container_port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+{% endfor %}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
+          nfs:
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ servarr_fqdn | to_json }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

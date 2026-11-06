@@ -1,0 +1,13 @@
+---
+# Phase shared by Docker and Kubernetes Deploy: where the app's API answers and which Host
+# header reaches it. Docker asks the container on the stack host; Kubernetes asks the
+# cluster ingress with the instance hostname (servarr_fqdn, set by the playbook), after
+# tasks/kubernetes/resolve-cluster.yml has set k8s_cluster_facts.
+- name: Resolve the API endpoint
+  ansible.builtin.set_fact:
+    _servarr_url: >-
+      {{ 'http://' ~ k8s_cluster_facts.ingress_vip
+         if app_config.hosting.method == 'kubernetes'
+         else 'http://localhost:' ~ app_config.app.port }}
+    _servarr_host_headers: >-
+      {{ {'Host': servarr_fqdn} if app_config.hosting.method == 'kubernetes' else {} }}
