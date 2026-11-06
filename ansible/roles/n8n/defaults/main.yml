@@ -1,3 +1,12 @@
 ---
+n8n_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
 n8n_project_dir: "/opt/{{ instance }}"
 n8n_env_file: "{{ n8n_project_dir }}/n8n.env"
+
+# Native: n8n runs as this user. Its user folder holds only a link, `.n8n`, to
+# app.data_path, so the Docker and native recovery points share one layout.
+n8n_native_user: n8n
+n8n_native_home: "/var/lib/{{ instance }}"
+# Native: the pinned Node.js release n8n runs on, and the unit it runs as.
+n8n_native_node_root: "/usr/local/lib/nodejs/node-v{{ app_config.app.native_node_version }}-linux-x64"
+n8n_native_service: n8n

@@ -1,6 +1,10 @@
 ---
 # Deploy an instanced n8n automation service with an independently managed PostgreSQL
 # database. The encryption key is generated once and kept only in Vaultwarden.
+#
+# n8n uses the services Docker stack (a VM by default, an LXC when the instance names an
+# LXC stack), a pod on the k3s cluster (hosting.method: kubernetes), or its own LXC or VM
+# running the n8n npm package (hosting.method: native and proxmox.guest_type).
 - name: "n8n | Provision"
   hosts: localhost
   become: false
@@ -36,6 +40,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: n8n
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native n8n runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -67,6 +79,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: n8n
+      when: app_config.hosting.method == 'native'
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -81,6 +100,23 @@
         n8n_fqdn: "{{ hostvars['localhost'].n8n_fqdn }}"
       when: app_config.hosting.method == 'kubernetes'
 
+# Before Deploy on its own guest: the declared database egress (tasks/firewall/
+# open-app-access.yml). The Docker stack host and the cluster have their own paths.
+- name: "n8n | Open network access"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    app_config: "{{ hostvars['localhost'].app_config }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
+         if hostvars['localhost'].app_config.hosting.method == 'native' else '' }}
+    wiring_firewall: "{{ app_config.firewall | default({}) }}"
+  tasks:
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
+
 - name: "n8n | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -94,7 +130,7 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Ensure Docker is installed
@@ -118,11 +154,11 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ _n8n_host.ansible_host
-         if _n8n_host.app_config.hosting.method == 'docker'
+         if _n8n_host.app_config.hosting.method in ['docker', 'native']
          else homelabinfra_infra.kubernetes.ingress_vip }}
     wiring_upstream_port: >-
       {{ _n8n_host.app_config.app.port
-         if _n8n_host.app_config.hosting.method == 'docker'
+         if _n8n_host.app_config.hosting.method in ['docker', 'native']
          else 80 }}
     wiring_subdomain: "{{ hostvars['localhost'].n8n_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].n8n_fqdn }}"
@@ -157,10 +193,10 @@
       vars:
         record_guest_names: >-
           {{ groups['deploy_' ~ instance]
-             if _n8n_host.app_config.hosting.method == 'docker'
+             if _n8n_host.app_config.hosting.method in ['docker', 'native']
              else (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list) }}
         record_guest_kind: >-
-          {{ 'docker' if _n8n_host.app_config.hosting.method == 'docker' else 'kubernetes' }}
+          {{ _n8n_host.app_config.hosting.method }}
         record_guest_url: "https://{{ hostvars['localhost'].n8n_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

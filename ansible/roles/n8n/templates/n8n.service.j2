@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=n8n workflow automation ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ n8n_native_user }}
+Group={{ n8n_native_user }}
+WorkingDirectory={{ n8n_native_home }}
+EnvironmentFile={{ n8n_env_file }}
+ExecStart={{ n8n_native_node_root }}/bin/node {{ n8n_native_node_root }}/lib/node_modules/n8n/bin/n8n start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

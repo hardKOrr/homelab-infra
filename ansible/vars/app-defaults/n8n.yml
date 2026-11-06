@@ -2,9 +2,21 @@
 n8n_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 3072
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -14,6 +26,11 @@ n8n_defaults:
 
   app:
     image: docker.n8n.io/n8nio/n8n:1.104.2
+    # Native: the same release from the npm package, on a pinned Node.js
+    # (https://docs.n8n.io/hosting/installation/npm/).
+    native_version: "1.104.2"
+    native_node_version: "22.20.0"
+    native_node_sha256: 00bbd05e306ea68b6e13e17360d0e2f680b493ef95f2fea1c4296ff7437530bc
     port: 5678
     data_path: "/opt/{{ instance }}/data"
     storage: 5

@@ -34,7 +34,7 @@ def run(hook, root, **extra):
     log.unlink(missing_ok=True)
     (root / "n8n.env").unlink(missing_ok=True)
     result = run_hook("n8n", hook, {
-        "instance": "n8n-copy", "ansible_managed": "fixture",
+        "instance": "n8n-copy", "ansible_managed": "fixture", "n8n_native": False,
         "n8n_env_file": str(root / "n8n.env"),
         "restore_source_encryption_key": "source-key",
         "_n8n_restore_target_encryption_key": "target-key",
@@ -52,11 +52,14 @@ def run(hook, root, **extra):
 
 
 def main():
-    swap = swap_inputs("n8n", "restore-docker.yml")
+    swap = swap_inputs("n8n", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "data.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _n8n_restore_data_path }}", "source": "data",
-        "owner": 1000, "group": 1000, "mode": "0750"}]
+        "owner": "{{ n8n_native_user if n8n_native | bool else 1000 }}",
+        "group": "{{ n8n_native_user if n8n_native | bool else 1000 }}", "mode": "0750"}]
+    # The same inputs serve a Docker guest and a native one (the n8n systemd unit).
+    assert "app_config.hosting.method" in swap["recovery_swap_runtime"]
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "database/n8n.dump"}
     assert swap["recovery_swap_stop_services"] == ["n8n"]

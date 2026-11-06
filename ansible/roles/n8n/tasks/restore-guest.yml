@@ -72,13 +72,13 @@
 - name: n8n restore | Preview or replace the data directory and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method | default('docker') }}"
     recovery_swap_archives: [database.pxar, data.pxar]
     recovery_swap_paths:
       - path: "{{ _n8n_restore_data_path }}"
         source: data
-        owner: 1000
-        group: 1000
+        owner: "{{ n8n_native_user if n8n_native | bool else 1000 }}"
+        group: "{{ n8n_native_user if n8n_native | bool else 1000 }}"
         mode: "0750"
     recovery_swap_database:
       config: "{{ app_config.app.database }}"

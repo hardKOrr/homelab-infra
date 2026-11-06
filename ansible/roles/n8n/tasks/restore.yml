@@ -3,6 +3,6 @@
   ansible.builtin.include_tasks: restore-kubernetes.yml
   when: restore_target_config.hosting.method | default('docker') == 'kubernetes'
 
-- name: n8n restore | Use the Docker guest restore path
-  ansible.builtin.include_tasks: restore-docker.yml
-  when: restore_target_config.hosting.method | default('docker') == 'docker'
+- name: n8n restore | Use the Docker or native guest restore path
+  ansible.builtin.include_tasks: restore-guest.yml
+  when: restore_target_config.hosting.method | default('docker') in ['docker', 'native']
