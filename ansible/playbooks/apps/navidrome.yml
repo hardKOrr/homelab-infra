@@ -1,6 +1,7 @@
 ---
 # Deploy Navidrome — the media stack's music server. Docker remains the default;
-# `hosting.method: kubernetes` selects the cluster adapter.
+# `hosting.method: kubernetes` selects the cluster adapter and `hosting.method: native`
+# with `proxmox.guest_type` runs the Navidrome .deb on its own LXC or VM.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/navidrome.yml -e instance=navidrome
@@ -55,6 +56,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: navidrome
+
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Navidrome runs on its own guest: set proxmox.guest_type to lxc or vm in
+          the instance config.
   tasks:
     - name: Derive the published Navidrome hostname
       ansible.builtin.set_fact:
@@ -68,6 +78,14 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: navidrome
+      when: app_config.hosting.method == 'native'
 
     # Attach the existing storage roots to the stack host. The role narrows the
     # container bind to the one library_subpath below; no storage is created here.
@@ -84,6 +102,17 @@
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
         - app_config.hosting.method == 'docker'
+        - _navidrome_host_mounts | length > 0
+
+    # The same share the Docker method uses; the native unit makes the music path read-only.
+    - name: Attach existing media storage to the native guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        attach_mounts_list: "{{ _navidrome_host_mounts }}"
+        attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+      when:
+        - app_config.hosting.method == 'native'
         - _navidrome_host_mounts | length > 0
 
 # ── Play 2: Prepare Kubernetes access ──────────────────────────────────────────
@@ -104,7 +133,7 @@
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
       when: app_config.hosting.method == 'kubernetes'
 
-# ── Play 3: Deploy on Docker ───────────────────────────────────────────────────
+# ── Play 3: Deploy on Docker or natively ──────────────────────────────────────────────
 - name: "Navidrome | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -131,11 +160,12 @@
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy Navidrome
       ansible.builtin.include_role:
         name: navidrome
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 # ── Play 4: Deploy on Kubernetes ───────────────────────────────────────────────
 - name: "Navidrome | Deploy on Kubernetes"
@@ -172,7 +202,7 @@
   vars:
     _navidrome_deploy_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip
@@ -224,13 +254,13 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record Navidrome on its media stack host
+    - name: Record Navidrome on its guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _navidrome_deploy_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method }}"
         record_guest_url: "https://{{ wiring_domain }}/"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
     - name: Record Navidrome on the Kubernetes nodes
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

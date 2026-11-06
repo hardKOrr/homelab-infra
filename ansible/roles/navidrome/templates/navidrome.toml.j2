@@ -1,0 +1,5 @@
+{{ ansible_managed | comment }}
+DataFolder = "{{ app_config.app.data_path }}"
+MusicFolder = "{{ _navidrome_music_path }}"
+Address = "0.0.0.0"
+Port = {{ app_config.app.port }}

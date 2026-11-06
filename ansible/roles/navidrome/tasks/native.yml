@@ -1,0 +1,132 @@
+---
+# Navidrome natively on an LXC or a VM: the pinned upstream .deb
+# (https://www.navidrome.org/docs/installation/linux/) under the unit it ships, with the
+# data directory and music path set in its config file and the music path read-only.
+- name: Navidrome native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Navidrome supports Debian-family amd64 guests only.
+
+- name: Navidrome native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Navidrome native | Install the package prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, ffmpeg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# Created before the package so the user owns the library's uid/gid.
+- name: Navidrome native | Create the service group
+  ansible.builtin.group:
+    name: "{{ navidrome_native_user }}"
+    gid: "{{ _navidrome_gid }}"
+    system: true
+
+- name: Navidrome native | Create the service user
+  ansible.builtin.user:
+    name: "{{ navidrome_native_user }}"
+    uid: "{{ _navidrome_uid }}"
+    group: "{{ navidrome_native_user }}"
+    home: /var/lib/navidrome
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Navidrome native | Read the installed package version
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, "-f=${Version}", navidrome]
+  register: _navidrome_native_installed
+  changed_when: false
+  failed_when: false
+
+- name: Navidrome native | Install the pinned package
+  when: _navidrome_native_installed.stdout | default('') != app_config.app.native_version
+  block:
+    - name: Navidrome native | Download the .deb
+      ansible.builtin.get_url:
+        url: "https://github.com/navidrome/navidrome/releases/download/v{{ app_config.app.native_version }}/navidrome_{{ app_config.app.native_version }}_linux_amd64.deb"
+        dest: "/var/tmp/navidrome_{{ app_config.app.native_version }}_linux_amd64.deb"
+        checksum: "sha256:{{ app_config.app.native_deb_sha256 }}"
+        mode: "0600"
+
+    - name: Navidrome native | Install the .deb
+      ansible.builtin.apt:
+        deb: "/var/tmp/navidrome_{{ app_config.app.native_version }}_linux_amd64.deb"
+        state: present
+        lock_timeout: 300
+      notify: Restart navidrome
+
+  always:
+    - name: Navidrome native | Remove the .deb
+      ansible.builtin.file:
+        path: "/var/tmp/navidrome_{{ app_config.app.native_version }}_linux_amd64.deb"
+        state: absent
+
+- name: Navidrome native | Render the config file
+  ansible.builtin.template:
+    src: navidrome.toml.j2
+    dest: "{{ navidrome_native_config }}"
+    owner: root
+    group: "{{ navidrome_native_user }}"
+    mode: "0640"
+  notify: Restart navidrome
+
+- name: Navidrome native | Create the unit drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ navidrome_native_service }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Navidrome native | Render the unit drop-in
+  ansible.builtin.template:
+    src: navidrome-native.conf.j2
+    dest: "/etc/systemd/system/{{ navidrome_native_service }}.service.d/homelab.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _navidrome_native_unit
+  notify: Restart navidrome
+
+- name: Navidrome native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _navidrome_native_unit.changed
+
+- name: Navidrome native | Enable and start Navidrome
+  ansible.builtin.systemd:
+    name: "{{ navidrome_native_service }}"
+    state: started
+    enabled: true
+
+- name: Navidrome native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ navidrome_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ navidrome_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

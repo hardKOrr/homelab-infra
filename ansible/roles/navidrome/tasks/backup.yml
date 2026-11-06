@@ -10,7 +10,7 @@
       application recovery must not archive the external music library.
 
 # Navidrome stores its SQLite database, users, playlists and generated state in
-# /data. Quiescing the named Compose service before archiving makes that directory
+# /data. Quiescing the named Compose service (natively, the navidrome systemd unit) before archiving makes that directory
 # one application-consistent recovery unit. The music bind is external and is not
 # included in the archive.
 - name: Navidrome backup | Assert the recovery contract
@@ -41,9 +41,9 @@
 - name: Navidrome backup | Quiesce Navidrome and archive its data directory to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ navidrome_project_dir }}"
-    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_stop_services: ["{{ navidrome_native_service if navidrome_native | bool else instance }}"]
     pbs_client_archives:
       - name: data.pxar
         path: "{{ app_config.app.data_path }}"

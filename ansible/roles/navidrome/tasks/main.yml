@@ -61,26 +61,33 @@
     - "{{ navidrome_project_dir }}"
     - "{{ app_config.app.data_path }}"
 
-- name: Write Navidrome Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ navidrome_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart navidrome
+- name: Deploy Navidrome on Docker
+  when: not (navidrome_native | bool)
+  block:
+    - name: Write Navidrome Compose project
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ navidrome_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart navidrome
 
-- name: Pull Navidrome image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ navidrome_project_dir }}"
-    policy: missing
-  changed_when: false
+    - name: Pull Navidrome image
+      community.docker.docker_compose_v2_pull:
+        project_src: "{{ navidrome_project_dir }}"
+        policy: missing
+      changed_when: false
 
-- name: Start Navidrome
-  community.docker.docker_compose_v2:
-    project_src: "{{ navidrome_project_dir }}"
-    state: present
-    remove_orphans: true
+    - name: Start Navidrome
+      community.docker.docker_compose_v2:
+        project_src: "{{ navidrome_project_dir }}"
+        state: present
+        remove_orphans: true
+
+- name: Deploy Navidrome natively
+  ansible.builtin.include_tasks: native.yml
+  when: navidrome_native | bool
 
 - name: Apply pending Navidrome restarts
   ansible.builtin.meta: flush_handlers
@@ -100,7 +107,7 @@
     that: _navidrome_health.status == 200
     fail_msg: >-
       Navidrome did not answer /ping on port {{ app_config.app.port }}. Check the
-      image, the data directory ownership, and the read-only music mount.
+      image or package, the data directory ownership, and the read-only music mount.
 
 - name: Export Navidrome endpoint for platform wiring
   ansible.builtin.set_fact:

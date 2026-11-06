@@ -1,0 +1,5 @@
+{{ ansible_managed | comment }}
+[Service]
+# The music library is mounted read-only for Navidrome; only its data directory is writable.
+ReadOnlyPaths={{ _navidrome_music_path }}
+ReadWritePaths={{ app_config.app.data_path }}
