@@ -20,7 +20,7 @@
 
 - name: Servarr native | Install the runtime packages
   ansible.builtin.apt:
-    name: [ca-certificates, curl, sqlite3, "{{ servarr_native_icu[ansible_facts.distribution_release] }}"]
+    name: [ca-certificates, curl, sqlite3, libchromaprint-tools, mediainfo, "{{ servarr_native_icu[ansible_facts.distribution_release] }}"]
     state: present
     update_cache: true
     cache_valid_time: 3600
