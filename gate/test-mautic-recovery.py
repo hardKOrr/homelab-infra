@@ -48,7 +48,15 @@ def check_restore_swap():
     assert "mautic_native_services" in swap["recovery_swap_stop_services"]
     assert "'mautic_web', 'mautic_cron', 'mautic_worker'" in swap["recovery_swap_stop_services"]
     assert swap["recovery_swap_compose_project"] == "{{ mautic_project_dir }}"
-    assert swap["recovery_swap_health_status"] == [200, 302]
+    for native, statuses, redirects in [(False, [200, 302], "safe"), (True, [200, 301, 302], "none")]:
+        result = run_hook("mautic", "staged", {
+            "mautic_native": native,
+            "health_status": swap["recovery_swap_health_status"],
+            "health_redirects": swap["recovery_swap_health_follow_redirects"],
+            "expected_status": statuses, "expected_redirects": redirects,
+        }, stub=lambda _tasks: [{"ansible.builtin.assert": {"that": [
+            "health_status == expected_status", "health_redirects == expected_redirects"]}}])
+        assert result.returncode == 0, result.stdout + result.stderr
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
