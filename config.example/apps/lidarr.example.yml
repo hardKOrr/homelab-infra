@@ -1,0 +1,10 @@
+---
+# Example instance configuration for Lidarr. Copy to config/apps/<instance>.yml.
+# Defaults (including the shared Servarr settings) are in
+# ansible/vars/app-defaults/lidarr.yml and annotated in sonarr.example.yml.
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: media-lxc
