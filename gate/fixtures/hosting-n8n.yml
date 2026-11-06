@@ -1,0 +1,40 @@
+---
+- name: Resolve n8n's default VM and opt-in LXC stack
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance: n8n
+    hosting_app_slug: n8n
+    hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/n8n.yml"
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    _n8n_defaults: >-
+      {{ (lookup('ansible.builtin.file', hosting_app_defaults_file) | from_yaml).n8n_defaults }}
+    homelabinfra_config:
+      infrastructure:
+        stacks:
+          services-lxc:
+            guest_type: lxc
+  tasks:
+    - name: Validate the default configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: "{{ _n8n_defaults }}"
+
+    - name: Require the unchanged VM default
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-vm'
+          - _hosting_stack_name == 'services'
+
+    - name: Validate the drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _n8n_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'services-lxc'}, recursive=True) }}
+
+    - name: Require the selected LXC stack
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-lxc'
+          - _hosting_stack_name == 'services-lxc'

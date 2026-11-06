@@ -3,6 +3,12 @@
 # To host this instance on the Kubernetes cluster, uncomment:
 # hosting:
 #   method: kubernetes
+#
+# To use Docker on an LXC, set infrastructure.stacks.services-lxc.guest_type: lxc in
+# config/infrastructure.yml and uncomment:
+# hosting:
+#   method: docker
+# stack: services-lxc
 app:
   database:
     instance: postgresql-n8n

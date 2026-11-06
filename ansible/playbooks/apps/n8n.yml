@@ -97,6 +97,10 @@
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy n8n
       ansible.builtin.include_role:
         name: n8n
