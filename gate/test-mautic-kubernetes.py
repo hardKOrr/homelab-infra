@@ -57,7 +57,7 @@ def render_manifest():
 
 def static_contract():
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert role_main[0]["ansible.builtin.include_tasks"] == "docker.yml"
     assert role_main[0]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
     assert role_main[1]["ansible.builtin.include_tasks"] == "kubernetes.yml"

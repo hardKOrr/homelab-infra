@@ -81,7 +81,7 @@ def check_restore_swap():
                     line["line"] = line["line"].replace("'php-string.j2'", repr(str(template)))
             return tasks
 
-        result = run_hook("mautic", "replaced", {
+        hook_variables = {
             "restore_target": "mautic",
             "homelabinfra_infra": {"domain": "example.invalid"},
             "app_config": {"routing": {"subdomain": "crm"}},
@@ -90,7 +90,8 @@ def check_restore_swap():
             "_mautic_restore_database_name": "mautic",
             "_mautic_restore_database_user": "mautic",
             "_mautic_restore_database_password": "it's 50% a\\b",
-        }, stub)
+        }
+        result = run_hook("mautic", "replaced", hook_variables, stub)
         assert result.returncode == 0, result.stdout + result.stderr
         config = (data / "config/local.php").read_text()
         for line in ["'db_host' => 'db.example.invalid',", "'db_port' => '3306',",
@@ -100,12 +101,18 @@ def check_restore_swap():
             assert line in config, (line, config)
         assert "source-db" not in config and config.rstrip().endswith(");")
         assert (data / "config/local.php").stat().st_mode & 0o777 == 0o640
+        assert "\t'db_host' => 'db.example.invalid'," in config
+        # Match the app's own serialization: a second converge must not rewrite it.
+        repeat = run_hook("mautic", "replaced", hook_variables, stub)
+        assert repeat.returncode == 0, repeat.stdout + repeat.stderr
+        assert "changed=0" in repeat.stdout and "changed=1" not in repeat.stdout
+        assert (data / "config/local.php").read_text() == config
 
 
 def static_contract():
     config = defaults["mautic_defaults"]
     assert config["hosting"] == {
-        "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}}
+        "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}}
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])

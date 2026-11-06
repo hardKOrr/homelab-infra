@@ -169,8 +169,8 @@
     group: "www-data"
     mode: "0640"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
-    line: >-
-      '{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},
+    # Mautic's config writer uses a tab; match it to avoid a restart on every Deploy.
+    line: "\t'{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},"
     # Without this, a key absent from a mail-disabled deploy's local.php (or from a
     # pre-install one) is inserted at end-of-file by lineinfile's own default — AFTER
     # the closing `);` of the PHP array, which is not valid PHP. Every new key this
