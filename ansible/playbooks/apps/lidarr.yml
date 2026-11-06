@@ -1,12 +1,10 @@
 ---
-# Deploy Lidarr — music management. Docker on the media stack host, or on Kubernetes when
-# `hosting.method: kubernetes`. A Kubernetes instance has no stack host, so it records no
-# media registry entry and Wire Media Stack does not discover it.
+# Deploy Lidarr — music management. Docker on the media stack host; on Kubernetes when
+# `hosting.method: kubernetes` (no stack host, so no media registry entry and Wire Media
+# Stack does not discover it); or natively on its own LXC or VM when `hosting.method: native`
+# (with `proxmox.guest_type`).
 #
-# Usage:
-#   ansible-playbook -i inventory/ playbooks/apps/lidarr.yml -e instance=lidarr
-#   ansible-playbook -i inventory/ playbooks/apps/lidarr.yml -e instance=lidarr-lossless
-#
+# Usage: ansible-playbook -i inventory/ playbooks/apps/lidarr.yml -e instance=lidarr
 # `instance` names the deployment (hostname, Caddy subdomain, Authentik slug, Kuma
 # monitor); config/apps/<instance>.yml is merged over the defaults.
 # Play 3 records the `media` registry key (CONTRACT.md §3) that wire-media-stack.yml reads.
@@ -57,7 +55,6 @@
       vars:
         hosting_app_slug: lidarr
 
-    # The workload's ingress host must be the estate's published hostname.
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
@@ -69,7 +66,6 @@
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain
              | default(homelabinfra_config.infrastructure.domain) }}
   tasks:
-    # The stack host is found (or created) by tag. The app is deployed in Play 2.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -88,14 +84,22 @@
                        else ((app_config.media_storage | default({})).mounts | default([])),
                        true) }}
 
-    - name: Attach the lab's storage to the stack host
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: lidarr
+      when: app_config.hosting.method == 'native'
+
+    - name: Attach the lab's storage to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ _servarr_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _servarr_host_mounts | length > 0
 
 - name: "Lidarr | Prepare Kubernetes"
@@ -103,17 +107,17 @@
   become: false
   gather_facts: false
   tasks:
-    - name: Resolve Lidarr's existing media shares and library folder for Kubernetes
-      ansible.builtin.include_role:
-        name: servarr
-        tasks_from: kubernetes-media
+    - name: Prepare the cluster for Lidarr
       when: app_config.hosting.method == 'kubernetes'
-    - name: Refresh inventory for cluster access
-      ansible.builtin.meta: refresh_inventory
-      when: app_config.hosting.method == 'kubernetes'
-    - name: Open Lidarr's declared access from the Kubernetes node alias
-      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
-      when: app_config.hosting.method == 'kubernetes'
+      block:
+        - name: Resolve Lidarr's existing media shares and library folder for Kubernetes
+          ansible.builtin.include_role:
+            name: servarr
+            tasks_from: kubernetes-media
+        - name: Refresh inventory for cluster access
+          ansible.builtin.meta: refresh_inventory
+        - name: Open Lidarr's declared access from the Kubernetes node alias
+          ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -136,12 +140,10 @@
       failed_when: false
 
   tasks:
-    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
-    # Unconditional, so a baseline guest gets its Ntfy hook once Ntfy is up.
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
@@ -149,8 +151,8 @@
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-    # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Lidarr
       ansible.builtin.include_role:
         name: servarr
@@ -179,7 +181,6 @@
   gather_facts: false
 
   pre_tasks:
-    # Absent pre-bootstrap: every provider condition below then no-ops.
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -201,7 +202,6 @@
                          'host': _lidarr_deploy_host.servarr_media_host,
                          'config_path': _lidarr_deploy_host.servarr_media_config_path}} }}
 
-    # Belt-and-braces: include_vars cannot override the entry already merged by set_fact.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -270,7 +270,6 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    # Bookkeeping: stamps this instance onto the Proxmox guest.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       when: not (_lidarr_k8s | bool)
@@ -293,7 +292,6 @@
           Stack job to connect it to Prowlarr, the download clients and Bazarr.
       when: not (_lidarr_k8s | bool)
 
-    # Last task: wiring records what it could not do; this stops the run reporting success.
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

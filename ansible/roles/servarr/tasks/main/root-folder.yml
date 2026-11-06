@@ -27,7 +27,7 @@
   register: _servarr_root_check
   loop: "{{ _servarr_root_folders }}"
   failed_when: false
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
 
 - name: Assert the root folder is usable before configuring it
   ansible.builtin.assert:
@@ -44,7 +44,7 @@
   loop: "{{ _servarr_root_check.results }}"
   loop_control:
     label: "{{ item.item }}"
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
 
 # Lidarr and Readarr refuse a root folder that does not name a quality profile and
 # a metadata profile, so the ids have to be read from the app that is about to be

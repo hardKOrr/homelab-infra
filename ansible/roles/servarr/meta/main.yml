@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: servarr
-  description: "Deploys a Servarr app (Sonarr/Radarr/Lidarr/Readarr/Prowlarr) as a Docker container on a homelab-infra stack host"
+  description: "Deploys a Servarr app (Sonarr/Radarr/Lidarr/Readarr/Prowlarr) on Docker, Kubernetes or natively on its own guest"
   min_ansible_version: "2.15"
 
 # Deployment playbooks install Docker; recovery previews stay read-only.

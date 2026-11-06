@@ -1,7 +1,6 @@
 ---
-# Phase of main.yml: create the directories, check the lab's mounts, resolve the API
-# key, write Compose and start the app. Imported in place; inputs are listed in
-# main.yml.
+# Phase of main.yml: create the directories, write Compose and start the app. Imported in
+# place; inputs are listed in main.yml.
 
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
@@ -21,78 +20,6 @@
     owner: "{{ app_config.app.puid | default(1000) }}"
     group: "{{ app_config.app.pgid | default(1000) }}"
     mode: "0750"
-
-# ── Storage the lab already provides ──────────────────────────────────────────
-# The library and download directories are not this platform's to create. They are
-# mounted on the Proxmox node, attached to the stack host as mountpoints by Play 1,
-# and mounted into the container at the SAME path they have on the host. Identical
-# paths on both sides are what let an app database migrated from another machine
-# keep resolving its files without a single path rewrite.
-#
-# This checks they arrived. A container started against a missing bind source gets
-# an empty directory, the root folder below is created inside it, and the app
-# reports its entire library missing — which reads like data loss and is not.
-- name: Verify the declared mounts are present on the stack host
-  ansible.builtin.stat:
-    path: "{{ item.path }}"
-  register: _servarr_mount_check
-  loop: "{{ _servarr_mounts }}"
-  loop_control:
-    label: "{{ item.path }}"
-
-- name: Assert every declared mount is present on the stack host
-  ansible.builtin.assert:
-    that: item.stat.exists and item.stat.isdir
-    fail_msg: >-
-      {{ item.item.path }} is not present on this stack host. It is declared in
-      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
-      either the attach did not happen or the guest has not restarted since. This
-      platform attaches storage the lab already provides; it never creates it.
-  loop: "{{ _servarr_mount_check.results }}"
-  loop_control:
-    label: "{{ item.item.path }}"
-
-# ── API key continuity ────────────────────────────────────────────────────────
-# The key is declared by this deploy rather than discovered after it, so the
-# credential exists before the container that uses it. On a re-run the key
-# already in config.xml wins: it is what the app answers to today and what every
-# Prowlarr Application and Bazarr connection in the lab was wired with, so
-# regenerating it would break wiring this platform itself created.
-- name: Read the existing config.xml (key continuity across re-runs)
-  ansible.builtin.slurp:
-    src: "{{ app_config.app.config_path }}/config.xml"
-  register: _servarr_config_existing
-  failed_when: false
-  no_log: true
-
-# Three sources, in the order of what the app actually answers to.
-#
-# config.xml only carries <ApiKey> when the APP wrote one. A key this platform
-# supplies through the environment never appears there — measured on the live lab
-# 2026-08-12: prowlarr's config.xml has no ApiKey element at all. With config.xml
-# as the only continuity source, every re-deploy therefore minted a NEW key,
-# rewrote the Compose file and bounced the container (executions 114-116, three
-# consecutive runs, three different keys), which is precisely the breakage the
-# comment above says must not happen: the Prowlarr Applications, Bazarr
-# connections and media-registry entries this platform created all still hold the
-# previous key.
-#
-# The vault item is the platform's own record of the key it issued, and it
-# survives container recreation, so it is the continuity source when the app has
-# not written one. roles/qbittorrent and roles/jellyfin already read their
-# password back the same way.
-- name: Resolve the API key
-  ansible.builtin.set_fact:
-    _servarr_api_key: >-
-      {{ (_servarr_config_existing.content | default('') | b64decode
-          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join(''))
-         | default(_servarr_vault_key, true)
-         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
-  vars:
-    _servarr_vault_key: >-
-      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
-         | default('', true) }}
-  no_log: true
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 - name: Write docker-compose.yml

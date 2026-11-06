@@ -9,9 +9,21 @@
 lidarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -26,8 +38,14 @@ lidarr_defaults:
     # Nightly, because Deemix and Slskd reach Lidarr as plugin download clients and
     # plugin support is only in Lidarr's nightly channel. Moving an existing Lidarr
     # from mainline to nightly migrates its database; going back needs a backup
-    # taken before the move.
-    image: "lscr.io/linuxserver/lidarr:nightly"
+    # taken before the move. Docker and native run the same exact build.
+    image: "lscr.io/linuxserver/lidarr:nightly-3.2.1.5182-ls223"
+    # Native: the release tarball the Servarr wiki's Debian install downloads
+    # (https://wiki.servarr.com/lidarr/installation/linux), fetched from the same update
+    # service at this exact version and verified against its checksum.
+    native_version: "3.2.1.5182"
+    native_branch: nightly
+    native_sha256: b9cb838f715c85f876f407121295d0d2759e87d68ed7b12b0438271af7fb6a7c
     # Installed by Deploy (roles/servarr/tasks/plugins.yml) so Wire Media Stack can
     # register Deemix and slskd. Set `plugins: []` in config/apps/<instance>.yml
     # with a mainline image to run Lidarr without them.

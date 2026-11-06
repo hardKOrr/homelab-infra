@@ -1,7 +1,7 @@
 ---
 # Application-consistent backup for Servarr.
 #
-# Stop only the selected instance. Its database, config.xml and API key are one
+# Stop only the selected instance (its Compose service, or its systemd unit natively). Its database, config.xml and API key are one
 # recovery unit; logs and local Backups are disposable and excluded.
 
 - name: Servarr backup | Assert the backup contract
@@ -74,9 +74,9 @@
 - name: Servarr backup | Quiesce Servarr and archive its data to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ 'native' if servarr_native | bool else 'docker' }}"
     pbs_client_compose_project: "{{ servarr_project_dir }}"
-    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_stop_services: ["{{ servarr_service if servarr_native | bool else instance }}"]
     pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
     pbs_client_backup_args: [--exclude, /logs, --exclude, /logs.db, --exclude, '/logs.db-*', --exclude, /Backups]
     pbs_client_archives:

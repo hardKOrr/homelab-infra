@@ -1,5 +1,5 @@
 ---
-# Restore one Servarr data.pxar archive through the shared swap. The generic Restore App
+# Restore one Servarr data.pxar archive on a Docker or a native guest through the shared swap. The generic Restore App
 # playbook only dispatches here for applications that explicitly declare this path;
 # ordinary Docker applications remain covered by their whole-guest PBS snapshots.
 
@@ -18,17 +18,22 @@
 - name: Servarr restore | Resolve the application contract
   ansible.builtin.include_tasks: recovery-config.yml
 
+- name: Servarr restore | Resolve the guest runtime
+  ansible.builtin.set_fact:
+    _servarr_restore_runtime: >-
+      {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('docker')) }}
+
 - name: Servarr restore | Preview or replace the config directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ _servarr_restore_runtime }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.config_path }}"
         owner: "{{ app_config.app.puid }}"
         group: "{{ app_config.app.pgid }}"
         mode: "0750"
-    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_stop_services: ["{{ servarr_service if _servarr_restore_runtime == 'native' else instance }}"]
     recovery_swap_compose_project: "{{ servarr_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"

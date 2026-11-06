@@ -1,0 +1,153 @@
+---
+# Servarr app natively on an LXC or a VM: the release tarball the Servarr wiki's Debian
+# install downloads (https://wiki.servarr.com/lidarr/installation/linux), at the exact
+# version and checksum pinned in the app defaults, run by a systemd unit as the app's own
+# user. Its state is the config directory alone, which backup and restore archive.
+# main.yml has already checked the mounts and resolved _servarr_api_key.
+# Inputs: app_config.app.{native_version, native_branch, native_sha256, puid, pgid, config_path}.
+- name: Servarr native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release in servarr_native_icu
+    fail_msg: Native Servarr supports Debian 12 and Ubuntu 24.04 on amd64.
+
+- name: Servarr native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+- name: Servarr native | Install the runtime packages
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, sqlite3, "{{ servarr_native_icu[ansible_facts.distribution_release] }}"]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# The library files are written as this id, which the guest maps straight through to the
+# node (media_storage.owner).
+- name: Servarr native | Create the app group
+  ansible.builtin.group:
+    name: "{{ servarr_service }}"
+    gid: "{{ app_config.app.pgid }}"
+
+- name: Servarr native | Create the app user
+  ansible.builtin.user:
+    name: "{{ servarr_service }}"
+    uid: "{{ app_config.app.puid }}"
+    group: "{{ servarr_service }}"
+    home: "{{ servarr_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Servarr native | Create the project and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: ["{{ servarr_project_dir }}", "{{ servarr_native_dir }}"]
+
+- name: Servarr native | Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ servarr_service }}"
+    group: "{{ servarr_service }}"
+    mode: "0750"
+
+# The app reads this key from config.xml, so a restored config.xml brings its own key
+# back; only a missing file is seeded.
+- name: Servarr native | Seed config.xml with the API key
+  ansible.builtin.template:
+    src: native-config.xml.j2
+    dest: "{{ app_config.app.config_path }}/config.xml"
+    owner: "{{ servarr_service }}"
+    group: "{{ servarr_service }}"
+    mode: "0640"
+    force: false
+  no_log: true
+
+- name: Servarr native | Read the installed version
+  ansible.builtin.slurp:
+    src: "{{ servarr_native_dir }}/.homelab-version"
+  register: _servarr_installed
+  failed_when: false
+
+- name: Servarr native | Install the pinned release
+  when: (_servarr_installed.content | default('') | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Servarr native | Stop the app before replacing its files
+      ansible.builtin.systemd:
+        name: "{{ servarr_service }}"
+        state: stopped
+      failed_when: false
+
+    - name: Servarr native | Download the release tarball
+      ansible.builtin.get_url:
+        url: "https://{{ servarr_service }}.servarr.com/v1/update/{{ app_config.app.native_branch }}/updatefile?version={{ app_config.app.native_version }}&os=linux&runtime=netcore&arch=x64"
+        dest: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
+        checksum: "sha256:{{ app_config.app.native_sha256 }}"
+        mode: "0644"
+
+    - name: Servarr native | Unpack the release
+      ansible.builtin.unarchive:
+        src: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
+        dest: "{{ servarr_native_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
+      notify: Restart servarr
+
+    - name: Servarr native | Record the installed version
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ servarr_native_dir }}/.homelab-version"
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: Servarr native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ servarr_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart servarr
+
+- name: Servarr native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ servarr_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Servarr native | Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Servarr native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ servarr_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ servarr_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

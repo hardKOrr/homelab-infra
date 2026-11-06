@@ -9,3 +9,12 @@ servarr_project_dir: "/opt/{{ instance }}"
 # generates that file on first start, several seconds after the port opens.
 servarr_config_retries: 30
 servarr_config_delay: 5
+
+# Native: Lidarr installed from its release tarball under systemd, on its own LXC or VM.
+servarr_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+servarr_service: "{{ app_config.app.media_kind }}"
+servarr_native_dir: "{{ servarr_project_dir }}/bin"
+# Debian 12 and Ubuntu 24.04: the ICU runtime package the .NET app needs.
+servarr_native_icu:
+  bookworm: libicu72
+  noble: libicu74

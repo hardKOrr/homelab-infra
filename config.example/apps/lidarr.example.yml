@@ -11,3 +11,11 @@
 # To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
 # stack line). The library and download mounts come from their existing NFS exports at the
 # same paths.
+
+# To run Lidarr natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Deploy installs the pinned release as a systemd service; app.port
+# still sets the web port, and the library mounts attach to the guest like on the stack host.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

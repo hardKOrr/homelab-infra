@@ -4,3 +4,12 @@
     project_src: "{{ servarr_project_dir }}"
     state: present
     recreate: always
+  when: not (servarr_native | bool)
+
+- name: Restart native servarr
+  ansible.builtin.systemd:
+    name: "{{ servarr_service }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart servarr
+  when: servarr_native | bool

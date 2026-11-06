@@ -30,9 +30,10 @@ def check_backup_inputs(backup):
     """The shared PBS client stops, uploads, prunes and restarts; Servarr supplies its inputs."""
     upload = next(t for t in backup if t["name"] == "Servarr backup | Quiesce Servarr and archive its data to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ 'native' if servarr_native | bool else 'docker' }}"
     assert upload["vars"]["pbs_client_compose_project"] == "{{ servarr_project_dir }}"
-    assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
+    assert upload["vars"]["pbs_client_stop_services"] == [
+        "{{ servarr_service if servarr_native | bool else instance }}"]
     assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
     assert upload["vars"]["pbs_client_backup_args"] == [
         "--exclude", "/logs", "--exclude", "/logs.db", "--exclude", "/logs.db-*", "--exclude", "/Backups"]
@@ -42,11 +43,13 @@ def check_backup_inputs(backup):
 
 def check_swap_inputs():
     """Servarr supplies its paths and hooks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("servarr", "restore-docker.yml")
+    swap = swap_inputs("servarr", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == [
+        "{{ servarr_service if _servarr_restore_runtime == 'native' else instance }}"]
+    assert swap["recovery_swap_runtime"] == "{{ _servarr_restore_runtime }}"
     assert swap["recovery_swap_compose_project"] == "{{ servarr_project_dir }}"
     for hook in ["staged", "replaced", "verified", "rollback"]:
         assert swap[f"recovery_swap_{hook}_hook"] == f"{{{{ role_path }}}}/tasks/restore-{hook}.yml"
@@ -66,6 +69,8 @@ def main():
             task["ansible.builtin.copy"].pop(key)
     hook = yaml.safe_load((repo / "ansible/roles/servarr/tasks/backup-quiesced.yml").read_text())
     persist = next(t for t in hook if "Persist the verified" in t["name"])
+    # The Compose checks sit in a block that runs on Docker only; run its tasks directly.
+    staged = [inner for t in staged for inner in (t.get("block") or [t])]
     key_tasks = [t for t in staged if any(n in t["name"] for n in
                  ["Read the restored config", "Resolve the restored API", "Require the archived API",
                   "Read the Compose key", "Resolve the Compose override", "Require both Compose key"])
@@ -97,6 +102,7 @@ def main():
                 compose.write_text(fresh)
                 play_vars = {
                     "instance": app, "app_config": config, "servarr_project_dir": directory,
+                    "_servarr_restore_runtime": "docker",
                     "homelabinfra_infra": {"backups": {
                         "host": f"http://127.0.0.1:{server.server_port}",
                         "datastore": "fixture", "api_token_id": "fixture", "api_token_secret": "fixture"}},

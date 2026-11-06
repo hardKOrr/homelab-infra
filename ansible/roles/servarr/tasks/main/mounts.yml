@@ -1,0 +1,33 @@
+---
+# Phase of main.yml shared by Docker and native: check the lab's storage arrived on the
+# guest. Inputs are listed in main.yml.
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# The library and download directories are not this platform's to create. They are
+# mounted on the Proxmox node, attached to the stack host as mountpoints by Play 1,
+# and mounted into the container at the SAME path they have on the host. Identical
+# paths on both sides are what let an app database migrated from another machine
+# keep resolving its files without a single path rewrite.
+#
+# This checks they arrived. A container started against a missing bind source gets
+# an empty directory, the root folder below is created inside it, and the app
+# reports its entire library missing — which reads like data loss and is not.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _servarr_mount_check
+  loop: "{{ _servarr_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _servarr_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
