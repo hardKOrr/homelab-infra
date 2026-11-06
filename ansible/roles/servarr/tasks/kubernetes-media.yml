@@ -39,8 +39,10 @@
     path: "{{ item.dir }}"
     state: directory
     mode: "0775"
-    owner: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
-    group: "{{ (app_config.media_storage.owner | default({})).user | default(omit) }}"
+    # Numeric ids: the owner's named account need not exist on the node when the first
+    # media app is on Kubernetes (the Docker path creates it while attaching mounts).
+    owner: "{{ (app_config.media_storage.owner | default({})).uid | default(app_config.app.puid) | string }}"
+    group: "{{ (app_config.media_storage.owner | default({})).gid | default(app_config.app.pgid) | string }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   become: true
   loop: "{{ _servarr_k8s_root_dirs }}"

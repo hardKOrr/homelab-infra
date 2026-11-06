@@ -48,6 +48,10 @@ def main():
 
     media = read_yaml("ansible/roles/servarr/tasks/kubernetes-media.yml")
     assert includes(media, "tasks/kubernetes/resolve-media-nfs.yml")
+    # The named storage owner may not exist on the node yet: directories use numeric ids.
+    mkdir = next(t for t in media if "ansible.builtin.file" in t)["ansible.builtin.file"]
+    assert ").uid" in mkdir["owner"] and ").gid" in mkdir["group"]
+    assert ".user" not in mkdir["owner"] + mkdir["group"]
 
     tasks = read_yaml("ansible/roles/servarr/tasks/kubernetes.yml")
     assert includes(tasks, "tasks/kubernetes/prepare-media-volumes.yml")
