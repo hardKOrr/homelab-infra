@@ -6,7 +6,7 @@
 navidrome_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
   media_storage: {}
