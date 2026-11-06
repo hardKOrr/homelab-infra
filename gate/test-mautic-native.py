@@ -3,6 +3,8 @@
 
 import subprocess
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import yaml
@@ -22,12 +24,31 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 native = (role / "tasks/native.yml").read_text() + (role / "tasks/native-services.yml").read_text()
 assert "native_sha256" in native and "releases/download/" in native
 
+
+class HTTPSRedirect(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(301)
+        self.send_header("Location", "https://127.0.0.1:1/")
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     render = []
     for src, dest in [("mautic-apache.conf.j2", "site"), ("mautic-worker.service.j2", "worker"),
                       ("mautic-cron.service.j2", "cron"), ("mautic-cron.sh.j2", "cron.sh")]:
         render.append({"ansible.builtin.template": {"src": str(role / "templates" / src), "dest": str(root / dest)}})
+    # Exercise the real health probe: native Mautic redirects HTTP to Caddy's HTTPS,
+    # which is deliberately unavailable on the guest's loopback interface.
+    server = HTTPServer(("127.0.0.1", 0), HTTPSRedirect)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    health = next(task["ansible.builtin.uri"]
+                  for task in yaml.safe_load((role / "tasks/native-services.yml").read_text())
+                  if task.get("name", "").endswith("Wait for health endpoint"))
+    render.append({"ansible.builtin.uri": dict(health, url=f"http://127.0.0.1:{server.server_port}/")})
     playbook = root / "render.yml"
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost", "gather_facts": False,
@@ -36,6 +57,8 @@ with tempfile.TemporaryDirectory() as directory:
         "tasks": render}]))
     result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
                             text=True, capture_output=True, check=False)
+    server.shutdown()
+    server.server_close()
     assert result.returncode == 0, result.stdout + result.stderr
     site, worker, cron, script = [(root / name).read_text() for name in ("site", "worker", "cron", "cron.sh")]
 assert f"<VirtualHost *:{app['port']}>" in site and "DocumentRoot /var/www/mautic" in site
