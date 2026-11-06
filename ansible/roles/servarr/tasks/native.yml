@@ -88,42 +88,75 @@
         checksum: "sha256:{{ app_config.app.native_sha256 }}"
         mode: "0644"
 
-    # Only now, with the verified tarball on disk, is the running app stopped.
-    - name: Servarr native | Replace the installed files with the downloaded release
+    # Unpack beside the live install: a full disk or a bad archive fails here, with the
+    # running app untouched.
+    - name: Servarr native | Start a clean staging directory
+      ansible.builtin.shell:
+        cmd: rm -rf '{{ servarr_native_dir }}.new' && mkdir '{{ servarr_native_dir }}.new'
+      changed_when: true
+
+    - name: Servarr native | Unpack the release into staging
+      ansible.builtin.unarchive:
+        src: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
+        dest: "{{ servarr_native_dir }}.new"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
+
+    - name: Servarr native | Record the version in staging
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ servarr_native_dir }}.new/.homelab-version"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # Only now is the running app stopped. The previous install stays beside the new one
+    # until the swap has succeeded.
+    - name: Servarr native | Swap the staged release in
       block:
-        - name: Servarr native | Stop the app before replacing its files
+        - name: Servarr native | Stop the app before the swap
           ansible.builtin.systemd:
             name: "{{ servarr_service }}"
             state: stopped
           failed_when: false
 
-        - name: Servarr native | Unpack the release
-          ansible.builtin.unarchive:
-            src: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
-            dest: "{{ servarr_native_dir }}"
-            remote_src: true
-            extra_opts: [--strip-components=1]
-            owner: root
-            group: root
+        - name: Servarr native | Move the previous install aside and the new one in
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              rm -rf '{{ servarr_native_dir }}.old'
+              mv '{{ servarr_native_dir }}' '{{ servarr_native_dir }}.old'
+              mv '{{ servarr_native_dir }}.new' '{{ servarr_native_dir }}'
+            executable: /bin/bash
+          changed_when: true
           notify: Restart servarr
 
-        - name: Servarr native | Record the installed version
-          ansible.builtin.copy:
-            content: "{{ app_config.app.native_version }}\n"
-            dest: "{{ servarr_native_dir }}/.homelab-version"
-            owner: root
-            group: root
-            mode: "0644"
+        - name: Servarr native | Drop the previous install
+          ansible.builtin.file:
+            path: "{{ servarr_native_dir }}.old"
+            state: absent
       rescue:
+        - name: Servarr native | Put the previous install back
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              if [ -d '{{ servarr_native_dir }}.old' ]; then
+                rm -rf '{{ servarr_native_dir }}'
+                mv '{{ servarr_native_dir }}.old' '{{ servarr_native_dir }}'
+              fi
+            executable: /bin/bash
+          changed_when: true
+
         - name: Servarr native | Start the previous install again
           ansible.builtin.systemd:
             name: "{{ servarr_service }}"
             state: started
-          failed_when: false
 
         - name: Servarr native | Fail the replacement
           ansible.builtin.fail:
-            msg: Replacing {{ servarr_service }} failed; the previous install was started again.
+            msg: Replacing {{ servarr_service }} failed; the previous install was restored and started again.
 
 - name: Servarr native | Write the systemd unit
   ansible.builtin.template:
