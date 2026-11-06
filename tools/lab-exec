@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""lab-exec — run a command inside the runner, or on a lab node.
+
+  tools-exec 'systemctl is-active rundeckd'
+  tools-exec < probe.sh                 # script on stdin runs under bash -s
+  tools-exec --node 'pvesh get /cluster/resources --type vm'
+
+Runs as root. The exit code is the command's. Run long work through lab-start instead.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import labaccess  # noqa: E402
+
+args = sys.argv[1:]
+if args[:1] in (["-h"], ["--help"]):
+    print(__doc__.strip())
+    sys.exit(0)
+on_node = args[:1] == ["--node"]
+if on_node:
+    args = args[1:]
+command, script = labaccess.command_or_stdin(args)
+values = labaccess.lab_values()
+if on_node:
+    ip = labaccess.any_node(values)
+    remote = "bash -s" if command is None else command
+else:
+    ip, vmid = labaccess.runner(values)
+    remote = labaccess.pct_exec(vmid, command)
+sys.exit(labaccess.run_on_node(ip, remote, script))

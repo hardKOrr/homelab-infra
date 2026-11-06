@@ -1,0 +1,51 @@
+---
+# Run one shell command as root on one owned guest. The transport behind
+# tools/guest-exec for VMs: their SSH key lives in Vaultwarden, so the command goes
+# through lab-run like any other playbook instead of a key on disk.
+#
+# Usage (through lab-run):
+#   lab-run playbooks/maintenance/guest-exec.yml -e guest=<guest name> -e command_b64=<base64>
+#
+#   guest        — the guest's Proxmox name; it must carry `_+lab` (group lab_managed)
+#   command_b64  — the bash script, base64-encoded so no quoting layer can change it
+#
+# The result is one line, `GUEST_EXEC_RESULT <rc> <base64 of stdout+stderr>`, which
+# guest-exec decodes. A non-zero exit from the command does not fail the play.
+
+- name: Guest Exec | Load connection settings
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # The Proxmox inventory carries no ansible_user; see tail-applog.yml.
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Require the inputs
+      ansible.builtin.assert:
+        that:
+          - guest | default('') | length > 0
+          - command_b64 | default('') | length > 0
+        fail_msg: guest-exec needs -e guest=<name> and -e command_b64=<base64 script>
+
+# The intersection with lab_managed keeps this to guests homelab-infra owns.
+- name: Guest Exec | {{ guest | default('(no guest)') }}
+  hosts: "{{ guest | default('_guest_unset') }}:&lab_managed"
+  become: true
+  gather_facts: false
+  vars:
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
+  tasks:
+    - name: Run the command
+      ansible.builtin.shell:
+        cmd: 'printf %s "$GUEST_EXEC_SCRIPT" | base64 -d | bash > /tmp/.guest-exec.out 2>&1; rc=$?; base64 -w0 /tmp/.guest-exec.out; rm -f /tmp/.guest-exec.out; exit $rc'
+        executable: /bin/bash
+      environment:
+        GUEST_EXEC_SCRIPT: "{{ command_b64 }}"
+      register: _guest_exec
+      changed_when: true
+      failed_when: false
+
+    - name: Report the result
+      ansible.builtin.debug:
+        msg: "GUEST_EXEC_RESULT {{ _guest_exec.rc }} {{ _guest_exec.stdout }}"

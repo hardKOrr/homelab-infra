@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""lab-start — start a long command detached, logging to a job file. Then use lab-wait.
+
+  tools-start deploy -- "$HOMELAB_LAB_DIR/runner-lab-run.sh" <branch> playbooks/apps/<app>.yml -e instance=<i>
+  tools-wait deploy
+
+The job writes $LAB_JOB_DIR/<name>.log (default /tmp/lab-jobs) and, when it ends,
+<name>.rc holding its exit code. The command survives the calling shell. A name that
+is still running is refused; a finished one is replaced.
+"""
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+if len(args) < 3 or args[1] != "--" or args[0] in ("-h", "--help"):
+    print(__doc__.strip())
+    sys.exit(0 if args[:1] in (["-h"], ["--help"]) else 2)
+name, command = args[0], args[2:]
+if "/" in name or name.startswith("."):
+    sys.exit("lab-start: a job name is a plain word")
+job_dir = os.environ.get("LAB_JOB_DIR", "/tmp/lab-jobs")
+os.makedirs(job_dir, exist_ok=True)
+log, rc, pid_file = (os.path.join(job_dir, name + ext) for ext in (".log", ".rc", ".pid"))
+
+if os.path.exists(pid_file) and not os.path.exists(rc):
+    try:
+        os.kill(int(open(pid_file).read()), 0)
+        sys.exit(f"lab-start: job {name} is still running; wait for it or pick another name")
+    except (ProcessLookupError, ValueError):
+        pass
+for path in (rc, pid_file):
+    if os.path.exists(path):
+        os.remove(path)
+
+# The wrapper records the exit code atomically, so lab-wait never reads a partial .rc.
+wrapper = '"$@"; code=$?; printf "%s\\n" "$code" > "$RC.tmp" && mv "$RC.tmp" "$RC"'
+with open(log, "wb") as out:
+    proc = subprocess.Popen(["bash", "-c", wrapper, "lab-job"] + command,
+                            stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                            env={**os.environ, "RC": rc}, start_new_session=True)
+with open(pid_file, "w") as handle:
+    handle.write(str(proc.pid))
+print(f"started {name} (pid {proc.pid}); log {log}")
