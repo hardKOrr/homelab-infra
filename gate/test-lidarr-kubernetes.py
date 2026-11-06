@@ -34,7 +34,9 @@ def main():
     # Docker stays the default: the stack host is only provisioned for that method.
     provision = plays["Lidarr | Provision"]["tasks"]
     assert all(task.get("when") for task in provision if "find-or-create-host" in str(task))
-    prepare = plays["Lidarr | Prepare Kubernetes"]["tasks"]
+    [prepare_block] = plays["Lidarr | Prepare Kubernetes"]["tasks"]
+    assert prepare_block["when"] == "app_config.hosting.method == 'kubernetes'"
+    prepare = prepare_block["block"]
     assert any(t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes-media"
                for t in prepare)
     assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
@@ -74,7 +76,7 @@ def main():
     assert "__AUTH__APIKEY" in manifest and "kind: Ingress" in manifest
 
     restore = read_yaml("ansible/roles/servarr/tasks/restore.yml")
-    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-docker.yml")
+    assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml("ansible/roles/servarr/tasks/restore-kubernetes.yml")[0]
     assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
@@ -82,7 +84,7 @@ def main():
     # Docker keeps reading config.xml; Kubernetes never does, and calls the app via ingress.
     verify = read_yaml("ansible/roles/servarr/tasks/main/verify.yml")
     slurp = next(t for t in verify if "ansible.builtin.slurp" in t)
-    assert slurp["when"] == "app_config.hosting.method == 'docker'"
+    assert slurp["when"] == "app_config.hosting.method in ['docker', 'native']"
     endpoint = (REPO / "ansible/roles/servarr/tasks/main/endpoint.yml").read_text()
     assert "ingress_vip" in endpoint and "'Host': servarr_fqdn" in endpoint
 

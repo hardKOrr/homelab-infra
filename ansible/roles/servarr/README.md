@@ -4,6 +4,16 @@ Deploy runs `tasks/main.yml`, whose phases sit in `tasks/main/`: `resolve.yml` (
 version, storage), `start.yml` (directories, mounts, API key, Compose), `verify.yml`
 (authenticated status, refused anonymous call, chosen auth method) and `root-folder.yml`
 (library root folder). Plugins, the vault write and the registry export stay in `main.yml`.
+`start.yml` and `native.yml` share `mounts.yml` and `api-key.yml`.
+
+## Native
+
+Lidarr can run on its own LXC or VM (`hosting.method: native`, `proxmox.guest_type`).
+`native.yml` unpacks the pinned release tarball under `/opt/<instance>/bin`, seeds
+`config.xml` with the API key (a restored `config.xml` brings its own) and runs the
+app as a systemd unit under the app's `puid`/`pgid` user. Backup and restore use the same
+shared operations as Docker with the `native` runtime; the restore hooks skip the
+Compose key overrides, which exist only on Docker.
 
 ## Native recovery
 

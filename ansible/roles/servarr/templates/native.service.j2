@@ -1,0 +1,26 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description={{ _servarr_kind | capitalize }} ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ servarr_service }}
+Group={{ servarr_service }}
+Type=simple
+Environment=TZ={{ homelabinfra_config.timezone | default('UTC') }}
+Environment={{ _servarr_prefix }}__AUTH__METHOD={{ app_config.app.auth_method | default('External') }}
+Environment={{ _servarr_prefix }}__AUTH__REQUIRED={{ app_config.app.auth_required | default('Enabled') }}
+Environment={{ _servarr_prefix }}__SERVER__PORT={{ app_config.app.port }}
+Environment={{ _servarr_prefix }}__UPDATE__MECHANISM=External
+Environment={{ _servarr_prefix }}__UPDATE__AUTOMATICALLY=False
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+Environment={{ key }}={{ value }}
+{% endfor %}
+ExecStart={{ servarr_native_dir }}/{{ _servarr_kind | capitalize }} -nobrowser -data={{ app_config.app.config_path }}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

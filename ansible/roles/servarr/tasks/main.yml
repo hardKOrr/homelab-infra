@@ -1,6 +1,7 @@
 ---
 # servarr role — one Servarr application (Sonarr, Radarr, Lidarr, Readarr or
-# Prowlarr) as a Docker container on a stack host, or on Kubernetes (kubernetes.yml).
+# Prowlarr) as a Docker container on a stack host, on Kubernetes (kubernetes.yml), or
+# natively on its own guest (native.yml).
 # Called from Play 2 of
 # playbooks/apps/<app>.yml. Target: the media host.
 #
@@ -35,11 +36,25 @@
 - name: Resolve where the app's API answers
   ansible.builtin.import_tasks: main/endpoint.yml
 
+# Docker and native: the lab's storage must have arrived, and the API key in force is
+# resolved before either method writes it into its own configuration.
+- name: Check storage and resolve the API key
+  when: app_config.hosting.method in ['docker', 'native']
+  block:
+    - name: Check the lab's storage arrived
+      ansible.builtin.import_tasks: main/mounts.yml
+    - name: Resolve the API key
+      ansible.builtin.import_tasks: main/api-key.yml
+
 - name: Docker on the stack host
   when: app_config.hosting.method == 'docker'
   block:
-    - name: Create directories, resolve the API key and start the app
+    - name: Create directories and start the app
       ansible.builtin.import_tasks: main/start.yml
+
+- name: Native on its own guest
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method == 'native'
 
 - name: Kubernetes workload
   ansible.builtin.include_tasks: kubernetes.yml
@@ -61,7 +76,7 @@
 # stack wiring finds the key without the config.xml discovery pass. Stored after
 # the app has proven the key works, never before.
 - name: Store and verify the API key
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: "homelab-infra/media/{{ instance }}"
@@ -73,7 +88,7 @@
 # config_path is the HOST path, not the container's /config: it is what
 # wire-media-stack.yml slurps config.xml from when it falls back to discovery.
 - name: Export the media registry entry to the playbook
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
   ansible.builtin.set_fact:
     servarr_media_kind: "{{ _servarr_kind }}"
     servarr_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

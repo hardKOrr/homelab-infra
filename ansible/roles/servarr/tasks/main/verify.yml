@@ -40,7 +40,7 @@
   ansible.builtin.slurp:
     src: "{{ app_config.app.config_path }}/config.xml"
   register: _servarr_config
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
   until: _servarr_config.content is defined
   retries: "{{ servarr_config_retries }}"
   delay: "{{ servarr_config_delay }}"
