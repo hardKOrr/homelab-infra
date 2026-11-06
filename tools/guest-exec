@@ -14,10 +14,7 @@ Stdout and stderr come back merged for a VM. The exit code is the command's.
 """
 import base64
 import os
-import re
-import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import labaccess  # noqa: E402
@@ -44,18 +41,9 @@ if guest["type"] == "lxc":
 # A VM's root key lives in Vaultwarden, so the command travels through lab-run and
 # playbooks/maintenance/guest-exec.yml at --ref (default master), like any playbook run.
 body = script if script is not None else command.encode()
-lab_dir = os.environ["HOMELAB_LAB_DIR"]
-log = tempfile.NamedTemporaryFile(prefix=f"guest-exec-{vmid}-", suffix=".log", delete=False)
-run = subprocess.run([os.path.join(lab_dir, "runner-lab-run.sh"), ref, "playbooks/maintenance/guest-exec.yml",
-                      "-e", f"guest={guest['name']}", "-e", "command_b64=" + base64.b64encode(body).decode()],
-                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-log.close()
-found = re.findall(r"GUEST_EXEC_RESULT (\d+) ([A-Za-z0-9+/=]*)", open(log.name, errors="replace").read())
-if not found:
-    tail = open(log.name, errors="replace").read().splitlines()[-25:]
-    print("\n".join(tail), file=sys.stderr)
-    labaccess.die(f"no result from lab-run (exit {run.returncode}); full log {log.name}", 1)
-os.unlink(log.name)
-rc, output = found[-1]
-sys.stdout.buffer.write(base64.b64decode(output))
-sys.exit(int(rc))
+rc, output = labaccess.run_marked_playbook(
+    ref, "playbooks/maintenance/guest-exec.yml",
+    {"guest": guest["name"], "command_b64": base64.b64encode(body).decode()},
+    "GUEST_EXEC_RESULT", f"guest-exec-{vmid}")
+sys.stdout.buffer.write(output)
+sys.exit(rc)

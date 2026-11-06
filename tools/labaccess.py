@@ -100,3 +100,29 @@ def run_on_node(ip, remote, script):
 def pct_exec(vmid, command):
     inner = "bash -s" if command is None else "bash -c " + shlex.quote(command)
     return f"pct exec {vmid} -- {inner}"
+
+
+def run_marked_playbook(ref, playbook, extra_vars, marker, label):
+    """Run a playbook through runner-lab-run.sh and decode its `<marker> <rc> <base64>` line.
+
+    Returns (rc, output bytes). The lab-run log goes to a temp file, kept and named on
+    failure, removed on success.
+    """
+    import base64
+    import re
+    import tempfile
+    argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), ref, playbook]
+    for key, value in extra_vars.items():
+        argv += ["-e", f"{key}={value}"]
+    log = tempfile.NamedTemporaryFile(prefix=f"{label}-", suffix=".log", delete=False)
+    run = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+    log.close()
+    with open(log.name, errors="replace") as handle:
+        text = handle.read()
+    found = re.findall(re.escape(marker) + r" (\d+) ([A-Za-z0-9+/=]*)", text)
+    if not found:
+        print("\n".join(text.splitlines()[-25:]), file=sys.stderr)
+        die(f"no result from lab-run (exit {run.returncode}); full log {log.name}", 1)
+    os.unlink(log.name)
+    rc, output = found[-1]
+    return int(rc), base64.b64decode(output)

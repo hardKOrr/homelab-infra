@@ -1,0 +1,82 @@
+---
+# Run one browser spec against an app instance, headless on the runner. The transport
+# behind tools/lab-browser; scripts/browser-check.js runs the spec and documents its form.
+#
+# Usage (through lab-run):
+#   lab-run playbooks/maintenance/browser-check.yml -e instance=<i> -e url=<https://...> \
+#       -e run_id=<word> -e spec_b64=<base64 of the spec>
+#
+# The instance's Vaultwarden fields reach the spec as `secrets` through a 0600 file that is
+# removed when the run ends; they never enter argv or the log. Playwright is installed at a
+# pinned version under the rundeck home on first use. The result is one line,
+# `BROWSER_CHECK_RESULT <rc> <base64 report>`, which lab-browser decodes. Screenshots of a
+# failure stay in the run directory on the runner.
+
+- name: Browser Check | {{ instance | default('(no instance)') }}
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _bc_dir: "{{ lookup('env', 'HOME') }}/lab-browser"
+    _bc_run: "{{ _bc_dir }}/runs/{{ run_id | default('') }}"
+    _bc_playwright: "1.65.0"
+  tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Require the inputs
+      ansible.builtin.assert:
+        that:
+          - instance | default('') | length > 0
+          - url | default('') is match('^https?://')
+          - run_id | default('') is match('^[A-Za-z0-9._-]+$')
+          - spec_b64 | default('') | length > 0
+        fail_msg: browser-check needs -e instance, -e url=https://..., -e run_id=<word> and -e spec_b64
+
+    - name: Install the pinned Playwright and its headless Chromium
+      ansible.builtin.shell:
+        cmd: >-
+          set -e; mkdir -p {{ _bc_dir | quote }}; cd {{ _bc_dir | quote }};
+          grep -qs '"version": "{{ _bc_playwright }}"' node_modules/playwright-core/package.json
+          || npm install --no-audit --no-fund --silent playwright-core@{{ _bc_playwright }};
+          node node_modules/playwright-core/cli.js install chromium-headless-shell > /dev/null
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Run the spec
+      block:
+        - name: Create the run directory
+          ansible.builtin.file:
+            path: "{{ _bc_run }}"
+            state: directory
+            mode: "0700"
+
+        - name: Write the spec
+          ansible.builtin.copy:
+            content: "{{ spec_b64 | b64decode }}"
+            dest: "{{ _bc_run }}/spec.js"
+            mode: "0600"
+
+        - name: Write the instance secrets for the spec
+          ansible.builtin.copy:
+            content: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}) | to_json }}"
+            dest: "{{ _bc_run }}/secrets.json"
+            mode: "0600"
+          no_log: true
+
+        - name: Run browser-check.js
+          ansible.builtin.command:
+            argv: [node, "{{ playbook_dir }}/../../scripts/browser-check.js", "{{ _bc_run }}", "{{ url }}"]
+          environment:
+            NODE_PATH: "{{ _bc_dir }}/node_modules"
+          register: _bc_result
+          changed_when: false
+          failed_when: false
+      always:
+        - name: Remove the secrets
+          ansible.builtin.file:
+            path: "{{ _bc_run }}/secrets.json"
+            state: absent
+
+    - name: Report the result
+      ansible.builtin.debug:
+        msg: "BROWSER_CHECK_RESULT {{ _bc_result.rc }} {{ (_bc_result.stdout ~ '\n' ~ _bc_result.stderr) | b64encode }}"
