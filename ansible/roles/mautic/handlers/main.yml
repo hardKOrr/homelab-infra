@@ -6,6 +6,15 @@
   when: not (mautic_native | bool)
 
 # Mautic compiles local.php into its cache, so a native restart starts from an empty one.
+# Stop every cache writer before deleting it; the worker and cron can recreate files.
+- name: Stop native Mautic before clearing the cache
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ mautic_native_services }}"
+  listen: Restart mautic
+  when: mautic_native | bool
+
 - name: Clear the native Mautic cache
   ansible.builtin.command:
     argv: [find, "{{ mautic_native_root }}/var/cache", -mindepth, "1", -delete]
