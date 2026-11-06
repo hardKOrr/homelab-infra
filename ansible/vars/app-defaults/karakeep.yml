@@ -14,6 +14,7 @@ karakeep_defaults:
   # Used only when hosting.method is native (the guest type comes from the instance's
   # proxmox.guest_type). The production Next.js build needs the memory.
   proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
     cores: 4
     memory: 6144
     disk_volume:
