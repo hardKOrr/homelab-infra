@@ -53,6 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost", "gather_facts": False,
         "vars": {"ansible_managed": "generated", "instance": "mautic", "mautic_native_root": "/var/www/mautic",
+                 "homelabinfra_infra": {"reverse_proxy": {"host": "http://192.0.2.10"}},
                  "app_config": {"app": {"port": app["port"]}}},
         "tasks": render}]))
     result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
@@ -63,6 +64,8 @@ with tempfile.TemporaryDirectory() as directory:
     site, worker, cron, script = [(root / name).read_text() for name in ("site", "worker", "cron", "cron.sh")]
 assert f"<VirtualHost *:{app['port']}>" in site and "DocumentRoot /var/www/mautic" in site
 assert "AllowOverride All" in site and "FollowSymLinks" in site
+assert "SetEnvIfExpr" in site and "%{REMOTE_ADDR} == '192.0.2.10'" in site
+assert "req('X-Forwarded-Proto') == 'https'" in site and "HTTPS=on" in site
 assert "messenger:consume email hit failed" in worker and "User=www-data" in worker
 assert "ExecStart=/usr/local/bin/mautic-cron" in cron
 assert "mautic:segments:update" in script and "mautic:campaigns:trigger" in script
