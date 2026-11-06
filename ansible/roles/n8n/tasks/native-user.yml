@@ -1,0 +1,10 @@
+---
+# The service user and its user folder; main.yml links `<user folder>/.n8n` to
+# app.data_path once that directory exists.
+- name: n8n native | Create the service user
+  ansible.builtin.user:
+    name: "{{ n8n_native_user }}"
+    system: true
+    home: "{{ n8n_native_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin

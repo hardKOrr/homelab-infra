@@ -1,0 +1,154 @@
+---
+# n8n natively on an LXC or a VM: the pinned `n8n` npm package installed globally with
+# `npm install -g` (https://docs.n8n.io/hosting/installation/npm/) on a pinned Node.js
+# release, run by one systemd unit. main.yml has already written the environment file
+# and the data directory the unit uses.
+- name: n8n native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: Native n8n supports Debian 12 and Ubuntu 24.04 on amd64 only.
+
+- name: n8n native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: n8n native | Install the download and archive tools
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, xz-utils]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: n8n native | Check for the pinned Node.js release
+  ansible.builtin.stat:
+    path: "{{ n8n_native_node_root }}/bin/node"
+  register: _n8n_node
+
+- name: n8n native | Install the pinned Node.js release
+  when: not _n8n_node.stat.exists
+  block:
+    - name: n8n native | Download the Node.js archive
+      ansible.builtin.get_url:
+        url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        dest: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        checksum: "sha256:{{ app_config.app.native_node_sha256 }}"
+        mode: "0600"
+
+    - name: n8n native | Create the Node.js parent directory
+      ansible.builtin.file:
+        path: "{{ n8n_native_node_root | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: n8n native | Extract Node.js
+      ansible.builtin.unarchive:
+        src: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        dest: "{{ n8n_native_node_root | dirname }}"
+        remote_src: true
+        owner: root
+        group: root
+        creates: "{{ n8n_native_node_root }}/bin/node"
+
+  always:
+    - name: n8n native | Remove the Node.js archive
+      ansible.builtin.file:
+        path: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        state: absent
+
+- name: n8n native | Put node and npm on the path
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item }}"
+    src: "{{ n8n_native_node_root }}/bin/{{ item }}"
+    state: link
+  loop: [node, npm, npx]
+
+- name: n8n native | Read the installed n8n package
+  ansible.builtin.slurp:
+    src: "{{ n8n_native_node_root }}/lib/node_modules/n8n/package.json"
+  register: _n8n_native_package
+  failed_when: false
+
+- name: n8n native | Install the pinned n8n package
+  ansible.builtin.command:
+    argv: [npm, install, -g, "n8n@{{ app_config.app.native_version }}"]
+  environment:
+    PATH: "{{ n8n_native_node_root }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    npm_config_update_notifier: "false"
+    npm_config_fund: "false"
+    npm_config_audit: "false"
+  when: >-
+    _n8n_native_package.content is not defined
+    or (_n8n_native_package.content | b64decode | from_json).version != app_config.app.native_version
+  notify: Restart n8n
+  register: _n8n_native_install
+  changed_when: true
+
+- name: n8n native | Put n8n on the path
+  ansible.builtin.file:
+    path: /usr/local/bin/n8n
+    src: "{{ n8n_native_node_root }}/bin/n8n"
+    state: link
+
+- name: n8n native | Render the service unit
+  ansible.builtin.template:
+    src: n8n.service.j2
+    dest: "/etc/systemd/system/{{ n8n_native_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _n8n_native_unit
+  notify: Restart n8n
+
+- name: n8n native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _n8n_native_unit.changed
+
+- name: n8n native | Enable and start n8n
+  ansible.builtin.systemd:
+    name: "{{ n8n_native_service }}"
+    state: started
+    enabled: true
+
+- name: n8n native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ n8n_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ n8n_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: n8n native | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: n8n native | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/healthz"
+    status_code: 200
+  register: _n8n_health
+  until: _n8n_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false

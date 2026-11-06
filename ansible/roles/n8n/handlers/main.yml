@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ n8n_project_dir }}"
     state: restarted
+  when: not (n8n_native | bool)
+
+- name: Restart native n8n
+  ansible.builtin.systemd:
+    name: "{{ n8n_native_service }}"
+    state: restarted
+  listen: Restart n8n
+  when: n8n_native | bool

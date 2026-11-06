@@ -73,11 +73,12 @@
 
 - name: n8n backup | Quiesce n8n and archive database plus data
   block:
-    # PostgreSQL and every other service on the shared services guest stay untouched.
+    # PostgreSQL and every other service on the shared services guest stay untouched. The
+    # service is the n8n container or, natively, the n8n systemd unit.
     - name: n8n backup | Stop n8n, dump its database and push both archives
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
         pbs_client_compose_project: "/opt/{{ instance }}"
         pbs_client_stop_services: [n8n]
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"

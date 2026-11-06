@@ -1,19 +1,37 @@
 ---
+# The Docker deployment remains n8n's default; native runs the n8n npm package on its own
+# guest (native.yml). Both share the data layout, credentials and environment file.
 - name: n8n | Create project directory
   ansible.builtin.file:
     path: "{{ n8n_project_dir }}"
     state: directory
     owner: root
     group: root
-    mode: "0750"
+    # Natively the service user must traverse it: the default data path sits below it.
+    # The environment file keeps its own 0600 mode.
+    mode: "{{ '0755' if n8n_native | bool else '0750' }}"
+
+- name: n8n | Create the native service user
+  ansible.builtin.include_tasks: native-user.yml
+  when: n8n_native | bool
 
 - name: n8n | Create writable application data directory
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}"
     state: directory
-    owner: "1000"
-    group: "1000"
+    owner: "{{ n8n_native_user if n8n_native | bool else '1000' }}"
+    group: "{{ n8n_native_user if n8n_native | bool else '1000' }}"
     mode: "0750"
+
+- name: n8n | Link the native user folder's .n8n to the durable data path
+  ansible.builtin.file:
+    path: "{{ n8n_native_home }}/.n8n"
+    src: "{{ app_config.app.data_path }}"
+    state: link
+    owner: "{{ n8n_native_user }}"
+    group: "{{ n8n_native_user }}"
+    follow: false
+  when: n8n_native | bool
 
 - name: n8n | Generate or reuse the encryption key
   ansible.builtin.set_fact:
@@ -50,34 +68,41 @@
   no_log: true
   notify: Restart n8n
 
-- name: n8n | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ n8n_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart n8n
+- name: n8n | Deploy on Docker
+  when: not (n8n_native | bool)
+  block:
+    - name: n8n | Render Compose project
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ n8n_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart n8n
 
-- name: n8n | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ n8n_project_dir }}"
+    - name: n8n | Pull image
+      community.docker.docker_compose_v2_pull:
+        project_src: "{{ n8n_project_dir }}"
 
-- name: n8n | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ n8n_project_dir }}"
-    state: present
-    remove_orphans: true
+    - name: n8n | Start service
+      community.docker.docker_compose_v2:
+        project_src: "{{ n8n_project_dir }}"
+        state: present
+        remove_orphans: true
 
-- name: n8n | Apply pending restart
-  ansible.builtin.meta: flush_handlers
+    - name: n8n | Apply pending restart
+      ansible.builtin.meta: flush_handlers
 
-- name: n8n | Wait for health endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/healthz"
-    status_code: 200
-  register: _n8n_health
-  until: _n8n_health.status | default(0) == 200
-  retries: 60
-  delay: 5
-  changed_when: false
+    - name: n8n | Wait for health endpoint
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/healthz"
+        status_code: 200
+      register: _n8n_health
+      until: _n8n_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+- name: n8n | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: n8n_native | bool

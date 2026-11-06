@@ -409,6 +409,27 @@ def check_all_engines_share_placement():
     assert "{{ not (_native_guest_classed_placement | bool) }}" in provision_text
 
     provision_tasks = list(iter_tasks(yaml.safe_load(provision_text)))
+    native_clone = next(
+        task for task in provision_tasks
+        if task.get("name") == "Native guest | Clone the VM"
+    )
+    # A floating template may select a node while the original override stays empty.
+    # Clone must keep that selection even if another node now has more free memory.
+    clone_node_result = run_playbook([{
+        "hosts": "localhost", "gather_facts": False,
+        "vars": {
+            "homelabinfra_config": {"proxmox": {"node": "compute-a"}},
+            "_native_guest_node": "",
+        },
+        "tasks": [{
+            "name": "Keep the node selected for the native VM template",
+            "vars": native_clone["vars"],
+            "ansible.builtin.assert": {
+                "that": ["proxmox_placement_node == 'compute-a'"],
+            },
+        }],
+    }], "localhost ansible_connection=local\n")
+    assert clone_node_result.returncode == 0, clone_node_result.stdout + clone_node_result.stderr
     lxc_identity = next(
         task for task in provision_tasks
         if task.get("name") == "Native guest | Set LXC identity and sizing"
