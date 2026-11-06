@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""guest-exec — run a command as root inside a `_+lab` guest, found by vmid or name.
+
+  tools/guest-exec mautic 'docker ps --format "{{.Names}} {{.Status}}"'
+  tools/guest-exec 13040150 < check.sh      # script on stdin runs under bash -s
+
+Finds the guest's node itself and refuses any guest without the `_+lab` tag. An LXC runs
+through `pct exec` on its node (about a second). A VM has no guest agent and its root
+key lives in Vaultwarden, so the command runs through runner-lab-run.sh and
+playbooks/maintenance/guest-exec.yml at --ref <git-ref> (default master; about 30s).
+Stdout and stderr come back merged for a VM. The exit code is the command's.
+
+  tools/guest-exec [--ref <git-ref>] <vmid|name> [command | - ]
+"""
+import base64
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import labaccess  # noqa: E402
+
+args = sys.argv[1:]
+if not args or args[0] in ("-h", "--help"):
+    print(__doc__.strip())
+    sys.exit(0 if args else 2)
+ref = "master"
+if args[0] == "--ref":
+    ref, args = args[1], args[2:]
+target, args = args[0], args[1:]
+command, script = labaccess.command_or_stdin(args)
+values = labaccess.lab_values()
+ip, guest = labaccess.owned_guest(values, target)
+vmid = guest["vmid"]
+print(f"[guest-exec] {vmid} {guest.get('name')} ({guest['type']}, {guest['status']})", file=sys.stderr)
+if guest["status"] != "running":
+    labaccess.die(f"guest {vmid} is {guest['status']}", 1)
+
+if guest["type"] == "lxc":
+    sys.exit(labaccess.run_on_node(ip, labaccess.pct_exec(vmid, command), script))
+
+# A VM's root key lives in Vaultwarden, so the command travels through lab-run and
+# playbooks/maintenance/guest-exec.yml at --ref (default master), like any playbook run.
+body = script if script is not None else command.encode()
+rc, output = labaccess.run_marked_playbook(
+    ref, "playbooks/maintenance/guest-exec.yml",
+    {"guest": guest["name"], "command_b64": base64.b64encode(body).decode()},
+    "GUEST_EXEC_RESULT", f"guest-exec-{vmid}")
+sys.stdout.buffer.write(output)
+sys.exit(rc)

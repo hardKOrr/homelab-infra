@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""lab-wait — block until a lab-start job ends, then report it in one result.
+
+  tools-wait <name> [--timeout SECONDS] [--lines N]
+  tools-wait --log <file> --until <regex> [--timeout SECONDS]   # a log lab-start did not make
+
+Blocks for at most 570 seconds whatever --timeout asks (default 570), so one call always
+returns inside a 10-minute tool limit. Prints the state, the elapsed time, recent error
+lines and the last N log lines (default 20).
+
+Exit code: the job's own exit code when it has ended; 124 when it is still running (call
+lab-wait again with the same arguments); 2 for a usage error or an unknown job.
+"""
+import os
+import re
+import sys
+import time
+
+MAX_WAIT = 570
+POLL = 2
+ERRORS = re.compile(r"fatal:|FAILED!|ERROR|Traceback|UNREACHABLE!|\bfailed=[1-9]|unreachable=[1-9]|No such file")
+
+
+def usage(code):
+    print(__doc__.strip())
+    sys.exit(code)
+
+
+args = sys.argv[1:]
+if not args or args[0] in ("-h", "--help"):
+    usage(0 if args else 2)
+opts = {"--timeout": str(MAX_WAIT), "--lines": "20", "--log": None, "--until": None}
+name = None
+while args:
+    key = args.pop(0)
+    if key in opts:
+        if not args:
+            usage(2)
+        opts[key] = args.pop(0)
+    elif name is None and not key.startswith("-"):
+        name = key
+    else:
+        usage(2)
+
+wait = min(max(int(opts["--timeout"]), 0), MAX_WAIT)
+lines = int(opts["--lines"])
+job_dir = os.environ.get("LAB_JOB_DIR", "/tmp/lab-jobs")
+if opts["--log"]:
+    if not opts["--until"]:
+        sys.exit("lab-wait: --log needs --until <regex> that matches both success and failure")
+    log, rc_file, until = opts["--log"], None, re.compile(opts["--until"])
+elif name:
+    log, rc_file, until = os.path.join(job_dir, name + ".log"), os.path.join(job_dir, name + ".rc"), None
+else:
+    usage(2)
+if not os.path.exists(log):
+    print(f"lab-wait: no log {log}", file=sys.stderr)
+    sys.exit(2)
+
+
+def text():
+    with open(log, "rb") as handle:
+        return handle.read().decode("utf-8", "replace")
+
+
+def finished():
+    if rc_file:
+        return os.path.exists(rc_file)
+    return until.search(text()) is not None
+
+
+def alive():
+    """False when a lab-start job died without writing its exit code (killed)."""
+    pid_file = rc_file[:-3] + ".pid"
+    try:
+        os.kill(int(open(pid_file).read()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+start = time.monotonic()
+deadline = start + wait
+while not finished() and time.monotonic() < deadline:
+    if rc_file and not alive() and not finished():
+        break
+    time.sleep(min(POLL, max(deadline - time.monotonic(), 0)))
+
+body = text().splitlines()
+elapsed = int(time.monotonic() - start)
+since = int(time.time() - os.path.getmtime(log))
+if finished():
+    code = int(open(rc_file).read().strip() or 1) if rc_file else 0
+    state = f"done rc={code}" if rc_file else "matched --until"
+elif rc_file and not alive():
+    code, state = 1, "died without an exit code (killed?)"
+else:
+    code, state = 124, f"still running; call again (log last written {since}s ago)"
+print(f"lab-wait: {state}; waited {elapsed}s; {len(body)} log lines; {log}")
+errors = [line for line in body if ERRORS.search(line)]
+if errors:
+    print(f"--- error lines ({len(errors)}, last 10) ---")
+    print("\n".join(line[:300] for line in errors[-10:]))
+print(f"--- last {lines} lines ---")
+print("\n".join(line[:300] for line in body[-lines:]))
+sys.exit(code)

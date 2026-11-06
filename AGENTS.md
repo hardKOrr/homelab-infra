@@ -35,6 +35,7 @@ never depends on Rundeck.
 | Ansible layout, execution and config loading | [`ansible/README.md`](ansible/README.md), [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Rundeck jobs, the runner, `rd` and live runs | [`rundeck/README.md`](rundeck/README.md) |
 | Gate commands | [`gate/README.md`](gate/README.md) |
+| Lab commands from a workstation: wait, runner, guest | [`tools/README.md`](tools/README.md) |
 | Add an app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
 | Shared task files and playbooks | [`ansible/tasks/README.md`](ansible/tasks/README.md), [`ansible/playbooks/README.md`](ansible/playbooks/README.md) |
 | Application catalog | [`catalog/README.md`](catalog/README.md) |
