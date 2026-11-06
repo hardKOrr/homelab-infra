@@ -9,9 +9,7 @@
 #
 # `instance` names the deployment (hostname, Caddy subdomain, Authentik slug, Kuma
 # monitor); config/apps/<instance>.yml is merged over the defaults.
-#
-# Play 3 records the `media` registry key (CONTRACT.md §3) before wiring; wire-media-stack.yml
-# reads it, and the API key stored in homelab-infra/media/<instance>.
+# Play 3 records the `media` registry key (CONTRACT.md §3) that wire-media-stack.yml reads.
 # Drives the shared `servarr` role (roles/servarr/tasks/main.yml says why).
 - name: "Lidarr | Provision"
   hosts: localhost
@@ -58,6 +56,12 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: lidarr
+
+    # The workload's ingress host must be the estate's published hostname.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
 
     - name: Derive the published Lidarr hostname
       ansible.builtin.set_fact:
@@ -175,8 +179,7 @@
   gather_facts: false
 
   pre_tasks:
-    # Tolerate absence: pre-bootstrap there is no facts.yml and every provider
-    # when-condition below falls through to a silent no-op.
+    # Absent pre-bootstrap: every provider condition below then no-ops.
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -198,8 +201,7 @@
                          'host': _lidarr_deploy_host.servarr_media_host,
                          'config_path': _lidarr_deploy_host.servarr_media_config_path}} }}
 
-    # Belt-and-braces only: write-generated-facts.yml already merged the entry into the
-    # live homelabinfra_infra, and include_vars cannot override that set_fact.
+    # Belt-and-braces: include_vars cannot override the entry already merged by set_fact.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"

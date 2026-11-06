@@ -26,6 +26,11 @@ def main():
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
     plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/lidarr.yml")}
+    # The ingress hostname is derived only after the app's estate is resolved.
+    pre = [str(t) for t in plays["Lidarr | Provision"]["pre_tasks"]]
+    assert next(i for i, t in enumerate(pre) if "resolve-estate.yml" in t) < next(
+        i for i, t in enumerate(pre) if "servarr_fqdn" in t)
+    assert "routing.estate" in pre[next(i for i, t in enumerate(pre) if "resolve-estate.yml" in t)]
     # Docker stays the default: the stack host is only provisioned for that method.
     provision = plays["Lidarr | Provision"]["tasks"]
     assert all(task.get("when") for task in provision if "find-or-create-host" in str(task))
