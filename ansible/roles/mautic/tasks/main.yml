@@ -11,7 +11,9 @@
         state: directory
         owner: root
         group: root
-        mode: "0750"
+        # Natively the web user must traverse it: for the instance `mautic` the default
+        # data path sits below it. Its credential-bearing files keep their own modes.
+        mode: "{{ '0755' if mautic_native | bool else '0750' }}"
 
     - name: Mautic | Create writable volume directories for the web user
       ansible.builtin.file:
