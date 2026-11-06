@@ -81,12 +81,6 @@
 - name: Servarr native | Install the pinned release
   when: (_servarr_installed.content | default('') | b64decode | trim) != app_config.app.native_version
   block:
-    - name: Servarr native | Stop the app before replacing its files
-      ansible.builtin.systemd:
-        name: "{{ servarr_service }}"
-        state: stopped
-      failed_when: false
-
     - name: Servarr native | Download the release tarball
       ansible.builtin.get_url:
         url: "https://{{ servarr_service }}.servarr.com/v1/update/{{ app_config.app.native_branch }}/updatefile?version={{ app_config.app.native_version }}&os=linux&runtime=netcore&arch=x64"
@@ -94,23 +88,42 @@
         checksum: "sha256:{{ app_config.app.native_sha256 }}"
         mode: "0644"
 
-    - name: Servarr native | Unpack the release
-      ansible.builtin.unarchive:
-        src: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
-        dest: "{{ servarr_native_dir }}"
-        remote_src: true
-        extra_opts: [--strip-components=1]
-        owner: root
-        group: root
-      notify: Restart servarr
+    # Only now, with the verified tarball on disk, is the running app stopped.
+    - name: Servarr native | Replace the installed files with the downloaded release
+      block:
+        - name: Servarr native | Stop the app before replacing its files
+          ansible.builtin.systemd:
+            name: "{{ servarr_service }}"
+            state: stopped
+          failed_when: false
 
-    - name: Servarr native | Record the installed version
-      ansible.builtin.copy:
-        content: "{{ app_config.app.native_version }}\n"
-        dest: "{{ servarr_native_dir }}/.homelab-version"
-        owner: root
-        group: root
-        mode: "0644"
+        - name: Servarr native | Unpack the release
+          ansible.builtin.unarchive:
+            src: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
+            dest: "{{ servarr_native_dir }}"
+            remote_src: true
+            extra_opts: [--strip-components=1]
+            owner: root
+            group: root
+          notify: Restart servarr
+
+        - name: Servarr native | Record the installed version
+          ansible.builtin.copy:
+            content: "{{ app_config.app.native_version }}\n"
+            dest: "{{ servarr_native_dir }}/.homelab-version"
+            owner: root
+            group: root
+            mode: "0644"
+      rescue:
+        - name: Servarr native | Start the previous install again
+          ansible.builtin.systemd:
+            name: "{{ servarr_service }}"
+            state: started
+          failed_when: false
+
+        - name: Servarr native | Fail the replacement
+          ansible.builtin.fail:
+            msg: Replacing {{ servarr_service }} failed; the previous install was started again.
 
 - name: Servarr native | Write the systemd unit
   ansible.builtin.template:
