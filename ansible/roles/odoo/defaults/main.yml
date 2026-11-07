@@ -1,3 +1,13 @@
 ---
 odoo_project_dir: "/opt/{{ instance }}"
 odoo_config_file: "{{ odoo_project_dir }}/odoo.conf"
+
+# Native (native.yml): the package's own user, unit and config path. data_dir is the
+# filestore's parent, so the same recovery point restores on either hosting method.
+odoo_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+odoo_native_user: odoo
+odoo_native_service: odoo
+odoo_native_config: /etc/odoo/odoo.conf
+odoo_native_data_dir: "{{ app_config.app.filestore_path | dirname }}"
+odoo_owner: "{{ odoo_native_user if odoo_native | bool else app_config.app.puid }}"
+odoo_group: "{{ odoo_native_user if odoo_native | bool else app_config.app.pgid }}"

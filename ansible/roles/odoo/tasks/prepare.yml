@@ -1,0 +1,52 @@
+---
+# Shared by every hosting method: the module baseline, platform mail and the credentials.
+- name: Odoo | Assert the supported Community CRM baseline
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is iterable
+      - "'crm' in (app_config.crm.modules | default(['crm']))"
+      - (app_config.crm.modules | default(['crm']) | intersect(['studio', 'voip', 'iap', 'lead_mining'])) | length == 0
+    fail_msg: >-
+      The supported baseline must include Community crm. Enterprise-only modules are not
+      deployment dependencies; add other Community modules explicitly in instance config.
+
+- name: Odoo | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: Odoo | Generate or reuse administrator password
+  ansible.builtin.set_fact:
+    _odoo_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Odoo | Store credentials in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: odoo-community
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _odoo_admin_password }}"
+      database_provider: postgresql
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      filestore_path: "{{ app_config.app.filestore_path }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: Odoo | Validate requested Community modules
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is sequence
+      - (app_config.crm.modules | default(['crm']) | select('match', '^[a-z][a-z0-9_]*$') | list | length) == (app_config.crm.modules | default(['crm']) | length)
+    fail_msg: "crm.modules must be a list of safe Odoo module names."
+
+- name: Odoo | Resolve requested Community modules
+  ansible.builtin.set_fact:
+    _odoo_modules: "{{ app_config.crm.modules | default(['crm']) | unique | sort | join(',') }}"

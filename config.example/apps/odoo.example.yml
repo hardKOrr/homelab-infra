@@ -8,8 +8,13 @@
 # the cluster; the named PostgreSQL backend stays outside Kubernetes.
 # To use Docker on an LXC, set infrastructure.stacks.services-lxc.guest_type: lxc in
 # config/infrastructure.yml, keep hosting.method: docker and set stack: services-lxc.
+# To run Odoo natively on its own LXC or VM (the 18.0 nightly Debian package), set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc  # or vm
 hosting:
-  method: docker  # kubernetes is also supported
+  method: docker  # kubernetes and native are also supported
 # stack: services-lxc
 app:
   # Kubernetes data_dir claim size in GiB, using the cluster's default StorageClass.

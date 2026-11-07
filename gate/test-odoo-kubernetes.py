@@ -104,10 +104,10 @@ def main():
                 assert result.stdout.strip() == expected
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/odoo.yml").read_text())["odoo_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
-    assert [t["ansible.builtin.include_tasks"] for t in tasks("main.yml")] == ["docker.yml", "kubernetes.yml"]
-    assert [t["ansible.builtin.include_tasks"] for t in tasks("restore.yml")] == ["restore-docker.yml", "restore-kubernetes.yml"]
+    assert [t["ansible.builtin.include_tasks"] for t in tasks("main.yml")] == ["prepare.yml", "docker.yml", "native.yml", "kubernetes.yml"]
+    assert [t["ansible.builtin.include_tasks"] for t in tasks("restore.yml")] == ["restore-guest.yml", "restore-kubernetes.yml"]
 
     environment = Environment(trim_blocks=True, lstrip_blocks=True)
     environment.filters["to_json"] = json.dumps

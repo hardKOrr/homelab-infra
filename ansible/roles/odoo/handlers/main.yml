@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ odoo_project_dir }}"
     state: restarted
+  when: not (odoo_native | bool)
+
+- name: Restart native odoo
+  ansible.builtin.systemd:
+    name: "{{ odoo_native_service }}"
+    state: restarted
+  listen: Restart odoo
+  when: odoo_native | bool

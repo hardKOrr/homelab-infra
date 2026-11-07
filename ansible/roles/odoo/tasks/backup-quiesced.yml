@@ -4,6 +4,7 @@
 - name: Odoo backup | Dump the named PostgreSQL database
   ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
   vars:
+    database_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     database_app_instance: "{{ instance }}"
     database_app_config: "{{ app_config.app.database }}"
     database_dump_file: "{{ _odoo_backup_scratch.path }}/odoo.dump"
