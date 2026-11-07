@@ -92,6 +92,7 @@
         ollama_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
         ollama_fqdn: >-
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      when: app_config.hosting.method == 'kubernetes'
 
     - name: Provision Ollama's own VM
       ansible.builtin.include_role:
