@@ -1,0 +1,161 @@
+---
+# Ollama natively on an LXC or a VM: the pinned ollama-linux-amd64 release archive,
+# extracted into /usr as in Ollama's manual Linux install
+# (https://github.com/ollama/ollama/blob/main/docs/linux.mdx), under a unit of our own.
+# CPU mode only. ~/.ollama is a link to app.models_path, so the model store and key sit
+# where Docker's /root/.ollama mount puts them and one recovery point fits either method.
+- name: Ollama native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Ollama supports Debian-family amd64 guests only.
+
+- name: Ollama native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Ollama native | Install the package prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, zstd]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Ollama native | Create the service group
+  ansible.builtin.group:
+    name: "{{ ollama_native_user }}"
+    system: true
+
+- name: Ollama native | Create the service user
+  ansible.builtin.user:
+    name: "{{ ollama_native_user }}"
+    group: "{{ ollama_native_user }}"
+    home: "{{ ollama_native_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Ollama native | Read the installed version
+  ansible.builtin.command:
+    argv: [/usr/bin/ollama, --version]
+  register: _ollama_native_installed
+  changed_when: false
+  failed_when: false
+
+- name: Ollama native | Install the pinned release archive
+  when: >-
+    (_ollama_native_installed.stdout ~ _ollama_native_installed.stderr | default(''))
+    is not search('version is ' ~ (app_config.app.native_version | regex_escape) ~ '$', multiline=True)
+  block:
+    - name: Ollama native | Download the archive
+      ansible.builtin.get_url:
+        url: "https://github.com/ollama/ollama/releases/download/v{{ app_config.app.native_version }}/ollama-linux-amd64.tar.zst"
+        dest: "/var/tmp/ollama-linux-amd64-{{ app_config.app.native_version }}.tar.zst"
+        checksum: "sha256:{{ app_config.app.native_archive_sha256 }}"
+        mode: "0600"
+        timeout: 900
+
+    # The manual install says to remove the old libraries before upgrading.
+    - name: Ollama native | Remove the previous libraries
+      ansible.builtin.file:
+        path: /usr/lib/ollama
+        state: absent
+
+    - name: Ollama native | Extract the archive into /usr
+      ansible.builtin.command:
+        argv:
+          - tar
+          - --zstd
+          - -x
+          - -C
+          - /usr
+          - -f
+          - "/var/tmp/ollama-linux-amd64-{{ app_config.app.native_version }}.tar.zst"
+      changed_when: true
+      notify: Restart Ollama
+
+  always:
+    - name: Ollama native | Remove the archive
+      ansible.builtin.file:
+        path: "/var/tmp/ollama-linux-amd64-{{ app_config.app.native_version }}.tar.zst"
+        state: absent
+
+- name: Ollama native | Create the model storage
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ollama_native_user }}"
+    group: "{{ ollama_native_user }}"
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.storage_path }}"
+    - "{{ app_config.app.models_path }}"
+
+- name: Ollama native | Link ~/.ollama to the model storage
+  ansible.builtin.file:
+    src: "{{ app_config.app.models_path }}"
+    dest: "{{ ollama_native_home }}/.ollama"
+    state: link
+    owner: "{{ ollama_native_user }}"
+    group: "{{ ollama_native_user }}"
+
+- name: Ollama native | Render the unit
+  ansible.builtin.template:
+    src: ollama.service.j2
+    dest: "/etc/systemd/system/{{ ollama_native_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _ollama_native_unit
+  notify: Restart Ollama
+
+- name: Ollama native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _ollama_native_unit.changed
+
+- name: Ollama native | Enable and start Ollama
+  ansible.builtin.systemd:
+    name: "{{ ollama_native_service }}"
+    state: started
+    enabled: true
+
+- name: Ollama native | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Ollama native | Wait for the API tags endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/tags"
+    status_code: 200
+  register: _ollama_health
+  until: _ollama_health.status | default(0) == 200
+  retries: "{{ ollama_http_retries }}"
+  delay: "{{ ollama_http_delay }}"
+  changed_when: false
+
+- name: Ollama native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ ollama_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ ollama_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

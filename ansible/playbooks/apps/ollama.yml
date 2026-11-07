@@ -1,13 +1,9 @@
 ---
-# Deploy Ollama as Docker on its own VM, or as a pod on the k3s cluster (hosting.method:
-# kubernetes, CPU mode only; GPU mode needs a dedicated device passed to a VM). An instance that sets `stack:` instead lands on
-# that stack's host, so a stack with guest_type: lxc runs CPU-mode Ollama as Docker on an
-# LXC (a GPU needs a VM). CPU mode uses ordinary floating-VM placement.
-# When a dedicated PCIe GPU is named, it is assigned to this VM only; Ollama is not placed
-# on the shared ai-stack LXC and the play never selects a free device automatically.
-#
-# Before live binding a GPU, record the Ollama instance, Proxmox node, VM/VMID, exact PCI
-# address, GPU console recovery path, and model-storage path in the acceptance evidence.
+# Deploy Ollama as Docker on its own VM, natively on its own LXC or VM (hosting.method:
+# native, CPU mode), or as a pod on the k3s cluster (hosting.method: kubernetes, CPU mode).
+# An instance that sets `stack:` lands on that stack's host, so a stack with guest_type: lxc
+# runs CPU-mode Docker Ollama on an LXC. A dedicated PCIe GPU is assigned to a Docker VM
+# only; the play never selects a free device automatically.
 
 - name: "Ollama | Provision"
   hosts: localhost
@@ -71,6 +67,17 @@
           Ollama on Kubernetes runs in CPU mode. A dedicated GPU is passed to a VM only;
           clear app.gpu_device or set hosting.method to docker.
 
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+          - app_config.stack | default('', true) | length == 0
+          - app_config.app.gpu_device | default('', true) | trim | length == 0
+        fail_msg: >-
+          Native Ollama runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config, and leave stack and app.gpu_device unset (CPU mode).
+
     - name: Refuse a GPU on a stack-hosted Ollama
       ansible.builtin.assert:
         that:
@@ -112,10 +119,17 @@
         - app_config.hosting.method == 'docker'
         - app_config.stack | default('', true) | length > 0
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: ollama
+      when: app_config.hosting.method == 'native'
+
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
-
     - name: Open Ollama's declared Kubernetes network access
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
       when: app_config.hosting.method == 'kubernetes'
@@ -145,9 +159,10 @@
       failed_when: false
 
   tasks:
-    - name: Bootstrap the Ollama VM
+    - name: Bootstrap the Ollama guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
@@ -162,6 +177,12 @@
       ansible.builtin.include_role:
         name: ollama
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+    - name: Deploy Ollama natively
+      ansible.builtin.include_role:
+        name: ollama
+        tasks_from: native
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
 
 - name: "Ollama | Wire"
   hosts: localhost
@@ -183,7 +204,7 @@
   vars:
     _ollama_deploy_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker'
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
             and groups.get('deploy_' ~ instance, []) | length > 0
          else hostvars['localhost'] }}
     _ollama_kubernetes: "{{ _ollama_deploy_host.app_config.hosting.method == 'kubernetes' }}"
@@ -242,7 +263,6 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
-
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:

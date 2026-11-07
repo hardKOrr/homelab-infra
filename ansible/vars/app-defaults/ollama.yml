@@ -8,7 +8,7 @@
 ollama_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -18,6 +18,13 @@ ollama_defaults:
       restore_playbook: restore-app.yml
 
   proxmox:
+    # Used only when hosting.method is native (the guest type comes from the instance's
+    # proxmox.guest_type): CPU mode, models on the guest's own disk.
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 4
+    memory: 16384
+    disk_volume:
+      size: 128
     vm:
       cores: 8
       memory: 32768
@@ -31,7 +38,11 @@ ollama_defaults:
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.15
+    # Native: the same release's ollama-linux-amd64 archive, installed as in Ollama's manual
+    # Linux install (https://github.com/ollama/ollama/blob/main/docs/linux.mdx).
+    native_version: "0.40.15"
+    native_archive_sha256: 628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379
     port: 11434
     service_name: ollama
     # Empty selects CPU mode. GPU mode requires naming a dedicated device declared in
