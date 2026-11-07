@@ -6,8 +6,11 @@
 # enabled or required by this baseline.
 # Default: Docker on the services VM. Select Kubernetes explicitly after deploying
 # the cluster; the named PostgreSQL backend stays outside Kubernetes.
+# To use Docker on an LXC, set infrastructure.stacks.services-lxc.guest_type: lxc in
+# config/infrastructure.yml, keep hosting.method: docker and set stack: services-lxc.
 hosting:
   method: docker  # kubernetes is also supported
+# stack: services-lxc
 app:
   # Kubernetes data_dir claim size in GiB, using the cluster's default StorageClass.
   # storage: 10

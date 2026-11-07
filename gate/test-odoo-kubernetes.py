@@ -104,7 +104,7 @@ def main():
                 assert result.stdout.strip() == expected
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/odoo.yml").read_text())["odoo_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
     assert [t["ansible.builtin.include_tasks"] for t in tasks("main.yml")] == ["docker.yml", "kubernetes.yml"]
     assert [t["ansible.builtin.include_tasks"] for t in tasks("restore.yml")] == ["restore-docker.yml", "restore-kubernetes.yml"]
