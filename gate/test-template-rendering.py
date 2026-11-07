@@ -1899,6 +1899,7 @@ def plane_environment_context(plane_fqdn):
     return {
         "ansible_managed": "Managed by gate test",
         "plane_fqdn": plane_fqdn,
+        "plane_native": False,
         "app_config": {
             "app": {
                 "release": "v1.4.2",

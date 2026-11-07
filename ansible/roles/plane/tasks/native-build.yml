@@ -1,0 +1,98 @@
+---
+# Build the pinned source into a per-release directory: the Django virtualenv and the
+# pnpm/turbo builds of web, admin, space and live, with the same build settings the
+# upstream Dockerfiles use. The marker is written last, so a failed build is rerun.
+- name: Plane native build | Download the pinned Node runtime
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.node_version }}/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:https://nodejs.org/dist/v{{ app_config.app.node_version }}/SHASUMS256.txt"
+    dest: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Plane native build | Unpack the Node runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "{{ plane_native_node_dir }}/bin/node"
+  notify: Restart Plane
+
+- name: Plane native build | Check the build marker
+  ansible.builtin.stat:
+    path: "{{ plane_native_src }}/.built"
+  register: _plane_native_built
+
+- name: Plane native build | Download the pinned source
+  ansible.builtin.get_url:
+    url: "https://github.com/makeplane/plane/archive/refs/tags/{{ app_config.app.release }}.tar.gz"
+    checksum: "sha256:{{ app_config.app.native_source_sha256 }}"
+    dest: "/var/cache/plane-{{ app_config.app.release }}.tar.gz"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not _plane_native_built.stat.exists
+
+- name: Plane native build | Create the source directory
+  ansible.builtin.file:
+    path: "{{ plane_native_src }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plane native build | Unpack the source
+  ansible.builtin.unarchive:
+    src: "/var/cache/plane-{{ app_config.app.release }}.tar.gz"
+    dest: "{{ plane_native_src }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "{{ plane_native_src }}/package.json"
+  when: not _plane_native_built.stat.exists
+
+- name: Plane native build | Create the virtualenv
+  ansible.builtin.command:
+    argv: [python3, -m, venv, "{{ plane_native_venv }}"]
+    creates: "{{ plane_native_venv }}/bin/python"
+
+- name: Plane native build | Install the API requirements
+  ansible.builtin.command:
+    argv:
+      - "{{ plane_native_venv }}/bin/pip"
+      - install
+      - --no-input
+      - --disable-pip-version-check
+      - -r
+      - "{{ plane_native_src }}/apps/api/requirements.txt"
+  environment:
+    TMPDIR: /var/tmp
+  when: not _plane_native_built.stat.exists
+  changed_when: true
+
+- name: Plane native build | Install the workspace dependencies
+  ansible.builtin.command:
+    argv: ["{{ plane_native_node_dir }}/bin/corepack", pnpm, install, --frozen-lockfile]
+    chdir: "{{ plane_native_src }}"
+  environment: "{{ plane_native_node_env }}"
+  when: not _plane_native_built.stat.exists
+  changed_when: true
+
+- name: Plane native build | Build the web, admin, space and live apps
+  ansible.builtin.command:
+    argv: ["{{ plane_native_node_dir }}/bin/corepack", pnpm, turbo, run, build, "--filter={{ item.key }}"]
+    chdir: "{{ plane_native_src }}"
+  environment: "{{ plane_native_node_env | combine(item.value) }}"
+  loop: "{{ plane_native_builds | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: not _plane_native_built.stat.exists
+  changed_when: true
+
+- name: Plane native build | Record the completed build
+  ansible.builtin.copy:
+    content: "{{ app_config.app.release }}\n"
+    dest: "{{ plane_native_src }}/.built"
+    owner: root
+    group: root
+    mode: "0644"

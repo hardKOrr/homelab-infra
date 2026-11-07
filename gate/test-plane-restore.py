@@ -30,12 +30,17 @@ def check_swap_inputs():
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "database/plane.dump"}
     assert swap["recovery_swap_staging_parent"] == "{{ plane_project_dir }}"
-    paths = {p["source"]: p for p in swap["recovery_swap_paths"]}
+    facts = next(t for t in restore if t.get("name") == "Plane restore | Resolve the paths and services the swap replaces")[
+        "ansible.builtin.set_fact"]
+    assert swap["recovery_swap_paths"].split() == [
+        "{{", "_plane_restore_paths", "+", "([]", "if", "plane_native", "|", "bool", "else",
+        "_plane_restore_docker_paths)", "}}"]
+    paths = {p["source"]: p for p in facts["_plane_restore_paths"] + facts["_plane_restore_docker_paths"]}
     created = next(t for t in deploy if t.get("name") == "Plane | Create persistent service directories")
     for directory in created["loop"][1:-1]:
         name = directory.rsplit("/", 1)[1]
         assert paths[f"data/{name}"]["path"] == "{{ _plane_restore_data_path }}/" + name, name
-        assert (paths[f"data/{name}"]["owner"], paths[f"data/{name}"]["group"]) == ("root", "root")
+        assert (paths[f"data/{name}"]["owner"], paths[f"data/{name}"]["group"]) == ("{{ plane_native_owner }}",) * 2
     assert (paths["data/rabbitmq"]["owner"], paths["data/rabbitmq"]["group"]) == ("live", "live")
     assert paths["object-storage"]["path"] == "{{ _plane_restore_object_storage_path }}"
     bind_mounts = {line.split('"')[1].split(":")[0].replace("{{ app_config.app.data_path }}/", "data/")
@@ -43,7 +48,8 @@ def check_swap_inputs():
     assert bind_mounts <= set(paths), f"every data bind mount is restored: {bind_mounts - set(paths)}"
     services = [line.strip().rstrip(":") for line in compose.splitlines()
                 if line.startswith("  ") and not line.startswith("   ") and line.strip().endswith(":")]
-    assert swap["recovery_swap_stop_services"] == services, "the swap stops the whole project"
+    assert facts["_plane_restore_compose_services"] == services, "the swap stops the whole project"
+    assert "plane_native_services" in swap["recovery_swap_stop_services"]
     assert swap["recovery_swap_health_headers"]["Host"].endswith("{{ homelabinfra_infra.domain }}")
     assert swap["recovery_swap_health_follow_redirects"] == "none"
 
@@ -67,7 +73,7 @@ def check_staged_hook():
         stage = Path(directory)
         (stage / "database").mkdir()
         (stage / "redis").mkdir()
-        variables = {"recovery_swap_stage": str(stage), "app_config": {"app": {"release": "v1.2.3"}}}
+        variables = {"plane_native": False, "recovery_swap_stage": str(stage), "app_config": {"app": {"release": "v1.2.3"}}}
         assert run_hook("plane", "staged", variables, stub).returncode != 0, "no release identity"
         (stage / "database/plane-release.txt").write_text("v1.2.3\n")
         assert run_hook("plane", "staged", variables, stub).returncode != 0, "no Redis RDB"

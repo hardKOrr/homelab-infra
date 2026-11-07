@@ -1,6 +1,6 @@
 ---
 # Restore Plane's application-consistent PostgreSQL, Redis, server/worker and MinIO state
-# through the shared swap. The point is extracted and checked while Plane still runs. The
+# through the shared swap (Docker or native). The point is extracted and checked while Plane still runs. The
 # replaced hook loads the Redis RDB into the named Redis backend and gives the target the
 # source's keys; a failure after the stop puts the original paths, database, Redis dataset
 # and keys back and starts Plane. The guest's backup timer takes the same lock.
@@ -117,6 +117,34 @@
   when: restore_destination == 'new'
   no_log: true
 
+- name: Plane restore | Resolve the paths and services the swap replaces
+  ansible.builtin.set_fact:
+    # Native keeps these directories for the shared layout; only Docker's RabbitMQ
+    # container stores its state in data_path (the native broker is recreated from Vaultwarden).
+    _plane_restore_paths:
+      - {path: "{{ _plane_restore_data_path }}/api", source: data/api, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750", allow_empty: true}
+      - {path: "{{ _plane_restore_data_path }}/worker", source: data/worker, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750", allow_empty: true}
+      - {path: "{{ _plane_restore_data_path }}/beat", source: data/beat, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750", allow_empty: true}
+      - {path: "{{ _plane_restore_data_path }}/migrator", source: data/migrator, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750", allow_empty: true}
+      - {path: "{{ _plane_restore_data_path }}/proxy", source: data/proxy, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750", allow_empty: true}
+      - {path: "{{ _plane_restore_object_storage_path }}", source: object-storage, owner: "{{ plane_native_owner }}", group: "{{ plane_native_owner }}", mode: "0750"}
+    _plane_restore_docker_paths:
+      # RabbitMQ's entrypoint gives its directory to the image's own user.
+      - {path: "{{ _plane_restore_data_path }}/rabbitmq", source: data/rabbitmq, owner: live, group: live, mode: "0750"}
+    _plane_restore_compose_services:
+      - plane-web
+      - plane-space
+      - plane-admin
+      - plane-live
+      - plane-api
+      - plane-worker
+      - plane-beat-worker
+      - plane-migrator
+      - plane-mq
+      - plane-minio
+      - plane-minio-init
+      - plane-proxy
+
 # Redis's RDB travels through the controller only as private transfer material; the live
 # dataset's copy there is what a rollback loads back. Both are removed afterwards.
 - name: Plane restore | Allocate controller Redis transfer space
@@ -140,36 +168,17 @@
     - name: Plane restore | Preview or replace the paths, database and Redis dataset
       ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
       vars:
-        recovery_swap_runtime: docker
+        recovery_swap_runtime: "{{ plane_runtime }}"
         recovery_swap_backup_id: "{{ _plane_restore_backup_id }}"
         recovery_swap_archives: [database.pxar, redis.pxar, data.pxar, object-storage.pxar]
         # Staging sits in the project directory, outside both backed-up paths.
         recovery_swap_staging_parent: "{{ plane_project_dir }}"
-        recovery_swap_paths:
-          - {path: "{{ _plane_restore_data_path }}/api", source: data/api, owner: root, group: root, mode: "0750", allow_empty: true}
-          - {path: "{{ _plane_restore_data_path }}/worker", source: data/worker, owner: root, group: root, mode: "0750", allow_empty: true}
-          - {path: "{{ _plane_restore_data_path }}/beat", source: data/beat, owner: root, group: root, mode: "0750", allow_empty: true}
-          - {path: "{{ _plane_restore_data_path }}/migrator", source: data/migrator, owner: root, group: root, mode: "0750", allow_empty: true}
-          - {path: "{{ _plane_restore_data_path }}/proxy", source: data/proxy, owner: root, group: root, mode: "0750", allow_empty: true}
-          # RabbitMQ's entrypoint gives its directory to the image's own user.
-          - {path: "{{ _plane_restore_data_path }}/rabbitmq", source: data/rabbitmq, owner: live, group: live, mode: "0750"}
-          - {path: "{{ _plane_restore_object_storage_path }}", source: object-storage, owner: root, group: root, mode: "0750"}
+        recovery_swap_paths: >-
+          {{ _plane_restore_paths + ([] if plane_native | bool else _plane_restore_docker_paths) }}
         recovery_swap_database:
           config: "{{ app_config.app.database }}"
           dump: database/plane.dump
-        recovery_swap_stop_services:
-          - plane-web
-          - plane-space
-          - plane-admin
-          - plane-live
-          - plane-api
-          - plane-worker
-          - plane-beat-worker
-          - plane-migrator
-          - plane-mq
-          - plane-minio
-          - plane-minio-init
-          - plane-proxy
+        recovery_swap_stop_services: "{{ plane_native_services if plane_native | bool else _plane_restore_compose_services }}"
         recovery_swap_compose_project: "{{ plane_project_dir }}"
         recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
         recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"

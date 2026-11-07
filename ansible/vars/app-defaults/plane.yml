@@ -5,7 +5,7 @@
 plane_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
   recovery:
@@ -13,8 +13,35 @@ plane_defaults:
     native:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
+  proxmox:
+    # Used only when hosting.method is native (the guest type comes from the instance's
+    # proxmox.guest_type); the frontend build needs the memory and disk.
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 4
+    memory: 12288
+    disk_volume:
+      size: 60
+    vm:
+      cores: 4
+      memory: 12288
+      disk_size: 60
+      agent: 1
+      onboot: true
+      description: "Plane, created by homelab-infra"
+      tags: [_+lab, _-debian]
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
     release: v1.4.2
+    # Native: the v1.4.2 source built on the guest, with the Node version its Dockerfiles
+    # use, and the S3 server (the Silo release the Docker image is pinned to).
+    native_source_sha256: 99c69e67d5c06e6c78eca690aaecba36a7f5d1c0d9184d3283c743d9b2e5da05
+    node_version: "22.23.4"
+    native_object_storage_release: "2026-09-16T00-00-00Z"
+    native_object_storage_version: "20260916000000.0.0"
+    native_object_storage_sha256: 381e745510a8fb64323d7bb3207f95984b7f4ed826f4fcad318f97683c420c73
     port: 8093
     data_path: "/opt/{{ instance }}/data"
     object_storage_path: "/opt/{{ instance }}/object-storage"

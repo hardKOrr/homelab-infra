@@ -1,0 +1,33 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Plane {{ item.value.description }} ({{ instance }})
+After=network-online.target{% for unit in item.value.needs %} {{ unit }}{% endfor %}
+
+Wants=network-online.target
+{% if item.value.needs %}
+Requires={{ item.value.needs | join(' ') }}
+{% endif %}
+
+[Service]
+Type=simple
+User={{ plane_native_user }}
+Group={{ plane_native_user }}
+WorkingDirectory={{ item.value.workdir }}
+Environment=HOME={{ plane_project_dir }}/home
+Environment=MACHINE_SIGNATURE={{ ansible_facts.machine_id | hash('sha256') }}
+{% for name, value in (item.value.env | default({})).items() %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+EnvironmentFile={{ plane_env_file }}
+{% for command in (item.value.pre | default([])) + (item.value.api_pre | default([])) %}
+ExecStartPre={{ command }}
+{% endfor %}
+ExecStart={{ item.value.start }}
+TimeoutStartSec=900
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

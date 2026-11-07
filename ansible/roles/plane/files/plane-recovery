@@ -17,11 +17,17 @@ set -a
 . "$CONFIG"
 set +a
 
-for required in PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH \
-  PLANE_DB_HOST PLANE_DB_PORT PLANE_DB_NAME PLANE_DB_USER PLANE_DB_PASSWORD \
-  PLANE_REDIS_HOST PLANE_REDIS_PORT PLANE_REDIS_PASSWORD PLANE_BACKUP_ID PLANE_RELEASE \
-  PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE DATABASE_CLIENT_SCRIPT \
-  PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG; do
+RUNTIME=${PLANE_RUNTIME:-docker}
+required_vars=(PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH
+  PLANE_DB_HOST PLANE_DB_PORT PLANE_DB_NAME PLANE_DB_USER PLANE_DB_PASSWORD
+  PLANE_REDIS_HOST PLANE_REDIS_PORT PLANE_REDIS_PASSWORD PLANE_BACKUP_ID PLANE_RELEASE
+  DATABASE_CLIENT_SCRIPT PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG)
+case "$RUNTIME" in
+  docker) required_vars+=(PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE) ;;
+  native) required_vars+=(PLANE_SERVICES PLANE_POSTGRES_BIN) ;;
+  *) echo "Plane recovery runtime is unsupported: $RUNTIME" >&2; exit 1 ;;
+esac
+for required in "${required_vars[@]}"; do
   [[ -n "${!required:-}" ]] || { echo "Plane recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
@@ -62,6 +68,7 @@ case "$PLANE_DATA_PATH" in
   "$PLANE_OBJECT_STORAGE_PATH"/*) echo "Plane recovery paths overlap" >&2; exit 1 ;;
 esac
 
+read -r -a native_services <<<"${PLANE_SERVICES:-}"
 compose=(docker compose --project-directory "$PLANE_PROJECT_DIR" -f "$PLANE_PROJECT_DIR/docker-compose.yml")
 work=$(mktemp -d /var/tmp/homelab-plane.XXXXXX)
 lock="/run/lock/homelab-infra-plane-${INSTANCE}.lock"
@@ -69,11 +76,27 @@ lock_acquired=0
 stopped=0
 restart_on_failure=0
 
+stop_project() {
+  if [[ "$RUNTIME" == native ]]; then
+    systemctl stop "${native_services[@]}"
+  else
+    "${compose[@]}" stop
+  fi
+}
+
+start_project() {
+  if [[ "$RUNTIME" == native ]]; then
+    systemctl start "${native_services[@]}"
+  else
+    "${compose[@]}" start
+  fi
+}
+
 finish() {
   local rc=$?
   rm -rf -- "$work"
   if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
-    "${compose[@]}" start >/dev/null 2>&1 || true
+    start_project >/dev/null 2>&1 || true
   fi
   if [[ "$lock_acquired" == 1 ]]; then
     rmdir -- "$lock" 2>/dev/null || true
@@ -85,6 +108,10 @@ trap finish EXIT
 # Dump or check the named database with the shared client (tasks/database/scripts/
 # database-client.sh) in the server-matched image, as the application's own login.
 database_client() {
+  if [[ "$RUNTIME" == native ]]; then
+    PATH="$PLANE_POSTGRES_BIN:$PATH" DB_ENGINE=postgresql "$DATABASE_CLIENT_SCRIPT" "$1" "$2"
+    return
+  fi
   docker run --rm --network host \
     --volume "$(dirname -- "$2"):/work" \
     --volume "$DATABASE_CLIENT_SCRIPT:/usr/local/bin/database-client.sh:ro" \
@@ -104,21 +131,27 @@ backup() {
   # The named PostgreSQL/Redis guests and unrelated shared-guest services remain untouched.
   stopped=1
   restart_on_failure=1
-  "${compose[@]}" stop
+  stop_project
 
   database_client dump "$work/database/plane.dump"
   printf '%s\n' "$PLANE_RELEASE" > "$work/database/plane-release.txt"
   database_client verify "$work/database/plane.dump"
 
-  docker run --rm --network host \
-    --volume "$work/redis:/backup" \
-    --env REDIS_HOST --env REDIS_PORT --env REDISCLI_AUTH \
-    "$PLANE_REDIS_IMAGE" /bin/sh -ceu \
-    'redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" \
-      --rdb /backup/dump.rdb'
-  test -s "$work/redis/dump.rdb"
-  docker run --rm --volume "$work/redis:/backup:ro" "$PLANE_REDIS_IMAGE" \
-    redis-check-rdb /backup/dump.rdb >/dev/null
+  if [[ "$RUNTIME" == native ]]; then
+    redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" --rdb "$work/redis/dump.rdb"
+    test -s "$work/redis/dump.rdb"
+    redis-check-rdb "$work/redis/dump.rdb" >/dev/null
+  else
+    docker run --rm --network host \
+      --volume "$work/redis:/backup" \
+      --env REDIS_HOST --env REDIS_PORT --env REDISCLI_AUTH \
+      "$PLANE_REDIS_IMAGE" /bin/sh -ceu \
+      'redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" \
+        --rdb /backup/dump.rdb'
+    test -s "$work/redis/dump.rdb"
+    docker run --rm --volume "$work/redis:/backup:ro" "$PLANE_REDIS_IMAGE" \
+      redis-check-rdb /backup/dump.rdb >/dev/null
+  fi
 
   "$PBS_CLIENT_SCRIPT" backup --id "$PLANE_BACKUP_ID" --no-prune \
     database.pxar:"$work/database" redis.pxar:"$work/redis" data.pxar:"$PLANE_DATA_PATH" \
@@ -127,7 +160,7 @@ backup() {
 
   # Do not prune snapshots here. This recovery action preserves existing points; any PBS
   # datastore-wide retention policy is independent and must be verified separately.
-  "${compose[@]}" start
+  start_project
   stopped=0
   restart_on_failure=0
 }
