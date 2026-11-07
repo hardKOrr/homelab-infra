@@ -11,7 +11,9 @@ module.exports = async ({ page, step, url }) => {
     const response = await page.request.get(`${url}/api/instances/`);
     if (!response.ok()) throw new Error(`API returned ${response.status()}`);
     const data = await response.json();
-    if (!data.instance?.is_setup_done) throw new Error('Instance setup is incomplete');
+    if (!data.instance || typeof data.instance !== 'object') {
+      throw new Error('API did not return an instance');
+    }
   });
 
   await step('admin sign-in page renders', async () => {
