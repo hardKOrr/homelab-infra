@@ -121,6 +121,7 @@ assert recovery["archives"] == [
     {"name": "prometheus", "claim": "{{ restore_target }}-prometheus", "owner": "65534:472"},
 ]
 assert recovery["stop"] == ["{{ restore_target }}"]
+assert recovery["after_restore_tasks"].endswith("/tasks/restore-kubernetes-credential.yml")
 assert "recovery-restore.yml" in restore[0]["ansible.builtin.include_tasks"]
 assert not (ROLE / "templates/kubernetes").exists()
 
@@ -132,5 +133,22 @@ facts = next(
     t for t in playbook[2]["pre_tasks"] if t["name"] == "Record metrics facts"
 )
 assert facts["when"] == isolated
+
+# Restoring between instances with different credentials: the reset Job runs against the
+# TARGET's volume and reads the TARGET's Secret, never the source's.
+job = yaml.safe_load(environment.from_string((ROLE / "templates/reset-admin-job.yaml.j2").read_text(
+    encoding="utf-8")).render(
+    restore_target="obs-target",
+    restore_target_config={"app": {"grafana_image": "docker.io/grafana/grafana:latest"}},
+    instance="obs-source",
+))
+pod = job["spec"]["template"]["spec"]
+assert job["metadata"]["name"] == "obs-target-reset-admin"
+assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == "obs-target-grafana"
+assert pod["containers"][0]["envFrom"][0]["secretRef"]["name"] == "obs-target"
+assert "obs-source" not in json.dumps(job)
+assert "reset-admin-password" in pod["containers"][0]["command"][-1]
+credential = load("tasks/restore-kubernetes-credential.yml")
+assert credential[0]["ansible.builtin.include_tasks"].endswith("run-job.yml")
 
 print("observability kubernetes: ok")

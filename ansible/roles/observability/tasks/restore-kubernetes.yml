@@ -15,6 +15,7 @@
           owner: "65534:472"
       stop:
         - "{{ restore_target }}"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-credential.yml"
       describe: >-
         the {{ restore_target }}-grafana and {{ restore_target }}-prometheus volumes
         (Grafana's database and Prometheus's TSDB)
