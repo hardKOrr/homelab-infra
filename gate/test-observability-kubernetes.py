@@ -91,8 +91,12 @@ deployment = objects["Deployment", "obs-test"]
 pod = deployment["spec"]["template"]["spec"]
 assert deployment["spec"]["strategy"]["type"] == "Recreate"
 assert pod["automountServiceAccountToken"] is False
+assert pod["securityContext"]["runAsUser"] == 472
+assert pod["securityContext"]["runAsGroup"] == 472
 containers = {c["name"]: c for c in pod["containers"]}
 assert set(containers) == {"prometheus", "grafana"}
+assert containers["prometheus"]["securityContext"]["runAsUser"] == 65534
+assert containers["grafana"]["securityContext"]["runAsUser"] == 472
 assert "--web.listen-address=127.0.0.1:9090" in containers["prometheus"]["args"]
 assert "ports" not in containers["prometheus"]
 service = objects["Service", "obs-test"]["spec"]
