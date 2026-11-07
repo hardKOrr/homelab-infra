@@ -139,7 +139,8 @@ def check_playbooks_use_it():
             "tasks/proxmox/resolve-instance-guest.yml, which also finds a guest Remove kept"
         )
         if "tasks_from: provision-vm" in text:
-            text += (ROOT / "ansible/roles/comfyui/tasks/provision-vm.yml").read_text()
+            role = playbook.stem
+            text += (ROOT / f"ansible/roles/{role}/tasks/provision-vm.yml").read_text()
         if "name: _template-native" in text:
             text += (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
         if "tasks/proxmox/resolve-instance-guest.yml" in text:

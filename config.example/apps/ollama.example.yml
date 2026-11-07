@@ -8,6 +8,13 @@
 # console recovery path, and model-storage path. The 1024 GiB default VM disk is intentionally
 # sized for local model downloads; override it only with an explicitly sized disk.
 
+# To use Docker on an LXC (CPU mode only; a GPU needs a VM), keep gpu_device empty,
+# uncomment these instance overrides and set infrastructure.stacks.ollama-lxc.guest_type:
+# lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: ollama-lxc
+
 app:
   image: ollama/ollama:latest
   port: 11434
