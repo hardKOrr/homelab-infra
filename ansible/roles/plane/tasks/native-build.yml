@@ -19,6 +19,12 @@
     creates: "{{ plane_native_node_dir }}/bin/node"
   notify: Restart Plane
 
+- name: Plane native build | Enable pnpm for Turbo subprocesses
+  ansible.builtin.command:
+    argv: ["{{ plane_native_node_dir }}/bin/corepack", enable, pnpm]
+    creates: "{{ plane_native_node_dir }}/bin/pnpm"
+  environment: "{{ plane_native_node_env }}"
+
 - name: Plane native build | Check the build marker
   ansible.builtin.stat:
     path: "{{ plane_native_src }}/.built"
