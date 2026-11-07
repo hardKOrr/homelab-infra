@@ -18,8 +18,15 @@ set -a
 . "$CONFIG"
 set +a
 
-for required in OPEN_WEBUI_PROJECT_DIR OPEN_WEBUI_SERVICE OPEN_WEBUI_DATA_PATH \
-  OPEN_WEBUI_IMAGE OPEN_WEBUI_BACKUP_ID PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG; do
+RUNTIME=${OPEN_WEBUI_RUNTIME:-docker}
+required_vars=(OPEN_WEBUI_PROJECT_DIR OPEN_WEBUI_SERVICE OPEN_WEBUI_DATA_PATH
+  OPEN_WEBUI_BACKUP_ID PBS_CLIENT_SCRIPT PBS_CLIENT_CONFIG)
+case "$RUNTIME" in
+  docker) required_vars+=(OPEN_WEBUI_IMAGE) ;;
+  native) required_vars+=(OPEN_WEBUI_PYTHON) ;;
+  *) echo "Open WebUI recovery runtime is unsupported: $RUNTIME" >&2; exit 1 ;;
+esac
+for required in "${required_vars[@]}"; do
   [[ -n "${!required:-}" ]] || { echo "Open WebUI recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
@@ -38,10 +45,40 @@ lock_acquired=0
 stopped=0
 restart_on_failure=0
 
+stop_service() {
+  if [[ "$RUNTIME" == native ]]; then
+    systemctl stop "$OPEN_WEBUI_SERVICE"
+  else
+    "${compose[@]}" stop "$OPEN_WEBUI_SERVICE"
+  fi
+}
+
+start_service() {
+  if [[ "$RUNTIME" == native ]]; then
+    systemctl start "$OPEN_WEBUI_SERVICE"
+  else
+    "${compose[@]}" start "$OPEN_WEBUI_SERVICE"
+  fi
+}
+
+# The pinned Open WebUI's own Python checks the database it will open.
+check_database() {
+  local code='
+import sqlite3, sys
+result = sqlite3.connect("file:" + sys.argv[1] + "/webui.db?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
+sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)'
+  if [[ "$RUNTIME" == native ]]; then
+    "$OPEN_WEBUI_PYTHON" -c "$code" "$OPEN_WEBUI_DATA_PATH"
+  else
+    docker run --rm --network none --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
+      --entrypoint python3 "$OPEN_WEBUI_IMAGE" -c "$code" /source
+  fi
+}
+
 finish() {
   local rc=$?
   if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
-    "${compose[@]}" start "$OPEN_WEBUI_SERVICE" >/dev/null 2>&1 || true
+    start_service >/dev/null 2>&1 || true
   fi
   if [[ "$lock_acquired" == 1 ]]; then
     rmdir -- "$lock" 2>/dev/null || true
@@ -58,19 +95,14 @@ backup() {
   lock_acquired=1
   # SQLite is single-instance state. Stop this Compose service before checking or reading
   # the data tree; selected Ollama/LiteLLM services and their model stores stay untouched.
-  "${compose[@]}" stop "$OPEN_WEBUI_SERVICE" >/dev/null
+  stop_service >/dev/null
   stopped=1
   restart_on_failure=1
-  # The pinned Open WebUI image's own Python checks the database it will open.
-  docker run --rm --network none --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
-    --entrypoint python3 "$OPEN_WEBUI_IMAGE" -c '
-import sqlite3, sys
-result = sqlite3.connect("file:/source/webui.db?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
-sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)'
+  check_database
   # Open WebUI keeps every point; PBS's own retention prunes the group.
   "$PBS_CLIENT_SCRIPT" backup --id "$OPEN_WEBUI_BACKUP_ID" --no-prune data.pxar:"$OPEN_WEBUI_DATA_PATH"
   echo "Open WebUI backup complete (data.pxar; SQLite integrity verified)"
-  "${compose[@]}" start "$OPEN_WEBUI_SERVICE" >/dev/null
+  start_service >/dev/null
   stopped=0
   restart_on_failure=0
 }

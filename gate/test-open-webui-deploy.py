@@ -31,7 +31,7 @@ def open_webui_release_image_and_docker_bootstrap():
     deploy = next(play for play in plays if play.get("name") == "Open WebUI | Deploy")
     tasks = deploy["tasks"]
 
-    bootstrap = task_named(tasks, "Bootstrap Docker guest")
+    bootstrap = task_named(tasks, "Bootstrap the Open WebUI guest")
     updates = task_named(tasks, "Configure OS update notifications")
     docker = task_named(tasks, "Ensure Docker is installed on the AI stack host")
     app = task_named(tasks, "Deploy Open WebUI")
@@ -45,7 +45,7 @@ def open_webui_kubernetes_deployment_uses_shared_operations():
         (ROOT / "ansible/vars/app-defaults/open-webui.yml").read_text(encoding="utf-8")
     )["open_webui_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["app"]["container_port"] == 8080
     assert defaults["app"]["data_mount_path"] == "/app/backend/data"
     assert defaults["app"]["storage"] > 0
@@ -109,7 +109,7 @@ def open_webui_recovery_uploads_through_the_shared_client():
     assert "PRAGMA integrity_check" in script
     install = task_named(tasks, "Open WebUI | Install the shared PBS client and this instance's settings")
     assert install["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-script.yml")
-    assert install["vars"]["pbs_client_runtime"] == "docker"
+    assert install["vars"]["pbs_client_runtime"] == "{{ open_webui_runtime }}"
     render = task_named(tasks, "Open WebUI | Render root-only recovery configuration")
     assert tasks.index(install) < tasks.index(render)
 

@@ -1,0 +1,98 @@
+---
+# Open WebUI natively on an LXC or a VM: the pinned `open-webui` PyPI package installed with
+# pip into a virtualenv, as in Open WebUI's Python install
+# (https://docs.openwebui.com/getting-started/quick-start/), run by one systemd unit.
+# main.yml has already written the environment file and the data directory the unit uses.
+- name: Open WebUI native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: Native Open WebUI supports Debian 12 and Ubuntu 24.04 on amd64 only.
+
+- name: Open WebUI native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Open WebUI native | Install Python and its build prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, python3, python3-venv, python3-pip, build-essential, python3-dev]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Open WebUI native | Read the installed package version
+  ansible.builtin.command:
+    argv:
+      - "{{ open_webui_native_venv }}/bin/python"
+      - -c
+      - "import importlib.metadata as m; print(m.version('open-webui'))"
+  register: _open_webui_native_installed
+  changed_when: false
+  failed_when: false
+
+- name: Open WebUI native | Create the virtualenv
+  ansible.builtin.command:
+    argv: [python3, -m, venv, "{{ open_webui_native_venv }}"]
+    creates: "{{ open_webui_native_venv }}/bin/python"
+
+- name: Open WebUI native | Install the pinned package
+  ansible.builtin.command:
+    argv:
+      - "{{ open_webui_native_venv }}/bin/pip"
+      - install
+      - --no-input
+      - --disable-pip-version-check
+      - "open-webui=={{ app_config.app.native_version }}"
+  environment:
+    TMPDIR: /var/tmp
+  when: _open_webui_native_installed.stdout | trim != app_config.app.native_version
+  notify: Restart Open WebUI
+  changed_when: true
+
+- name: Open WebUI native | Render the service unit
+  ansible.builtin.template:
+    src: open-webui.service.j2
+    dest: "/etc/systemd/system/{{ open_webui_native_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _open_webui_native_unit
+  notify: Restart Open WebUI
+
+- name: Open WebUI native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _open_webui_native_unit.changed
+
+- name: Open WebUI native | Enable and start Open WebUI
+  ansible.builtin.systemd:
+    name: "{{ open_webui_native_service }}"
+    state: started
+    enabled: true
+
+- name: Open WebUI native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ open_webui_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ open_webui_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

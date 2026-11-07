@@ -1,7 +1,7 @@
 ---
-# restore-swap.yml staged hook: the pinned Open WebUI image's own Python checks the
-# database it will open, while the live instance still serves.
-- name: Open WebUI restore | Check the staged webui.db
+# restore-swap.yml staged hook: the pinned Open WebUI's own Python (its image, or the
+# native virtualenv) checks the database it will open, while the live instance still serves.
+- name: Open WebUI restore | Check the staged webui.db in the pinned image
   ansible.builtin.command:
     argv:
       - docker
@@ -15,10 +15,17 @@
       - python3
       - "{{ app_config.app.image }}"
       - -c
-      - |
-        import os, sqlite3, sys
-        if not os.path.getsize("/source/webui.db"):
-            sys.exit("webui.db is empty")
-        result = sqlite3.connect("file:/source/webui.db?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
-        sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)
+      - "{{ open_webui_staged_check }}"
+      - /source
   changed_when: false
+  when: not (open_webui_native | bool)
+
+- name: Open WebUI restore | Check the staged webui.db in the virtualenv
+  ansible.builtin.command:
+    argv:
+      - "{{ open_webui_native_venv }}/bin/python"
+      - -c
+      - "{{ open_webui_staged_check }}"
+      - "{{ recovery_swap_stage }}/data"
+  changed_when: false
+  when: open_webui_native | bool

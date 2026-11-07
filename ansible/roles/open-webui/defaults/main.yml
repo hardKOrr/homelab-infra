@@ -5,3 +5,20 @@ open_webui_env_file: "{{ open_webui_project_dir }}/open-webui.env"
 open_webui_recovery_config_dir: /etc/homelab-infra/open-webui
 open_webui_recovery_config: "{{ open_webui_recovery_config_dir }}/{{ instance }}.env"
 open_webui_recovery_script: /usr/local/sbin/homelab-infra-open-webui-recovery
+
+# Native (native.yml): Open WebUI's PyPI package in a virtualenv, run by one unit as its own
+# user. The data directory is the same app.data_path the Docker mount uses.
+open_webui_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+open_webui_native_user: open-webui
+open_webui_native_service: open-webui
+open_webui_native_venv: "{{ open_webui_project_dir }}/venv"
+open_webui_owner: "{{ open_webui_native_user if open_webui_native | bool else 'root' }}"
+open_webui_runtime: "{{ app_config.hosting.method | default('docker') }}"
+open_webui_native_home: "/var/lib/{{ instance }}"
+open_webui_staged_check: |
+  import os, sqlite3, sys
+  path = sys.argv[1] + "/webui.db"
+  if not os.path.getsize(path):
+      sys.exit("webui.db is empty")
+  result = sqlite3.connect("file:" + path + "?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
+  sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)

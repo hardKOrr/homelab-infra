@@ -29,10 +29,10 @@ def task_named(name):
 
 def check_swap_and_lock():
     swap = swap_inputs("open-webui", task_file="restore-docker.yml")
-    assert swap["recovery_swap_runtime"] == "docker"
+    assert swap["recovery_swap_runtime"] == "{{ open_webui_runtime }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{
-        "path": "{{ app_config.app.data_path }}", "owner": "root", "group": "root", "mode": "0750"}]
+        "path": "{{ app_config.app.data_path }}", "owner": "{{ open_webui_owner }}", "group": "{{ open_webui_owner }}", "mode": "0750"}]
     assert swap["recovery_swap_backup_id"] == "{{ _open_webui_restore_backup_id }}"
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _open_webui_target_backup_id }}"
     assert swap["recovery_swap_stop_services"] == ["{{ app_config.app.service_name }}"]
@@ -56,14 +56,15 @@ def check_swap_and_lock():
     argv = staged[0]["ansible.builtin.command"]["argv"]
     assert "{{ recovery_swap_stage }}/data:/source:ro" in argv and "none" in argv
     assert argv[argv.index("--entrypoint") + 2] == "{{ app_config.app.image }}"
-    assert "PRAGMA integrity_check" in argv[-1]
+    assert argv[-2] == "{{ open_webui_staged_check }}" and argv[-1] == "/source"
+    assert "PRAGMA integrity_check" in (repo / "ansible/roles/open-webui/defaults/main.yml").read_text()
 
 
 def check_kubernetes_restore_uses_shared_job_and_key_hook():
     assert dispatch[0]["ansible.builtin.include_tasks"] == "restore-kubernetes.yml"
     assert dispatch[0]["when"] == "app_config.hosting.method | default('docker') == 'kubernetes'"
     assert dispatch[1]["ansible.builtin.include_tasks"] == "restore-docker.yml"
-    assert dispatch[1]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
+    assert dispatch[1]["when"] == "app_config.hosting.method | default('docker') in ['docker', 'native']"
 
     restore = next(
         task for task in kubernetes

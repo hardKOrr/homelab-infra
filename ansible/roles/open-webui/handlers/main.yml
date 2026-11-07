@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ open_webui_project_dir }}"
     state: restarted
+  when: not (open_webui_native | bool)
+
+- name: Restart native Open WebUI
+  ansible.builtin.systemd:
+    name: "{{ open_webui_native_service }}"
+    state: restarted
+  listen: Restart Open WebUI
+  when: open_webui_native | bool

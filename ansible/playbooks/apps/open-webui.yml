@@ -1,6 +1,7 @@
 ---
 # Deploy Open WebUI using the selected hosting method. Docker on a VM remains the default;
-# an instance that names a stack with guest_type: lxc runs Docker on an LXC.
+# an instance that names a stack with guest_type: lxc runs Docker on an LXC, and
+# hosting.method: native runs the pinned PyPI package on its own LXC or VM.
 # The app does not deploy or auto-select a model backend: config/apps/<instance>.yml must
 # name an already-deployed Ollama and/or LiteLLM instance, and the preflight fails before
 # provisioning when that registry entry is absent or has the wrong provider.
@@ -58,6 +59,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: open-webui
+      when: app_config.hosting.method == 'native'
 
 - name: "Open WebUI | Deploy Kubernetes"
   hosts: localhost
@@ -85,7 +93,7 @@
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -93,24 +101,24 @@
       failed_when: false
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
-    - name: Gather facts from the Docker app host
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
+    - name: Gather facts from the app host
       ansible.builtin.setup:
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the Open WebUI guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
         - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed on the AI stack host
       ansible.builtin.include_role:
         name: docker
@@ -127,7 +135,7 @@
         open_webui_litellm_url: "{{ hostvars['localhost'].open_webui_litellm_url }}"
       when:
         - inventory_hostname != 'localhost'
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Open WebUI | Wire"
   hosts: localhost
@@ -201,7 +209,7 @@
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _open_webui_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_kind: "{{ _open_webui_host.app_config.hosting.method }}"
         record_guest_url: "https://{{ hostvars['localhost'].open_webui_fqdn }}"
       when: not _open_webui_kubernetes
     - name: Record Kubernetes Open WebUI on its cluster nodes
