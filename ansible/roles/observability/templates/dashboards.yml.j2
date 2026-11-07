@@ -13,5 +13,5 @@ providers:
     # restored on the next deploy.
     allowUiUpdates: true
     options:
-      path: {{ observability_dashboards_path | default('/var/lib/grafana/dashboards') }}
+      path: {{ observability_dashboards_path }}
       foldersFromFilesStructure: false

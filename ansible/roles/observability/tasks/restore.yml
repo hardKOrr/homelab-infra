@@ -6,7 +6,7 @@
     | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
 - name: Observability restore | Use the data directory swap
-  ansible.builtin.include_tasks: restore-docker.yml
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('docker')) != 'kubernetes'

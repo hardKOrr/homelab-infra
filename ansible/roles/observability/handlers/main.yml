@@ -4,6 +4,15 @@
     project_src: "{{ observability_project_dir }}"
     state: present
     recreate: always
+  when: not (observability_native | bool)
+
+- name: Restart native observability
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ observability_native_services }}"
+  listen: Restart observability
+  when: observability_native | bool
 
 # Prometheus reloads its scrape config without dropping the TSDB — cheaper and
 # less disruptive than recreating the container when only targets changed.

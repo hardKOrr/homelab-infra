@@ -1,0 +1,21 @@
+{{ ansible_managed | comment }}
+# Environment of the grafana-server unit for {{ instance }} — managed by homelab-infra.
+# Mode 0640, root:grafana: it holds the admin password (see the role header).
+GRAFANA_USER=grafana
+GRAFANA_GROUP=grafana
+GRAFANA_HOME=/usr/share/grafana
+LOG_DIR=/var/log/grafana
+DATA_DIR={{ app_config.app.data_path }}/grafana
+MAX_OPEN_FILES=10000
+CONF_DIR=/etc/grafana
+CONF_FILE=/etc/grafana/grafana.ini
+RESTART_ON_UPGRADE=true
+PLUGINS_DIR=/var/lib/grafana/plugins
+PROVISIONING_CFG_DIR={{ app_config.app.config_path }}/provisioning
+PID_FILE_DIR=/run/grafana
+GF_SECURITY_ADMIN_USER={{ app_config.app.admin_user | default('admin') }}
+GF_SECURITY_ADMIN_PASSWORD={{ _observability_admin_password }}
+GF_SERVER_HTTP_PORT={{ app_config.app.port }}
+GF_SERVER_ROOT_URL=https://{{ instance }}.{{ _observability_domain }}
+GF_USERS_ALLOW_SIGN_UP=false
+GF_ANALYTICS_REPORTING_ENABLED=false

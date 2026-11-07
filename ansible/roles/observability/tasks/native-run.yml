@@ -1,0 +1,57 @@
+---
+# The two native services: Prometheus under its own unit, Grafana under the unit the
+# package ships with its paths and settings moved into /etc/default/grafana-server.
+- name: Observability native | Write the Prometheus unit
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _observability_prometheus_unit
+  notify: Restart observability
+
+# Read by the package unit as its EnvironmentFile: Grafana's data tree and provisioning
+# live under the same paths as on Docker, so backup and restore see one layout.
+- name: Observability native | Write the Grafana service environment
+  ansible.builtin.template:
+    src: grafana-default.j2
+    dest: /etc/default/grafana-server
+    owner: root
+    group: grafana
+    mode: "0640"
+  no_log: true
+  notify: Restart observability
+
+- name: Observability native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _observability_prometheus_unit.changed
+
+- name: Observability native | Enable and start Prometheus and Grafana
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ observability_native_services }}"
+
+- name: Observability native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ observability_native_services | join(' ') }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u prometheus -u grafana-server -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

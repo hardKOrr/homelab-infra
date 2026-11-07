@@ -1,0 +1,35 @@
+---
+# Docker: the Compose project on the stack host.
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ observability_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart observability
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# Prometheus and Grafana are pulled at `:latest`, so the default `always` policy
+# re-pulls whatever the tag points at today and recreates the containers under it.
+# That makes every re-run of a deploy a silent, unreviewed upgrade of the monitoring
+# stack, and it is Watchtower's job in this platform (see the day-2 model in
+# AGENTS.md) — a deploy ensures the images are present, Watchtower moves them
+# forward and reports it. `missing` also lets a converged re-run reach changed=0.
+- name: Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ observability_project_dir }}"
+    policy: missing
+  # Under `missing` this task can only make images exist locally — it never touches a
+  # running container, and "Start the observability stack" below reports any container
+  # that actually moved. Its own changed flag is not trustworthy anyway: with images
+  # already present, `docker compose pull` emits the same Pulling/Pulled events here as
+  # it does for the pinned-tag roles, yet the module calls this one changed and those
+  # not. Reporting on the container, once, is the honest signal.
+  changed_when: false
+
+- name: Start the observability stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ observability_project_dir }}"
+    state: present
+    remove_orphans: true

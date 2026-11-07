@@ -24,6 +24,13 @@
 #   method: docker
 # stack: monitoring-lxc
 
+# To run Prometheus and Grafana natively on the instance's own LXC or VM instead, set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc  # or vm
+# Grafana comes from the Grafana APT repository and Prometheus from its release binary.
+
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:
 #   port: 3000                # Grafana, published to the reverse proxy
@@ -34,8 +41,8 @@
 #   retention: 30d            # how long Prometheus keeps samples — raise with disk
 #   scrape_interval: 30s      # lower for finer resolution, at a cost in disk
 #
-#   grafana_image: "docker.io/grafana/grafana:latest"
-#   prometheus_image: "docker.io/prom/prometheus:latest"
+#   grafana_image: "docker.io/grafana/grafana:13.3.0"
+#   prometheus_image: "docker.io/prom/prometheus:v3.16.0"
 #
 # There is no node_exporter_image: node_exporter is installed as a package on every
 # guest by the platform, not run as a container here. node_exporter_port above is the

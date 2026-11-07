@@ -47,24 +47,24 @@
 - name: Observability restore | Preview or replace the Prometheus and Grafana data
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method | default('docker') }}"
     recovery_swap_pre_restore_backup_id: "{{ _observability_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
-    # Grafana runs as uid 472 and Prometheus as 65534 (nobody), as Deploy creates them.
+    # Each tree keeps the uid its service runs as, as Deploy creates them.
     recovery_swap_paths:
       - path: "{{ app_config.app.data_path }}/prometheus"
         source: data/prometheus
-        owner: 65534
+        owner: "{{ observability_prometheus_uid }}"
         group: 0
         mode: "0750"
       - path: "{{ app_config.app.data_path }}/grafana"
         source: data/grafana
-        owner: 472
+        owner: "{{ observability_grafana_uid }}"
         group: 0
         mode: "0750"
     # Beside data_path, so staging kept after a failure stays out of the next backup.
     recovery_swap_staging_parent: "{{ app_config.app.data_path | dirname }}"
-    recovery_swap_stop_services: [prometheus, grafana]
+    recovery_swap_stop_services: "{{ observability_stop_services }}"
     recovery_swap_compose_project: "{{ observability_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.prometheus_port }}/-/ready"

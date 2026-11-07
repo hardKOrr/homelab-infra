@@ -1,5 +1,7 @@
 ---
-# observability role — Prometheus + Grafana via Docker Compose. node_exporter is NOT part
+# observability role — Prometheus + Grafana via Docker Compose, or as native services
+# (hosting.method native: the Grafana APT package and the Prometheus release binary, see
+# native-install.yml and native-run.yml) on the instance's own guest. node_exporter is NOT part
 # of this stack: it is a package on every guest, installed by tasks/guest-bootstrap.yml.
 # Called from Play 2 of playbooks/apps/observability.yml. Target: the
 # monitoring host.
@@ -42,6 +44,11 @@
 - name: Collect the node scrape targets
   ansible.builtin.include_tasks: scrape-targets.yml
 
+# ── Native install (packages and service users come before the data directories) ─
+- name: Install Grafana and Prometheus natively
+  ansible.builtin.include_tasks: native-install.yml
+  when: observability_native | bool
+
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
   ansible.builtin.file:
@@ -67,9 +74,8 @@
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item }}"
     state: directory
-    # Grafana runs as uid 472 and Prometheus as uid 65534 (nobody); both need to
-    # write their own volume, so these are not root-owned like the config tree.
-    owner: "{{ (item == 'grafana') | ternary('472', '65534') }}"
+    # Each service writes its own tree, so these are not root-owned like the config tree.
+    owner: "{{ (item == 'grafana') | ternary(observability_grafana_uid, observability_prometheus_uid) }}"
     mode: "0750"
   loop:
     - prometheus
@@ -169,171 +175,20 @@
     mode: "0644"
   notify: Restart observability
 
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ observability_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart observability
-
 # ── Run ───────────────────────────────────────────────────────────────────────
-# Prometheus and Grafana are pulled at `:latest`, so the default `always` policy
-# re-pulls whatever the tag points at today and recreates the containers under it.
-# That makes every re-run of a deploy a silent, unreviewed upgrade of the monitoring
-# stack, and it is Watchtower's job in this platform (see the day-2 model in
-# AGENTS.md) — a deploy ensures the images are present, Watchtower moves them
-# forward and reports it. `missing` also lets a converged re-run reach changed=0.
-- name: Pull images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ observability_project_dir }}"
-    policy: missing
-  # Under `missing` this task can only make images exist locally — it never touches a
-  # running container, and "Start the observability stack" below reports any container
-  # that actually moved. Its own changed flag is not trustworthy anyway: with images
-  # already present, `docker compose pull` emits the same Pulling/Pulled events here as
-  # it does for the pinned-tag roles, yet the module calls this one changed and those
-  # not. Reporting on the container, once, is the honest signal.
-  changed_when: false
+- name: Run the stack on Docker
+  ansible.builtin.include_tasks: docker.yml
+  when: not (observability_native | bool)
 
-- name: Start the observability stack
-  community.docker.docker_compose_v2:
-    project_src: "{{ observability_project_dir }}"
-    state: present
-    remove_orphans: true
+- name: Run Prometheus and Grafana as native services
+  ansible.builtin.include_tasks: native-run.yml
+  when: observability_native | bool
 
 - name: Apply pending restarts and reloads before the health checks
   ansible.builtin.meta: flush_handlers
 
-- name: Wait for Prometheus to be ready
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.prometheus_port }}/-/ready"
-    status_code: 200
-  register: _prometheus_health
-  until: _prometheus_health.status == 200
-  retries: 30
-  delay: 5
-  changed_when: false
-
-# /-/ready answers from whatever config Prometheus last loaded, which is not
-# necessarily the file this run wrote — exactly the failure the single-file bind
-# mount produced above, where a replaced inode left Prometheus scraping a five-day-old
-# target list while /-/ready stayed 200 the whole time. Comparing the ACTIVE target
-# set against the list this run rendered is what makes that visible.
-#
-# Target HEALTH is deliberately not asserted for every target: a guest that happens
-# to be down is not a reason to fail this deploy. One target scraping successfully is
-# enough to prove Prometheus is collecting at all.
-- name: Read the active Prometheus targets
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.prometheus_port }}/api/v1/targets?state=active"
-    status_code: 200
-  register: _prometheus_targets
-  # Both halves of the assert below must be waited for, not just the first. A target
-  # enters activeTargets the moment Prometheus LOADS the config, with health `unknown`
-  # until its first scrape — and the first scrape lands at a jittered offset inside one
-  # scrape_interval (30s by default). Waiting on the target COUNT alone therefore
-  # satisfied `until` within a second or two and then asserted health on a target set
-  # that had not been scraped once. That is the failure seen on 2026-08-26: assertion at
-  # roughly 6 seconds into a 30-second interval, every target `unknown`, deploy red on a
-  # Prometheus that was working correctly.
-  #
-  # The retry budget covers a full scrape_interval plus a slow first scrape.
-  until: >-
-    ((_prometheus_targets.json.data.activeTargets | default([]))
-     | selectattr('labels.job', 'equalto', 'nodes') | list | length
-     == (_observability_node_targets | length))
-    and ((_observability_node_targets | length) == 0
-         or ((_prometheus_targets.json.data.activeTargets | default([]))
-             | selectattr('labels.job', 'equalto', 'nodes')
-             | selectattr('health', 'equalto', 'up') | list | length > 0))
-  retries: 20
-  delay: 5
-  failed_when: false
-  changed_when: false
-
-- name: Assert Prometheus is scraping the targets this deploy rendered
-  ansible.builtin.assert:
-    that:
-      - (_prometheus_scraped | sort) == (_observability_node_targets | map(attribute='name') | list | sort)
-      - >-
-        (_observability_node_targets | length) == 0
-        or (_prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
-            | selectattr('health', 'equalto', 'up') | list | length > 0)
-    fail_msg: >-
-      Prometheus is scraping {{ _prometheus_scraped | sort }} but this deploy
-      rendered {{ _observability_node_targets | map(attribute='name') | list | sort }},
-      and the health of those targets is
-      {{ _prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
-         | map(attribute='health') | list | sort }}.
-      A Prometheus that never picked up the new config keeps collecting the old
-      target list indefinitely, and every dashboard still looks populated. Health
-      that is entirely `down` means the config loaded but node_exporter is not
-      answering on any guest.
-  vars:
-    _prometheus_active: "{{ _prometheus_targets.json.data.activeTargets | default([]) }}"
-    _prometheus_scraped: >-
-      {{ _prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
-         | map(attribute='labels.instance') | list }}
-
-- name: Wait for Grafana to be healthy
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/health"
-    status_code: 200
-  register: _grafana_health
-  until: _grafana_health.status == 200
-  retries: 30
-  delay: 5
-  changed_when: false
-
-# Proves the provisioning actually landed — a datasource that failed to load
-# leaves every dashboard panel blank, which is easy to miss until someone looks.
-- name: Verify the Prometheus datasource is provisioned
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/datasources/uid/prometheus"
-    user: "{{ app_config.app.admin_user | default('admin') }}"
-    password: "{{ _observability_admin_password }}"
-    force_basic_auth: true
-    status_code: 200
-  register: _grafana_datasource
-  until: _grafana_datasource.status | default(0) == 200
-  retries: 10
-  delay: 3
-  changed_when: false
-  no_log: true
-
-# The check above proves the datasource EXISTS. This one proves Grafana can actually
-# query it: a datasource whose URL is unreachable from inside the container — a
-# loopback address, a renamed compose service — provisions perfectly and leaves every
-# panel on every dashboard blank, which nobody notices until they open a dashboard.
-# Verified against Grafana 13.1.3:
-#   {"status":"OK","message":"Successfully queried the Prometheus API."}
-#
-# no_log because the admin password is a task argument; the assert below reads the
-# registered result, which carries the server's message but not the credential.
-- name: Query the Prometheus datasource health from Grafana
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/datasources/uid/prometheus/health"
-    user: "{{ app_config.app.admin_user | default('admin') }}"
-    password: "{{ _observability_admin_password }}"
-    force_basic_auth: true
-    status_code: 200
-  register: _grafana_datasource_health
-  until: (_grafana_datasource_health.json.status | default('')) == 'OK'
-  retries: 10
-  delay: 3
-  failed_when: false
-  changed_when: false
-  no_log: true
-
-- name: Assert Grafana can query Prometheus
-  ansible.builtin.assert:
-    that: (_grafana_datasource_health.json.status | default('')) == 'OK'
-    fail_msg: >-
-      Grafana cannot query its Prometheus datasource —
-      {{ _grafana_datasource_health.json.message | default('no response') }}.
-      The datasource is provisioned but unusable, so every dashboard renders blank.
+- name: Verify Prometheus and Grafana
+  ansible.builtin.include_tasks: verify.yml
 
 # ── Hand the endpoints back to the playbook ───────────────────────────────────
 - name: Export the observability endpoints to the playbook

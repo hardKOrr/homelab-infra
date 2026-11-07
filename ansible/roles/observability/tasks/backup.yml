@@ -1,6 +1,6 @@
 ---
 # Grafana's SQLite database and Prometheus's TSDB form one application recovery unit.
-# Stop both writers before archiving the complete persistent data directory.
+# Stop both writers (Compose services, or natively their systemd units) before archiving the complete persistent data directory.
 
 - name: Observability backup | Assert the backup contract
   ansible.builtin.assert:
@@ -39,9 +39,9 @@
 - name: Observability backup | Stop Prometheus and Grafana and archive the data directory
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ observability_project_dir }}"
-    pbs_client_stop_services: [prometheus, grafana]
+    pbs_client_stop_services: "{{ observability_stop_services }}"
     pbs_client_archives:
       - name: data.pxar
         path: "{{ app_config.app.data_path }}"

@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Guard Observability's native method: pinned releases shared with the images, and the
+shared-operation inputs."""
+
+from pathlib import Path
+
+import yaml
+
+repo = Path(__file__).resolve().parents[1]
+role = repo / "ansible/roles/observability"
+defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/observability.yml").read_text())["observability_defaults"]
+app = defaults["app"]
+
+# One exact release per component, for the images and the native install.
+assert app["grafana_image"].endswith(f":{app['grafana_version']}")
+assert app["prometheus_image"].endswith(f":v{app['prometheus_version']}")
+assert len(app["prometheus_sha256"]) == 64
+assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
+assert "latest" not in app["grafana_image"] + app["prometheus_image"]
+
+install = (role / "tasks/native-install.yml").read_text()
+assert "https://apt.grafana.com" in install
+assert "grafana={{ app_config.app.grafana_version }}" in install
+assert "prometheus_sha256" in install and "prometheus_version" in install
+
+# Backup and restore use the shared files with the guest's runtime.
+backup = (role / "tasks/backup.yml").read_text()
+assert 'pbs_client_runtime: "{{ app_config.hosting.method' in backup
+assert "tasks/backup/pbs-client-backup.yml" in backup
+restore = (role / "tasks/restore-guest.yml").read_text()
+assert "tasks/recovery/restore-swap.yml" in restore
+
+print("Observability native pins one release per component and reuses the shared backup and restore")
