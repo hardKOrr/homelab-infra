@@ -34,6 +34,16 @@ for kind in ("groups", "users"):
 unit = (role / "templates/prometheus.service.j2").read_text()
 assert "User=observability-prometheus\nGroup=observability-prometheus" in unit
 
+# Both service users must traverse the shared parent before reaching private data.
+main = yaml.safe_load((role / "tasks/main.yml").read_text())
+parent = next(t for t in main if t["name"] == "Create the shared native data parent")
+assert parent["ansible.builtin.file"] == {
+    "path": "{{ app_config.app.data_path }}", "state": "directory",
+    "owner": "root", "group": "root", "mode": "0711",
+}
+assert parent["when"] == "observability_native | bool"
+assert main.index(parent) < next(i for i, t in enumerate(main) if t["name"] == "Create data directories")
+
 # Backup and restore use the shared files with the guest's runtime.
 backup = (role / "tasks/backup.yml").read_text()
 assert 'pbs_client_runtime: "{{ app_config.hosting.method' in backup

@@ -72,6 +72,17 @@
     - provisioning/datasources
     - provisioning/dashboards
 
+# The service-owned children must not implicitly create their shared parent with
+# the first service's ownership and mode, preventing the other service's access.
+- name: Create the shared native data parent
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0711"
+  when: observability_native | bool
+
 - name: Create data directories
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item }}"
