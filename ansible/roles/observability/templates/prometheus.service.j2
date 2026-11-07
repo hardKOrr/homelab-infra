@@ -7,8 +7,8 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-User=prometheus
-Group=prometheus
+User=observability-prometheus
+Group=observability-prometheus
 Type=simple
 ExecStart=/usr/local/bin/prometheus \
   --config.file={{ app_config.app.config_path }}/prometheus/prometheus.yml \

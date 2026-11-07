@@ -27,6 +27,8 @@
     cache_valid_time: 3600
     lock_timeout: 300
 
+# Dedicated Prometheus identity: guest bootstrap already runs node_exporter as the
+# distribution's prometheus user; never change that active account's uid or home.
 # Created before the package so Grafana's data tree has a fixed owner a restore can assign.
 - name: Observability native | Create the service groups
   ansible.builtin.group:
@@ -35,7 +37,7 @@
     system: true
   loop:
     - {name: grafana, id: "{{ observability_grafana_uid }}"}
-    - {name: prometheus, id: "{{ observability_prometheus_uid }}"}
+    - {name: observability-prometheus, id: "{{ observability_prometheus_uid }}"}
 
 - name: Observability native | Create the service users
   ansible.builtin.user:
@@ -48,7 +50,7 @@
     system: true
   loop:
     - {name: grafana, id: "{{ observability_grafana_uid }}", home: /usr/share/grafana}
-    - {name: prometheus, id: "{{ observability_prometheus_uid }}", home: /var/lib/prometheus}
+    - {name: observability-prometheus, id: "{{ observability_prometheus_uid }}", home: /var/lib/prometheus}
 
 - name: Observability native | Create the APT keyring directory
   ansible.builtin.file:

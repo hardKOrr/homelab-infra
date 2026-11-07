@@ -23,6 +23,17 @@ assert "https://apt.grafana.com" in install
 assert "grafana={{ app_config.app.grafana_version }}" in install
 assert "prometheus_sha256" in install and "prometheus_version" in install
 
+# Bootstrap's node exporter owns the distribution's prometheus account. A native
+# deployment must never mutate that running user's identity.
+tasks = yaml.safe_load(install)
+for kind in ("groups", "users"):
+    task = next(t for t in tasks if t["name"].endswith("Create the service " + kind))
+    prometheus = next(item for item in task["loop"] if "prometheus" in item["name"])
+    assert prometheus["name"] == "observability-prometheus"
+    assert prometheus["id"] == "{{ observability_prometheus_uid }}"
+unit = (role / "templates/prometheus.service.j2").read_text()
+assert "User=observability-prometheus\nGroup=observability-prometheus" in unit
+
 # Backup and restore use the shared files with the guest's runtime.
 backup = (role / "tasks/backup.yml").read_text()
 assert 'pbs_client_runtime: "{{ app_config.hosting.method' in backup
