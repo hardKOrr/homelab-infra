@@ -18,6 +18,10 @@ module.exports = async ({ page, step, url, secrets }) => {
   };
   await step('HTTPS and owner login', async () => {
     if (!email || !password) throw new Error(`owner credential fields missing: ${Object.keys(secrets).join(',')}`);
+    if (mode === 'fresh') {
+      const config = await api('/api/config');
+      if (config.features.enable_signup !== true) throw new Error('fresh signup setting is not enabled');
+    }
     await page.goto(`${base}/auth`);
     let response = await page.request.post(`${base}/api/v1/auths/signin`, { data: { email, password } });
     if (!response.ok() && ['create', 'fresh'].includes(mode)) {
@@ -37,8 +41,8 @@ module.exports = async ({ page, step, url, secrets }) => {
     let config = await api('/api/v1/auths/admin/config');
     let prompts = await api('/api/v1/prompts/');
     if (mode === 'fresh') {
-      if (prompts.some(p => p.command === canary.command) || config.ENABLE_SIGNUP !== true)
-        throw new Error('fresh target contains a canary');
+      if (prompts.some(p => p.command === canary.command))
+        throw new Error('fresh target contains the prompt canary');
       return;
     }
     if (mode === 'create') {
