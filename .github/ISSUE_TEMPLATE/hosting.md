@@ -63,9 +63,9 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R12: The repository shall include `gate/test-<app>-kubernetes.py`.
 - R13: The Kubernetes method shall mount <App>'s media and download shares in the pod from the NFS shares it uses today, at the same container paths as its Docker stack, through the shared media-share seam `tasks/kubernetes/prepare-media-volumes.yml` and no role-local copy.
 - R14: The Kubernetes method shall give <App>'s pod access to <device> on the node that runs it.
-- R17: When the code set for the Kubernetes method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 - R15: When the recovery drill runs on Kubernetes at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
 - R16: When the Kubernetes drill passes, the app's defaults shall keep `kubernetes` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `kubernetes` together with the Kubernetes method's path.
+- R17: When the code set for the Kubernetes method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Method 2: Native on an LXC and on a VM
 
@@ -74,11 +74,11 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R20: The <app> role shall install <App> natively from <install>, pinned to <version>.
 - R21: Where the config selects `hosting.method: native` with `proxmox.guest_type: lxc`, Deploy shall run <App> natively on an LXC.
 - R22: Where the config selects `hosting.method: native` with `proxmox.guest_type: vm`, Deploy shall run <App> natively on a VM.
-- R27: When the code set for the native method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 - R23: When the recovery drill runs natively on an LXC at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
 - R24: When the native LXC drill passes, the app's defaults shall keep `native-lxc` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `native-lxc` together with the native method's LXC path.
 - R25: When the recovery drill runs natively on a VM at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
 - R26: When the native VM drill passes, the app's defaults shall keep `native-vm` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `native-vm` together with the native method's VM path.
+- R27: When the code set for the native method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Method 3: Docker on an LXC and on a VM
 
@@ -87,11 +87,11 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R30: Where the config selects `hosting.method: docker` on a stack with `guest_type: lxc`, Deploy shall run <App> on Docker on an LXC.
 - R31: Where the config selects `hosting.method: docker` on a stack with `guest_type: vm`, Deploy shall run <App> on Docker on a VM.
 - R32: The LXC drill config shall use a stack named after the app's current stack with `-lxc` appended (`<app>-lxc` for an app with no `stack:`), created with `guest_type: lxc`; the VM drill shall use the app's current stack (`<app>` for an app with no `stack:`) with `guest_type: vm`.
-- R37: When the code set for the Docker method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 - R33: When the recovery drill runs on Docker on an LXC at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
 - R34: When the Docker LXC drill passes, the app's defaults shall keep `docker-lxc` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `docker-lxc` together with the Docker method's LXC path.
 - R35: When the recovery drill runs on Docker on a VM at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
 - R36: When the Docker VM drill passes, the app's defaults shall keep `docker-vm` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `docker-vm` together with the Docker method's VM path.
+- R37: When the code set for the Docker method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Requirement sets
 
