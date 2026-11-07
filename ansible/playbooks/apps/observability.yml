@@ -178,6 +178,7 @@
     # prometheus_host is recorded for humans and on-host debugging only.
     - name: Record metrics facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      when: not (recovery_isolated | default(false) | bool)
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: metrics

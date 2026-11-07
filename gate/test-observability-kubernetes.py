@@ -124,4 +124,13 @@ assert recovery["stop"] == ["{{ restore_target }}"]
 assert "recovery-restore.yml" in restore[0]["ansible.builtin.include_tasks"]
 assert not (ROLE / "templates/kubernetes").exists()
 
+# An isolated recovery target must not repoint the shared metrics registration.
+isolated = "not (recovery_isolated | default(false) | bool)"
+registry = next(t for t in deploy if "metrics registry" in t["name"])
+assert registry["when"] == isolated
+facts = next(
+    t for t in playbook[2]["pre_tasks"] if t["name"] == "Record metrics facts"
+)
+assert facts["when"] == isolated
+
 print("observability kubernetes: ok")

@@ -39,7 +39,10 @@
       admin_password: "{{ _observability_admin_password }}"
     vault_item_secret_fields: [admin_password]
 
+# Skipped for an isolated recovery target: the shared metrics registration must keep
+# pointing at the live source until the restore is verified.
 - name: Observability Kubernetes | Store the Grafana password for the metrics registry
+  when: not (recovery_isolated | default(false) | bool)
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: homelab-infra/metrics
