@@ -1,5 +1,6 @@
 ---
-# Deploy Ollama as Docker on its own VM. An instance that sets `stack:` instead lands on
+# Deploy Ollama as Docker on its own VM, or as a pod on the k3s cluster (hosting.method:
+# kubernetes, CPU mode only; GPU mode needs a dedicated device passed to a VM). An instance that sets `stack:` instead lands on
 # that stack's host, so a stack with guest_type: lxc runs CPU-mode Ollama as Docker on an
 # LXC (a GPU needs a VM). CPU mode uses ordinary floating-VM placement.
 # When a dedicated PCIe GPU is named, it is assigned to this VM only; Ollama is not placed
@@ -51,9 +52,9 @@
       vars:
         hosting_app_slug: ollama
     - name: Assert the VM, optional PCI, and model-storage contract
+      when: app_config.hosting.method == 'docker'
       ansible.builtin.assert:
         that:
-          - app_config.hosting.method == 'docker'
           - app_config.proxmox.vm is mapping
           - app_config.app.storage_path | default('') | length > 0
           - app_config.app.models_path | default('') | length > 0
@@ -61,6 +62,14 @@
           Ollama requires its own Docker-capable VM and an explicit persistent model-storage
           path. GPU mode additionally requires an exact PCI device declared dedicated in
           proxmox.devices.
+
+    - name: Refuse a GPU on Kubernetes
+      when: app_config.hosting.method == 'kubernetes'
+      ansible.builtin.assert:
+        that: app_config.app.gpu_device | default('', true) | trim | length == 0
+        fail_msg: >-
+          Ollama on Kubernetes runs in CPU mode. A dedicated GPU is passed to a VM only;
+          clear app.gpu_device or set hosting.method to docker.
 
     - name: Refuse a GPU on a stack-hosted Ollama
       ansible.builtin.assert:
@@ -72,11 +81,25 @@
           stack, or remove stack: to keep Ollama on its own VM.
 
   tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        ollama_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        ollama_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+
     - name: Provision Ollama's own VM
       ansible.builtin.include_role:
         name: ollama
         tasks_from: provision-vm
-      when: app_config.stack | default('', true) | length == 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - app_config.stack | default('', true) | length == 0
 
     - name: Find or create the Docker stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
@@ -84,7 +107,25 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
-      when: app_config.stack | default('', true) | length > 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - app_config.stack | default('', true) | length > 0
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Open Ollama's declared Kubernetes network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Deploy Ollama on Kubernetes
+      ansible.builtin.include_role:
+        name: ollama
+        tasks_from: kubernetes
+      vars:
+        ollama_fqdn: "{{ hostvars['localhost'].ollama_fqdn }}"
+      when: app_config.hosting.method == 'kubernetes'
 
 
 - name: "Ollama | Deploy"
@@ -114,10 +155,12 @@
     - name: Ensure Docker is installed on the VM
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy Ollama
       ansible.builtin.include_role:
         name: ollama
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
 - name: "Ollama | Wire"
   hosts: localhost
@@ -134,15 +177,21 @@
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: >-
-          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
-             | default('') }}
+        resolve_estate_name: "{{ _ollama_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _ollama_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _ollama_deploy_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if hostvars['localhost'].app_config.hosting.method == 'docker'
+            and groups.get('deploy_' ~ instance, []) | length > 0
+         else hostvars['localhost'] }}
+    _ollama_kubernetes: "{{ _ollama_deploy_host.app_config.hosting.method == 'kubernetes' }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _ollama_deploy_host.ansible_host }}"
-    wiring_upstream_port: "{{ _ollama_deploy_host.app_config.app.port }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if _ollama_kubernetes | bool else _ollama_deploy_host.ansible_host }}
+    wiring_upstream_port: >-
+      {{ 80 if _ollama_kubernetes | bool else _ollama_deploy_host.app_config.app.port }}
     wiring_subdomain: >-
       {{ _ollama_deploy_host.app_config.routing.subdomain | default(instance, true) }}
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
@@ -170,6 +219,21 @@
             host: "http://{{ _ollama_deploy_host.ansible_host }}"
             port: "{{ _ollama_deploy_host.app_config.app.port }}"
             url: "http://{{ _ollama_deploy_host.ansible_host }}:{{ _ollama_deploy_host.app_config.app.port }}/"
+      when: not (_ollama_kubernetes | bool)
+
+    - name: Record the Kubernetes Ollama endpoint for named AI consumers
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: apps
+        generated_facts_data:
+          "{{ instance }}":
+            provider: ollama
+            instance: "{{ instance }}"
+            host: "https://{{ wiring_domain }}"
+            port: "443"
+            url: "https://{{ wiring_domain }}/"
+      when: _ollama_kubernetes | bool
 
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
@@ -202,7 +266,11 @@
     - name: Record Ollama on its Docker guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_kind: docker
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list)
+             if _ollama_kubernetes | bool else [groups['deploy_' ~ instance][0]] }}
+        record_guest_kind: "{{ _ollama_deploy_host.app_config.hosting.method }}"
+        record_guest_url: "https://{{ wiring_domain }}"
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

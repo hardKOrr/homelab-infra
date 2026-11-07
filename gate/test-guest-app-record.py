@@ -116,6 +116,7 @@ def main():
         wire = next(play for play in plays if play["name"] == f"{display} | Wire")
         wire_record = task_named(wire["tasks"], f"Record {display} on its Docker guest")
         assert wire_record["vars"]["record_guest_kind"] == (
+            "{{ _ollama_deploy_host.app_config.hosting.method }}" if app == "ollama" else
             "docker" if app != "comfyui" else
             "{{ 'native' if _comfyui_cfg.hosting.method == 'native' else 'docker' }}"
         )

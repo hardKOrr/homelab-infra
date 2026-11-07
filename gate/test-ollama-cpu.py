@@ -69,7 +69,8 @@ def test_compose_template_cpu_and_gpu_modes():
 
 def test_playbook_selects_cpu_or_dedicated_gpu_placement():
     playbook = read_yaml("ansible/playbooks/apps/ollama.yml")
-    assert playbook[0]["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "provision-vm"
+    provision_role = next(t for t in playbook[0]["tasks"] if t.get("ansible.builtin.include_role", {}).get("tasks_from") == "provision-vm")
+    assert provision_role["ansible.builtin.include_role"]["name"] == "ollama"
     provision = {"tasks": read_yaml("ansible/roles/ollama/tasks/provision-vm.yml")}
     placement_tasks = [
         task

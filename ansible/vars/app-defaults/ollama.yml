@@ -1,5 +1,5 @@
 ---
-# Ollama is Docker on its own Debian VM; a stack with guest_type: lxc runs CPU mode on an LXC. A dedicated PCIe GPU is optional; when configured,
+# Ollama is Docker on its own Debian VM, or CPU-mode Kubernetes once its drill passes; a stack with guest_type: lxc runs CPU mode on an LXC. A dedicated PCIe GPU is optional; when configured,
 # the guest owns that device exclusively. CPU deployments use ordinary floating-VM
 # placement.
 # The VM root disk is intentionally large enough for local model downloads. The role
@@ -8,7 +8,7 @@
 ollama_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
 
   recovery:
@@ -37,6 +37,8 @@ ollama_defaults:
     # Empty selects CPU mode. GPU mode requires naming a dedicated device declared in
     # proxmox.devices; no device is selected automatically.
     gpu_device: ""
+    # Kubernetes only: size in Gi of the default-StorageClass claim holding the models.
+    storage: 50
     storage_path: "/opt/{{ instance }}/models"
     models_path: "/opt/{{ instance }}/models"
     # The application archive covers storage_path, including downloaded models and
@@ -56,3 +58,13 @@ ollama_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

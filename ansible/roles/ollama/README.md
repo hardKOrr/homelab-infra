@@ -15,3 +15,11 @@ recovery in GPU mode; it is not part of the archive.
 
 For GPU deployments, declare the exact PCI device and keep node console recovery access.
 Both CPU and GPU deployments need a persistent model-storage path.
+
+## Kubernetes
+
+`hosting.method: kubernetes` runs one CPU-mode pod (`tasks/kubernetes.yml`,
+`templates/manifest.yaml.j2`) with the model store on a default-StorageClass claim.
+Backup is the shared CronJob and restore the shared Job (`tasks/restore-kubernetes.yml`).
+A GPU is not available there: it would need a dedicated GPU passed to one k3s node VM plus
+a device plugin.
