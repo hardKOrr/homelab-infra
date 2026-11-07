@@ -37,6 +37,7 @@ EXTRA_IMPLEMENTED = {
     "mautic": {"docker-lxc"},
     "n8n": {"docker-lxc"},
     "navidrome": {"docker-lxc"},
+    "observability": {"docker-lxc"},
     "mariadb": {"native-vm"},
 }
 ANSIBLE_PLAYBOOK = os.environ.get("GATE_ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
@@ -265,7 +266,7 @@ def main():
     check_rendered_defaults(expected_by_slug)
     check_unsupported_fails_before_state_change()
     check_mariadb_vm_instance_override()
-    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-forgejo.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-lidarr.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml"):
+    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-forgejo.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-lidarr.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml", "hosting-observability.yml"):
         result = run_ansible(fixture)
         assert result.returncode == 0, result.stdout + result.stderr
     print(f"Hosting contract passed for {len(paths)} app defaults and preflight refusal.")
