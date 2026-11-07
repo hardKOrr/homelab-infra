@@ -54,7 +54,9 @@ assert "homelabinfra_infra.kubernetes.ingress_vip" in read(
 environment = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
 environment.filters["to_json"] = json.dumps
 environment.filters["hash"] = lambda value, algo: hashlib.new(algo, value.encode()).hexdigest()
-config_files = {"prometheus.yml": "global: {}\n", "homelab-nodes.json": '{"a": 1}'}
+# Ansible can deserialize a JSON file lookup into a mapping while setting facts.
+dashboard = json.loads((ROLE / "files/homelab-nodes.json").read_text())
+config_files = {"prometheus.yml": "global: {}\n", "homelab-nodes.json": dashboard}
 context = {
     "instance": "obs-test",
     "observability_fqdn": "obs-test.example.test",
@@ -80,7 +82,9 @@ assert set(objects) == {
     ("Service", "obs-test"),
     ("Ingress", "obs-test"),
 }
-assert json.loads(objects["ConfigMap", "obs-test-config"]["data"]["homelab-nodes.json"]) == {"a": 1}
+data = objects["ConfigMap", "obs-test-config"]["data"]
+assert all(isinstance(value, str) for value in data.values())
+assert json.loads(data["homelab-nodes.json"]) == dashboard
 for claim in ("obs-test-prometheus", "obs-test-grafana"):
     assert "storageClassName" not in objects["PersistentVolumeClaim", claim]["spec"]
 deployment = objects["Deployment", "obs-test"]

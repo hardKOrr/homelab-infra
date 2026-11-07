@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: homelab-infra
 data:
 {% for key, content in _observability_k8s_config.items() %}
-  {{ key }}: {{ content | to_json }}
+  {{ key }}: {{ (content | to_json if content is mapping else content) | to_json }}
 {% endfor %}
 ---
 apiVersion: v1
