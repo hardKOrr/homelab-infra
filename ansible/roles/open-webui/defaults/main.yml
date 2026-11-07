@@ -22,3 +22,5 @@ open_webui_staged_check: |
       sys.exit("webui.db is empty")
   result = sqlite3.connect("file:" + path + "?mode=ro", uri=True).execute("PRAGMA integrity_check").fetchone()[0]
   sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)
+# Upstream copies its frontend assets here at import, so the service user must own it.
+open_webui_native_static: "{{ open_webui_native_home }}/static"

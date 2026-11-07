@@ -55,6 +55,14 @@
   notify: Restart Open WebUI
   changed_when: true
 
+- name: Open WebUI native | Create the service-owned static directory
+  ansible.builtin.file:
+    path: "{{ open_webui_native_static }}"
+    state: directory
+    owner: "{{ open_webui_native_user }}"
+    group: "{{ open_webui_native_user }}"
+    mode: "0755"
+
 - name: Open WebUI native | Render the service unit
   ansible.builtin.template:
     src: open-webui.service.j2

@@ -10,6 +10,7 @@ User={{ open_webui_native_user }}
 Group={{ open_webui_native_user }}
 WorkingDirectory={{ open_webui_native_home }}
 Environment=HOME={{ open_webui_native_home }}
+Environment=STATIC_DIR={{ open_webui_native_static }}
 Environment=DATA_DIR={{ app_config.app.data_path }}
 EnvironmentFile={{ open_webui_env_file }}
 ExecStart={{ open_webui_native_venv }}/bin/open-webui serve --host 0.0.0.0 --port {{ app_config.app.port }}

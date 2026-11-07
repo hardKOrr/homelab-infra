@@ -17,6 +17,15 @@ assert defaults["app"]["image"].endswith(f":v{version}")
 native = (role / "tasks/native.yml").read_text()
 assert 'open-webui=={{ app_config.app.native_version }}' in native
 
+# The package is installed as root but runs unprivileged: every directory the unit points
+# upstream at for writing must be created owned by the service user.
+unit = (role / "templates/open-webui.service.j2").read_text()
+assert "Environment=STATIC_DIR={{ open_webui_native_static }}" in unit
+assert "Environment=DATA_DIR={{ app_config.app.data_path }}" in unit
+static = next(t for t in yaml.safe_load(native) if t["name"].endswith("service-owned static directory"))
+assert static["ansible.builtin.file"]["path"] == "{{ open_webui_native_static }}"
+assert static["ansible.builtin.file"]["owner"] == "{{ open_webui_native_user }}"
+
 main = (role / "tasks/main.yml").read_text()
 assert 'pbs_client_runtime: "{{ open_webui_runtime }}"' in main
 assert "tasks/backup/pbs-client-script.yml" in main
