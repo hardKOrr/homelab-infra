@@ -139,16 +139,25 @@ assert facts["when"] == isolated
 job = yaml.safe_load(environment.from_string((ROLE / "templates/reset-admin-job.yaml.j2").read_text(
     encoding="utf-8")).render(
     restore_target="obs-target",
-    restore_target_config={"app": {"grafana_image": "docker.io/grafana/grafana:latest"}},
+    restore_target_config={"app": {
+        "grafana_image": "docker.io/grafana/grafana:latest",
+        "sqlite_image": "docker.io/keinos/sqlite3:latest",
+        "admin_user": "targetadmin",
+    }},
+    source_admin="sourceadmin",
     instance="obs-source",
 ))
 pod = job["spec"]["template"]["spec"]
 assert job["metadata"]["name"] == "obs-target-reset-admin"
 assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == "obs-target-grafana"
 assert pod["containers"][0]["envFrom"][0]["secretRef"]["name"] == "obs-target"
-assert "obs-source" not in json.dumps(job)
+assert "obs-source" not in json.dumps(job) and "sourceadmin" not in json.dumps(job)
+rename = pod["initContainers"][0]
+assert rename["command"][0] == "sqlite3"
+assert "login = 'targetadmin' WHERE id = 1" in rename["command"][2]
+assert rename["volumeMounts"] == pod["containers"][0]["volumeMounts"]
 assert "reset-admin-password" in pod["containers"][0]["command"][-1]
 credential = load("tasks/restore-kubernetes-credential.yml")
-assert credential[0]["ansible.builtin.include_tasks"].endswith("run-job.yml")
+assert credential[1]["ansible.builtin.include_tasks"].endswith("run-job.yml")
 
 print("observability kubernetes: ok")

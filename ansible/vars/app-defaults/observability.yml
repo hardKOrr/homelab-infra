@@ -43,6 +43,8 @@ observability_defaults:
     prometheus_image: "docker.io/prom/prometheus:latest"
     # Kubernetes backend only: one PVC per data tree, on the cluster's default
     # StorageClass (storageClassName omitted).
+    # Used only to rewrite the administrator login in a restored Grafana database.
+    sqlite_image: "docker.io/keinos/sqlite3:latest"
     grafana_storage: 2
     prometheus_storage: 10
 
