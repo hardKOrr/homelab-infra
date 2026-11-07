@@ -1,5 +1,6 @@
 ---
-# Deploy Open WebUI using the selected hosting method. Docker on a VM remains the default.
+# Deploy Open WebUI using the selected hosting method. Docker on a VM remains the default;
+# an instance that names a stack with guest_type: lxc runs Docker on an LXC.
 # The app does not deploy or auto-select a model backend: config/apps/<instance>.yml must
 # name an already-deployed Ollama and/or LiteLLM instance, and the preflight fails before
 # provisioning when that registry entry is absent or has the wrong provider.
