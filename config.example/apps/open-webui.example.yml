@@ -29,3 +29,9 @@ routing:
 backup:
   enabled: true
   # schedule: "0 3 * * *"
+
+# To use Docker on an LXC, uncomment these instance overrides and set
+# infrastructure.stacks.ai-lxc.guest_type: lxc in config/infrastructure.yml.
+# hosting:
+#   method: docker
+# stack: ai-lxc

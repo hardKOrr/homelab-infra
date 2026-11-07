@@ -45,7 +45,7 @@ def open_webui_kubernetes_deployment_uses_shared_operations():
         (ROOT / "ansible/vars/app-defaults/open-webui.yml").read_text(encoding="utf-8")
     )["open_webui_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["app"]["container_port"] == 8080
     assert defaults["app"]["data_mount_path"] == "/app/backend/data"
     assert defaults["app"]["storage"] > 0
