@@ -1,9 +1,9 @@
 ---
-- name: Odoo restore | Restore Docker state
-  ansible.builtin.include_tasks: restore-docker.yml
+- name: Odoo restore | Restore Docker or native state
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     (restore_target_config | default(app_config, true)).hosting.method
-    | default('docker') == 'docker'
+    | default('docker') in ['docker', 'native']
 
 - name: Odoo restore | Restore Kubernetes state
   ansible.builtin.include_tasks: restore-kubernetes.yml

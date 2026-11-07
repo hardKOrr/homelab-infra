@@ -67,14 +67,14 @@
 
 - name: Odoo backup | Quiesce Odoo and archive database plus filestore
   block:
-    # Only this instance's Compose service stops; the shared PostgreSQL guest and its other
+    # Only this instance's Compose service (natively, its systemd unit) stops; the shared PostgreSQL guest and its other
     # databases are never touched.
     - name: Odoo backup | Stop Odoo, dump its database and push both archives
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
         pbs_client_compose_project: "{{ odoo_project_dir }}"
-        pbs_client_stop_services: [odoo]
+        pbs_client_stop_services: ["{{ odoo_native_service if odoo_native | bool else 'odoo' }}"]
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
         pbs_client_archives:
           - name: database.pxar

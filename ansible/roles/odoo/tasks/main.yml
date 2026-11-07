@@ -1,7 +1,15 @@
 ---
+- name: Odoo | Resolve the module set, mail and credentials
+  ansible.builtin.include_tasks: prepare.yml
+  when: app_config.hosting.method | default('docker') in ['docker', 'native']
+
 - name: Odoo | Deploy on Docker
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('docker') == 'docker'
+
+- name: Odoo | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('docker') == 'native'
 
 - name: Odoo | Deploy on Kubernetes
   ansible.builtin.include_tasks: kubernetes.yml

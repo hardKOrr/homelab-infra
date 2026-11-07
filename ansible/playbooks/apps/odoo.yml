@@ -35,6 +35,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: odoo
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Odoo runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -62,6 +70,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: odoo
+      when: app_config.hosting.method == 'native'
 
 # Before Deploy: the declared access plus SMTP egress to the platform relay, which
 # Odoo needs to send mail (tasks/firewall/open-app-access.yml).
@@ -71,7 +86,7 @@
   vars:
     _odoo_fw_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}
     app_config: "{{ hostvars['localhost'].app_config }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _odoo_fw_host.ansible_host | default('') }}"
@@ -80,7 +95,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Odoo | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -95,14 +110,14 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap the guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
-        and hostvars['localhost'].app_config.hosting.method == 'docker'
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Deploy Odoo
       ansible.builtin.include_role:
         name: odoo
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Odoo | Deploy on Kubernetes"
   hosts: localhost
@@ -130,7 +145,7 @@
   vars:
     _odoo_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}
+         if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars['localhost'].homelabinfra_infra.kubernetes.ingress_vip
@@ -171,9 +186,9 @@
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _odoo_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method }}"
         record_guest_url: "https://{{ wiring_domain }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:

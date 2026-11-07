@@ -10,15 +10,16 @@ from restore_swap_inputs import swap_inputs
 
 
 def main():
-    swap = swap_inputs("odoo", "restore-docker.yml")
+    swap = swap_inputs("odoo", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "filestore.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _odoo_restore_filestore_path }}", "source": "filestore",
-        "owner": "{{ app_config.app.puid }}", "group": "{{ app_config.app.pgid }}",
+        "owner": "{{ odoo_owner }}", "group": "{{ odoo_group }}",
         "mode": "0750"}]
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "database/odoo.dump"}
-    assert swap["recovery_swap_stop_services"] == ["odoo"]
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method | default('docker') }}"
+    assert swap["recovery_swap_stop_services"] == ["{{ odoo_native_service if odoo_native | bool else 'odoo' }}"]
     assert swap["recovery_swap_compose_project"] == "{{ odoo_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/web/health")
     print("Odoo: restore swap inputs passed")
