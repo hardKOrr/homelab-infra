@@ -86,6 +86,9 @@
         path: "/var/tmp/ollama-linux-amd64-{{ app_config.app.native_version }}.tar.zst"
         state: absent
 
+- name: Ollama native | Assert the storage paths are inside the application storage root
+  ansible.builtin.include_tasks: storage-contained.yml
+
 - name: Ollama native | Create the model storage
   ansible.builtin.file:
     path: "{{ item }}"
