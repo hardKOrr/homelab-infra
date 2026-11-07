@@ -69,7 +69,8 @@ def test_compose_template_cpu_and_gpu_modes():
 
 def test_playbook_selects_cpu_or_dedicated_gpu_placement():
     playbook = read_yaml("ansible/playbooks/apps/ollama.yml")
-    provision = playbook[0]
+    assert playbook[0]["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "provision-vm"
+    provision = {"tasks": read_yaml("ansible/roles/ollama/tasks/provision-vm.yml")}
     placement_tasks = [
         task
         for task in walk_tasks(provision)
@@ -103,7 +104,7 @@ def test_playbook_selects_cpu_or_dedicated_gpu_placement():
     assert render("{{ " + attach["when"] + " }}", gpu_context)
 
     contract = next(
-        task for task in provision["pre_tasks"]
+        task for task in playbook[0]["pre_tasks"]
         if task.get("name") == "Assert the VM, optional PCI, and model-storage contract"
     )
     assert all("gpu_device" not in condition for condition in contract["ansible.builtin.assert"]["that"])

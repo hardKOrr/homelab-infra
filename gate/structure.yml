@@ -28,7 +28,6 @@ size:
   ansible/playbooks/apps/caddy.yml: 358
   ansible/playbooks/apps/k3s-cluster.yml: 486
   ansible/playbooks/apps/migrate-servarr.yml: 395
-  ansible/playbooks/apps/ollama.yml: 349
   ansible/playbooks/apps/pbs.yml: 667
   ansible/playbooks/apps/slskd.yml: 304
   ansible/playbooks/apps/uptime-kuma.yml: 316

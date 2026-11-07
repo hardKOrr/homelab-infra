@@ -1,5 +1,5 @@
 ---
-# Ollama is Docker on its own Debian VM. A dedicated PCIe GPU is optional; when configured,
+# Ollama is Docker on its own Debian VM; a stack with guest_type: lxc runs CPU mode on an LXC. A dedicated PCIe GPU is optional; when configured,
 # the guest owns that device exclusively. CPU deployments use ordinary floating-VM
 # placement.
 # The VM root disk is intentionally large enough for local model downloads. The role
@@ -8,7 +8,7 @@
 ollama_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
 
   recovery:
