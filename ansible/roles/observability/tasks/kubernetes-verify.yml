@@ -1,0 +1,83 @@
+---
+# Prove the pod is doing its job, as tasks/main.yml does for Docker: Prometheus scrapes
+# exactly the targets this run rendered (one up), and Grafana can query its datasource.
+# Both are reached with `kubectl exec` inside the pod, since neither is published.
+
+- name: Observability Kubernetes verify | Read the active Prometheus targets
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --container
+      - prometheus
+      - --
+      - wget
+      - -q
+      - -O
+      - "-"
+      - "http://127.0.0.1:9090/api/v1/targets?state=active"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _observability_k8s_targets
+  vars:
+    _active: "{{ (_observability_k8s_targets.stdout | default('{}', true) | from_json).data.activeTargets | default([]) | selectattr('labels.job', 'equalto', 'nodes') | list }}"
+  until: >-
+    _observability_k8s_targets.rc == 0
+    and (_active | length) == (_observability_node_targets | length)
+    and ((_observability_node_targets | length) == 0
+         or (_active | selectattr('health', 'equalto', 'up') | list | length) > 0)
+  retries: 20
+  delay: 5
+  failed_when: false
+  changed_when: false
+
+- name: Observability Kubernetes verify | Assert Prometheus scrapes this deploy's targets
+  ansible.builtin.assert:
+    that:
+      - _observability_k8s_targets.rc == 0
+      - (_active | map(attribute='labels.instance') | sort | list) == (_observability_node_targets | map(attribute='name') | sort | list)
+      - (_observability_node_targets | length) == 0 or (_active | selectattr('health', 'equalto', 'up') | list | length) > 0
+    fail_msg: >-
+      Prometheus in {{ k8s_namespace }} is not scraping the targets this deploy rendered
+      ({{ _observability_node_targets | map(attribute='name') | sort | list }}), or none is
+      up. If none is up, the pods cannot reach node_exporter: check the cluster-node alias
+      firewall rule for TCP {{ app_config.app.node_exporter_port }}.
+  vars:
+    _active: "{{ (_observability_k8s_targets.stdout | default('{}', true) | from_json).data.activeTargets | default([]) | selectattr('labels.job', 'equalto', 'nodes') | list }}"
+
+- name: Observability Kubernetes verify | Ask Grafana for its Prometheus datasource health
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --container
+      - grafana
+      - --
+      - wget
+      - -q
+      - -O
+      - "-"
+      - "--header=Authorization: Basic {{ ((app_config.app.admin_user | default('admin')) ~ ':' ~ _observability_admin_password) | b64encode }}"
+      - "http://127.0.0.1:3000/api/datasources/uid/prometheus/health"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _observability_k8s_ds
+  until: _observability_k8s_ds.rc == 0 and (_observability_k8s_ds.stdout | from_json).status | default('') == 'OK'
+  retries: 10
+  delay: 3
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Observability Kubernetes verify | Assert Grafana can query Prometheus
+  ansible.builtin.assert:
+    that: _observability_k8s_ds.rc == 0 and (_observability_k8s_ds.stdout | from_json).status | default('') == 'OK'
+    fail_msg: Grafana cannot query its Prometheus datasource, so every dashboard would render blank.

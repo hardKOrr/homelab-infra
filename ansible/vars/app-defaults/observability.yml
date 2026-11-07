@@ -11,7 +11,7 @@
 observability_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
@@ -41,6 +41,11 @@ observability_defaults:
 
     grafana_image: "docker.io/grafana/grafana:latest"
     prometheus_image: "docker.io/prom/prometheus:latest"
+    # Kubernetes backend only: one PVC per data tree, on the cluster's default
+    # StorageClass (storageClassName omitted).
+    grafana_storage: 2
+    prometheus_storage: 10
+
     # No node_exporter_image: node_exporter is a PACKAGE on every guest, installed by
     # tasks/guest-bootstrap.yml, not a container this stack runs. node_exporter_port
     # above is still live — it is the port Prometheus scrapes every guest on.
@@ -52,6 +57,14 @@ observability_defaults:
     identity: catalog           # catalog tile only — Grafana has its own login and user
                                 # model; set forward_auth to put Authentik in front as well
 
+  # Kubernetes backend only: Prometheus scrapes every guest's node_exporter from a pod,
+  # so the cluster-node alias needs that port (ansible/tasks/kubernetes/README.md).
+  firewall:
+    egress:
+      - name: node-exporter
+        protocol: TCP
+        port: 9100
+
   # One stopped archive captures Grafana's saved dashboards and alert rules, and
   # Prometheus's TSDB. The configuration files are regenerated on Deploy.
   backup:
@@ -61,3 +74,11 @@ observability_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timeout_seconds: 3600
+    scratch_size: 5
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
