@@ -1,0 +1,143 @@
+---
+# Grafana and Prometheus natively on an LXC or a VM: Grafana from the Grafana APT
+# repository (https://grafana.com/docs/grafana/latest/setup-grafana/installation/debian/)
+# and Prometheus from its pre-compiled release binary
+# (https://prometheus.io/docs/prometheus/latest/installation/), each at the exact version
+# the app defaults pin. Runs before the data directories so the service users exist.
+- name: Observability native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Observability supports Debian-family amd64 guests only.
+
+- name: Observability native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Observability native | Install the repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, gpg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# Dedicated Prometheus identity: guest bootstrap already runs node_exporter as the
+# distribution's prometheus user; never change that active account's uid or home.
+# Created before the package so Grafana's data tree has a fixed owner a restore can assign.
+- name: Observability native | Create the service groups
+  ansible.builtin.group:
+    name: "{{ item.name }}"
+    gid: "{{ item.id }}"
+    system: true
+  loop:
+    - {name: grafana, id: "{{ observability_grafana_uid }}"}
+    - {name: observability-prometheus, id: "{{ observability_prometheus_uid }}"}
+
+- name: Observability native | Create the service users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    uid: "{{ item.id }}"
+    group: "{{ item.name }}"
+    home: "{{ item.home }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+  loop:
+    - {name: grafana, id: "{{ observability_grafana_uid }}", home: /usr/share/grafana}
+    - {name: observability-prometheus, id: "{{ observability_prometheus_uid }}", home: /var/lib/prometheus}
+
+- name: Observability native | Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Observability native | Download the Grafana repository signing key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.key
+    mode: "0644"
+
+- name: Observability native | Read the signing-key fingerprint
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, /etc/apt/keyrings/grafana.key]
+  register: _observability_grafana_key
+  changed_when: false
+
+- name: Observability native | Assert the Grafana repository signing key
+  ansible.builtin.assert:
+    that: >-
+      _observability_grafana_key.stdout is search("^fpr:::::::::B53AE77BADB630A683046005963FA27710458545:", multiline=True)
+    fail_msg: Grafana repository key fingerprint did not match the upstream-published key.
+
+- name: Observability native | Install the Grafana repository signing key
+  ansible.builtin.command:
+    argv: [gpg, --dearmor, --yes, --output, /etc/apt/keyrings/grafana.gpg, /etc/apt/keyrings/grafana.key]
+    creates: /etc/apt/keyrings/grafana.gpg
+
+- name: Observability native | Configure the Grafana APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+    update_cache: true
+
+- name: Observability native | Install the pinned Grafana package
+  ansible.builtin.apt:
+    name: "grafana={{ app_config.app.grafana_version }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 300
+  notify: Restart observability
+
+- name: Observability native | Read the installed Prometheus version
+  ansible.builtin.command:
+    argv: [/usr/local/bin/prometheus, --version]
+  register: _observability_prometheus_installed
+  changed_when: false
+  failed_when: false
+
+- name: Observability native | Install the pinned Prometheus release
+  when: "('version ' ~ app_config.app.prometheus_version ~ ' ') not in _observability_prometheus_installed.stdout | default('')"
+  vars:
+    _release: "prometheus-{{ app_config.app.prometheus_version }}.linux-amd64"
+  block:
+    - name: Observability native | Download the release archive
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ app_config.app.prometheus_version }}/{{ _release }}.tar.gz"
+        dest: "/var/tmp/{{ _release }}.tar.gz"
+        checksum: "sha256:{{ app_config.app.prometheus_sha256 }}"
+        mode: "0600"
+
+    - name: Observability native | Unpack the release archive
+      ansible.builtin.unarchive:
+        src: "/var/tmp/{{ _release }}.tar.gz"
+        dest: /var/tmp
+        remote_src: true
+        creates: "/var/tmp/{{ _release }}/prometheus"
+
+    - name: Observability native | Install the Prometheus binaries
+      ansible.builtin.copy:
+        src: "/var/tmp/{{ _release }}/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [prometheus, promtool]
+      notify: Restart observability
+
+  always:
+    - name: Observability native | Remove the release download
+      ansible.builtin.file:
+        path: "/var/tmp/{{ item }}"
+        state: absent
+      loop:
+        - "{{ _release }}.tar.gz"
+        - "{{ _release }}"

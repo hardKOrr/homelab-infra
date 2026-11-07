@@ -15,7 +15,7 @@ datasources:
     # the host's published port or on any DNS the lab may or may not have.
     # The Kubernetes backend runs both containers in one pod and overrides this with the
     # pod's loopback (tasks/kubernetes.yml).
-    url: {{ observability_prometheus_upstream | default('http://prometheus:9090') }}
+    url: {{ observability_prometheus_upstream }}
     isDefault: true
     editable: false
     jsonData:

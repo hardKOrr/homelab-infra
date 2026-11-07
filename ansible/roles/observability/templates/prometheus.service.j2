@@ -1,0 +1,24 @@
+{{ ansible_managed | comment }}
+# Prometheus for {{ instance }} — managed by homelab-infra. It binds the loopback only:
+# it has no authentication of its own.
+[Unit]
+Description=Prometheus ({{ instance }})
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=observability-prometheus
+Group=observability-prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+  --config.file={{ app_config.app.config_path }}/prometheus/prometheus.yml \
+  --storage.tsdb.path={{ app_config.app.data_path }}/prometheus \
+  --storage.tsdb.retention.time={{ app_config.app.retention | default('30d') }} \
+  --web.listen-address=127.0.0.1:{{ app_config.app.prometheus_port }} \
+  --web.enable-lifecycle
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

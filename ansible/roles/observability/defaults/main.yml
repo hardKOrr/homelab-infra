@@ -5,3 +5,20 @@ observability_project_dir: "/opt/{{ instance }}"
 observability_env_file: "/opt/{{ instance }}/.env"
 observability_datasource_name: Prometheus
 observability_dashboard_uid: homelab-infra-nodes
+
+# Native: Grafana from the Grafana APT repository and Prometheus from its release binary,
+# each under its own unit. The users have fixed uids so a restore can assign ownership.
+observability_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+observability_grafana_uid: 472
+observability_prometheus_uid: "{{ 9090 if observability_native | bool else 65534 }}"
+observability_native_services: [prometheus, grafana-server]
+# What backup and restore stop: the Compose services, or the units.
+observability_stop_services: >-
+  {{ observability_native_services if observability_native | bool else ['prometheus', 'grafana'] }}
+# Where Grafana reaches Prometheus and reads dashboards (Kubernetes overrides both).
+observability_prometheus_upstream: >-
+  {{ ('http://127.0.0.1:' ~ app_config.app.prometheus_port)
+     if observability_native | bool else 'http://prometheus:9090' }}
+observability_dashboards_path: >-
+  {{ (app_config.app.config_path ~ '/dashboards')
+     if observability_native | bool else '/var/lib/grafana/dashboards' }}

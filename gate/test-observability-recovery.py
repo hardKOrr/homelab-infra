@@ -179,19 +179,20 @@ def backup_check(case, server):
 
 
 def check_restore_swap(server):
-    swap = swap_inputs("observability", "restore-docker.yml")
+    swap = swap_inputs("observability", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     # Each tree keeps the uid its container runs as; data_path itself stays as Deploy made it.
     assert swap["recovery_swap_paths"] == [
         {"path": "{{ app_config.app.data_path }}/prometheus", "source": "data/prometheus",
-         "owner": 65534, "group": 0, "mode": "0750"},
+         "owner": "{{ observability_prometheus_uid }}", "group": 0, "mode": "0750"},
         {"path": "{{ app_config.app.data_path }}/grafana", "source": "data/grafana",
-         "owner": 472, "group": 0, "mode": "0750"}]
+         "owner": "{{ observability_grafana_uid }}", "group": 0, "mode": "0750"}]
     assert swap["recovery_swap_staging_parent"] == "{{ app_config.app.data_path | dirname }}"
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _observability_restore_target_backup_id }}"
-    assert swap["recovery_swap_stop_services"] == ["prometheus", "grafana"]
+    assert swap["recovery_swap_stop_services"] == "{{ observability_stop_services }}"
+    assert "app_config.hosting.method" in swap["recovery_swap_runtime"]
     assert swap["recovery_swap_health_url"].endswith("{{ app_config.app.prometheus_port }}/-/ready")
-    tasks = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore-docker.yml").read_text())
+    tasks = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore-guest.yml").read_text())
     assert "Observability restore | Require an independent pre-restore point for an existing target" in [
         task.get("name") for task in tasks]
 
@@ -232,7 +233,7 @@ def check_contract():
     assert {"backup", "restore"} <= set(catalog["extra"])
     upload = next(task for task in all_tasks(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
-    assert upload["vars"]["pbs_client_stop_services"] == ["prometheus", "grafana"]
+    assert upload["vars"]["pbs_client_stop_services"] == "{{ observability_stop_services }}"
 
 
 def main():
