@@ -3,3 +3,10 @@ ollama_project_dir: "/opt/{{ instance }}"
 ollama_compose_file: "{{ ollama_project_dir }}/docker-compose.yml"
 ollama_http_retries: 60
 ollama_http_delay: 5
+
+# Native (native.yml): the service user and unit; ~/.ollama links to app.models_path.
+ollama_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+ollama_native_user: ollama
+ollama_native_service: ollama
+ollama_native_home: /usr/share/ollama
+ollama_owner: "{{ ollama_native_user if ollama_native | bool else 0 }}"

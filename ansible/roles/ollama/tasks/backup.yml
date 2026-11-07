@@ -30,7 +30,7 @@
 - name: Ollama backup | Quiesce Ollama and archive models and configuration to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ ollama_project_dir }}"
     pbs_client_stop_services: [ollama]
     pbs_client_archives:

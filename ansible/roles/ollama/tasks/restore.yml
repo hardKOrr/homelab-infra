@@ -5,17 +5,17 @@
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Ollama restore | Use the restore swap on a Docker guest
+- name: Ollama restore | Use the restore swap on a Docker or native guest
   ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('docker')) == 'docker'
+    | default(app_config.hosting.method | default('docker')) in ['docker', 'native']
 
 - name: Ollama restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
     that: >-
       restore_target_config.hosting.method
-      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'native', 'kubernetes']
     fail_msg: >-
-      Ollama restore supports hosting.method docker or kubernetes; refusing to mutate a
+      Ollama restore supports hosting.method docker, native or kubernetes; refusing to mutate a
       target hosted by an unsupported method.

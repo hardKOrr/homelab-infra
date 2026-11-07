@@ -16,6 +16,14 @@ recovery in GPU mode; it is not part of the archive.
 For GPU deployments, declare the exact PCI device and keep node console recovery access.
 Both CPU and GPU deployments need a persistent model-storage path.
 
+## Native
+
+`hosting.method: native` with `proxmox.guest_type: lxc` or `vm` (`tasks/native.yml`) installs
+the pinned `ollama-linux-amd64` release archive from Ollama's manual Linux install and runs
+it under its own `ollama` unit, in CPU mode. `~ollama/.ollama` links to `app.models_path`, so
+a recovery point from Docker or native restores to either. Backup and restore are the shared
+PBS client and restore swap with the `native` runtime.
+
 ## Kubernetes
 
 `hosting.method: kubernetes` runs one CPU-mode pod (`tasks/kubernetes.yml`,

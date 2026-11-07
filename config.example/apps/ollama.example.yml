@@ -15,8 +15,14 @@
 #   method: docker
 # stack: ollama-lxc
 
+# To run Ollama natively on its own LXC or VM (CPU mode only), set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc  # or vm
+
 app:
-  image: ollama/ollama:latest
+  image: ollama/ollama:0.40.15
   port: 11434
   gpu_device: "" # CPU mode; set to the key in proxmox.devices for dedicated GPU mode
   # Models and Ollama metadata are retained here and included in the PBS archive.

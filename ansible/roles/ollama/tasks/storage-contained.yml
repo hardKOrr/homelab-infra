@@ -1,0 +1,11 @@
+---
+# Shared by the Docker and native paths: the archive covers storage_path only.
+- name: Ollama | Assert the storage paths are inside the application storage root
+  ansible.builtin.assert:
+    that:
+      - (app_config.app.models_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+    fail_msg: >-
+      Ollama storage paths must remain below app.storage_path so model files and
+      configuration share one owned recovery unit.

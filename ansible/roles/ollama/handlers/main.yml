@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ ollama_project_dir }}"
     state: restarted
+  when: not (ollama_native | bool)
+
+- name: Restart native Ollama
+  ansible.builtin.systemd:
+    name: "{{ ollama_native_service }}"
+    state: restarted
+  listen: Restart Ollama
+  when: ollama_native | bool
