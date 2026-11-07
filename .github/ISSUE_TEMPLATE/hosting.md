@@ -43,7 +43,7 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R2: Each method shall do backup, restore and database dump/drop through the shared operations files, with <App>'s own behavior in their inputs and hooks and no role-local copy (`gate/test-shared-standards.py` fails on one).
 - R3: The repository shall pass `bash gate/lint.sh` and `bash gate/test.sh` at each set's candidate SHA.
 - R4: While <App> runs on a method this issue adds, Deploy shall keep exactly one DNS record, one Caddy route and one Kuma monitor for it (SSO as declared), as on the default method.
-- R5: If running <App> on a method or guest type is technically impossible, because upstream documents that the app cannot run this way or a device or kernel feature it needs cannot reach that guest or the cluster, then the worker shall post blocked for that method on the issue with the reason and a link to the upstream source or the exact failing step, tick that method's remaining sets with `impossible` after them, and continue with the next method. Difficulty or effort doesn't count as impossible.
+- R5: If running <App> on a method or guest type is technically impossible, because upstream documents that the app cannot run this way or a device or kernel feature it needs cannot reach that guest or the cluster, then the worker shall post blocked for that method on the issue with the reason and a link to the upstream source or the exact failing step, tick that method's remaining sets with `impossible` after them, and continue with the next method. The worker shall also remove that method's or guest type's `hosting.supported` entries together with its playbook path, so the gate stays consistent. Difficulty or effort doesn't count as impossible.
 
 ## Method 1: Kubernetes
 
@@ -64,7 +64,8 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R13: The Kubernetes method shall mount <App>'s media and download shares in the pod from the NFS shares it uses today, at the same container paths as its Docker stack, through the shared media-share seam `tasks/kubernetes/prepare-media-volumes.yml` and no role-local copy.
 - R14: The Kubernetes method shall give <App>'s pod access to <device> on the node that runs it.
 - R15: When the recovery drill runs on Kubernetes at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
-- R16: When the Kubernetes drill passes, the app's defaults shall list `kubernetes` in `hosting.supported`.
+- R16: When the Kubernetes drill passes, the app's defaults shall keep `kubernetes` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `kubernetes` together with the Kubernetes method's path.
+- R17: When the code set for the Kubernetes method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Method 2: Native on an LXC and on a VM
 
@@ -74,9 +75,10 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R21: Where the config selects `hosting.method: native` with `proxmox.guest_type: lxc`, Deploy shall run <App> natively on an LXC.
 - R22: Where the config selects `hosting.method: native` with `proxmox.guest_type: vm`, Deploy shall run <App> natively on a VM.
 - R23: When the recovery drill runs natively on an LXC at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
-- R24: When the native LXC drill passes, the app's defaults shall list `native-lxc` in `hosting.supported`.
+- R24: When the native LXC drill passes, the app's defaults shall keep `native-lxc` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `native-lxc` together with the native method's LXC path.
 - R25: When the recovery drill runs natively on a VM at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
-- R26: When the native VM drill passes, the app's defaults shall list `native-vm` in `hosting.supported`.
+- R26: When the native VM drill passes, the app's defaults shall keep `native-vm` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `native-vm` together with the native method's VM path.
+- R27: When the code set for the native method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Method 3: Docker on an LXC and on a VM
 
@@ -86,20 +88,21 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R31: Where the config selects `hosting.method: docker` on a stack with `guest_type: vm`, Deploy shall run <App> on Docker on a VM.
 - R32: The LXC drill config shall use a stack named after the app's current stack with `-lxc` appended (`<app>-lxc` for an app with no `stack:`), created with `guest_type: lxc`; the VM drill shall use the app's current stack (`<app>` for an app with no `stack:`) with `guest_type: vm`.
 - R33: When the recovery drill runs on Docker on an LXC at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
-- R34: When the Docker LXC drill passes, the app's defaults shall list `docker-lxc` in `hosting.supported`.
+- R34: When the Docker LXC drill passes, the app's defaults shall keep `docker-lxc` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `docker-lxc` together with the Docker method's LXC path.
 - R35: When the recovery drill runs on Docker on a VM at the candidate SHA, the drill shall restore both canaries exactly from the recorded recovery point into a fresh instance, and the repeat and final Deploy shall report no changes.
-- R36: When the Docker VM drill passes, the app's defaults shall list `docker-vm` in `hosting.supported`.
+- R36: When the Docker VM drill passes, the app's defaults shall keep `docker-vm` in `hosting.supported`. If the drill fails or R5 applies, the worker shall remove `docker-vm` together with the Docker method's VM path.
+- R37: When the code set for the Docker method is ready, the app's defaults shall list each of that method's guest types in `hosting.supported`, as `gate/test-hosting-contract.py` requires.
 
 ## Requirement sets
 
 Sets run in order; a method's sets all finish before the next method's first set starts.
 
-- [ ] S1 (code, Kubernetes): When R1–R3 and R10–R14 are met, the worker shall tick S1 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
+- [ ] S1 (code, Kubernetes): When R1–R3, R10–R14 and R17 are met, the worker shall tick S1 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
 - [ ] S2 (execution, Kubernetes): When R4, R15 and R16 are met, the worker shall tick S2 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
-- [ ] S3 (code, native): When R1–R3 and R20–R22 are met, the worker shall tick S3 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
+- [ ] S3 (code, native): When R1–R3, R20–R22 and R27 are met, the worker shall tick S3 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
 - [ ] S4 (execution, native LXC): When R4, R23 and R24 are met, the worker shall tick S4 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
 - [ ] S5 (execution, native VM): When R4, R25 and R26 are met, the worker shall tick S5 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
-- [ ] S6 (code, Docker): When R1–R3 and R30–R32 are met, the worker shall tick S6 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
+- [ ] S6 (code, Docker): When R1–R3, R30–R32 and R37 are met, the worker shall tick S6 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
 - [ ] S7 (execution, Docker LXC): When R4, R33 and R34 are met, the worker shall tick S7 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
 - [ ] S8 (execution, Docker VM): When R4, R35 and R36 are met, the worker shall tick S8 and post done. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
 
