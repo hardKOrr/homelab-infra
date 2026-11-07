@@ -56,7 +56,9 @@
     state: directory
     owner: root
     group: root
-    mode: "0750"
+    # Natively the service users reach config/ and data/ through this directory (execute
+    # only, no listing); the root-only .env inside keeps its own 0600.
+    mode: "{{ '0711' if observability_native | bool else '0750' }}"
 
 - name: Create config directories
   ansible.builtin.file:
