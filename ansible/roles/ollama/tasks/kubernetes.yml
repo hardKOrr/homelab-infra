@@ -1,0 +1,34 @@
+---
+# One Deployment (CPU mode) with the model store on a default-StorageClass claim, and the
+# shared CronJob that backs the claim up to PBS.
+
+- name: Ollama | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Ollama | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Ollama | Render the Kubernetes workload
+  ansible.builtin.set_fact:
+    _ollama_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Ollama | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _ollama_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Ollama | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-storage"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the downloaded models and Ollama's metadata in one application-consistent
+        recovery point

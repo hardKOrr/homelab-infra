@@ -1,0 +1,20 @@
+---
+# The shared restore Job replaces the whole model volume (/root/.ollama: models and keys).
+- name: Ollama Kubernetes restore | Restore the model volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Ollama
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-storage"
+          owner: "0:0"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the downloaded models and Ollama's metadata in one application-consistent
+        recovery point
+      verify:
+        - >-
+          Query /api/tags at the instance URL and verify the expected model canary is
+          listed.
