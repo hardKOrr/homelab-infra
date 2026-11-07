@@ -6,10 +6,22 @@
 navidrome_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
   media_storage: {}
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -18,7 +30,11 @@ navidrome_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: "deluan/navidrome:latest"
+    image: "deluan/navidrome:0.64.2"
+    # Native: the same release from its .deb
+    # (https://www.navidrome.org/docs/installation/linux/).
+    native_version: "0.64.2"
+    native_deb_sha256: b9ecb35eb6e042d6b019d504c0df40fa676f9a5a18db6513f551e124af7085e3
     port: 4533
     container_port: 4533
     data_path: "/opt/{{ instance }}/data"

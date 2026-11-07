@@ -11,10 +11,17 @@ stack: media
 #   method: docker
 # stack: media-lxc
 
+# To run Navidrome natively on its own LXC or VM instead, set:
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc  # or vm
+# The guest gets the same media_storage mounts; the music path is read-only to Navidrome.
+
 # app:
 #   library_subpath: music  # relative path below media_storage.library; do not use ..
 #   port: 4533              # change only when another Navidrome instance uses the stack
-#   # image: deluan/navidrome:latest
+#   # image: deluan/navidrome:0.64.2
 #   # puid/pgid must match media_storage.owner.uid/gid; Navidrome uses user:, not PUID/PGID.
 
 # Navidrome creates its first administrator through its own web setup screen on first

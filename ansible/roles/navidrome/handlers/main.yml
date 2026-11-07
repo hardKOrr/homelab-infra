@@ -4,3 +4,11 @@
     project_src: "{{ navidrome_project_dir }}"
     state: present
     recreate: always
+  when: not (navidrome_native | bool)
+
+- name: Restart native navidrome
+  ansible.builtin.systemd:
+    name: "{{ navidrome_native_service }}"
+    state: restarted
+  listen: Restart navidrome
+  when: navidrome_native | bool

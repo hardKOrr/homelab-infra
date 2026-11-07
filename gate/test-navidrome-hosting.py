@@ -16,7 +16,7 @@ def read_yaml(path):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/navidrome.yml")["navidrome_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["hosting"]["impossible"] == {}
 
     playbook = read_yaml("ansible/playbooks/apps/navidrome.yml")
@@ -24,7 +24,7 @@ def main():
     assert len(docker_hosts) == 1
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "navidrome"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in docker_hosts[0]["tasks"]
     )
     assert any(
@@ -191,7 +191,7 @@ def main():
     wrapper = read_yaml("ansible/roles/navidrome/tasks/restore.yml")
     assert len(wrapper) == 3
     assert "restore-kubernetes.yml" in wrapper[0]["ansible.builtin.include_tasks"]
-    assert "restore-docker.yml" in wrapper[1]["ansible.builtin.include_tasks"]
+    assert "restore-guest.yml" in wrapper[1]["ansible.builtin.include_tasks"]
     print("Navidrome hosting: Docker default and shared Kubernetes recovery passed")
 
 
