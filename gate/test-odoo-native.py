@@ -20,4 +20,8 @@ assert "pbs_client_runtime: \"{{ app_config.hosting.method" in backup
 assert "database_client_runtime" in (role / "tasks/backup-quiesced.yml").read_text()
 assert "tasks/recovery/restore-swap.yml" in (role / "tasks/restore-guest.yml").read_text()
 
+# A non-default app.port reaches the native listener (Docker keeps 8069 inside the container).
+conf = (role / "templates/odoo.conf.j2").read_text()
+assert "{% if odoo_native | bool %}" in conf and "http_port = {{ app_config.app.port }}" in conf
+
 print("Odoo native pins the 18.0 repository and reuses the shared backup and restore")
