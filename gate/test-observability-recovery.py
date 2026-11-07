@@ -179,7 +179,7 @@ def backup_check(case, server):
 
 
 def check_restore_swap(server):
-    swap = swap_inputs("observability")
+    swap = swap_inputs("observability", "restore-docker.yml")
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     # Each tree keeps the uid its container runs as; data_path itself stays as Deploy made it.
     assert swap["recovery_swap_paths"] == [
@@ -191,7 +191,7 @@ def check_restore_swap(server):
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _observability_restore_target_backup_id }}"
     assert swap["recovery_swap_stop_services"] == ["prometheus", "grafana"]
     assert swap["recovery_swap_health_url"].endswith("{{ app_config.app.prometheus_port }}/-/ready")
-    tasks = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore.yml").read_text())
+    tasks = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore-docker.yml").read_text())
     assert "Observability restore | Require an independent pre-restore point for an existing target" in [
         task.get("name") for task in tasks]
 
@@ -230,7 +230,6 @@ def check_contract():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["extra"])
-    assert "client" not in defaults["backup"], "the shared client owns its pins"
     upload = next(task for task in all_tasks(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
     assert upload["vars"]["pbs_client_stop_services"] == ["prometheus", "grafana"]

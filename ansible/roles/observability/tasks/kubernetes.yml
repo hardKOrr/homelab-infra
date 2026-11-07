@@ -1,0 +1,114 @@
+---
+# Deploy the observability stack onto Kubernetes: one pod runs Prometheus and Grafana
+# (Grafana reaches Prometheus on the pod loopback, so Prometheus is never published), with
+# a PVC per data tree on the cluster's default StorageClass. Runs on localhost.
+#
+# Inputs: instance, app_config, observability_fqdn (the Ingress hostname).
+# Exports: the same observability_* facts as tasks/main.yml, for Play 3.
+
+- name: Observability Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Observability Kubernetes | Open node_exporter egress through the cluster node alias
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
+
+- name: Observability Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Observability Kubernetes | Collect the node scrape targets
+  ansible.builtin.include_tasks: scrape-targets.yml
+
+# Canonical in Vaultwarden, read back through app_config.app on later runs (the playbook
+# merges homelabinfra_vault.apps[instance] over the defaults), so a repeat Deploy keeps it.
+- name: Observability Kubernetes | Resolve the Grafana admin credential
+  ansible.builtin.set_fact:
+    _observability_admin_password: >-
+      {{ app_config.app.admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Observability Kubernetes | Store the canonical credential
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: prometheus_grafana
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user | default('admin') }}"
+      admin_password: "{{ _observability_admin_password }}"
+    vault_item_secret_fields: [admin_password]
+
+# Skipped for an isolated recovery target: the shared metrics registration must keep
+# pointing at the live source until the restore is verified.
+- name: Observability Kubernetes | Store the Grafana password for the metrics registry
+  when: not (recovery_isolated | default(false) | bool)
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/metrics
+    vault_item_fields:
+      provider: prometheus_grafana
+      instance: "{{ instance }}"
+      host: "https://{{ observability_fqdn }}"
+      prometheus_host: "http://127.0.0.1:9090"
+      admin_user: "{{ app_config.app.admin_user | default('admin') }}"
+      admin_password: "{{ _observability_admin_password }}"
+    vault_item_secret_fields: [admin_password]
+
+- name: Observability Kubernetes | Sync the Grafana credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      GF_SECURITY_ADMIN_USER: "{{ app_config.app.admin_user | default('admin') }}"
+      GF_SECURITY_ADMIN_PASSWORD: "{{ _observability_admin_password }}"
+
+# The same templates the Docker path writes to disk, with the pod-local addresses.
+- name: Observability Kubernetes | Render the configuration files
+  ansible.builtin.set_fact:
+    _observability_k8s_config:
+      prometheus.yml: "{{ lookup('ansible.builtin.template', 'prometheus.yml.j2') }}"
+      datasource.yml: "{{ lookup('ansible.builtin.template', 'datasource.yml.j2') }}"
+      dashboards.yml: "{{ lookup('ansible.builtin.template', 'dashboards.yml.j2') }}"
+      homelab-nodes.json: "{{ lookup('ansible.builtin.file', 'homelab-nodes.json') }}"
+  vars:
+    observability_prometheus_upstream: http://127.0.0.1:9090
+    observability_dashboards_path: /etc/grafana/dashboards
+
+- name: Observability Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _observability_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Observability Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _observability_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Observability Kubernetes | Verify Prometheus scrapes and Grafana queries it
+  ansible.builtin.include_tasks: kubernetes-verify.yml
+
+- name: Observability Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: grafana
+          claim: "{{ instance }}-grafana"
+        - name: prometheus
+          claim: "{{ instance }}-prometheus"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        Grafana's database (dashboards, users, alert rules) and Prometheus's TSDB
+
+- name: Observability Kubernetes | Export the endpoints to the playbook
+  ansible.builtin.set_fact:
+    observability_grafana_url: "https://{{ observability_fqdn }}"
+    observability_prometheus_url: http://127.0.0.1:9090
+    observability_admin_username: "{{ app_config.app.admin_user | default('admin') }}"
+    observability_admin_password: "{{ _observability_admin_password }}"
+    observability_scrape_target_count: "{{ _observability_node_targets | length }}"
+  no_log: true

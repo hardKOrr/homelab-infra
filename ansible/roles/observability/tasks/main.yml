@@ -39,29 +39,8 @@
          | default(homelabinfra_config.infrastructure.domain, true) }}
 
 # ── Scrape targets ────────────────────────────────────────────────────────────
-# Guests with no resolvable address (never booted, inventory mid-refresh) are
-# skipped rather than written as an empty target Prometheus would reject.
-- name: Collect node scrape targets
-  ansible.builtin.set_fact:
-    _observability_node_targets: >-
-      {{ (_observability_node_targets | default([]))
-         + [{'name': item,
-             'address': hostvars[item].ansible_host
-                        | default(hostvars[item].ansible_default_ipv4.address | default(''))}] }}
-  # Sorted, because the dynamic inventory does not promise a stable order for a group and
-  # this list is rendered straight into prometheus.yml. Unsorted, a no-op re-run produced a
-  # file that differed only in the ORDER of its scrape targets, which marked the template
-  # changed and fired the handler — so every bootstrap pass restarted Prometheus and put a
-  # gap in the metrics it exists to collect. Sorting makes the render a pure function of
-  # which guests exist, not of how the inventory happened to enumerate them.
-  loop: "{{ groups['lab_managed'] | default([]) | sort }}"
-  when: >-
-    hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address | default(''))
-    | length > 0
-
-- name: Default the scrape target list when the inventory is empty
-  ansible.builtin.set_fact:
-    _observability_node_targets: "{{ _observability_node_targets | default([]) }}"
+- name: Collect the node scrape targets
+  ansible.builtin.include_tasks: scrape-targets.yml
 
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
