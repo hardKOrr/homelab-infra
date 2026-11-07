@@ -1,0 +1,8 @@
+---
+# Supply the native service list to the shared Remove operation.
+- name: Plane remove | Load role defaults
+  ansible.builtin.include_vars: ../defaults/main.yml
+
+- name: Plane remove | Select every native service
+  ansible.builtin.set_fact:
+    _rm_service_names: "{{ plane_native_services }}"

@@ -1,0 +1,10 @@
+---
+# Shared removal has already stopped every native unit; it deletes data_path itself.
+- name: Plane remove | Remove the recovery schedule and configuration
+  ansible.builtin.include_tasks: remove.yml
+
+- name: Plane remove | Delete object storage when data deletion was requested
+  ansible.builtin.file:
+    path: "{{ app_config.app.object_storage_path }}"
+    state: absent
+  when: _rm_delete_data | bool
