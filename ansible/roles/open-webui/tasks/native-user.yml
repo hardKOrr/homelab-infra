@@ -1,0 +1,15 @@
+---
+# Created before main.yml makes the data directory the service user owns.
+- name: Open WebUI native | Create the service group
+  ansible.builtin.group:
+    name: "{{ open_webui_native_user }}"
+    system: true
+
+- name: Open WebUI native | Create the service user
+  ansible.builtin.user:
+    name: "{{ open_webui_native_user }}"
+    group: "{{ open_webui_native_user }}"
+    home: "{{ open_webui_native_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true

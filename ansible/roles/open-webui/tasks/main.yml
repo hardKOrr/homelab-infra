@@ -3,16 +3,26 @@
 # applications: only their already-recorded endpoint and, when available, their canonical
 # API credential are consumed here.
 
-- name: Open WebUI | Create project and data directories
+- name: Open WebUI | Create the native service user
+  ansible.builtin.include_tasks: native-user.yml
+  when: open_webui_native | bool
+
+- name: Open WebUI | Create the project directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ open_webui_project_dir }}"
     state: directory
     owner: root
     group: root
+    # The native service user reaches its virtualenv and data below this directory.
+    mode: "{{ '0755' if open_webui_native | bool else '0750' }}"
+
+- name: Open WebUI | Create the data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "{{ open_webui_owner }}"
+    group: "{{ open_webui_owner }}"
     mode: "0750"
-  loop:
-    - "{{ open_webui_project_dir }}"
-    - "{{ app_config.app.data_path }}"
 
 - name: Open WebUI | Generate or reuse the application secret
   ansible.builtin.set_fact:
@@ -48,7 +58,12 @@
   no_log: true
   notify: Restart Open WebUI
 
+- name: Open WebUI | Install and start the native service
+  ansible.builtin.include_tasks: native.yml
+  when: open_webui_native | bool
+
 - name: Open WebUI | Render the Compose project
+  when: not (open_webui_native | bool)
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ open_webui_compose_file }}"
@@ -58,10 +73,12 @@
   notify: Restart Open WebUI
 
 - name: Open WebUI | Pull the image
+  when: not (open_webui_native | bool)
   community.docker.docker_compose_v2_pull:
     project_src: "{{ open_webui_project_dir }}"
 
 - name: Open WebUI | Start the application
+  when: not (open_webui_native | bool)
   community.docker.docker_compose_v2:
     project_src: "{{ open_webui_project_dir }}"
     state: present
@@ -123,7 +140,7 @@
 - name: Open WebUI | Install the shared PBS client and this instance's settings
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ open_webui_runtime }}"
     pbs_client_config_state: "{{ 'present' if _open_webui_backup_timer_enabled | bool else 'absent' }}"
   when: not (recovery_isolated | default(false) | bool)
 

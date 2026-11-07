@@ -12,7 +12,12 @@
 # independent and are never removed or included in this recovery unit.
 
 hosting:
-  method: docker # docker | kubernetes
+  method: docker # docker | kubernetes | native
+
+# To run Open WebUI natively (the pinned PyPI package) on its own LXC or VM, set
+# hosting.method: native and:
+# proxmox:
+#   guest_type: lxc  # or vm
 
 app:
   upstreams:

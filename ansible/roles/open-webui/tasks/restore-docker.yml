@@ -1,5 +1,5 @@
 ---
-# Restore one Open WebUI data.pxar point through the shared swap. The restored webui.db
+# Restore one Open WebUI data.pxar point through the shared swap (Docker or native). The restored webui.db
 # needs the source's application key, so the replaced hook gives it to the target; a
 # failure after the stop puts the original data and key back and starts Open WebUI. The
 # guest's backup timer takes the same lock, so a backup never archives a half-swapped tree.
@@ -107,14 +107,14 @@
     - name: Open WebUI restore | Preview or replace the data directory
       ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
       vars:
-        recovery_swap_runtime: docker
+        recovery_swap_runtime: "{{ open_webui_runtime }}"
         recovery_swap_backup_id: "{{ _open_webui_restore_backup_id }}"
         recovery_swap_pre_restore_backup_id: "{{ _open_webui_target_backup_id }}"
         recovery_swap_archives: [data.pxar]
         recovery_swap_paths:
           - path: "{{ app_config.app.data_path }}"
-            owner: root
-            group: root
+            owner: "{{ open_webui_owner }}"
+            group: "{{ open_webui_owner }}"
             mode: "0750"
         recovery_swap_stop_services: ["{{ app_config.app.service_name }}"]
         recovery_swap_compose_project: "{{ open_webui_project_dir }}"

@@ -6,7 +6,7 @@
 open_webui_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: ai
 
@@ -16,9 +16,31 @@ open_webui_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
 
+  proxmox:
+    # Used only when hosting.method is native (the guest type comes from the instance's
+    # proxmox.guest_type); the Python package and its dependencies need room.
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 4
+    memory: 8192
+    disk_volume:
+      size: 40
+    vm:
+      cores: 4
+      memory: 8192
+      disk_size: 40
+      agent: 1
+      onboot: true
+      description: "Open WebUI, created by homelab-infra"
+      tags: [_+lab, _-debian]
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
     # Pin a published release instead of a moving upstream branch/tag image.
     image: ghcr.io/open-webui/open-webui:v0.11.4
+    # Native: the same release from PyPI (https://docs.openwebui.com/getting-started/quick-start/).
+    native_version: "0.11.4"
     port: 3000
     container_port: 8080
     service_name: open-webui

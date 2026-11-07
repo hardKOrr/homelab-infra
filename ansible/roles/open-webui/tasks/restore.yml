@@ -2,6 +2,6 @@
   ansible.builtin.include_tasks: restore-kubernetes.yml
   when: app_config.hosting.method | default('docker') == 'kubernetes'
 
-- name: Open WebUI restore | Restore Docker data through the shared swap
+- name: Open WebUI restore | Restore Docker or native data through the shared swap
   ansible.builtin.include_tasks: restore-docker.yml
-  when: app_config.hosting.method | default('docker') == 'docker'
+  when: app_config.hosting.method | default('docker') in ['docker', 'native']
