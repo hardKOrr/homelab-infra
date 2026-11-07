@@ -18,6 +18,12 @@
 # compete for disk with the login path on sso.
 # stack: monitoring
 
+# To use Docker on an LXC, set infrastructure.stacks.monitoring-lxc.guest_type: lxc in
+# config/infrastructure.yml and set:
+# hosting:
+#   method: docker
+# stack: monitoring-lxc
+
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:
 #   port: 3000                # Grafana, published to the reverse proxy
