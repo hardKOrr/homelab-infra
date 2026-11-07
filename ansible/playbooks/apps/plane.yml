@@ -1,6 +1,7 @@
 ---
 # Deploy Plane with named PostgreSQL and Redis backends using the selected hosting method.
-# Docker on the services stack remains the default.
+# Docker on the services stack remains the default; an instance that names a stack with
+# guest_type: lxc runs Docker on an LXC.
 - name: "Plane | Provision"
   hosts: localhost
   become: false

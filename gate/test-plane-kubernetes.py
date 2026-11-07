@@ -134,7 +134,7 @@ def test_defaults_and_dispatch():
         (ROOT / "ansible/vars/app-defaults/plane.yml").read_text(encoding="utf-8")
     )["plane_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["retention_days"] == 14
     assert defaults["backup"]["client"]["image"] == "python:3.12-bookworm"
