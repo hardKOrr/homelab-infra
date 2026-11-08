@@ -1,0 +1,82 @@
+---
+# Run on localhost before the cluster deploy (the playbook's prepare play): resolve the
+# NFS share behind each directory the pod mounts, at the container paths the Docker stack
+# uses (/downloads/complete, /downloads/incomplete, /shared/<n>), and create the download
+# directories on the Proxmox node, which the pod cannot do before the app starts. Sets
+# k8s_media_nfs (opening the cluster nodes' NFS egress) and _slskd_k8s_shares.
+- name: slskd Kubernetes media | Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _slskd_k8s_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+    _slskd_k8s_download: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+
+# Each wanted directory is matched to the deepest mount that holds it.
+- name: slskd Kubernetes media | Map each mounted directory to its media mount
+  ansible.builtin.set_fact:
+    _slskd_k8s_dirs_json: >-
+      {%- set wanted = [{'container': '/downloads/complete', 'path': _slskd_k8s_download ~ '/complete', 'read_only': false, 'create': true},
+                        {'container': '/downloads/incomplete', 'path': _slskd_k8s_download ~ '/incomplete', 'read_only': false, 'create': true}] -%}
+      {%- for shared in (app_config.app.shared_dirs | default([])) -%}
+      {%- set _ = wanted.append({'container': '/shared/' ~ loop.index0, 'path': shared | regex_replace('/+$', ''), 'read_only': true, 'create': false}) -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for want in wanted -%}
+      {%- set found = [] -%}
+      {%- for m in (_slskd_k8s_mounts | sort(attribute='path', reverse=true)) -%}
+      {%- set root = m.path | regex_replace('/+$', '') -%}
+      {%- if not found and (want.path == root or want.path.startswith(root ~ '/')) -%}
+      {%- set _ = found.append(want | combine({'mount': m.path, 'rel': want.path[(root | length):],
+                                               'host': (m.host | regex_replace('/+$', '')) ~ want.path[(root | length):]})) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.append(found | first | default(want | combine({'mount': ''}))) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: slskd Kubernetes media | Require every mounted directory to be inside a declared mount
+  ansible.builtin.assert:
+    that: item.mount | length > 0
+    fail_msg: >-
+      {{ item.path }} (app.download_path or app.shared_dirs) is not inside any
+      media_storage mount, so Kubernetes has no share to mount it from.
+  loop: "{{ _slskd_k8s_dirs_json | from_json }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# Before any directory is created: an unmounted share must fail here, not after the
+# download tree was written into the node's backing directory.
+- name: slskd Kubernetes media | Resolve the mounts' NFS shares
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: "{{ _slskd_k8s_mounts }}"
+
+- name: slskd Kubernetes media | Express each directory as an NFS share at its Docker path
+  ansible.builtin.set_fact:
+    _slskd_k8s_shares: >-
+      {%- set shares = [] -%}
+      {%- for d in (_slskd_k8s_dirs_json | from_json) -%}
+      {%- for n in k8s_media_nfs if n.path == d.mount -%}
+      {%- set _ = shares.append({'name': 'share-' ~ shares | length, 'server': n.server,
+                                 'path': (n.export | regex_replace('/+$', '')) ~ d.rel,
+                                 'mount_path': d.container, 'read_only': d.read_only}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: slskd Kubernetes media | Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: slskd Kubernetes media | Ensure the download directories exist on the node
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0775"
+    # Numeric ids: the owner's named account need not exist on the node.
+    owner: "{{ app_config.app.puid | default(1000) | string }}"
+    group: "{{ app_config.app.pgid | default(1000) | string }}"
+  loop: >-
+    {{ [(_slskd_k8s_dirs_json | from_json)[0].host | regex_replace('/complete$', '')]
+       + ((_slskd_k8s_dirs_json | from_json) | selectattr('create') | map(attribute='host') | list) }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true

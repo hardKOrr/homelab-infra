@@ -1,0 +1,156 @@
+{# slskd: its /app volume and the lab's existing NFS media shares, at the Docker container paths. #}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set container_port = app_config.app.container_port | default(app_config.app.port) %}
+{% set secret_env = {'SLSKD_API_KEY': 'api-key', 'SLSKD_PASSWORD': 'web-password',
+                     'SLSKD_SLSK_USERNAME': 'slsk-username', 'SLSKD_SLSK_PASSWORD': 'slsk-password'} %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | default(2) | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: app
+      annotations:
+        # Environment variables are read once at start; a changed credential must roll the pod.
+        homelab-infra/credential: {{ (_slskd_api_key ~ _slskd_web_password ~ _slskd_soulseek_username ~ _slskd_soulseek_password) | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: {{ app_config.app.puid | default(1000) | int }}
+        runAsGroup: {{ app_config.app.pgid | default(1000) | int }}
+        fsGroup: {{ app_config.app.pgid | default(1000) | int }}
+      containers:
+        - name: slskd
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: {{ homelabinfra_config.timezone | default('UTC') | to_json }}
+            - name: SLSKD_HTTP_PORT
+              value: "{{ container_port }}"
+            - name: SLSKD_SLSK_LISTEN_PORT
+              value: "{{ app_config.app.listen_port }}"
+            - name: SLSKD_USERNAME
+              value: {{ app_config.app.web_username | default('admin') | to_json }}
+            - name: SLSKD_DOWNLOADS_DIR
+              value: /downloads/complete
+            - name: SLSKD_INCOMPLETE_DIR
+              value: /downloads/incomplete
+            # Lets Lidarr delete a completed download after importing it.
+            - name: SLSKD_REMOTE_FILE_MANAGEMENT
+              value: "true"
+{% set shared = app_config.app.shared_dirs | default([]) %}
+{% if shared | length > 0 %}
+            - name: SLSKD_SHARED_DIR
+              value: {{ range(shared | length) | map('string') | map('regex_replace', '^', '/shared/') | join(';') | to_json }}
+{% endif %}
+{% for name, key in secret_env.items() %}
+            - name: {{ name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: {{ key }}
+{% endfor %}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+            - name: {{ key | to_json }}
+              value: {{ value | string | to_json }}
+{% endfor %}
+          ports:
+            - name: http
+              containerPort: {{ container_port }}
+          volumeMounts:
+            - name: config
+              mountPath: /app
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+              readOnly: {{ mount.readOnly | to_json }}
+{% endfor %}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
+          nfs:
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ slskd_fqdn | to_json }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

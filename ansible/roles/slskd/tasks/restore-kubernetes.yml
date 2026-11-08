@@ -1,0 +1,18 @@
+---
+# Replace the target's /app PVC through the shared Kubernetes recovery Job. The NFS media
+# shares are not part of the archive; the credentials come from the target's own Secret.
+- name: slskd Kubernetes restore | Restore the /app volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: slskd
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid }}:{{ restore_target_config.app.pgid }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        slskd's settings and shares database from its /app volume; downloads are not included
+      verify:
+        - Open the slskd URL and verify the restored settings and the Soulseek login.

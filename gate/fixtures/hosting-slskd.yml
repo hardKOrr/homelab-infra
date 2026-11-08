@@ -38,3 +38,13 @@
         that:
           - _hosting_combination == 'docker-lxc'
           - _hosting_stack_name == 'media-lxc'
+
+    - name: Validate the Kubernetes drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _slskd_defaults | combine({'hosting': {'method': 'kubernetes'}, 'stack': ''}, recursive=True) }}
+
+    - name: Require the Kubernetes combination
+      ansible.builtin.assert:
+        that: _hosting_combination == 'kubernetes'
