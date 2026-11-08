@@ -8,7 +8,7 @@ version, storage), `start.yml` (directories, mounts, API key, Compose), `verify.
 
 ## Native
 
-Lidarr can run on its own LXC or VM (`hosting.method: native`, `proxmox.guest_type`).
+Each Servarr app can run on its own LXC or VM (`hosting.method: native`, `proxmox.guest_type`).
 `native.yml` unpacks the pinned release tarball under `/opt/<instance>/bin`, seeds
 `config.xml` with the API key (a restored `config.xml` brings its own) and runs the
 app as a systemd unit under the app's `puid`/`pgid` user. Backup and restore use the same

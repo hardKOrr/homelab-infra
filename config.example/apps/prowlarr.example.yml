@@ -10,3 +10,11 @@
 # stack: media-lxc
 # To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
 # stack line). Prowlarr mounts no media shares unless app.mounts asks for them.
+
+# To run Prowlarr natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Deploy installs the pinned release as a systemd service; app.port
+# still sets the web port.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc
