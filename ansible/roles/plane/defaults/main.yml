@@ -4,3 +4,87 @@ plane_env_file: "{{ plane_project_dir }}/plane.env"
 plane_recovery_config_dir: /etc/homelab-infra/plane
 plane_recovery_config: "{{ plane_recovery_config_dir }}/{{ instance }}.env"
 plane_recovery_script: /usr/local/sbin/homelab-infra-plane-recovery
+
+# Native (native.yml): Plane built from its pinned source, each service its own unit run
+# as one system user. The data and object-storage paths are the same ones Docker mounts.
+plane_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+plane_runtime: "{{ app_config.hosting.method | default('docker') }}"
+plane_native_user: plane
+# A directory per pinned release and source checksum: changing either builds a fresh tree
+# and virtualenv, and the rendered units move to it.
+plane_native_src: "{{ plane_project_dir }}/src-{{ app_config.app.release }}-{{ app_config.app.native_source_sha256[:12] }}"
+plane_native_venv: "{{ plane_native_src }}/venv"
+plane_native_node_dir: "/opt/node-v{{ app_config.app.node_version }}-linux-x64"
+plane_native_object_storage_bin: /usr/local/bin/plane-object-storage
+plane_native_owner: "{{ plane_native_user if plane_native | bool else 'root' }}"
+# Start (and stop) order for the shared restore swap and the recovery helper.
+plane_native_services: [plane-minio, plane-api, plane-worker, plane-beat, plane-live, plane-space, nginx]
+plane_native_vite_paths:
+  VITE_ADMIN_BASE_PATH: /god-mode
+  VITE_LIVE_BASE_PATH: /live
+  VITE_SPACE_BASE_PATH: /spaces
+plane_native_node_env:
+  PATH: "{{ plane_native_node_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  COREPACK_HOME: "{{ plane_project_dir }}/.corepack"
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  NODE_OPTIONS: --max-old-space-size=8192
+# Per-app build settings, as in each app's upstream Dockerfile (the base URLs stay empty so
+# the browser uses the published host).
+plane_native_builds:
+  web: "{{ plane_native_vite_paths }}"
+  admin: "{{ plane_native_vite_paths | combine(plane_native_vite_space_admin) }}"
+  space: "{{ plane_native_vite_paths | combine(plane_native_vite_space_admin) }}"
+  live: {}
+plane_native_vite_space_admin:
+  VITE_API_BASE_PATH: /api
+  VITE_WEBSITE_URL: https://plane.so
+  VITE_SUPPORT_EMAIL: support@plane.so
+# One unit per service: ExecStartPre waits for the database and migrations, as the upstream
+# entrypoints do; `needs` lists the units it follows.
+plane_native_units:
+  plane-minio:
+    description: object storage
+    workdir: "{{ plane_project_dir }}"
+    start: "{{ plane_native_object_storage_bin }} server {{ app_config.app.object_storage_path }} --address 127.0.0.1:9000 --console-address 127.0.0.1:9090"
+    needs: []
+  plane-api:
+    description: API
+    workdir: "{{ plane_native_src }}/apps/api"
+    pre: &plane_wait
+      - "{{ plane_native_venv }}/bin/python manage.py wait_for_db"
+      - "{{ plane_native_venv }}/bin/python manage.py wait_for_migrations"
+    api_pre:
+      - "{{ plane_native_venv }}/bin/python manage.py register_instance ${MACHINE_SIGNATURE}"
+      - "{{ plane_native_venv }}/bin/python manage.py configure_instance"
+      - "{{ plane_native_venv }}/bin/python manage.py create_bucket"
+      - "{{ plane_native_venv }}/bin/python manage.py clear_cache"
+      - "{{ plane_native_venv }}/bin/python manage.py collectstatic --noinput"
+    env: {PORT: "8000"}
+    start: "{{ plane_native_venv }}/bin/gunicorn -w ${GUNICORN_WORKERS} -k uvicorn.workers.UvicornWorker plane.asgi:application --bind 127.0.0.1:8000 --max-requests 1200 --max-requests-jitter 1000 --access-logfile -"
+    needs: [plane-minio.service, rabbitmq-server.service]
+  plane-worker:
+    description: worker
+    workdir: "{{ plane_native_src }}/apps/api"
+    pre: *plane_wait
+    start: "{{ plane_native_venv }}/bin/celery -A plane worker -l info"
+    needs: [plane-minio.service, rabbitmq-server.service]
+  plane-beat:
+    description: beat worker
+    workdir: "{{ plane_native_src }}/apps/api"
+    pre: *plane_wait
+    start: "{{ plane_native_venv }}/bin/celery -A plane beat -l info"
+    needs: [rabbitmq-server.service]
+  plane-live:
+    description: live
+    workdir: "{{ plane_native_src }}"
+    env: {PORT: "3001", NODE_ENV: production}
+    start: "{{ plane_native_node_dir }}/bin/node apps/live"
+    needs: [rabbitmq-server.service]
+  plane-space:
+    description: space
+    workdir: "{{ plane_native_src }}/apps/space"
+    env: {PORT: "3002", NODE_ENV: production, PATH: "{{ plane_native_node_dir }}/bin:/usr/bin:/bin"}
+    start: "{{ plane_native_src }}/apps/space/node_modules/.bin/react-router-serve ./build/server/index.js"
+    needs: []

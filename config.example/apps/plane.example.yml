@@ -4,6 +4,13 @@
 # cluster and its default StorageClass, select:
 # hosting:
 #   method: kubernetes
+# To run Plane natively (built from its pinned v1.4.2 source, one systemd unit per
+# service) on its own LXC or VM, set hosting.method: native and proxmox.guest_type: lxc
+# or vm.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc
 # To use Docker on an LXC, uncomment these instance overrides and set
 # infrastructure.stacks.services-lxc.guest_type: lxc in config/infrastructure.yml.
 # hosting:

@@ -1,0 +1,136 @@
+---
+# Render the units and nginx, apply migrations, then start the services. The API, worker
+# and beat units wait for the migrations in ExecStartPre, so migrations run before them.
+- name: Plane native services | Give the service user the directories the API writes
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ plane_native_user }}"
+    group: "{{ plane_native_user }}"
+    mode: "0755"
+  loop:
+    - "{{ plane_native_src }}/apps/api/plane/logs"
+    - "{{ plane_native_src }}/apps/api/plane/static-assets"
+
+- name: Plane native services | Keep the API media directory in the backed-up data path
+  ansible.builtin.file:
+    src: "{{ app_config.app.data_path }}/api"
+    dest: "{{ plane_native_src }}/apps/api/mediafiles"
+    state: link
+    force: true
+
+- name: Plane native services | Expose the admin build under its served path
+  ansible.builtin.file:
+    path: "{{ plane_project_dir }}/admin-root"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plane native services | Link the admin build
+  ansible.builtin.file:
+    src: "{{ plane_native_src }}/apps/admin/build/client"
+    dest: "{{ plane_project_dir }}/admin-root/god-mode"
+    state: link
+
+- name: Plane native services | Render the service units
+  ansible.builtin.template:
+    src: plane.service.j2
+    dest: "/etc/systemd/system/{{ item.key }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ plane_native_units | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: _plane_native_units
+  notify: Restart Plane
+
+- name: Plane native services | Reload systemd for changed units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _plane_native_units.changed
+
+- name: Plane native services | Remove nginx's default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart Plane
+
+- name: Plane native services | Render the nginx proxy
+  ansible.builtin.template:
+    src: plane-nginx.conf.j2
+    dest: /etc/nginx/conf.d/plane.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Plane
+
+- name: Plane native services | Start the object store
+  ansible.builtin.systemd:
+    name: plane-minio
+    state: started
+    enabled: true
+
+- name: Plane native services | Apply database migrations
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --wait
+      - --pipe
+      - --collect
+      - --property=User={{ plane_native_user }}
+      - --property=EnvironmentFile={{ plane_env_file }}
+      - --property=WorkingDirectory={{ plane_native_src }}/apps/api
+      - "{{ plane_native_venv }}/bin/python"
+      - manage.py
+      - migrate
+  changed_when: false
+  no_log: true
+
+- name: Plane native services | Enable and start every service
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ plane_native_services }}"
+
+- name: Plane native services | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ plane_native_services | join(' ') }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u plane-api -u plane-worker -u plane-live -u plane-space -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Plane native services | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Plane native services | Wait for the health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    headers:
+      Host: "{{ plane_fqdn }}"
+    # Plane may redirect its HTTP origin to WEB_URL before the later Wire play
+    # publishes that hostname; treat the redirect as ready.
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
+  register: _plane_health
+  until: _plane_health.status | default(0) in [200, 301, 302, 303, 307, 308]
+  retries: 90
+  delay: 5
+  changed_when: false

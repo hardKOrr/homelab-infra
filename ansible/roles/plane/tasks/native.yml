@@ -1,0 +1,130 @@
+---
+# Plane natively on its own LXC or VM: the pinned v1.4.2 source built on the guest (upstream
+# documents only a Docker install, https://developers.plane.so/self-hosting/overview) and
+# run as one systemd unit per service. RabbitMQ and nginx come from the distribution; the
+# S3-compatible object store is the Silo release the Docker image is pinned to. nginx
+# replaces the plane-proxy container: it serves the web and admin builds and routes the rest.
+- name: Plane native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: Native Plane supports Debian 12 and Ubuntu 24.04 on amd64 only.
+
+- name: Plane native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Plane native | Install the build prerequisites and the distribution services
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - xz-utils
+      - build-essential
+      - pkg-config
+      - python3
+      - python3-venv
+      - python3-dev
+      - libpq-dev
+      - libffi-dev
+      - libxml2-dev
+      - libxslt1-dev
+      - libxmlsec1-dev
+      - libxmlsec1-openssl
+      - redis-tools
+      - rabbitmq-server
+      - nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Plane native | Create the service group
+  ansible.builtin.group:
+    name: "{{ plane_native_user }}"
+    system: true
+
+- name: Plane native | Create the service user
+  ansible.builtin.user:
+    name: "{{ plane_native_user }}"
+    group: "{{ plane_native_user }}"
+    home: "{{ plane_project_dir }}/home"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Plane native | Create the project and service-owned directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ plane_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ plane_project_dir }}/home", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}", owner: "{{ plane_native_user }}", mode: "0750"}
+    # worker, beat, migrator and proxy stay empty: they keep the Docker data layout, so one
+    # recovery point shape (and one restore path list) serves both methods.
+    - {path: "{{ app_config.app.data_path }}/api", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/worker", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/beat", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/migrator", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}/proxy", owner: "{{ plane_native_user }}", mode: "0750"}
+    - {path: "{{ app_config.app.object_storage_path }}", owner: "{{ plane_native_user }}", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Plane native | Resolve secrets and backends
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: Plane native | Configure the RabbitMQ user and virtual host
+  ansible.builtin.include_tasks: native-rabbitmq.yml
+  vars:
+    plane_rabbitmq_secret: "{{ _plane_rabbitmq_password }}"
+
+- name: Plane native | Download the pinned object-storage server
+  ansible.builtin.get_url:
+    url: "https://github.com/pgsty/silo/releases/download/RELEASE.{{ app_config.app.native_object_storage_release }}/silo_{{ app_config.app.native_object_storage_version }}_linux_amd64.tar.gz"
+    checksum: "sha256:{{ app_config.app.native_object_storage_sha256 }}"
+    dest: "/var/cache/silo-{{ app_config.app.native_object_storage_version }}.tar.gz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Plane native | Create the object-storage server directory
+  ansible.builtin.file:
+    path: "/opt/silo-{{ app_config.app.native_object_storage_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plane native | Unpack the object-storage server
+  ansible.builtin.unarchive:
+    src: "/var/cache/silo-{{ app_config.app.native_object_storage_version }}.tar.gz"
+    dest: "/opt/silo-{{ app_config.app.native_object_storage_version }}"
+    remote_src: true
+    creates: "/opt/silo-{{ app_config.app.native_object_storage_version }}/silo"
+  notify: Restart Plane
+
+- name: Plane native | Point the object-storage command at the pinned binary
+  ansible.builtin.file:
+    src: "/opt/silo-{{ app_config.app.native_object_storage_version }}/silo"
+    dest: "{{ plane_native_object_storage_bin }}"
+    state: link
+  notify: Restart Plane
+
+- name: Plane native | Build the pinned source
+  ansible.builtin.include_tasks: native-build.yml
+
+- name: Plane native | Run the services
+  ansible.builtin.include_tasks: native-services.yml
+
+- name: Plane native | Schedule recovery
+  ansible.builtin.include_tasks: recovery-timer.yml

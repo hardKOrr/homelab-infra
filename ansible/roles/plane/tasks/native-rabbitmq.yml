@@ -1,0 +1,42 @@
+---
+# Make RabbitMQ's Plane user, password and virtual host match plane_rabbitmq_secret, the
+# value in plane.env. Deploy and the restore keys step share it; nothing here is backed up
+# because the broker only holds transient task messages.
+- name: Plane native | Wait for RabbitMQ
+  ansible.builtin.command: rabbitmqctl await_startup --timeout 120
+  changed_when: false
+
+- name: Plane native | Ensure the RabbitMQ user and its password
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -eu
+      if rabbitmqctl authenticate_user "$RABBIT_USER" "$RABBIT_PASS" >/dev/null 2>&1; then exit 0; fi
+      if rabbitmqctl list_users -q | cut -f1 | grep -qx -- "$RABBIT_USER"; then
+        rabbitmqctl change_password "$RABBIT_USER" "$RABBIT_PASS" >/dev/null
+      else
+        rabbitmqctl add_user "$RABBIT_USER" "$RABBIT_PASS" >/dev/null
+      fi
+      echo changed
+  environment:
+    RABBIT_USER: "{{ app_config.app.rabbitmq.user }}"
+    RABBIT_PASS: "{{ plane_rabbitmq_secret }}"
+  register: _plane_rabbit_user
+  changed_when: "'changed' in _plane_rabbit_user.stdout"
+  no_log: true
+
+- name: Plane native | Ensure the RabbitMQ virtual host and its permissions
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -eu
+      if ! rabbitmqctl list_vhosts -q | grep -qx -- "$RABBIT_VHOST"; then
+        rabbitmqctl add_vhost "$RABBIT_VHOST" >/dev/null
+        echo changed
+      fi
+      rabbitmqctl set_permissions -p "$RABBIT_VHOST" "$RABBIT_USER" '.*' '.*' '.*' >/dev/null
+  environment:
+    RABBIT_USER: "{{ app_config.app.rabbitmq.user }}"
+    RABBIT_VHOST: "{{ app_config.app.rabbitmq.vhost }}"
+  register: _plane_rabbit_vhost
+  changed_when: "'changed' in _plane_rabbit_vhost.stdout"

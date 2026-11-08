@@ -5,17 +5,17 @@
     restore_target_config.hosting.method | default(
       app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: Plane restore | Keep the shared-swap Docker recovery for a Docker target
+- name: Plane restore | Keep the shared-swap recovery for a Docker or native target
   ansible.builtin.include_tasks: restore-docker.yml
   when: >-
     restore_target_config.hosting.method | default(
-      app_config.hosting.method | default('docker')) == 'docker'
+      app_config.hosting.method | default('docker')) in ['docker', 'native']
 
 - name: Plane restore | Reject an unsupported destination method
   ansible.builtin.fail:
     msg: >-
-      Plane restore supports a Docker or Kubernetes target; refusing to restore into
+      Plane restore supports a Docker, native or Kubernetes target; refusing to restore into
       {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('undefined')) }}.
   when: >-
     restore_target_config.hosting.method | default(
-      app_config.hosting.method | default('docker')) not in ['docker', 'kubernetes']
+      app_config.hosting.method | default('docker')) not in ['docker', 'kubernetes', 'native']

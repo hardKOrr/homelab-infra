@@ -3,3 +3,12 @@
   community.docker.docker_compose_v2:
     project_src: "{{ plane_project_dir }}"
     state: restarted
+  when: not (plane_native | bool)
+
+- name: Restart native Plane
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ plane_native_services }}"
+  listen: Restart Plane
+  when: plane_native | bool

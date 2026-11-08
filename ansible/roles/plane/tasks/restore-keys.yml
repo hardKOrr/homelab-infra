@@ -45,3 +45,11 @@
     _plane_object_storage_access_key: "{{ _plane_restore_keys.object_storage_access_key }}"
     _plane_object_storage_secret_key: "{{ _plane_restore_keys.object_storage_secret_key }}"
   no_log: true
+
+# The native broker's user lives in RabbitMQ, not in the restored files; give it the
+# password the environment file now carries.
+- name: Plane restore | Give the native broker the target's password
+  ansible.builtin.include_tasks: native-rabbitmq.yml
+  vars:
+    plane_rabbitmq_secret: "{{ _plane_restore_keys.rabbitmq_password }}"
+  when: plane_native | bool

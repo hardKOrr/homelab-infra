@@ -28,7 +28,14 @@
       The selected Plane point was captured by a different declared release. Rebuild an
       isolated target with the matching Plane release before attempting this restore.
 
-- name: Plane restore | Verify the Redis RDB
+- name: Plane restore | Verify the Redis RDB on the guest
+  ansible.builtin.command:
+    argv: [redis-check-rdb, "{{ recovery_swap_stage }}/redis/dump.rdb"]
+  changed_when: false
+  when: plane_native | bool
+
+- name: Plane restore | Verify the Redis RDB in the client image
+  when: not (plane_native | bool)
   ansible.builtin.command:
     argv:
       - docker

@@ -7,9 +7,13 @@
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('docker') == 'docker'
 
+- name: Plane | Deploy natively on its own LXC or VM when selected
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('docker') == 'native'
+
 - name: Plane | Reject an unsupported deployment method
   ansible.builtin.fail:
     msg: >-
-      Plane supports hosting.method docker or kubernetes; refusing to deploy with
+      Plane supports hosting.method docker, kubernetes or native; refusing to deploy with
       {{ app_config.hosting.method | default('undefined') }}.
-  when: app_config.hosting.method | default('docker') not in ['docker', 'kubernetes']
+  when: app_config.hosting.method | default('docker') not in ['docker', 'kubernetes', 'native']
