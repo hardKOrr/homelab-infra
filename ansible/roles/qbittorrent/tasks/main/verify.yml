@@ -13,6 +13,8 @@
   ansible.builtin.include_tasks: ../login.yml
   vars:
     qbt_login_base: "{{ _qbt_base }}"
+    qbt_login_origin: "{{ _qbt_origin }}"
+    qbt_login_extra_headers: "{{ _qbt_host_headers }}"
     qbt_login_user: "{{ _qbt_user }}"
     qbt_login_password: "{{ _qbt_password }}"
 
@@ -21,8 +23,12 @@
 # password back. The file is edited with the container STOPPED, deliberately:
 # qBittorrent rewrites its config from memory on shutdown, so an edit made while
 # it runs is discarded by the very restart meant to apply it.
+# Docker only: on Kubernetes the pod's init container writes the platform's credential
+# into the config before every start, so a refusal there is a real failure.
 - name: Repair a WebUI password that is not the platform's
-  when: not (qbt_login_ok | bool)
+  when:
+    - not (qbt_login_ok | bool)
+    - app_config.hosting.method == 'docker'
   block:
     - name: Stop the app before editing its configuration
       community.docker.docker_compose_v2:
@@ -86,8 +92,7 @@
 - name: Ask the app what it is
   ansible.builtin.uri:
     url: "{{ _qbt_base }}/api/v2/app/version"
-    headers:
-      Cookie: "{{ qbt_login_cookie }}"
+    headers: "{{ _qbt_host_headers | combine({'Cookie': qbt_login_cookie}) }}"
     return_content: true
     status_code: 200
   register: _qbt_version
@@ -109,6 +114,7 @@
 - name: Call the API with no session
   ansible.builtin.uri:
     url: "{{ _qbt_base }}/api/v2/app/version"
+    headers: "{{ _qbt_host_headers }}"
     status_code: [200, 401, 403]
   register: _qbt_unauthenticated
   changed_when: false

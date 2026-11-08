@@ -9,7 +9,18 @@
 - name: Resolve the app kind
   ansible.builtin.set_fact:
     _qbt_kind: "{{ app_config.app.media_kind }}"
-    _qbt_base: "http://localhost:{{ app_config.app.port }}"
+    # Kubernetes asks the cluster ingress with the instance hostname (qbittorrent_fqdn, set
+    # by the playbook); qBittorrent's CSRF check compares Origin and Referer with Host.
+    _qbt_base: >-
+      {{ 'http://' ~ k8s_cluster_facts.ingress_vip
+         if app_config.hosting.method == 'kubernetes'
+         else 'http://localhost:' ~ app_config.app.port }}
+    _qbt_origin: >-
+      {{ 'http://' ~ qbittorrent_fqdn
+         if app_config.hosting.method == 'kubernetes'
+         else 'http://localhost:' ~ app_config.app.port }}
+    _qbt_host_headers: >-
+      {{ {'Host': qbittorrent_fqdn} if app_config.hosting.method == 'kubernetes' else {} }}
     _qbt_conf_dir: "{{ app_config.app.config_path }}/qBittorrent"
     _qbt_conf: "{{ app_config.app.config_path }}/qBittorrent/qBittorrent.conf"
 

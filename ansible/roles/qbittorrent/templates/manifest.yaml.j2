@@ -1,0 +1,200 @@
+{# qBittorrent: its config volume and the lab's existing NFS media shares, at the Docker container paths. #}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set container_port = app_config.app.container_port | default(app_config.app.port) %}
+{# Runs before every start with the app stopped: qBittorrent rewrites its config from memory
+   on shutdown, so an edit made while it runs is lost. The file is seeded once (as
+   qBittorrent.conf.j2 does on Docker); the credential and peer port range are enforced
+   on every start, as the Docker deploy enforces them. #}
+{% set seed_script %}
+set -eu
+dir=/config/qBittorrent
+conf=$dir/qBittorrent.conf
+mkdir -p "$dir"
+seeded=0
+if [ ! -f "$conf" ]; then : > "$conf"; seeded=1; fi
+{% raw %}
+ensure() {
+  QS="$1" QK="$2" QV="$3" awk '
+    function flush() { if (insec && !done) { print ENVIRON["QK"] "=" ENVIRON["QV"]; done = 1 } }
+    /^\[.*\]$/ { flush(); insec = ($0 == "[" ENVIRON["QS"] "]"); if (insec) found = 1; print; next }
+    { n = index($0, "="); if (insec && n > 0 && substr($0, 1, n - 1) == ENVIRON["QK"]) { if (!done) { print ENVIRON["QK"] "=" ENVIRON["QV"]; done = 1 } next } print }
+    END { flush(); if (!found) { print "[" ENVIRON["QS"] "]"; print ENVIRON["QK"] "=" ENVIRON["QV"] } }
+  ' "$conf" > "$conf.new"
+  if cmp -s "$conf" "$conf.new"; then rm -f "$conf.new"; else mv "$conf.new" "$conf"; fi
+}
+{% endraw %}
+if [ "$seeded" = 1 ]; then
+  ensure LegalNotice Accepted true
+  ensure BitTorrent 'Session\DefaultSavePath' {{ app_config.app.download_path | quote }}
+  ensure BitTorrent 'Session\TempPathEnabled' false
+  ensure BitTorrent 'Session\Port' {{ app_config.app.torrenting_port | default(6881) }}
+  ensure Preferences 'WebUI\Port' {{ container_port }}
+  ensure Preferences 'WebUI\Address' '*'
+  ensure Preferences 'WebUI\LocalHostAuth' true
+  ensure Preferences 'WebUI\CSRFProtection' true
+  ensure Preferences 'WebUI\ClickjackingProtection' true
+  ensure Preferences 'WebUI\HostHeaderValidation' true
+  ensure Preferences 'WebUI\ServerDomains' '*'
+fi
+ensure BitTorrent 'Session\OutgoingPortsMin' {{ qbittorrent_peer_outgoing_ports_min }}
+ensure BitTorrent 'Session\OutgoingPortsMax' {{ qbittorrent_peer_outgoing_ports_max }}
+ensure Preferences 'WebUI\Username' "$WEBUI_USER"
+ensure Preferences 'WebUI\Password_PBKDF2' "\"$WEBUI_HASH\""
+chown "$PUID:$PGID" "$dir" "$conf"
+chmod 0640 "$conf"
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | default(1) | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: app
+      annotations:
+        # The init container reads the credential once per start; a changed credential
+        # must roll the pod.
+        homelab-infra/credential: {{ _qbt_password_hash | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: seed-config
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - {{ seed_script | to_json }}
+          env:
+            - name: PUID
+              value: "{{ app_config.app.puid | default(1000) }}"
+            - name: PGID
+              value: "{{ app_config.app.pgid | default(1000) }}"
+            - name: WEBUI_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: webui-user
+            - name: WEBUI_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: webui-password-hash
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      containers:
+        - name: qbittorrent
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: "{{ app_config.app.puid | default(1000) }}"
+            - name: PGID
+              value: "{{ app_config.app.pgid | default(1000) }}"
+            - name: TZ
+              value: {{ homelabinfra_config.timezone | default('UTC') | to_json }}
+            - name: WEBUI_PORT
+              value: "{{ container_port }}"
+            - name: TORRENTING_PORT
+              value: "{{ app_config.app.torrenting_port | default(6881) }}"
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+            - name: {{ key | to_json }}
+              value: {{ value | string | to_json }}
+{% endfor %}
+          ports:
+            - name: http
+              containerPort: {{ container_port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+{% endfor %}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
+          nfs:
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ qbittorrent_fqdn | to_json }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

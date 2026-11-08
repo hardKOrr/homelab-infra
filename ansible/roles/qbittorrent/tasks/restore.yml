@@ -1,29 +1,19 @@
 ---
-# Restore one application-consistent qBittorrent config archive through the shared swap.
-- name: qBittorrent restore | Assert the restore contract
-  ansible.builtin.assert:
-    that:
-      - app_config.backup.enabled | default(false) | bool
-      - app_config.backup.application_consistent | default(false) | bool
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
-      - homelabinfra_infra.backups is defined
-    fail_msg: >-
-      qBittorrent restore needs a PBS-backed application recovery contract. Keep
-      overwrite=false to list snapshots before selecting one.
+- name: qBittorrent restore | Use the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'kubernetes'
 
-- name: qBittorrent restore | Preview or replace the config directory
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: docker
-    recovery_swap_archives: [data.pxar]
-    recovery_swap_paths:
-      - path: "{{ app_config.app.config_path }}"
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
-        mode: "0750"
-    recovery_swap_stop_services: ["{{ instance }}"]
-    recovery_swap_compose_project: "{{ qbittorrent_project_dir }}"
-    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"
-    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
+- name: qBittorrent restore | Use the config directory swap
+  ansible.builtin.include_tasks: restore-guest.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('docker')) == 'docker'
+
+- name: qBittorrent restore | Reject an unsupported restore hosting method
+  ansible.builtin.assert:
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('docker')) in ['docker', 'kubernetes']
+    fail_msg: qBittorrent recovery supports hosting.method docker or kubernetes.
