@@ -9,6 +9,9 @@
 
 # ── Stack assignment (Docker app) ──────────────────────────────────────────────
 stack: media     # which Docker stack host this app runs on
+# To use Docker on an LXC, set stack: media-lxc and
+# infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
 
 # ── App config ─────────────────────────────────────────────────────────────────
 app:
