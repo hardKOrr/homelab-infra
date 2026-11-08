@@ -1,7 +1,8 @@
 ---
 # Deploy Prowlarr — indexer management. Docker on the media stack host; on Kubernetes
 # when `hosting.method: kubernetes` (no stack host, so no media registry entry and Wire
-# Media Stack does not discover it).
+# Media Stack does not discover it); or natively on its own LXC or VM when
+# `hosting.method: native` (with `proxmox.guest_type`).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/prowlarr.yml -e instance=prowlarr
@@ -95,14 +96,22 @@
                        else ((app_config.media_storage | default({})).mounts | default([])),
                        true) }}
 
-    - name: Attach the lab's storage to the stack host
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: prowlarr
+      when: app_config.hosting.method == 'native'
+
+    - name: Attach the lab's storage to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ _servarr_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _servarr_host_mounts | length > 0
 
 - name: "Prowlarr | Prepare Kubernetes"
@@ -151,6 +160,7 @@
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Prowlarr
