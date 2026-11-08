@@ -20,6 +20,13 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/main/native-install.yml").read_text()
 # SABnzbd 5.1.3 sets NO_DOWNLOADING without par2 and unrar; unrar is Debian non-free.
 assert "unrar" in install and "par2" in install and "components: [non-free]" in install
+# A new source needs its own index refresh before unrar has a candidate.
+tasks = yaml.safe_load(install)
+repo_at = next(i for i, t in enumerate(tasks) if "ansible.builtin.deb822_repository" in t)
+refresh = tasks[repo_at + 1]["ansible.builtin.apt"]
+assert refresh["update_cache"] is True and "cache_valid_time" not in refresh
+assert "is changed" in tasks[repo_at + 1]["when"]
+assert "unrar" in tasks[repo_at + 2]["ansible.builtin.apt"]["name"]
 assert "native_sha256" in install and "-src.tar.gz" in install and "requirements.txt" in install
 
 with tempfile.TemporaryDirectory() as directory:

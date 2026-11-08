@@ -40,13 +40,19 @@
     components: [non-free]
     signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
     state: present
+  register: _sab_non_free
+
+# deb822_repository does not refresh the indexes, so a new source is fetched here.
+- name: SABnzbd native | Refresh the apt indexes after adding the source
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: _sab_non_free is changed
 
 - name: SABnzbd native | Install Python, par2, unrar and the archive unpackers
   ansible.builtin.apt:
     name: [curl, python3, python3-venv, python3-dev, par2, unrar, p7zip-full]
     state: present
-    update_cache: true
-    cache_valid_time: 3600
     lock_timeout: 300
 
 - name: SABnzbd native | Require the binaries SABnzbd needs to download
