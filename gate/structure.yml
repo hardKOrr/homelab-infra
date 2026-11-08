@@ -14,7 +14,6 @@ role_aliases:
 
 # Expected per-app paths that do not exist yet.
 missing_paths:
-  - config.example/apps/prowlarr.example.yml
 
 # Literal app-name comparisons per playbook (rule 5).
 literal: {}
