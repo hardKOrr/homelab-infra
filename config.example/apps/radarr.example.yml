@@ -16,6 +16,10 @@ stack: media     # which Docker stack host this app runs on
 # infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml, with
 # hosting.method: docker.
 
+# To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
+# stack line). The library and download mounts come from their existing NFS exports at the
+# same paths.
+
 # ── App config ─────────────────────────────────────────────────────────────────
 app:
   library_subpath: movies      # which subdirectory of media_storage.library this
