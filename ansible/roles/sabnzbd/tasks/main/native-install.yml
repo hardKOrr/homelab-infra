@@ -20,13 +20,40 @@
     - app_config.backup.enabled | default(false) | bool
     - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
 
-- name: SABnzbd native | Install Python, par2 and the archive unpackers
+# SABnzbd 5.1.3 refuses to download without par2 and the real unrar (NO_DOWNLOADING in
+# SABnzbd.py), and Debian ships unrar only in non-free: a separate source file adds that
+# component without touching the guest's own sources.
+- name: SABnzbd native | Install the packages the repository definition needs
   ansible.builtin.apt:
-    name: [ca-certificates, curl, python3, python3-venv, python3-dev, par2, p7zip-full]
+    name: [ca-certificates, python3-debian]
     state: present
     update_cache: true
     cache_valid_time: 3600
     lock_timeout: 300
+
+- name: SABnzbd native | Enable Debian's non-free component for unrar
+  ansible.builtin.deb822_repository:
+    name: homelab-non-free
+    types: [deb]
+    uris: http://deb.debian.org/debian
+    suites: [bookworm, bookworm-updates]
+    components: [non-free]
+    signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    state: present
+
+- name: SABnzbd native | Install Python, par2, unrar and the archive unpackers
+  ansible.builtin.apt:
+    name: [curl, python3, python3-venv, python3-dev, par2, unrar, p7zip-full]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: SABnzbd native | Require the binaries SABnzbd needs to download
+  ansible.builtin.command: "{{ item }}"
+  loop: ["unrar", "par2 --version"]
+  register: _sab_binaries
+  changed_when: false
 
 # The downloads are written as this id, which the guest maps straight through to the node
 # (media_storage.owner), so the *arr apps can hardlink them.

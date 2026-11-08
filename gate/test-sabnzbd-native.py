@@ -18,6 +18,8 @@ assert app["image"].split(":")[1].startswith(f"{app['native_version']}-ls")
 assert len(app["native_sha256"]) == 64
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/main/native-install.yml").read_text()
+# SABnzbd 5.1.3 sets NO_DOWNLOADING without par2 and unrar; unrar is Debian non-free.
+assert "unrar" in install and "par2" in install and "components: [non-free]" in install
 assert "native_sha256" in install and "-src.tar.gz" in install and "requirements.txt" in install
 
 with tempfile.TemporaryDirectory() as directory:
