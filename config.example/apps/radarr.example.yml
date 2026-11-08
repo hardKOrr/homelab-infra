@@ -37,3 +37,11 @@ app:
 #   access: internal           # internal | public (WHO may reach it — public means the
 #                              # internet on a WAN-facing proxy)
 #   identity: catalog          # none | catalog | oidc | forward_auth (default from app-defaults)
+
+# To run Radarr natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Deploy installs the pinned release as a systemd service; app.port
+# still sets the web port, and the library mounts attach to the guest like on the stack host.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

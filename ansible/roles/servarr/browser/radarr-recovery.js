@@ -5,8 +5,10 @@ module.exports = async ({ page, step, url, secrets }) => {
   const target = new URL(url);
   const base = target.origin;
   const mode = target.searchParams.get('drill') || 'verify';
-  const label = 'p2-canary-radarr-docker-lxc';
-  const saved = '/var/lib/rundeck/scratch/issue640/radarr-canaries.json';
+  const scope = target.searchParams.get('scope');
+  if (scope && !/^[a-zA-Z0-9-]+$/.test(scope)) throw new Error('Invalid drill scope');
+  const label = `p2-canary-radarr-${scope || 'docker-lxc'}`;
+  const saved = `/var/lib/rundeck/scratch/${scope || 'issue640'}/radarr-canaries.json`;
   const vault = JSON.parse(process.env.HOMELABINFRA_VAULT_JSON || '{}');
   const key = vault.media?.radarr?.api_key;
   const { username, password } = secrets;
