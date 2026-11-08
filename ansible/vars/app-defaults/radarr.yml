@@ -9,9 +9,21 @@
 radarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -23,7 +35,14 @@ radarr_defaults:
   app:
     media_kind: radarr
 
-    image: "lscr.io/linuxserver/radarr:latest"
+    # Docker and native run the same exact build.
+    image: "lscr.io/linuxserver/radarr:6.4.4.10685-ls325"
+    # Native: the release tarball the Servarr wiki's Debian install downloads
+    # (https://wiki.servarr.com/radarr/installation/linux), fetched from the same update
+    # service at this exact version and verified against its checksum.
+    native_version: "6.4.4.10685"
+    native_branch: master
+    native_sha256: a1d726129535e739d4efaf93b5fdd771bb1c78349f55ceac70e365e37b5a12a3
     port: 7878
     container_port: 7878
     # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
