@@ -30,6 +30,13 @@
       app.download_path {{ app_config.app.download_path }} is not inside any media_storage
       mount, so Kubernetes has no share to mount it from.
 
+# Before any directory is created: an unmounted share must fail here, not after the
+# download tree was written into the node's backing directory.
+- name: SABnzbd Kubernetes media | Resolve the mounts' NFS shares
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: "{{ _sab_k8s_mounts }}"
+
 - name: SABnzbd Kubernetes media | Register Proxmox nodes as delegation targets
   ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
 
@@ -47,8 +54,3 @@
     - "{{ _sab_k8s_download_dir }}/complete"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   become: true
-
-- name: SABnzbd Kubernetes media | Resolve the mounts' NFS shares
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
-  vars:
-    k8s_media_mounts: "{{ _sab_k8s_mounts }}"

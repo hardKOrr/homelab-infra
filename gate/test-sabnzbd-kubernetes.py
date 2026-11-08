@@ -76,6 +76,13 @@ def main():
     share = next(t for t in resolve if "resolve-media-nfs.yml" in str(t.get("ansible.builtin.include_tasks")))
     assert share["vars"]["k8s_media_mounts"] == "{{ _sab_k8s_mounts }}"
 
+    # The NFS validation runs before anything is written under the node's mount path.
+    order = [str(t.get("ansible.builtin.include_tasks", "")) + str(t.get("ansible.builtin.file", ""))
+             for t in resolve]
+    nfs = next(i for i, x in enumerate(order) if "resolve-media-nfs.yml" in x)
+    made = next(i for i, x in enumerate(order) if "directory" in x)
+    assert nfs < made
+
     kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
     assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
     assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
