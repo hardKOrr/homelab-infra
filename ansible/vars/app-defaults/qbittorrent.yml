@@ -6,7 +6,7 @@
 qbittorrent_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
 
@@ -33,6 +33,8 @@ qbittorrent_defaults:
     torrenting_port: 6881
 
     config_path: "/opt/{{ instance }}/config"
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 1
 
     # Where completed downloads land. It MUST be inside a media_storage mount
     # (config/infrastructure.yml): the *arr apps import from here into the
@@ -116,3 +118,10 @@ qbittorrent_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # The PBS client Job on Kubernetes.
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

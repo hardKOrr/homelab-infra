@@ -1,9 +1,20 @@
 # qBittorrent
 
 `tasks/main.yml` is Deploy's entry; its phases live in `tasks/main/`: `resolve.yml` (kind,
-mounts), `storage.yml` (directories, download path), `start.yml` (WebUI credential, seeded
-config, peer port settings, Compose) and `verify.yml` (login and password repair, identity,
+mounts, endpoint), `storage.yml` (directories, download path), `credentials.yml` (WebUI
+credential), `start.yml` (seeded config, peer port settings, Compose) and `verify.yml` (login and password repair, identity,
 refused session-less call). `main.yml` then stores the credential and exports the endpoint.
+
+## Kubernetes
+
+`hosting.method: kubernetes` runs `tasks/kubernetes.yml` instead of `storage.yml` and
+`start.yml`; the playbook's prepare play first runs `resolve-kubernetes-media.yml`. The
+config sits on a default-StorageClass PVC. Every `media_storage` mount is mounted from its
+existing NFS share at the same path as on Docker. The pod's init container seeds
+`qBittorrent.conf` once and enforces the WebUI credential (from a Secret) and the peer
+port range before every start. The BitTorrent listen port is not exposed outside the
+cluster, no media registry entry is written and the *arr apps are not wired to it.
+`restore.yml` dispatches to `restore-kubernetes.yml` (shared Job) or `restore-guest.yml`.
 
 ## Native recovery
 

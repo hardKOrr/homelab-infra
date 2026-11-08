@@ -1,6 +1,6 @@
 ---
-# qbittorrent role — qBittorrent as a Docker container on a stack host. Called
-# from Play 2 of playbooks/apps/qbittorrent.yml. Target: the media host.
+# qbittorrent role — qBittorrent as a Docker container on a stack host (Play 2 of
+# playbooks/apps/qbittorrent.yml) or on Kubernetes (its localhost Kubernetes play).
 #
 # The media stack's torrent download client. Until this existed, the stack could
 # find releases and could not fetch any of them: tasks/app-wiring/arr-download-client.yml
@@ -20,14 +20,34 @@
 # in common with them is the deploy shape, which is the playbook's, not the
 # role's.
 
+# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and
+# the playbook's prepare play ran resolve-kubernetes-media.yml); the credential, the
+# sign-in proof and the vault item are shared with Docker.
+- name: Resolve the cluster the app deploys to
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+  when: app_config.hosting.method == 'kubernetes'
+
 - name: Resolve the app kind and storage
   ansible.builtin.import_tasks: main/resolve.yml
 
-- name: Create directories and check the lab's storage
-  ansible.builtin.import_tasks: main/storage.yml
+- name: Docker storage
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Create directories and check the lab's storage
+      ansible.builtin.import_tasks: main/storage.yml
 
-- name: Resolve the WebUI credential and start the app
-  ansible.builtin.import_tasks: main/start.yml
+- name: Resolve the WebUI credential
+  ansible.builtin.import_tasks: main/credentials.yml
+
+- name: Docker on the stack host
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Seed the config and start the app
+      ansible.builtin.import_tasks: main/start.yml
+
+- name: Kubernetes workload
+  ansible.builtin.include_tasks: kubernetes.yml
+  when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the WebUI credential works and repair it if not
   ansible.builtin.import_tasks: main/verify.yml
@@ -48,6 +68,7 @@
 
 # ── Hand the endpoint back to the playbook ────────────────────────────────────
 - name: Export the media registry entry to the playbook
+  when: app_config.hosting.method == 'docker'
   ansible.builtin.set_fact:
     qbittorrent_media_kind: "{{ _qbt_kind }}"
     qbittorrent_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

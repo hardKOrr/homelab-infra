@@ -1,45 +1,6 @@
 ---
-# Phase of main.yml: resolve the WebUI credential, seed the config, enforce the peer
-# port settings, start the app and wait for it. Imported in place; inputs are listed in
-# main.yml.
-
-# ── The WebUI credential ──────────────────────────────────────────────────────
-# The password is the platform's, not the operator's: it is what every *arr in the
-# lab authenticates to this client with (tasks/app-wiring/arr-download-client.yml
-# reads it from the same vault item). It is declared here before the container
-# that uses it, and on a re-run the one already in the vault wins — regenerating
-# it would break wiring this platform itself created.
-#
-# homelabinfra_vault, not homelabinfra_infra: this play reloads homelabinfra_infra
-# from config/.generated/facts.yml, which holds topology and never credentials.
-# The vault contract is the only place the existing password is readable.
-- name: Resolve the WebUI credentials
-  ansible.builtin.set_fact:
-    _qbt_user: "{{ app_config.app.webui_user | default('admin') }}"
-    _qbt_password: >-
-      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).password
-         | default('', true)
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-  no_log: true
-
-# STDIN, not argv and not the environment — see the script's docstring. It runs on
-# the controller because that is where the repo is; nothing but the derived hash
-# ever reaches the guest.
-- name: Render the password into qBittorrent's stored form
-  ansible.builtin.command:
-    argv: [python3, "{{ role_path }}/files/webui-password.py"]
-    stdin: "{{ _qbt_password }}"
-    stdin_add_newline: false
-  register: _qbt_hash
-  changed_when: false
-  delegate_to: localhost
-  become: false
-  no_log: true
-
-- name: Record the rendered password hash
-  ansible.builtin.set_fact:
-    _qbt_password_hash: "{{ _qbt_hash.stdout }}"
-  no_log: true
+# Phase of main.yml (Docker only): seed the config, enforce the peer port settings, start the
+# app and wait for it. Imported in place; inputs are listed in main.yml.
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 # force: false — seeded once, then qBittorrent's. See the template's header for

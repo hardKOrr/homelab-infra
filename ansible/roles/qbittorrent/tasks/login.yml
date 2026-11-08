@@ -3,6 +3,9 @@
 #
 # Inputs:
 #   qbt_login_base      base URL, no trailing slash (http://localhost:8080)
+#   qbt_login_origin    optional Origin and Referer value when it differs from the URL, as
+#                       behind the Kubernetes ingress (default: qbt_login_base)
+#   qbt_login_extra_headers  optional headers to add, such as the ingress Host
 #   qbt_login_user      WebUI username
 #   qbt_login_password  WebUI password
 #
@@ -28,9 +31,10 @@
     body:
       username: "{{ qbt_login_user }}"
       password: "{{ qbt_login_password }}"
-    headers:
-      Referer: "{{ qbt_login_base }}"
-      Origin: "{{ qbt_login_base }}"
+    headers: >-
+      {{ {'Referer': qbt_login_origin | default(qbt_login_base),
+          'Origin': qbt_login_origin | default(qbt_login_base)}
+         | combine(qbt_login_extra_headers | default({})) }}
     return_content: true
     # What each answer means, measured against qBittorrent 5.2.3 in the lab
     # (execution 76, 2026-08-11) rather than assumed:

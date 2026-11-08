@@ -1,0 +1,78 @@
+---
+# qBittorrent on Kubernetes, included from main.yml after the cluster and endpoint are
+# resolved: its config lives on a default-StorageClass PVC and the lab's media shares are
+# the existing NFS exports, mounted at the same container paths as on Docker (the
+# playbook's prepare play resolved them into k8s_media_nfs). The WebUI credential reaches
+# the pod as a Secret; the pod's init container seeds qBittorrent.conf and enforces it.
+# main.yml then proves the sign-in and stores the credential.
+- name: qBittorrent Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: qBittorrent Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ qbittorrent_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: qbittorrent_k8s_node
+    label: Kubernetes node
+
+- name: qBittorrent Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: qBittorrent Kubernetes | Sync the WebUI credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      webui-user: "{{ _qbt_user }}"
+      webui-password-hash: "{{ _qbt_password_hash }}"
+  no_log: true
+
+- name: qBittorrent Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _qbt_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: qBittorrent Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _qbt_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: qBittorrent Kubernetes | Wait for the WebUI to answer through the ingress
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/"
+    headers: "{{ _qbt_host_headers }}"
+    status_code: [200, 401, 403]
+  register: _qbt_up
+  until: _qbt_up.status | default(0) in [200, 401, 403]
+  retries: "{{ qbittorrent_webui_retries }}"
+  delay: "{{ qbittorrent_webui_delay }}"
+  changed_when: false
+
+- name: qBittorrent Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        qBittorrent's configuration and resume data from its config volume; downloads
+        and logs-only payloads on the media shares are not included

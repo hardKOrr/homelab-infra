@@ -55,7 +55,7 @@ def run_hook(hook, stage, port):
 
 
 def main():
-    swap = swap_inputs("qbittorrent")
+    swap = swap_inputs("qbittorrent", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
