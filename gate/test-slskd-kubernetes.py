@@ -55,7 +55,7 @@ def main():
                and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
                for task in docker["tasks"])
     assert any(task.get("ansible.builtin.include_role", {}).get("name") == "slskd"
-               and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+               and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
                for task in docker["tasks"])
     kube = plays["slskd | Deploy on Kubernetes"]
     assert any(task.get("ansible.builtin.include_role", {}).get("name") == "slskd"

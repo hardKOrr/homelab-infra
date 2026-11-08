@@ -1,6 +1,7 @@
 ---
 # slskd role — slskd as a Docker container on a stack host (Play 3 of
-# playbooks/apps/slskd.yml), or in its own Kubernetes namespace (the playbook's
+# playbooks/apps/slskd.yml), natively on its own LXC or VM (native*.yml), or in its own
+# Kubernetes namespace (the playbook's
 # Kubernetes play; kubernetes.yml, after resolve-kubernetes-media.yml ran in its prepare
 # play). Credentials, the API proof and the vault item are shared by both methods.
 #
@@ -34,7 +35,7 @@
 # template header), so the value in Vaultwarden IS the value in force once
 # the container is (re)started. That also means a credential rotation is
 # nothing more than "the templated environment changed", which the existing
-# `notify: Restart slskd` on the Compose write already covers — there is no
+# `notify: Restart slskd` on the Compose write (or the native environment file) already covers — there is no
 # second file with its own notify path to forget, the way Deemix's ARL had.
 
 - name: Resolve the cluster the app deploys to
@@ -123,9 +124,21 @@
          | default('', true) }}
   no_log: true
 
+- name: Native service account and release
+  ansible.builtin.include_tasks: native-install.yml
+  when: app_config.hosting.method == 'native'
+
+- name: Directories and the lab's storage, on the stack host or the native guest
+  ansible.builtin.include_tasks: storage.yml
+  when: app_config.hosting.method in ['docker', 'native']
+
 - name: Docker on the stack host
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method == 'docker'
+
+- name: Native service
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method == 'native'
 
 - name: Kubernetes workload
   ansible.builtin.include_tasks: kubernetes.yml
@@ -153,4 +166,4 @@
   ansible.builtin.set_fact:
     slskd_media_kind: "{{ _slskd_kind }}"
     slskd_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']

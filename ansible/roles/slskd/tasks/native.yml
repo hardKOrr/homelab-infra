@@ -1,0 +1,55 @@
+---
+# Included by main.yml (native only): write the environment file and the systemd unit, start
+# slskd and install the helpers. Settings are the same SLSKD_* variables the Compose file
+# sets, so the persistent state under config_path (the app directory) matches the Docker
+# image's /app and one backup and restore serves both methods.
+
+- name: slskd native | Write the environment file
+  ansible.builtin.template:
+    src: native.env.j2
+    dest: "{{ slskd_native_env }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart slskd
+  no_log: true   # the file carries the Soulseek password and the API key
+
+- name: slskd native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ slskd_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart slskd
+
+- name: slskd native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ slskd_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: slskd native | Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: slskd native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ slskd_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ slskd_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

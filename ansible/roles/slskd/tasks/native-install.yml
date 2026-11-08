@@ -1,0 +1,98 @@
+---
+# Included by main.yml (native only): slskd's documented binary install
+# (https://github.com/slskd/slskd#with-binaries) at the exact version and checksum pinned in
+# the app defaults: the release zip from GitHub, the service account, and the PBS client
+# when this lab declares app backups. Runs before storage.yml so the directories can be
+# owned by the account's ids. The version marker is written last, so an interrupted install
+# repeats. Inputs: app_config.app.{native_version, native_sha256, puid, pgid}.
+
+- name: slskd native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native slskd supports Debian 12 on amd64.
+
+- name: slskd native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+- name: slskd native | Install the tools the install needs
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, unzip]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# Downloads are written as this id, which the guest maps straight through to the node
+# (media_storage.owner), so the *arr apps can hardlink them.
+- name: slskd native | Create the app group
+  ansible.builtin.group:
+    name: "{{ slskd_service }}"
+    gid: "{{ app_config.app.pgid | default(1000) }}"
+
+- name: slskd native | Create the app user
+  ansible.builtin.user:
+    name: "{{ slskd_service }}"
+    uid: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ slskd_service }}"
+    home: "{{ slskd_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: slskd native | Create the project and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: ["{{ slskd_project_dir }}", "{{ slskd_native_dir }}"]
+
+- name: slskd native | Read the installed version
+  ansible.builtin.slurp:
+    src: "{{ slskd_native_dir }}/.homelab-version"
+  register: _slskd_installed
+  failed_when: false
+
+- name: slskd native | Install the pinned release
+  when: (_slskd_installed.content | default('') | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: slskd native | Download the release zip
+      ansible.builtin.get_url:
+        url: "https://github.com/slskd/slskd/releases/download/{{ app_config.app.native_version }}/slskd-{{ app_config.app.native_version }}-linux-x64.zip"
+        dest: "{{ slskd_project_dir }}/slskd-{{ app_config.app.native_version }}-linux-x64.zip"
+        checksum: "sha256:{{ app_config.app.native_sha256 }}"
+        mode: "0644"
+
+    - name: slskd native | Stop the app before replacing its binary
+      ansible.builtin.systemd:
+        name: "{{ slskd_service }}"
+        state: stopped
+      failed_when: false
+
+    - name: slskd native | Unpack the release
+      ansible.builtin.unarchive:
+        src: "{{ slskd_project_dir }}/slskd-{{ app_config.app.native_version }}-linux-x64.zip"
+        dest: "{{ slskd_native_dir }}"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: slskd native | Make the binary executable
+      ansible.builtin.file:
+        path: "{{ slskd_native_dir }}/slskd"
+        mode: "0755"
+
+    - name: slskd native | Record the version
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ slskd_native_dir }}/.homelab-version"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart slskd

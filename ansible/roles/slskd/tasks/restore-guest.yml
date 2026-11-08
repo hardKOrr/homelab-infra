@@ -1,0 +1,37 @@
+---
+# Restore one application-consistent slskd app-directory archive through the shared swap.
+# The credentials live in the environment file or Compose file, outside the archive, so the
+# restored state is served under the target's own keys.
+
+- name: slskd restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      slskd restore needs a PBS-backed application recovery contract. Keep overwrite=false
+      to list snapshots before selecting one.
+
+- name: slskd restore | Resolve the guest runtime
+  ansible.builtin.set_fact:
+    _slskd_restore_runtime: >-
+      {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('docker')) }}
+
+- name: slskd restore | Preview or replace the app directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: "{{ _slskd_restore_runtime }}"
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ app_config.app.config_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+        mode: "0750"
+    recovery_swap_stop_services: ["{{ slskd_service if _slskd_restore_runtime == 'native' else instance }}"]
+    recovery_swap_compose_project: "{{ slskd_project_dir }}"
+    # Any status but a refused connection: the restored app serves and answers its API.
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/v0/application"
+    recovery_swap_health_status: [200, 401, 403]

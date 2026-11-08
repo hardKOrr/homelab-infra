@@ -1,0 +1,22 @@
+# slskd ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# The settings and credentials are in the environment file; slskd keeps its state under
+# config_path (SLSKD_APP_DIR), the layout the Docker image's /app has.
+[Unit]
+Description=slskd ({{ instance }})
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ slskd_service }}
+Group={{ slskd_service }}
+UMask=0002
+EnvironmentFile={{ slskd_native_env }}
+WorkingDirectory={{ slskd_native_dir }}
+ExecStart={{ slskd_native_dir }}/slskd
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

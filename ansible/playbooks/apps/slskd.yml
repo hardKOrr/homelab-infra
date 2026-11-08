@@ -1,7 +1,8 @@
 ---
 # Deploy slskd — the media stack's Soulseek download client for Lidarr's plugins-branch
-# integration. Docker on the media stack host; on Kubernetes when `hosting.method:
-# kubernetes` (no stack host, so no media registry entry and no wiring into Lidarr).
+# integration. Docker on the media stack host; on Kubernetes when `hosting.method: kubernetes`
+# (no media registry entry, no wiring into Lidarr); or natively on its own LXC or VM when
+# `hosting.method: native` (with `proxmox.guest_type`).
 #
 # Usage: ansible-playbook -i inventory/ playbooks/apps/slskd.yml -e instance=slskd
 #
@@ -11,7 +12,7 @@
 # (see roles/slskd/tasks/main.yml). The last play records the `media` registry key
 # (CONTRACT.md §3); playbooks/stacks/wire-media-stack.yml registers the client in Lidarr.
 
-# Play 1: find or create the stack host, via the Proxmox API.
+# Play 1: find or create the stack host or native guest, via the Proxmox API.
 - name: "slskd | Provision"
   hosts: localhost
   become: false
@@ -84,14 +85,22 @@
           {{ app_config.app.mounts
              | default((app_config.media_storage | default({})).mounts | default([]), true) }}
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: slskd
+      when: app_config.hosting.method == 'native'
+
     - name: Attach the lab's storage to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ _slskd_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _slskd_host_mounts | length > 0
 
 - name: "slskd | Prepare Kubernetes"
@@ -111,7 +120,6 @@
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
       when: app_config.hosting.method == 'kubernetes'
 
-
 # Before Deploy: its last step waits for the Soulseek login, which needs this access.
 - name: "slskd | Open network access"
   hosts: localhost
@@ -126,8 +134,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      when: app_config.hosting.method == 'docker'
-
+      when: app_config.hosting.method in ['docker', 'native']
 
 - name: "slskd | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -160,7 +167,7 @@
     - name: Deploy slskd
       ansible.builtin.include_role:
         name: slskd
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "slskd | Deploy on Kubernetes"
   hosts: localhost
@@ -183,7 +190,6 @@
   gather_facts: false
 
   pre_tasks:
-    # Absent on a pre-bootstrap run: every provider condition below then no-ops.
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
