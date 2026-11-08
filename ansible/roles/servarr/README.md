@@ -48,3 +48,7 @@ canaries through HTTPS. Use `?drill=create`, then `fresh` before Restore and `ve
 afterwards; it compares the tag, disabled Nyaa.si indexer, UI settings and API key
 against private runner scratch. Run with `tools/lab-browser` and instance
 `prowlarr-drill-owner` ([tool map](../../../tools/README.md)).
+
+`browser/radarr-recovery.js` uses the same three modes with `radarr-drill-owner`.
+It checks an unmonitored The Matrix movie, its tag and profile associations, the
+media-management settings and the canonical API key against private runner scratch.
