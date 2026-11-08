@@ -63,7 +63,9 @@ def main():
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == [
+        "{{ sabnzbd_service if _sabnzbd_restore_runtime == 'native' else instance }}"]
+    assert swap["recovery_swap_runtime"] == "{{ _sabnzbd_restore_runtime }}"
     assert swap["recovery_swap_compose_project"] == "{{ sabnzbd_project_dir }}"
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Queue)

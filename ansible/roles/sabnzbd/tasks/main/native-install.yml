@@ -1,0 +1,134 @@
+---
+# Phase of main.yml (native only): SABnzbd's documented Unix install from source
+# (https://sabnzbd.org/wiki/installation/install-unix) at the exact version and checksum
+# pinned in the app defaults: the release tarball, its requirements.txt in a virtualenv,
+# the unpackers it calls, the service account and the PBS client when this lab declares app
+# backups. Runs before storage.yml so the download directories can be owned by the
+# account's ids. The version marker is written last, so an interrupted install repeats.
+# Inputs: app_config.app.{native_version, native_sha256, puid, pgid}.
+
+- name: SABnzbd native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native SABnzbd supports Debian 12 on amd64.
+
+- name: SABnzbd native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+# SABnzbd 5.1.3 refuses to download without par2 and the real unrar (NO_DOWNLOADING in
+# SABnzbd.py), and Debian ships unrar only in non-free: a separate source file adds that
+# component without touching the guest's own sources.
+- name: SABnzbd native | Install the packages the repository definition needs
+  ansible.builtin.apt:
+    name: [ca-certificates, python3-debian]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: SABnzbd native | Enable Debian's non-free component for unrar
+  ansible.builtin.deb822_repository:
+    name: homelab-non-free
+    types: [deb]
+    uris: http://deb.debian.org/debian
+    suites: [bookworm, bookworm-updates]
+    components: [non-free]
+    signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    state: present
+  register: _sab_non_free
+
+# deb822_repository does not refresh the indexes, so a new source is fetched here.
+- name: SABnzbd native | Refresh the apt indexes after adding the source
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: _sab_non_free is changed
+
+- name: SABnzbd native | Install Python, par2, unrar and the archive unpackers
+  ansible.builtin.apt:
+    name: [curl, python3, python3-venv, python3-dev, par2, unrar, p7zip-full]
+    state: present
+    lock_timeout: 300
+
+- name: SABnzbd native | Require the binaries SABnzbd needs to download
+  ansible.builtin.command: "{{ item }}"
+  loop: ["unrar", "par2 --version"]
+  register: _sab_binaries
+  changed_when: false
+
+# The downloads are written as this id, which the guest maps straight through to the node
+# (media_storage.owner), so the *arr apps can hardlink them.
+- name: SABnzbd native | Create the app group
+  ansible.builtin.group:
+    name: "{{ sabnzbd_service }}"
+    gid: "{{ app_config.app.pgid | default(1000) }}"
+
+- name: SABnzbd native | Create the app user
+  ansible.builtin.user:
+    name: "{{ sabnzbd_service }}"
+    uid: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ sabnzbd_service }}"
+    home: "{{ sabnzbd_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: SABnzbd native | Create the project and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: ["{{ sabnzbd_project_dir }}", "{{ sabnzbd_native_dir }}"]
+
+- name: SABnzbd native | Read the installed version
+  ansible.builtin.slurp:
+    src: "{{ sabnzbd_native_dir }}/.homelab-version"
+  register: _sab_installed
+  failed_when: false
+
+- name: SABnzbd native | Install the pinned release
+  when: (_sab_installed.content | default('') | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: SABnzbd native | Download the source tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/sabnzbd/sabnzbd/releases/download/{{ app_config.app.native_version }}/SABnzbd-{{ app_config.app.native_version }}-src.tar.gz"
+        dest: "{{ sabnzbd_project_dir }}/SABnzbd-{{ app_config.app.native_version }}-src.tar.gz"
+        checksum: "sha256:{{ app_config.app.native_sha256 }}"
+        mode: "0644"
+
+    - name: SABnzbd native | Stop the app before replacing its code
+      ansible.builtin.systemd:
+        name: "{{ sabnzbd_service }}"
+        state: stopped
+      failed_when: false
+
+    - name: SABnzbd native | Unpack the release
+      ansible.builtin.unarchive:
+        src: "{{ sabnzbd_project_dir }}/SABnzbd-{{ app_config.app.native_version }}-src.tar.gz"
+        dest: "{{ sabnzbd_native_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
+
+    - name: SABnzbd native | Install the requirements in the virtualenv
+      ansible.builtin.pip:
+        requirements: "{{ sabnzbd_native_dir }}/requirements.txt"
+        virtualenv: "{{ sabnzbd_native_venv }}"
+        virtualenv_command: python3 -m venv
+
+    - name: SABnzbd native | Record the version
+      ansible.builtin.copy:
+        content: "{{ app_config.app.native_version }}\n"
+        dest: "{{ sabnzbd_native_dir }}/.homelab-version"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart sabnzbd

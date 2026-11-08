@@ -4,3 +4,12 @@
     project_src: "{{ sabnzbd_project_dir }}"
     state: present
     recreate: always
+  when: not (sabnzbd_native | bool)
+
+- name: Restart native sabnzbd
+  ansible.builtin.systemd:
+    name: "{{ sabnzbd_service }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart sabnzbd
+  when: sabnzbd_native | bool
