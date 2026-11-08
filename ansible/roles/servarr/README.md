@@ -52,3 +52,4 @@ against private runner scratch. Run with `tools/lab-browser` and instance
 `browser/radarr-recovery.js` uses the same three modes with `radarr-drill-owner`.
 It checks an unmonitored The Matrix movie, its tag and profile associations, the
 media-management settings and the canonical API key against private runner scratch.
+Add `&scope=<drill-name>` to isolate the canary label and saved comparison between drills.
