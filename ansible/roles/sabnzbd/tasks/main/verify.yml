@@ -17,6 +17,7 @@
   delay: "{{ sabnzbd_ini_delay }}"
   failed_when: false
   no_log: true
+  when: app_config.hosting.method == 'docker'
 
 - name: Resolve the key that is in force
   ansible.builtin.set_fact:
@@ -35,6 +36,7 @@
   vars:
     sab_check_base: "{{ _sab_base }}"
     sab_check_key: "{{ _sab_effective_key }}"
+    sab_check_headers: "{{ _sab_host_headers }}"
 
 # An instance whose key was regenerated in the web interface cannot be reached with
 # the credential every *arr holds, so this deploy puts the platform's key back. The
@@ -42,8 +44,12 @@
 # configuration in memory and rewrites this file on shutdown, so an edit made while
 # it runs is discarded by the very restart meant to apply it. Stopping first is also
 # what makes the edit deterministic — the flush happens, then the value is set.
+# Docker only: on Kubernetes the pod's init container writes the platform's key into the
+# config before every start, so a refusal there is a real failure.
 - name: Repair an API key that is not the platform's
-  when: not (sab_api_ok | bool)
+  when:
+    - not (sab_api_ok | bool)
+    - app_config.hosting.method == 'docker'
   block:
     - name: Stop the app before editing its configuration
       community.docker.docker_compose_v2:
@@ -103,6 +109,7 @@
 - name: Ask the app what it is
   ansible.builtin.uri:
     url: "{{ _sab_base }}/api?mode=version&output=json&apikey={{ _sab_effective_key | urlencode }}"
+    headers: "{{ _sab_host_headers }}"
     status_code: 200
   register: _sab_version
   changed_when: false
@@ -124,6 +131,7 @@
 - name: Call the API with no key
   ansible.builtin.uri:
     url: "{{ _sab_base }}/api?mode=queue&output=json"
+    headers: "{{ _sab_host_headers }}"
     status_code: [200, 401, 403]
   register: _sab_unauthenticated
   changed_when: false

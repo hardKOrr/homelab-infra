@@ -5,6 +5,16 @@ Deploy's `tasks/main.yml` imports `tasks/main/resolve.yml` (kind, download direc
 continuity, seeded `sabnzbd.ini`, Compose) and `verify.yml` (key probe and repair, identity,
 refused anonymous queue); the vault write and registry export follow in `main.yml`.
 
+## Kubernetes
+
+`hosting.method: kubernetes` swaps `storage.yml` and `start.yml` for `tasks/kubernetes.yml`,
+after the playbook's prepare play ran `resolve-kubernetes-media.yml`. Settings live on a
+PVC from the cluster's default StorageClass, and the pod sees each declared media mount
+through its NFS export under the container path Docker uses. An init container seeds
+`sabnzbd.ini` once and, before every start, sets the API key held in a Secret. Kubernetes
+writes no media registry entry and wires no *arr to the client. `restore.yml` hands off to
+`restore-kubernetes.yml` (the shared Job) or `restore-guest.yml`.
+
 ## Client wiring
 
 SABnzbd Deploy registers only that client in each deployed Usenet consumer and creates

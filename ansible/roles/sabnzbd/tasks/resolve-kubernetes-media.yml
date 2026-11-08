@@ -1,0 +1,56 @@
+---
+# Run on localhost before the cluster deploy (the playbook's prepare play): resolve every
+# declared media mount as the NFS share Kubernetes mounts at the same container path as
+# the Docker stack, and create the download directories on the Proxmox node, which the pod
+# cannot do before the app starts. Sets k8s_media_nfs and opens the cluster nodes' NFS
+# egress.
+- name: SABnzbd Kubernetes media | Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _sab_k8s_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+- name: SABnzbd Kubernetes media | Find the mount that holds the download path
+  ansible.builtin.set_fact:
+    _sab_k8s_download_dir: >-
+      {%- set dl = app_config.app.download_path | regex_replace('/+$', '') -%}
+      {%- set found = [] -%}
+      {%- for m in (_sab_k8s_mounts | sort(attribute='path', reverse=true)) -%}
+      {%- set root = m.path | regex_replace('/+$', '') -%}
+      {%- if not found and (dl == root or dl.startswith(root ~ '/')) -%}
+      {%- set _ = found.append((m.host | regex_replace('/+$', '')) ~ dl[(root | length):]) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ found | first | default('') }}
+
+- name: SABnzbd Kubernetes media | Require the download path to be inside a declared mount
+  ansible.builtin.assert:
+    that: _sab_k8s_download_dir | length > 0
+    fail_msg: >-
+      app.download_path {{ app_config.app.download_path }} is not inside any media_storage
+      mount, so Kubernetes has no share to mount it from.
+
+# Before any directory is created: an unmounted share must fail here, not after the
+# download tree was written into the node's backing directory.
+- name: SABnzbd Kubernetes media | Resolve the mounts' NFS shares
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: "{{ _sab_k8s_mounts }}"
+
+- name: SABnzbd Kubernetes media | Register Proxmox nodes as delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: SABnzbd Kubernetes media | Ensure the download directories exist on the node
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0775"
+    # Numeric ids: the owner's named account need not exist on the node.
+    owner: "{{ app_config.app.puid | default(1000) | string }}"
+    group: "{{ app_config.app.pgid | default(1000) | string }}"
+  loop:
+    - "{{ _sab_k8s_download_dir }}"
+    - "{{ _sab_k8s_download_dir }}/incomplete"
+    - "{{ _sab_k8s_download_dir }}/complete"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
