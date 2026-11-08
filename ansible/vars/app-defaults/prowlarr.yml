@@ -13,7 +13,7 @@
 prowlarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
 
@@ -30,6 +30,8 @@ prowlarr_defaults:
     image: "lscr.io/linuxserver/prowlarr:latest"
     port: 9696
     container_port: 9696
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 2
 
     config_path: "/opt/{{ instance }}/config"
     # No library_subpath, and the role reads that as "owns no part of the
@@ -59,3 +61,10 @@ prowlarr_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # The PBS client Job on Kubernetes.
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

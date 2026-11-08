@@ -33,7 +33,7 @@ restore puts the original directory and Compose API-key overrides back and start
 
 ## Kubernetes
 
-Lidarr can run in its own namespace (`hosting.method: kubernetes`); `main.yml` includes
+Lidarr and Prowlarr can run in their own namespace (`hosting.method: kubernetes`); `main.yml` includes
 `kubernetes.yml` for the workload and shares every other phase. Config sits on a PVC of the
 default StorageClass. Media and download mounts are the NFS exports the node already uses:
 `kubernetes-media.yml` resolves them (and creates the library root folder on the node) and
@@ -42,3 +42,9 @@ taken from `homelab-infra/media/<instance>` (or generated) and reaches the pod a
 `config.xml` is never read; the verify, root-folder and plugin phases call the app through
 the ingress (`main/endpoint.yml`). A Kubernetes instance has no stack host and records no media
 registry entry. Backup and restore are the shared Kubernetes recovery Job over the config PVC.
+
+`browser/prowlarr-recovery.js` checks the existing drill owner login and Prowlarr
+canaries through HTTPS. Use `?drill=create`, then `fresh` before Restore and `verify`
+afterwards; it compares the tag, disabled Nyaa.si indexer, UI settings and API key
+against private runner scratch. Run with `tools/lab-browser` and instance
+`prowlarr-drill-owner` ([tool map](../../../tools/README.md)).
