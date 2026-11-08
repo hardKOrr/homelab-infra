@@ -9,7 +9,8 @@
     state: directory
     owner: root
     group: root
-    mode: "0750"
+    # Native: the service account must reach the config directory beneath it.
+    mode: "{{ '0755' if qbittorrent_native | bool else '0750' }}"
 
 # Owned by the container's uid: qBittorrent writes its configuration, its resume
 # data and its logs here, and the seeded config file below has to be readable and

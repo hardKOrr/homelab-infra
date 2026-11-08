@@ -1,0 +1,25 @@
+# qBittorrent ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# qbittorrent-nox keeps its configuration and data under XDG_CONFIG_HOME / XDG_DATA_HOME,
+# set here so the layout is the Docker image's: <config_path>/qBittorrent/...
+[Unit]
+Description=qBittorrent ({{ instance }})
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ qbittorrent_service }}
+Group={{ qbittorrent_service }}
+UMask=0002
+Environment=HOME={{ app_config.app.config_path }}
+Environment=XDG_CONFIG_HOME={{ app_config.app.config_path }}
+Environment=XDG_DATA_HOME={{ app_config.app.config_path }}
+Environment=XDG_CACHE_HOME=/var/cache/{{ qbittorrent_service }}
+CacheDirectory={{ qbittorrent_service }}
+ExecStart=/usr/bin/qbittorrent-nox --webui-port={{ _qbt_webui_port }} --confirm-legal-notice
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

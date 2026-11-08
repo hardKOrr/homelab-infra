@@ -30,7 +30,7 @@ Session\OutgoingPortsMax={{ qbittorrent_peer_outgoing_ports_max }}
 [Preferences]
 WebUI\Username={{ app_config.app.webui_user | default('admin') }}
 WebUI\Password_PBKDF2="{{ _qbt_password_hash }}"
-WebUI\Port={{ app_config.app.container_port | default(app_config.app.port) }}
+WebUI\Port={{ _qbt_webui_port }}
 WebUI\Address=*
 # Authentication is required from every address, including the container's own
 # host. The *arr apps reach this client across the Docker bridge and authenticate

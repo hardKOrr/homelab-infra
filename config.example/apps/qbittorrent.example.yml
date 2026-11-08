@@ -16,6 +16,13 @@ stack: media     # which Docker stack host this app runs on
 # stack line). Every media_storage mount is mounted from its NFS share at the same path;
 # the BitTorrent listen port is not exposed outside the cluster there, so the client
 # works without incoming peers.
+# To run qBittorrent natively on its own LXC (or set guest_type: vm for a VM), drop the
+# stack line and set these instance overrides. Deploy installs the pinned qbittorrent-nox
+# package as a systemd service; app.port is the WebUI port.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc
 
 # ── App config ─────────────────────────────────────────────────────────────────
 app:

@@ -1,0 +1,112 @@
+---
+# Phase of main.yml (native only): seed the config, enforce the peer port settings, write
+# the systemd unit and start qBittorrent. The config layout matches the Docker image's
+# (<config_path>/qBittorrent/qBittorrent.conf, BT_backup beside it) through XDG_CONFIG_HOME
+# and XDG_DATA_HOME, so one backup and restore serves both methods.
+
+- name: qBittorrent native | Seed qBittorrent.conf on first deploy
+  ansible.builtin.template:
+    src: qBittorrent.conf.j2
+    dest: "{{ _qbt_conf }}"
+    owner: "{{ qbittorrent_service }}"
+    group: "{{ qbittorrent_service }}"
+    mode: "0640"
+    force: false
+  no_log: true      # the file carries the password hash
+
+- name: qBittorrent native | Check the outgoing peer port settings
+  community.general.ini_file:
+    path: "{{ _qbt_conf }}"
+    section: BitTorrent
+    option: "{{ item.option }}"
+    value: "{{ item.value | string }}"
+    no_extra_spaces: true
+  loop:
+    - option: 'Session\OutgoingPortsMin'
+      value: "{{ qbittorrent_peer_outgoing_ports_min }}"
+    - option: 'Session\OutgoingPortsMax'
+      value: "{{ qbittorrent_peer_outgoing_ports_max }}"
+  loop_control:
+    label: "{{ item.option }}"
+  check_mode: true
+  register: _qbt_peer_ports_check
+  no_log: true
+
+# qBittorrent rewrites its config from memory on shutdown, so the file is edited stopped.
+- name: qBittorrent native | Enforce the outgoing peer port settings when they drift
+  when: _qbt_peer_ports_check.results | selectattr('changed') | list | length > 0
+  block:
+    - name: qBittorrent native | Stop the service before editing its configuration
+      ansible.builtin.systemd:
+        name: "{{ qbittorrent_service }}"
+        state: stopped
+      failed_when: false
+
+    - name: qBittorrent native | Write the outgoing peer port settings
+      community.general.ini_file:
+        path: "{{ _qbt_conf }}"
+        section: BitTorrent
+        option: "{{ item.option }}"
+        value: "{{ item.value | string }}"
+        owner: "{{ qbittorrent_service }}"
+        group: "{{ qbittorrent_service }}"
+        mode: "0640"
+        no_extra_spaces: true
+      loop:
+        - option: 'Session\OutgoingPortsMin'
+          value: "{{ qbittorrent_peer_outgoing_ports_min }}"
+        - option: 'Session\OutgoingPortsMax'
+          value: "{{ qbittorrent_peer_outgoing_ports_max }}"
+      loop_control:
+        label: "{{ item.option }}"
+      no_log: true
+
+- name: qBittorrent native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ qbittorrent_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart qbittorrent
+
+- name: qBittorrent native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ qbittorrent_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: qBittorrent native | Apply pending restarts before the WebUI checks
+  ansible.builtin.meta: flush_handlers
+
+- name: qBittorrent native | Wait for the WebUI to answer
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/"
+    status_code: [200, 401, 403]
+  register: _qbt_up
+  until: _qbt_up.status | default(0) in [200, 401, 403]
+  retries: "{{ qbittorrent_webui_retries }}"
+  delay: "{{ qbittorrent_webui_delay }}"
+  changed_when: false
+
+- name: qBittorrent native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ qbittorrent_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ qbittorrent_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
