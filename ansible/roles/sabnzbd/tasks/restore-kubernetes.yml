@@ -1,0 +1,20 @@
+---
+# Replace the target's config PVC through the shared Kubernetes recovery Job. The NFS
+# media shares are not part of the archive; the target's init container writes its own
+# API key into the restored sabnzbd.ini on the next start.
+- name: SABnzbd Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: SABnzbd
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid }}:{{ restore_target_config.app.pgid }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        SABnzbd's configuration, history and queue state from its config volume; downloads
+        are not included
+      verify:
+        - Open the SABnzbd URL and verify the restored settings and history.

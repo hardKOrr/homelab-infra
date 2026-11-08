@@ -1,0 +1,90 @@
+---
+# SABnzbd on Kubernetes, included from main.yml after the cluster and endpoint are
+# resolved: its config lives on a default-StorageClass PVC and the lab's media shares are
+# the existing NFS exports, mounted at the same container paths as on Docker (the
+# playbook's prepare play resolved them into k8s_media_nfs). The API key reaches the pod as
+# a Secret; the pod's init container seeds sabnzbd.ini and enforces the key before every
+# start. main.yml then proves the key and stores it.
+
+# Key continuity as on Docker, minus the ini (it lives in the pod): the vault item's key
+# wins, and a genuinely first deploy generates one.
+- name: SABnzbd Kubernetes | Resolve the API key
+  ansible.builtin.set_fact:
+    _sab_api_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true)
+         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+    _sab_k8s_whitelist: >-
+      {{ app_config.app.host_whitelist | default([sabnzbd_fqdn, instance], true) }}
+  no_log: true
+
+- name: SABnzbd Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: SABnzbd Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ sabnzbd_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: sabnzbd_k8s_node
+    label: Kubernetes node
+
+- name: SABnzbd Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: SABnzbd Kubernetes | Sync the API key into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      api-key: "{{ _sab_api_key }}"
+  no_log: true
+
+- name: SABnzbd Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _sab_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: SABnzbd Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _sab_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: SABnzbd Kubernetes | Wait for the web interface to answer through the ingress
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json"
+    headers: "{{ _sab_host_headers }}"
+    status_code: [200, 401, 403]
+  register: _sab_up
+  until: _sab_up.status | default(0) in [200, 401, 403]
+  retries: "{{ sabnzbd_webui_retries }}"
+  delay: "{{ sabnzbd_webui_delay }}"
+  changed_when: false
+
+- name: SABnzbd Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        SABnzbd's configuration, history and queue state from its config volume; downloads
+        on the media shares are not included

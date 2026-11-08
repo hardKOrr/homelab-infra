@@ -1,0 +1,179 @@
+{# SABnzbd: its config volume and the lab's existing NFS media shares, at the Docker container paths. #}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set container_port = app_config.app.container_port | default(app_config.app.port) %}
+{# Runs before every start with the app stopped: SABnzbd rewrites sabnzbd.ini from memory on
+   shutdown, so an edit made while it runs is lost. The file is seeded once (as
+   sabnzbd.ini.j2 does on Docker); the API key every *arr authenticates with is enforced on
+   every start, as the Docker deploy enforces it. #}
+{% set seed_script %}
+set -eu
+conf=/config/sabnzbd.ini
+if [ ! -f "$conf" ]; then
+  cat > "$conf" <<SABINI
+[misc]
+api_key = $SAB_API_KEY
+host = 0.0.0.0
+port = {{ container_port }}
+host_whitelist = {{ _sab_k8s_whitelist | join(', ') }}
+download_dir = {{ _sab_incomplete_dir }}
+complete_dir = {{ _sab_complete_dir }}
+SABINI
+fi
+has=0
+{% raw %}
+awk '/^\[[^\[]/ { s = ($0 == "[misc]") } s && /^[ \t]*api_key[ \t]*=/ { f = 1 } END { exit !f }' "$conf" && has=1
+SAB_HAS="$has" awk '
+  /^\[[^\[]/ { insec = ($0 == "[misc]"); print; if (insec && ENVIRON["SAB_HAS"] == "0") print "api_key = " ENVIRON["SAB_API_KEY"]; next }
+  insec && /^[ \t]*api_key[ \t]*=/ { print "api_key = " ENVIRON["SAB_API_KEY"]; next }
+  { print }
+' "$conf" > "$conf.new"
+{% endraw %}
+if cmp -s "$conf" "$conf.new"; then rm -f "$conf.new"; else mv "$conf.new" "$conf"; fi
+chown "$PUID:$PGID" "$conf"
+chmod 0640 "$conf"
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | default(1) | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: app
+      annotations:
+        # The init container reads the key once per start; a changed key must roll the pod.
+        homelab-infra/credential: {{ _sab_api_key | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: seed-config
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c]
+          args:
+            - {{ seed_script | to_json }}
+          env:
+            - name: PUID
+              value: "{{ app_config.app.puid | default(1000) }}"
+            - name: PGID
+              value: "{{ app_config.app.pgid | default(1000) }}"
+            - name: SAB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ instance }}
+                  key: api-key
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      containers:
+        - name: sabnzbd
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: "{{ app_config.app.puid | default(1000) }}"
+            - name: PGID
+              value: "{{ app_config.app.pgid | default(1000) }}"
+            - name: TZ
+              value: {{ homelabinfra_config.timezone | default('UTC') | to_json }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+            - name: {{ key | to_json }}
+              value: {{ value | string | to_json }}
+{% endfor %}
+          ports:
+            - name: http
+              containerPort: {{ container_port }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+{% endfor %}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
+          nfs:
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ sabnzbd_fqdn | to_json }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

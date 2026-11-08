@@ -5,6 +5,7 @@
 # Inputs:
 #   sab_check_base  base URL, no trailing slash (http://localhost:8085)
 #   sab_check_key   the API key to authenticate with
+#   sab_check_headers  optional request headers (the Host header on Kubernetes)
 #
 # Outputs:
 #   sab_api_ok      true when the key was accepted
@@ -22,6 +23,7 @@
   ansible.builtin.uri:
     url: "{{ sab_check_base }}/api?mode=queue&output=json&apikey={{ sab_check_key | urlencode }}"
     return_content: true
+    headers: "{{ sab_check_headers | default({}) }}"
     # Both shapes of refusal are answers this file reports rather than crashes on.
     # SABnzbd has answered a bad key as HTTP 401 and, in older releases, as HTTP 200
     # carrying {"status": false, "error": "API Key Incorrect"} — so neither the

@@ -24,14 +24,28 @@
 # exactly what ansible/vars/media-wiring.yml records as `auth: api_key`. What the
 # three share is the deploy shape, which belongs to the playbook, not the role.
 
+# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and the
+# playbook's prepare play ran resolve-kubernetes-media.yml); the API key proof and the vault
+# item are shared with Docker.
+- name: Resolve the cluster the app deploys to
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+  when: app_config.hosting.method == 'kubernetes'
+
 - name: Resolve the app kind, storage and download directories
   ansible.builtin.import_tasks: main/resolve.yml
 
-- name: Create directories and check the lab's storage
-  ansible.builtin.import_tasks: main/storage.yml
+- name: Docker on the stack host
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Create directories and check the lab's storage
+      ansible.builtin.import_tasks: main/storage.yml
 
-- name: Resolve the API key and start the app
-  ansible.builtin.import_tasks: main/start.yml
+    - name: Resolve the API key and start the app
+      ansible.builtin.import_tasks: main/start.yml
+
+- name: Kubernetes workload
+  ansible.builtin.include_tasks: kubernetes.yml
+  when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the API key works and repair it if not
   ansible.builtin.import_tasks: main/verify.yml
@@ -51,6 +65,7 @@
 
 # ── Hand the endpoint back to the playbook ────────────────────────────────────
 - name: Export the media registry entry to the playbook
+  when: app_config.hosting.method == 'docker'
   ansible.builtin.set_fact:
     sabnzbd_media_kind: "{{ _sab_kind }}"
     sabnzbd_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

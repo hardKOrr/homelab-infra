@@ -9,7 +9,14 @@
 - name: Resolve the app kind
   ansible.builtin.set_fact:
     _sab_kind: "{{ app_config.app.media_kind }}"
-    _sab_base: "http://localhost:{{ app_config.app.port }}"
+    # Kubernetes asks the cluster ingress with the instance hostname (sabnzbd_fqdn, set by
+    # the playbook), which the app's host whitelist names.
+    _sab_base: >-
+      {{ 'http://' ~ k8s_cluster_facts.ingress_vip
+         if app_config.hosting.method == 'kubernetes'
+         else 'http://localhost:' ~ app_config.app.port }}
+    _sab_host_headers: >-
+      {{ {'Host': sabnzbd_fqdn} if app_config.hosting.method == 'kubernetes' else {} }}
     _sab_ini: "{{ app_config.app.config_path }}/sabnzbd.ini"
 
 # The kind is not decoration: wire-media-stack.yml refuses to wire an app whose
