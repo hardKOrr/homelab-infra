@@ -59,4 +59,8 @@ guest = (role / "tasks/restore-guest.yml").read_text()
 assert "tasks/recovery/restore-swap.yml" in guest and "_slskd_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 
+# A restore into a differently named instance swaps the target's directory, not the source's.
+hook = (role / "tasks/restore-config.yml").read_text()
+assert "tasks/recovery/rebase-target-path.yml" in hook and "restore_rebase_key: config_path" in hook
+
 print("slskd native renders its unit and environment and uses the shared backup and restore")
