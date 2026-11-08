@@ -1,0 +1,45 @@
+---
+# Phase of main.yml (native only): the qbittorrent-nox package at its pinned version, the
+# service account, and the PBS client when this lab declares app backups. Runs before
+# storage.yml so the download directory can be owned by the account's ids.
+# Inputs: app_config.app.{native_package_version, puid, pgid}.
+
+- name: qBittorrent native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native qBittorrent pins the Debian 12 qbittorrent-nox package on amd64.
+
+- name: qBittorrent native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+- name: qBittorrent native | Install the pinned qbittorrent-nox package
+  ansible.builtin.apt:
+    name: "qbittorrent-nox={{ app_config.app.native_package_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+    allow_downgrade: true
+  notify: Restart qbittorrent
+
+# The downloads are written as this id, which the guest maps straight through to the node
+# (media_storage.owner), so the *arr apps can hardlink them.
+- name: qBittorrent native | Create the app group
+  ansible.builtin.group:
+    name: "{{ qbittorrent_service }}"
+    gid: "{{ app_config.app.pgid | default(1000) }}"
+
+- name: qBittorrent native | Create the app user
+  ansible.builtin.user:
+    name: "{{ qbittorrent_service }}"
+    uid: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ qbittorrent_service }}"
+    home: "{{ qbittorrent_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true

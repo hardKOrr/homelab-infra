@@ -56,7 +56,7 @@ def main():
     docker = plays["qBittorrent | Deploy"]
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "qbittorrent"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in docker["tasks"]
     )
     kube = plays["qBittorrent | Deploy on Kubernetes"]

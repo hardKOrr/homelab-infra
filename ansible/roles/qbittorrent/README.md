@@ -5,6 +5,15 @@ mounts, endpoint), `storage.yml` (directories, download path), `credentials.yml`
 credential), `start.yml` (seeded config, peer port settings, Compose) and `verify.yml` (login and password repair, identity,
 refused session-less call). `main.yml` then stores the credential and exports the endpoint.
 
+## Native
+
+`hosting.method: native` runs `main/native-install.yml` (the pinned `qbittorrent-nox`
+package, the service account, the PBS client) before `storage.yml`, then `main/native.yml`
+(seeded config, peer port settings, systemd unit) instead of `start.yml`. The unit sets
+`XDG_CONFIG_HOME` and `XDG_DATA_HOME` to `config_path`, so the config layout is the Docker
+image's and one backup and restore serves both. `app.native_version` and the image tag
+name the same upstream release.
+
 ## Kubernetes
 
 `hosting.method: kubernetes` runs `tasks/kubernetes.yml` instead of `storage.yml` and

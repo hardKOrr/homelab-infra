@@ -28,12 +28,19 @@
 - name: Repair a WebUI password that is not the platform's
   when:
     - not (qbt_login_ok | bool)
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
   block:
     - name: Stop the app before editing its configuration
       community.docker.docker_compose_v2:
         project_src: "{{ qbittorrent_project_dir }}"
         state: stopped
+      when: not (qbittorrent_native | bool)
+
+    - name: Stop the native service before editing its configuration
+      ansible.builtin.systemd:
+        name: "{{ qbittorrent_service }}"
+        state: stopped
+      when: qbittorrent_native | bool
 
     - name: Restore the platform's WebUI credentials
       community.general.ini_file:
@@ -60,6 +67,13 @@
       community.docker.docker_compose_v2:
         project_src: "{{ qbittorrent_project_dir }}"
         state: present
+      when: not (qbittorrent_native | bool)
+
+    - name: Start the native service again
+      ansible.builtin.systemd:
+        name: "{{ qbittorrent_service }}"
+        state: started
+      when: qbittorrent_native | bool
 
     - name: Wait for the WebUI to answer after the repair
       ansible.builtin.uri:
@@ -86,7 +100,7 @@
       them again after they were written back into {{ _qbt_conf }}
       ({{ qbt_login_reason }}). Nothing can wire this download client until it
       accepts them: qBittorrent bans a calling address for an hour after repeated
-      failed logins, so check `docker logs {{ instance }}`, and check that the
+      failed logins, so check `docker logs {{ instance }}` (or `journalctl -u {{ qbittorrent_service }}` natively), and check that the
       container is reading the config file this role writes.
 
 - name: Ask the app what it is

@@ -1,6 +1,6 @@
 ---
 # Restore one application-consistent qBittorrent config archive through the shared swap, on a
-# Docker stack host.
+# Docker stack host or a native guest.
 - name: qBittorrent restore | Assert the restore contract
   ansible.builtin.assert:
     that:
@@ -13,17 +13,22 @@
       qBittorrent restore needs a PBS-backed application recovery contract. Keep
       overwrite=false to list snapshots before selecting one.
 
+- name: qBittorrent restore | Resolve the guest runtime
+  ansible.builtin.set_fact:
+    _qbt_restore_runtime: >-
+      {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('docker')) }}
+
 - name: qBittorrent restore | Preview or replace the config directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ _qbt_restore_runtime }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.config_path }}"
         owner: "{{ app_config.app.puid }}"
         group: "{{ app_config.app.pgid }}"
         mode: "0750"
-    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_stop_services: ["{{ qbittorrent_service if _qbt_restore_runtime == 'native' else instance }}"]
     recovery_swap_compose_project: "{{ qbittorrent_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}"

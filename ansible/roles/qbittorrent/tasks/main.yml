@@ -1,6 +1,7 @@
 ---
 # qbittorrent role — qBittorrent as a Docker container on a stack host (Play 2 of
-# playbooks/apps/qbittorrent.yml) or on Kubernetes (its localhost Kubernetes play).
+# playbooks/apps/qbittorrent.yml), natively on its own guest (main/native*.yml) or on
+# Kubernetes (its localhost Kubernetes play).
 #
 # The media stack's torrent download client. Until this existed, the stack could
 # find releases and could not fetch any of them: tasks/app-wiring/arr-download-client.yml
@@ -30,8 +31,14 @@
 - name: Resolve the app kind and storage
   ansible.builtin.import_tasks: main/resolve.yml
 
-- name: Docker storage
-  when: app_config.hosting.method == 'docker'
+- name: Native service account and package
+  when: app_config.hosting.method == 'native'
+  block:
+    - name: Install the native service account and package
+      ansible.builtin.import_tasks: main/native-install.yml
+
+- name: Docker and native storage
+  when: app_config.hosting.method in ['docker', 'native']
   block:
     - name: Create directories and check the lab's storage
       ansible.builtin.import_tasks: main/storage.yml
@@ -44,6 +51,12 @@
   block:
     - name: Seed the config and start the app
       ansible.builtin.import_tasks: main/start.yml
+
+- name: Native service
+  when: app_config.hosting.method == 'native'
+  block:
+    - name: Seed the config and run the native service
+      ansible.builtin.import_tasks: main/native.yml
 
 - name: Kubernetes workload
   ansible.builtin.include_tasks: kubernetes.yml
@@ -68,7 +81,7 @@
 
 # ── Hand the endpoint back to the playbook ────────────────────────────────────
 - name: Export the media registry entry to the playbook
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
   ansible.builtin.set_fact:
     qbittorrent_media_kind: "{{ _qbt_kind }}"
     qbittorrent_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

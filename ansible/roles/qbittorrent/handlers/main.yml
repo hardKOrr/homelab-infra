@@ -4,3 +4,12 @@
     project_src: "{{ qbittorrent_project_dir }}"
     state: present
     recreate: always
+  when: not (qbittorrent_native | bool)
+
+- name: Restart native qbittorrent
+  ansible.builtin.systemd:
+    name: "{{ qbittorrent_service }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart qbittorrent
+  when: qbittorrent_native | bool

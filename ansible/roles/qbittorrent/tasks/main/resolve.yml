@@ -21,6 +21,10 @@
          else 'http://localhost:' ~ app_config.app.port }}
     _qbt_host_headers: >-
       {{ {'Host': qbittorrent_fqdn} if app_config.hosting.method == 'kubernetes' else {} }}
+    # The port the app itself binds: the image's container_port on Docker, app.port natively.
+    _qbt_webui_port: >-
+      {{ app_config.app.port if app_config.hosting.method == 'native'
+         else app_config.app.container_port | default(app_config.app.port) }}
     _qbt_conf_dir: "{{ app_config.app.config_path }}/qBittorrent"
     _qbt_conf: "{{ app_config.app.config_path }}/qBittorrent/qBittorrent.conf"
 
