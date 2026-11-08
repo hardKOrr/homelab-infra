@@ -16,7 +16,7 @@ Environment=XDG_CONFIG_HOME={{ app_config.app.config_path }}
 Environment=XDG_DATA_HOME={{ app_config.app.config_path }}
 Environment=XDG_CACHE_HOME=/var/cache/{{ qbittorrent_service }}
 CacheDirectory={{ qbittorrent_service }}
-ExecStart=/usr/bin/qbittorrent-nox --webui-port={{ _qbt_webui_port }} --confirm-legal-notice
+ExecStart=/usr/bin/qbittorrent-nox --webui-port={{ _qbt_webui_port }}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=120

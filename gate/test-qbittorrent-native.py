@@ -40,7 +40,15 @@ with tempfile.TemporaryDirectory() as directory:
     unit = (root / "unit").read_text()
     conf = (root / "conf").read_text()
 assert "XDG_CONFIG_HOME=/opt/qbittorrent/config" in unit and "XDG_DATA_HOME=/opt/qbittorrent/config" in unit
-assert "ExecStart=/usr/bin/qbittorrent-nox --webui-port=8080" in unit
+exec_line = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
+assert exec_line == "ExecStart=/usr/bin/qbittorrent-nox --webui-port=8080"
+# Every flag must exist in the pinned release: 4.5.2's src/app/cmdoptions.cpp defines only
+# these (it has no --confirm-legal-notice; an unknown flag stops the app from starting).
+# The legal notice is accepted by [LegalNotice] Accepted=true in the seeded config.
+options_in_4_5_2 = {"--webui-port", "--profile"}  # the ones this unit may use
+flags = [w.split("=")[0] for w in exec_line.split()[1:]]
+assert flags and set(flags) <= options_in_4_5_2, flags
+assert "Accepted=true" in conf
 assert "WebUI\\Port=8080" in conf and "WebUI\\Password_PBKDF2=\"fixture-hash\"" in conf
 
 # Backup and restore go through the shared operations with the method's runtime.
