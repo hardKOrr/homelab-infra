@@ -42,3 +42,9 @@ taken from `homelab-infra/media/<instance>` (or generated) and reaches the pod a
 `config.xml` is never read; the verify, root-folder and plugin phases call the app through
 the ingress (`main/endpoint.yml`). A Kubernetes instance has no stack host and records no media
 registry entry. Backup and restore are the shared Kubernetes recovery Job over the config PVC.
+
+`browser/prowlarr-recovery.js` checks the existing drill owner login and Prowlarr
+canaries through HTTPS. Use `?drill=create`, then `fresh` before Restore and `verify`
+afterwards; it compares the tag, disabled Nyaa.si indexer, UI settings and API key
+against private runner scratch. Run with `tools/lab-browser` and instance
+`prowlarr-drill-owner` ([tool map](../../../tools/README.md)).
