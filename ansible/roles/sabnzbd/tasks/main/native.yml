@@ -1,0 +1,55 @@
+---
+# Phase of main.yml (native only): write the systemd unit, start SABnzbd and wait for it.
+# The configuration layout matches the Docker image's (<config_path>/sabnzbd.ini, admin/
+# and logs/ beside it) because the unit points -f at the same file, so one backup and
+# restore serves both methods. main/start.yml has already seeded sabnzbd.ini.
+
+- name: SABnzbd native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ sabnzbd_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart sabnzbd
+
+- name: SABnzbd native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ sabnzbd_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: SABnzbd native | Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: SABnzbd native | Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json"
+    status_code: [200, 401, 403]
+  register: _sab_up
+  until: _sab_up.status | default(0) in [200, 401, 403]
+  retries: "{{ sabnzbd_webui_retries }}"
+  delay: "{{ sabnzbd_webui_delay }}"
+  changed_when: false
+
+- name: SABnzbd native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ sabnzbd_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ sabnzbd_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

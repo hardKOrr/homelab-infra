@@ -1,0 +1,22 @@
+# SABnzbd ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# -f puts sabnzbd.ini, the history database and the logs under config_path, the layout the
+# Docker image's /config has. The listen address and port come from that file.
+[Unit]
+Description=SABnzbd ({{ instance }})
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ sabnzbd_service }}
+Group={{ sabnzbd_service }}
+UMask=0002
+Environment=HOME={{ app_config.app.config_path }}
+Environment=TZ={{ homelabinfra_config.timezone | default('UTC') }}
+ExecStart={{ sabnzbd_native_venv }}/bin/python {{ sabnzbd_native_dir }}/SABnzbd.py -f {{ _sab_ini }} -b 0
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -17,7 +17,7 @@
   delay: "{{ sabnzbd_ini_delay }}"
   failed_when: false
   no_log: true
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
 
 - name: Resolve the key that is in force
   ansible.builtin.set_fact:
@@ -44,17 +44,24 @@
 # configuration in memory and rewrites this file on shutdown, so an edit made while
 # it runs is discarded by the very restart meant to apply it. Stopping first is also
 # what makes the edit deterministic — the flush happens, then the value is set.
-# Docker only: on Kubernetes the pod's init container writes the platform's key into the
+# Docker and native: on Kubernetes the pod's init container writes the platform's key into the
 # config before every start, so a refusal there is a real failure.
 - name: Repair an API key that is not the platform's
   when:
     - not (sab_api_ok | bool)
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
   block:
     - name: Stop the app before editing its configuration
       community.docker.docker_compose_v2:
         project_src: "{{ sabnzbd_project_dir }}"
         state: stopped
+      when: not (sabnzbd_native | bool)
+
+    - name: Stop the native service before editing its configuration
+      ansible.builtin.systemd:
+        name: "{{ sabnzbd_service }}"
+        state: stopped
+      when: sabnzbd_native | bool
 
     - name: Restore the platform's API key
       community.general.ini_file:
@@ -77,6 +84,13 @@
       community.docker.docker_compose_v2:
         project_src: "{{ sabnzbd_project_dir }}"
         state: present
+      when: not (sabnzbd_native | bool)
+
+    - name: Start the native service again
+      ansible.builtin.systemd:
+        name: "{{ sabnzbd_service }}"
+        state: started
+      when: sabnzbd_native | bool
 
     - name: Wait for the web interface to answer after the repair
       ansible.builtin.uri:
@@ -101,7 +115,7 @@
       {{ instance }} refused the API key this deploy holds, and refused it again
       after it was written back into {{ _sab_ini }} ({{ sab_api_reason }}). Nothing
       can wire this download client until it answers: check
-      `docker logs {{ instance }}`, and check that the container is reading the
+      `docker logs {{ instance }}` (or `journalctl -u {{ sabnzbd_service }}` natively), and check that the container is reading the
       configuration file this role writes — SABnzbd rewrites sabnzbd.ini from
       memory on shutdown, so a second process holding the same /config would undo
       the repair.

@@ -1,20 +1,17 @@
 ---
 # Deploy SABnzbd — the media stack's usenet download client. Docker on the media stack
 # host; on Kubernetes when `hosting.method: kubernetes` (no stack host, so no media
-# registry entry and no wiring into the *arr apps).
+# registry entry and no wiring into the *arr apps); or natively on its own LXC or VM when
+# `hosting.method: native` (with `proxmox.guest_type`).
 #
 # Usage: ansible-playbook -i inventory/ playbooks/apps/sabnzbd.yml -e instance=sabnzbd
 #
-# The `instance` is the hostname, Caddy subdomain, Authentik app slug and Kuma monitor name;
-# config/apps/<instance>.yml is merged over the defaults. Play 4 records the `media` registry
-# key (CONTRACT.md §3) before wiring: wire-media-stack.yml reads it, and the API key this
-# deploy stored in homelab-infra/media/<instance>, to register the client in every *arr that
-# speaks `usenet`. The deploy shape is qBittorrent's (playbooks/apps/qbittorrent.yml) with
-# its own role: see roles/sabnzbd/tasks/main.yml.
+# `instance` names the host, route, Authentik app and monitor; config/apps/<instance>.yml
+# is merged over the defaults. The last play records the `media` registry key (CONTRACT.md
+# §3) and registers the client in every *arr that speaks `usenet`, with the API key in
+# homelab-infra/media/<instance>. The shape is qBittorrent's; see roles/sabnzbd/tasks/main.yml.
 
-# ── Play 1: Provision ──────────────────────────────────────────────────────────
-# Runs on localhost against the Proxmox API to find or create the stack host.
-# Adds the target host to a group for Plays 2 and 3 to use.
+# Play 1: find or create the stack host or native guest, via the Proxmox API.
 - name: "SABnzbd | Provision"
   hosts: localhost
   become: false
@@ -80,22 +77,29 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
-    # A download client gets ALL of media_storage: the library must share its mount
-    # namespace or every *arr import is a copy instead of a hardlink.
+    # A download client gets all of media_storage, so *arr imports hardlink.
     - name: Resolve the storage this app needs on the stack host
       ansible.builtin.set_fact:
         _sab_host_mounts: >-
           {{ app_config.app.mounts
              | default((app_config.media_storage | default({})).mounts | default([]), true) }}
 
-    - name: Attach the lab's storage to the stack host
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: sabnzbd
+      when: app_config.hosting.method == 'native'
+
+    - name: Attach the lab's storage to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ _sab_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _sab_host_mounts | length > 0
 
 - name: "SABnzbd | Prepare Kubernetes"
@@ -116,7 +120,7 @@
       when: app_config.hosting.method == 'kubernetes'
 
 
-# Before Deploy, so SABnzbd can reach a Usenet server as soon as one is configured.
+# Before Deploy, so a Usenet server is reachable as soon as one is configured.
 - name: "SABnzbd | Open network access"
   hosts: localhost
   gather_facts: false
@@ -130,7 +134,7 @@
   tasks:
     - name: Open the app's network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
 
 
 - name: "SABnzbd | Deploy"
@@ -149,7 +153,6 @@
       failed_when: false
 
   tasks:
-    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
@@ -165,7 +168,7 @@
     - name: Deploy SABnzbd
       ansible.builtin.include_role:
         name: sabnzbd
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "SABnzbd | Deploy on Kubernetes"
   hosts: localhost
@@ -195,8 +198,7 @@
         name: homelabinfra_infra
       failed_when: false
 
-    # Instance-keyed (CONTRACT.md §3): merges one entry, leaves siblings alone. Topology
-    # only — the API key lives in homelab-infra/media/<instance>.
+    # Instance-keyed (CONTRACT.md §3): merges one entry. Topology only, no credentials.
     - name: Record the media registry entry
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
@@ -225,8 +227,7 @@
     _sab_deploy_host: >-
       {{ {} if _sab_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}
 
-    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
-    # These are the variables all wiring tasks read. Do not rename them.
+    # WIRING CONTRACT: the variables all wiring tasks read. Do not rename them.
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip if _sab_k8s | bool
@@ -238,7 +239,7 @@
     # mode=version is one of the two API modes SABnzbd answers without a key.
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/api?mode=version"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
-    # catalog by default: its own API key is what the *arr apps use. See app-defaults/sabnzbd.yml.
+    # catalog by default: see app-defaults/sabnzbd.yml.
     wiring_identity_mode: "{{ _sab_cfg.routing.identity | default('catalog') }}"
     wiring_access: "{{ _sab_cfg.routing.access | default('internal') }}"
 
@@ -288,12 +289,11 @@
         record_guest_url: "https://{{ wiring_domain }}/"
       when: _sab_k8s | bool
 
-    # Kubernetes has no media registry entry, so there is no client address to hand the *arr apps.
     - name: Wire this download client into deployed Usenet consumers
       ansible.builtin.include_tasks: ../../tasks/app-wiring/sabnzbd-clients.yml
       when: not (_sab_k8s | bool)
 
-    # Last, so a provider failure recorded above still fails the run (tasks/report-degradation.yml).
+    # Last, so a provider failure recorded above still fails the run.
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

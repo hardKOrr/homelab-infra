@@ -38,7 +38,7 @@ api_key = {{ _sab_api_key }}
 # Bind every interface inside the container — Docker publishes the port, and the
 # container's own address is not knowable when this file is written.
 host = 0.0.0.0
-port = {{ app_config.app.container_port | default(app_config.app.port) }}
+port = {{ _sab_listen_port }}
 
 # SABnzbd refuses a request whose Host header names a host it does not know, which
 # is exactly what the reverse proxy sends. Requests by IP address — every *arr, and

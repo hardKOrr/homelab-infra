@@ -1,6 +1,7 @@
 ---
-# sabnzbd role — SABnzbd as a Docker container on a stack host. Called from Play 2
-# of playbooks/apps/sabnzbd.yml. Target: the media host.
+# sabnzbd role — SABnzbd as a Docker container on a stack host, or natively on its own
+# guest (main/native*.yml). Called from Play 2 of playbooks/apps/sabnzbd.yml. Target: the
+# media host, or the native guest.
 #
 # The media stack's USENET download client, the counterpart to roles/qbittorrent.
 # Until this existed the stack could find usenet releases through Prowlarr and had
@@ -34,14 +35,32 @@
 - name: Resolve the app kind, storage and download directories
   ansible.builtin.import_tasks: main/resolve.yml
 
-- name: Docker on the stack host
-  when: app_config.hosting.method == 'docker'
+- name: Native service account, release and packages
+  when: app_config.hosting.method == 'native'
+  block:
+    - name: Install SABnzbd natively on its own guest
+      ansible.builtin.import_tasks: main/native-install.yml
+
+- name: Docker on the stack host, or native on its own guest
+  when: app_config.hosting.method in ['docker', 'native']
   block:
     - name: Create directories and check the lab's storage
       ansible.builtin.import_tasks: main/storage.yml
 
-    - name: Resolve the API key and start the app
+    - name: Resolve the API key and seed the configuration
       ansible.builtin.import_tasks: main/start.yml
+
+- name: Start the Compose project
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Write Compose and start the app
+      ansible.builtin.import_tasks: main/compose.yml
+
+- name: Run the native service
+  when: app_config.hosting.method == 'native'
+  block:
+    - name: Write the unit and start the service
+      ansible.builtin.import_tasks: main/native.yml
 
 - name: Kubernetes workload
   ansible.builtin.include_tasks: kubernetes.yml
@@ -65,7 +84,7 @@
 
 # ── Hand the endpoint back to the playbook ────────────────────────────────────
 - name: Export the media registry entry to the playbook
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
   ansible.builtin.set_fact:
     sabnzbd_media_kind: "{{ _sab_kind }}"
     sabnzbd_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

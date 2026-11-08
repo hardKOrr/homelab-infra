@@ -5,6 +5,13 @@
 
 sabnzbd_project_dir: "/opt/{{ instance }}"
 
+# Native: the systemd unit and account, the unpacked release and its virtualenv
+# (tasks/main/native*.yml).
+sabnzbd_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+sabnzbd_service: sabnzbd
+sabnzbd_native_dir: "{{ sabnzbd_project_dir }}/app"
+sabnzbd_native_venv: "{{ sabnzbd_project_dir }}/venv"
+
 # How long to wait for the web interface to answer after the container starts.
 # SABnzbd opens its port a few seconds after the process starts, and a first run
 # also has to read the seeded sabnzbd.ini and build its database.

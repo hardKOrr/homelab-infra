@@ -17,6 +17,10 @@
          else 'http://localhost:' ~ app_config.app.port }}
     _sab_host_headers: >-
       {{ {'Host': sabnzbd_fqdn} if app_config.hosting.method == 'kubernetes' else {} }}
+    # The port the app itself binds: the image's container_port on Docker, app.port natively.
+    _sab_listen_port: >-
+      {{ app_config.app.port if app_config.hosting.method == 'native'
+         else app_config.app.container_port | default(app_config.app.port) }}
     _sab_ini: "{{ app_config.app.config_path }}/sabnzbd.ini"
 
 # The kind is not decoration: wire-media-stack.yml refuses to wire an app whose

@@ -56,7 +56,7 @@ def main():
     docker = plays["SABnzbd | Deploy"]
     assert any(
         task.get("ansible.builtin.include_role", {}).get("name") == "sabnzbd"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
         for task in docker["tasks"]
     )
     kube = plays["SABnzbd | Deploy on Kubernetes"]

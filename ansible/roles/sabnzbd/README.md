@@ -2,8 +2,17 @@
 
 Deploy's `tasks/main.yml` imports `tasks/main/resolve.yml` (kind, download directories),
 `storage.yml` (mounts, owned download directories, host whitelist), `start.yml` (API key
-continuity, seeded `sabnzbd.ini`, Compose) and `verify.yml` (key probe and repair, identity,
+continuity, seeded `sabnzbd.ini`) and `verify.yml` (key probe and repair, identity,
 refused anonymous queue); the vault write and registry export follow in `main.yml`.
+
+## Native
+
+With `hosting.method: native`, `main/native-install.yml` installs the pinned upstream source
+release from SABnzbd's Unix install guide, its requirements in a virtualenv, par2 and 7zip,
+and a service account; `storage.yml` follows. `main/native.yml` then writes the systemd unit
+in place of `compose.yml`. The unit runs SABnzbd with `-f config_path/sabnzbd.ini`, giving
+the Docker image's `/config` layout, so one backup and restore serves both methods.
+`app.native_version` and the image tag are one upstream release.
 
 ## Kubernetes
 
