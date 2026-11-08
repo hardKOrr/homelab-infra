@@ -71,6 +71,14 @@ def main():
         for task in prepare
     )
     assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
+    refuse = next(t for t in prepare if "ansible.builtin.assert" in t)
+    names = [t.get("name") for t in prepare]
+    assert names.index(refuse["name"]) < next(i for i, t in enumerate(prepare) if includes([t], "open-app-access.yml"))
+    condition = refuse["ansible.builtin.assert"]["that"]
+    for inbound, ok in (([], True), ([{"name": "bittorrent-listen", "enabled": False}], True),
+                        ([{"name": "bittorrent-listen", "enabled": True}], False)):
+        env = jinja2.Environment()
+        assert env.compile_expression(condition)(app_config={"firewall": {"inbound": inbound}}) is ok, inbound
 
     # Every declared mount is resolved as an NFS share and mounted at its Docker path.
     resolve = read_yaml(f"{ROLE}/tasks/resolve-kubernetes-media.yml")
