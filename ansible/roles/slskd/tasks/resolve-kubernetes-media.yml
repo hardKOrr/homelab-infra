@@ -11,6 +11,21 @@
          | default((app_config.media_storage | default({})).mounts | default([]), true) }}
     _slskd_k8s_download: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
 
+# Before any path is joined to a mount's node directory: a traversal component would let a
+# string-prefix match escape the share and change ownership elsewhere on the node.
+- name: slskd Kubernetes media | Require safe absolute directory paths
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item.startswith('/')
+      - item is not search('//')
+      - item is not search('/(\.|\.\.)(/|$)')
+      - item is not search('[\x00-\x1f\x7f]')
+    fail_msg: >-
+      {{ item }} (app.download_path or app.shared_dirs) must be an absolute path without
+      empty, '.' or '..' components.
+  loop: "{{ [_slskd_k8s_download] + (app_config.app.shared_dirs | default([])) }}"
+
 # Each wanted directory is matched to the deepest mount that holds it.
 - name: slskd Kubernetes media | Map each mounted directory to its media mount
   ansible.builtin.set_fact:

@@ -65,9 +65,16 @@ def main():
     resolve = read_yaml(f"{ROLE}/tasks/resolve-kubernetes-media.yml")
     order = [str(t.get("ansible.builtin.include_tasks", "")) + str(t.get("ansible.builtin.file", ""))
              for t in resolve]
+    safe = next(i for i, t in enumerate(resolve) if "safe absolute" in t["name"])
+    guard = resolve[safe]["ansible.builtin.assert"]["that"]
+    pattern = next(g for g in guard if "search('/(" in g).split("search('")[1].rsplit("')", 1)[0]
+    import re
+    for bad in ("/mnt/media/../../etc", "/mnt/media/./x", "/mnt/media/.."):
+        assert re.search(pattern, bad), bad
+    assert not re.search(pattern, "/mnt/media/down.loads/a..b")
     nfs = next(i for i, x in enumerate(order) if "resolve-media-nfs.yml" in x)
     made = next(i for i, x in enumerate(order) if "directory" in x)
-    assert nfs < made, "NFS validation must precede directory creation"
+    assert safe < nfs < made, "NFS validation must precede directory creation"
     shares = next(t for t in resolve if "_slskd_k8s_shares" in str(t.get("ansible.builtin.set_fact")))
     text = str(shares)
     assert "/downloads/complete" in str(resolve) and "/downloads/incomplete" in str(resolve)
