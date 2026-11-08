@@ -49,7 +49,11 @@ def main():
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
     plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/slskd.yml")}
+    assert read_yaml(f"{ROLE}/meta/main.yml")["dependencies"] == []
     docker = plays["slskd | Deploy"]
+    assert any(task.get("ansible.builtin.include_role", {}).get("name") == "docker"
+               and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+               for task in docker["tasks"])
     assert any(task.get("ansible.builtin.include_role", {}).get("name") == "slskd"
                and task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
                for task in docker["tasks"])
