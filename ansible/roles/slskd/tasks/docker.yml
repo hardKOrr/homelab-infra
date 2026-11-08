@@ -1,0 +1,148 @@
+---
+# Included by main.yml for hosting.method docker: directories, the lab storage on the stack host,
+# the Compose project and its start. Inputs are set in main.yml.
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ slskd_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: unlike the LinuxServer images this stack
+# otherwise uses, slskd's whole persistent state — settings, shares
+# database, logs — lives under this one bind mount at /app.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/sabnzbd and roles/deemix: the mounts are the lab's,
+# attached to the stack host by Play 1, and only ever asserted here.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _slskd_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _slskd_mount_check
+  loop: "{{ _slskd_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared
+      in media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint,
+      so either the attach did not happen or the guest has not restarted
+      since. This platform attaches storage the lab already provides; it
+      never creates it.
+  loop: "{{ _slskd_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# slskd keeps incomplete and completed downloads in two directories, and both
+# are derived from the one path the platform declares — the same sibling
+# shape as roles/sabnzbd, for the same reason: a completed download that has
+# to cross a filesystem to reach the *arr import is copied twice instead of
+# moved once.
+- name: Resolve the download directories
+  ansible.builtin.set_fact:
+    _slskd_download_root: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+    _slskd_incomplete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/incomplete"
+    _slskd_complete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/complete"
+
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _slskd_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _slskd_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not
+      inside any media_storage mount
+      ({{ _slskd_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Completed downloads would land on the stack host's own disk and never
+      hardlink into the library. Point app.download_path at a directory under
+      one of the mounts, or declare the mount that holds it in
+      config/infrastructure.yml.
+  vars:
+    # Serialized through JSON because a template carrying {% %} statement
+    # blocks renders to a STRING; see the same construction in
+    # tasks/load-user-vars.yml and roles/deemix/tasks/main.yml.
+    _slskd_download_ancestors_json: >-
+      {%- set parts = _slskd_download_root.split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _slskd_download_ancestors: "{{ _slskd_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _slskd_download_dirs
+  loop:
+    - "{{ _slskd_download_root }}"
+    - "{{ _slskd_incomplete_dir }}"
+    - "{{ _slskd_complete_dir }}"
+  failed_when: false
+
+- name: Assert the download directories are usable
+  ansible.builtin.assert:
+    that: not (item.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}). On
+      an unprivileged stack host this is what an unmapped owner looks like: a
+      directory whose host uid falls outside the guest's id range appears as
+      nobody:nogroup and not even root inside the guest can chown it. Check that
+      the mount and everything under it belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+  loop: "{{ _slskd_download_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ slskd_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart slskd
+  no_log: true   # the rendered file carries the Soulseek password and the API key
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/deemix and roles/sabnzbd — a deploy ensures
+# the image is present, Watchtower is what moves it forward and reports it.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ slskd_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ slskd_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+

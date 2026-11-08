@@ -1,0 +1,63 @@
+---
+# slskd on Kubernetes, included from main.yml after the cluster is resolved: its /app state
+# (settings, shares database) lives on a default-StorageClass PVC and the download and
+# shared directories are the existing NFS exports, mounted at the same container paths as
+# on Docker (the playbook's prepare play resolved them into _slskd_k8s_shares). The
+# Soulseek login, API key and web password reach the pod as a Secret. main.yml then proves
+# the key and the login through the ingress and stores the credentials.
+
+- name: slskd Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: "{{ _slskd_k8s_shares }}"
+
+- name: slskd Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ slskd_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: slskd_k8s_node
+    label: Kubernetes node
+
+- name: slskd Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: slskd Kubernetes | Sync the credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      api-key: "{{ _slskd_api_key }}"
+      web-password: "{{ _slskd_web_password }}"
+      slsk-username: "{{ _slskd_soulseek_username }}"
+      slsk-password: "{{ _slskd_soulseek_password }}"
+  no_log: true
+
+- name: slskd Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _slskd_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: slskd Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _slskd_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: slskd Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        slskd's settings and shares database from its /app volume; downloads on the media
+        shares are not included

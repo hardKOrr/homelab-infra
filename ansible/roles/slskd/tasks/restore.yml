@@ -1,0 +1,11 @@
+---
+# slskd's application recovery exists for Kubernetes only; the Docker method has none.
+- name: slskd restore | Require the Kubernetes hosting method
+  ansible.builtin.assert:
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('docker')) == 'kubernetes'
+    fail_msg: slskd application recovery supports hosting.method kubernetes only.
+
+- name: slskd restore | Use the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml

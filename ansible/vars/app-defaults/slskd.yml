@@ -11,9 +11,18 @@
 slskd_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
+
+  # Application recovery is the Kubernetes method's: Backup App runs its CronJob and Restore
+  # App replaces the /app volume. The Docker method has none (backup.application_consistent
+  # stays false, so Backup App refuses it).
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
 
   app:
     # The key ansible/vars/media-wiring.yml is looked up by. It is already
@@ -30,6 +39,9 @@ slskd_defaults:
     listen_port: 50300
 
     config_path: "/opt/{{ instance }}/config"
+
+    # Kubernetes only: size in GiB of the default-StorageClass volume mounted at /app.
+    storage: 2
 
     # Where completed downloads land, as the container sees it. It MUST be
     # inside a media_storage mount (config/infrastructure.yml): Lidarr imports
@@ -101,3 +113,19 @@ slskd_defaults:
     # catalog publishes it and leaves the app to authenticate its own
     # callers — both the API key and the generated web UI password above.
     identity: catalog
+
+  # The Kubernetes CronJob stops the one Deployment and archives /app as one recovery
+  # point; downloads and shared directories live on the media shares, outside it.
+  backup:
+    enabled: true
+    application_consistent: false
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
