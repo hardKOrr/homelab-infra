@@ -1010,7 +1010,7 @@ def unpackerr_rendering():
             app["parallel"] = parallel
         app.update(
             {
-                "image": "golift/unpackerr:latest",
+                "image": "golift/unpackerr:v1.0.1",
                 "download_path": "/srv/fixtures/downloads",
             }
         )

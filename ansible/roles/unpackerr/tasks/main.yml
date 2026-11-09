@@ -1,6 +1,6 @@
 ---
-# Unpackerr on Docker. Arr discovery and the download-path check are shared with the
-# Kubernetes method (arrs.yml).
+# Unpackerr on Docker (docker.yml) or natively on its own LXC or VM (native*.yml). Arr
+# discovery and the download-path check are shared with the Kubernetes method (arrs.yml).
 - name: Resolve and verify the registered Arr applications
   ansible.builtin.include_tasks: arrs.yml
 - name: Verify the declared media mounts are present on the stack host
@@ -18,44 +18,9 @@
   loop: "{{ _unpackerr_mount_checks.results }}"
   loop_control:
     label: "{{ item.item.path }}"
-- name: Create the Unpackerr project directory
-  ansible.builtin.file:
-    path: "/opt/{{ instance }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-- name: Write the Unpackerr Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "/opt/{{ instance }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart unpackerr
-  no_log: true
-- name: Pull the Unpackerr image
-  community.docker.docker_compose_v2_pull:
-    project_src: "/opt/{{ instance }}"
-    policy: missing
-  changed_when: false
-- name: Start Unpackerr
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    remove_orphans: true
-  no_log: true
-- name: Apply pending Unpackerr restarts
-  ansible.builtin.meta: flush_handlers
-- name: Read the Unpackerr container state
-  community.docker.docker_container_info:
-    name: "{{ instance }}"
-  register: _unpackerr_container
-  changed_when: false
-- name: Assert Unpackerr is running after Arr credential preflight
-  ansible.builtin.assert:
-    that:
-      - _unpackerr_container.exists
-      - _unpackerr_container.container.State.Running | default(false) | bool
-    fail_msg: >-
-      Unpackerr did not remain running after its Arr credential preflight. Check docker logs {{ instance }} on the media stack host.
+- name: Docker on the stack host
+  ansible.builtin.include_tasks: docker.yml
+  when: not (unpackerr_native | bool)
+- name: Native package and service
+  ansible.builtin.include_tasks: native.yml
+  when: unpackerr_native | bool

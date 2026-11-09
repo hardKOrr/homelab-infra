@@ -4,11 +4,27 @@
 unpackerr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 1
+    memory: 512
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "golift/unpackerr:latest"
+    # Docker and native run the same upstream release. Native installs this exact package
+    # version from the GoLift APT repository (https://unpackerr.zip/docs/install/linux).
+    image: "golift/unpackerr:v1.0.1"
+    native_version: "1.0.1-1636"
     download_path: >-
       {{ ((homelabinfra_config.infrastructure.media_storage | default({})).mounts | default([], true) | map(attribute='path') | list | first | default('/mnt', true)) | regex_replace('/+$', '') }}/downloads
     mounts: >-

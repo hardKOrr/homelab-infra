@@ -1,0 +1,43 @@
+---
+# Included by main.yml (Docker only): the Compose project on the media stack host.
+- name: Create the Unpackerr project directory
+  ansible.builtin.file:
+    path: "/opt/{{ instance }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+- name: Write the Unpackerr Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart unpackerr
+  no_log: true
+- name: Pull the Unpackerr image
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+    policy: missing
+  changed_when: false
+- name: Start Unpackerr
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    remove_orphans: true
+  no_log: true
+- name: Apply pending Unpackerr restarts
+  ansible.builtin.meta: flush_handlers
+- name: Read the Unpackerr container state
+  community.docker.docker_container_info:
+    name: "{{ instance }}"
+  register: _unpackerr_container
+  changed_when: false
+- name: Assert Unpackerr is running after Arr credential preflight
+  ansible.builtin.assert:
+    that:
+      - _unpackerr_container.exists
+      - _unpackerr_container.container.State.Running | default(false) | bool
+    fail_msg: >-
+      Unpackerr did not remain running after its Arr credential preflight. Check docker logs {{ instance }} on the media stack host.

@@ -21,7 +21,7 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/unpackerr.yml")["unpackerr_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["routing"]["proxy"] == "none"
 
     plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/unpackerr.yml")}
@@ -29,13 +29,14 @@ def main():
     stack = next(t for t in provision if "find-or-create-host" in str(t))
     assert stack["when"] == "app_config.hosting.method == 'docker'"
     attach = next(t for t in provision if "attach-host-mounts" in str(t))
-    assert "app_config.hosting.method == 'docker'" in attach["when"]
+    assert "app_config.hosting.method in ['docker', 'native']" in attach["when"]
     prepare = plays["Unpackerr | Prepare Kubernetes"]["tasks"]
     assert includes(prepare, "tasks/kubernetes/resolve-media-nfs.yml")
     assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
     deploy = plays["Unpackerr | Deploy"]["tasks"]
-    assert all(t.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
-               for t in deploy if "include_role" in str(t))
+    assert [t["when"] for t in deploy if "include_role" in str(t)] == [
+        "hostvars['localhost'].app_config.hosting.method == 'docker'",
+        "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"]
     kube = plays["Unpackerr | Deploy on Kubernetes"]["tasks"]
     assert any(
         t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
