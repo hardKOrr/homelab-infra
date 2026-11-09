@@ -4,7 +4,7 @@
 unpackerr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: media
   app:
