@@ -1,0 +1,58 @@
+---
+# Shared by the Docker and Kubernetes methods. Unpackerr consumes the media registry rather than joining it: every Arr endpoint and its API key is rendered into the container at deploy time. Credentials remain in Vaultwarden and in the root-readable Compose file only.
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+- name: Resolve the media registry and its Arr kinds
+  ansible.builtin.set_fact:
+    _unpackerr_registry: >-
+      {{ (homelabinfra_infra.media | default({}, true)) | combine(homelabinfra_vault.media | default({}, true), recursive=True) }}
+    _unpackerr_arr_kinds: >-
+      {{ media_wiring.kinds | dict2items | selectattr('value.role', 'equalto', 'arr') | map(attribute='key') | list }}
+    _unpackerr_mounts: "{{ app_config.app.mounts | default([], true) }}"
+- name: Select registered Arr applications
+  ansible.builtin.set_fact:
+    _unpackerr_arrs: >-
+      {{ _unpackerr_registry | dict2items | selectattr('value.app', 'defined') | selectattr('value.app', 'in', _unpackerr_arr_kinds) | sort(attribute='key') | list }}
+  no_log: true
+- name: Assert at least one Arr application is registered
+  ansible.builtin.assert:
+    that: _unpackerr_arrs | length > 0
+    fail_msg: >-
+      No Arr application is registered in generated media facts. Deploy Sonarr, Radarr, or Lidarr first, then rerun Unpackerr so its configuration can be assembled from the media registry.
+- name: Assert every registered Arr has a usable endpoint and API key
+  ansible.builtin.assert:
+    that:
+      - item.value.host | default('', true) | length > 0
+      - item.value.api_key | default('', true) | length > 0
+    fail_msg: >-
+      Media registry entry {{ item.key }} lacks its endpoint or API key. Rerun that Arr deployment, or store its API key in Vaultwarden item homelab-infra/media/{{ item.key }}, before deploying Unpackerr.
+  loop: "{{ _unpackerr_arrs }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+- name: Verify every Arr accepts its registered API key
+  ansible.builtin.uri:
+    url: "{{ item.value.host }}/api/{{ media_wiring.kinds[item.value.app].api }}/system/status"
+    headers:
+      X-Api-Key: "{{ item.value.api_key }}"
+    status_code: 200
+  register: _unpackerr_arr_status
+  until: _unpackerr_arr_status.status | default(0) == 200
+  retries: 12
+  delay: 5
+  changed_when: false
+  loop: "{{ _unpackerr_arrs }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+- name: Assert the download directory is inside the lab's media storage
+  ansible.builtin.assert:
+    that: >-
+      _unpackerr_mounts | map(attribute='path') | map('regex_replace', '/+$', '') | select('in', _unpackerr_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not inside a declared media_storage mount. Unpackerr must extract on the shared media filesystem so the Arr application can import its completed download.
+  vars:
+    _unpackerr_download_ancestors_json: >-
+      {%- set parts = (app_config.app.download_path | regex_replace('/+$', '')).split('/') -%}{%- set out = [] -%}{%- for index in range(1, parts | length + 1) -%}{%- set _ = out.append(parts[:index] | join('/')) -%}{%- endfor -%}{{ out | to_json }}
+    _unpackerr_download_ancestors: "{{ _unpackerr_download_ancestors_json | from_json }}"

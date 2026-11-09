@@ -1,0 +1,70 @@
+{# Unpackerr: one stateless Deployment, the Arr API keys from the instance Secret and the existing NFS media shares at the Docker container paths. #}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: app
+      annotations:
+        # Env from a Secret is read at start: roll the pod on a credential change.
+        checksum/credentials: {{ (_unpackerr_k8s_conns | map(attribute='api_key') | join(':')) | hash('sha256') | to_json }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: {{ app_config.app.puid | default(1313) }}
+        runAsGroup: {{ app_config.app.pgid | default(1313) }}
+      containers:
+        - name: unpackerr
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: TZ, value: "{{ homelabinfra_config.timezone | default('UTC') }}"}
+            - {name: UN_PARALLEL, value: "{{ app_config.app.parallel | default(1) }}"}
+{% for conn in _unpackerr_k8s_conns %}
+            - {name: {{ conn.prefix }}_URL, value: {{ conn.url | to_json }}}
+            - name: {{ conn.key }}
+              valueFrom:
+                secretKeyRef: {name: {{ instance }}, key: {{ conn.key }}}
+            - {name: {{ conn.prefix }}_PATHS_0, value: {{ app_config.app.download_path | to_json }}}
+            - {name: {{ conn.prefix }}_PROTOCOLS, value: {{ app_config.app.protocols | to_json }}}
+{% endfor %}
+{% if k8s_media_volume_mounts | length > 0 %}
+          volumeMounts:
+{% for mount in k8s_media_volume_mounts %}
+            - name: {{ mount.name }}
+              mountPath: {{ mount.mountPath | to_json }}
+{% endfor %}
+{% endif %}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+{% if k8s_media_volumes | length > 0 %}
+      volumes:
+{% for volume in k8s_media_volumes %}
+        - name: {{ volume.name }}
+          nfs:
+            server: {{ volume.nfs.server | to_json }}
+            path: {{ volume.nfs.path | to_json }}
+            readOnly: {{ volume.nfs.readOnly | to_json }}
+{% endfor %}
+{% endif %}

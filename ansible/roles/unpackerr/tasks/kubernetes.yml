@@ -1,0 +1,79 @@
+---
+# Unpackerr on Kubernetes, run from the playbook's localhost play. It is stateless: the
+# Arr endpoints and API keys come from the media registry each deploy (arrs.yml), the keys
+# reach the pod through a Secret downstream of Vaultwarden, and the media and download
+# shares are the existing NFS exports at their Docker container paths (resolved by the
+# prepare play into k8s_media_nfs). There is no volume to back up and no UI to publish.
+- name: Unpackerr Kubernetes | Resolve and verify the registered Arr applications
+  ansible.builtin.include_tasks: arrs.yml
+
+- name: Unpackerr Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Unpackerr Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': false}) -%}
+      {%- endfor -%}
+      {{ shares }}
+  when: k8s_media_nfs | default([]) | length > 0
+
+- name: Unpackerr Kubernetes | Default to no media volumes when none are declared
+  ansible.builtin.set_fact:
+    k8s_media_volumes: []
+    k8s_media_volume_mounts: []
+  when: k8s_media_nfs | default([]) | length == 0
+
+- name: Unpackerr Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ unpackerr_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: unpackerr_k8s_node
+    label: Kubernetes node
+  when: k8s_media_volumes | length > 0
+
+- name: Unpackerr Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# One Secret key per Arr API key, named like the environment variable that carries it.
+- name: Unpackerr Kubernetes | Build the Arr connection settings
+  ansible.builtin.set_fact:
+    _unpackerr_k8s_conns: >-
+      {%- set out = [] -%}
+      {%- for arr in _unpackerr_arrs -%}
+      {%- set idx = _unpackerr_arrs[:loop.index0] | selectattr('value.app', 'equalto', arr.value.app) | list | length -%}
+      {%- set _ = out.append({'prefix': 'UN_' ~ (arr.value.app | upper) ~ '_' ~ idx,
+                              'key': 'UN_' ~ (arr.value.app | upper) ~ '_' ~ idx ~ '_API_KEY',
+                              'url': arr.value.host, 'api_key': arr.value.api_key}) -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true
+
+- name: Unpackerr Kubernetes | Sync the Arr API keys into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data: >-
+      {{ dict(_unpackerr_k8s_conns | map(attribute='key') | zip(_unpackerr_k8s_conns | map(attribute='api_key'))) }}
+  no_log: true
+
+- name: Unpackerr Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _unpackerr_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: Unpackerr Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _unpackerr_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+  no_log: true

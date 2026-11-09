@@ -1,7 +1,5 @@
 ---
 galaxy_info:
   role_name: unpackerr
-  description: "Deploys Unpackerr as a Docker media-stack daemon"
+  description: "Deploys Unpackerr as a Docker or Kubernetes media-stack daemon"
   min_ansible_version: "2.15"
-dependencies:
-  - role: docker
