@@ -33,7 +33,7 @@ restore puts the original directory and Compose API-key overrides back and start
 
 ## Kubernetes
 
-Lidarr, Prowlarr and Radarr can run in their own namespace (`hosting.method: kubernetes`); `main.yml` includes
+Lidarr, Prowlarr, Radarr and Sonarr can run in their own namespace (`hosting.method: kubernetes`); `main.yml` includes
 `kubernetes.yml` for the workload and shares every other phase. Config sits on a PVC of the
 default StorageClass. Media and download mounts are the NFS exports the node already uses:
 `kubernetes-media.yml` resolves them (and creates the library root folder on the node) and

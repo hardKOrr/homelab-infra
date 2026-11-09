@@ -10,7 +10,7 @@
 sonarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
@@ -32,6 +32,8 @@ sonarr_defaults:
     image: "lscr.io/linuxserver/sonarr:latest"
     port: 8989
     container_port: 8989
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 2
 
     config_path: "/opt/{{ instance }}/config"
     # Which subdirectory of media_storage.library this app owns. The library
@@ -66,3 +68,10 @@ sonarr_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # The PBS client Job on Kubernetes.
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
