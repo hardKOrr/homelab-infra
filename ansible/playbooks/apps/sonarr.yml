@@ -1,26 +1,14 @@
 ---
-# Deploy Sonarr — film management. Docker on the media stack host; on Kubernetes
-# when `hosting.method: kubernetes` (no stack host, so no media registry entry and Wire
-# Media Stack does not discover it).
+# Deploy Sonarr — TV series management. Docker on the media stack host; on Kubernetes when
+# `hosting.method: kubernetes` (no stack host, so no media registry entry and Wire Media
+# Stack does not discover it); or natively on its own LXC or VM when `hosting.method: native`
+# (with `proxmox.guest_type`).
 #
-# Usage:
-#   ansible-playbook -i inventory/ playbooks/apps/sonarr.yml -e instance=sonarr
-#   ansible-playbook -i inventory/ playbooks/apps/sonarr.yml -e instance=sonarr-anime
-#
-# The `instance` parameter is the unique name for this deployment. It becomes the
-# hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
-# the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
-#
-# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
-# what closes the loop with slice 504: wire-media-stack.yml reads that key to find
-# this app, and reads the API key this deploy stored in
-# homelab-infra/media/<instance>. Nothing has to be declared by hand afterwards.
-#
-# This playbook drives the shared `servarr` role — see roles/servarr/tasks/main.yml
-# for why five apps share one role while each keeps its own playbook and job.
-
-# ── Play 1: Provision ──────────────────────────────────────────────────────────
-# Runs on localhost against the Proxmox API to find or create the stack host.
+# Usage: ansible-playbook -i inventory/ playbooks/apps/sonarr.yml -e instance=sonarr
+# `instance` names the deployment (hostname, Caddy subdomain, Authentik slug, Kuma
+# monitor); config/apps/<instance>.yml is merged over the defaults.
+# Play 3 records the `media` registry key (CONTRACT.md §3) that wire-media-stack.yml reads.
+# Drives the shared `servarr` role (roles/servarr/tasks/main.yml says why).
 - name: "Sonarr | Provision"
   hosts: localhost
   become: false
@@ -86,7 +74,8 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
-    # ── Storage the lab already provides ──────────────────────────────────────
+    # The lab's library and download directories are already mounted on the Proxmox
+    # node; this attaches them to the stack host at the same paths.
     - name: Resolve the storage this app needs on the stack host
       ansible.builtin.set_fact:
         _servarr_host_mounts: >-
@@ -95,14 +84,22 @@
                        else ((app_config.media_storage | default({})).mounts | default([])),
                        true) }}
 
-    - name: Attach the lab's storage to the stack host
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: sonarr
+      when: app_config.hosting.method == 'native'
+
+    - name: Attach the lab's storage to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ _servarr_host_mounts }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - _servarr_host_mounts | length > 0
 
 - name: "Sonarr | Prepare Kubernetes"
@@ -113,7 +110,7 @@
     - name: Prepare the cluster for Sonarr
       when: app_config.hosting.method == 'kubernetes'
       block:
-        - name: Resolve Sonarr's existing media shares for Kubernetes
+        - name: Resolve Sonarr's existing media shares and library folder for Kubernetes
           ansible.builtin.include_role:
             name: servarr
             tasks_from: kubernetes-media
@@ -124,7 +121,10 @@
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the stack host to install and configure Sonarr.
 - name: "Sonarr | Deploy"
+  # Per-instance group: a shared one would accumulate every earlier app's guest.
+  # The default() can only fire during --syntax-check.
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -140,7 +140,6 @@
       failed_when: false
 
   tasks:
-    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
@@ -148,14 +147,16 @@
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
+    # Unconditional: "created in this run" is not "has Docker".
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
-    # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Sonarr
       ansible.builtin.include_role:
         name: servarr
+
 
 - name: "Sonarr | Deploy on Kubernetes"
   hosts: localhost
@@ -174,7 +175,7 @@
       when: app_config.hosting.method == 'kubernetes'
 
 
-# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# Play 3: record the media registry entry, then wire platform services (idempotent).
 - name: "Sonarr | Record facts and wire"
   hosts: localhost
   gather_facts: false
@@ -186,17 +187,20 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # The `media` key is instance-keyed (CONTRACT.md §3). Topology only — the API key
+    # lives in homelab-infra/media/<instance>, written by the role.
     - name: Record the media registry entry
+      when: not (_sonarr_k8s | bool)
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: media
-        # An expression, never a literal `"{{ instance }}":` key: Ansible does not template a mapping key.
+        # An expression, never a literal `"{{ instance }}":` key: Ansible does not
+        # template a mapping key, so every app would overwrite one nameless entry.
         generated_facts_data: >-
           {{ {instance: {'app': _sonarr_deploy_host.servarr_media_kind,
                          'host': _sonarr_deploy_host.servarr_media_host,
                          'config_path': _sonarr_deploy_host.servarr_media_config_path}} }}
-      when: not (_sonarr_k8s | bool)
 
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
@@ -204,6 +208,7 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
@@ -216,16 +221,19 @@
       {{ {} if _sonarr_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Do not rename them.
     wiring_app_name: "{{ instance }}"
-    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
-    wiring_app_display: "Sonarr ({{ instance }})"
-    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/ping"
-    wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip if _sonarr_k8s | bool
          else _sonarr_deploy_host.ansible_host }}
     wiring_upstream_port: "{{ 80 if _sonarr_k8s | bool else _sonarr_cfg.app.port }}"
     wiring_subdomain: "{{ _sonarr_cfg.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Sonarr ({{ instance }})"
+    # /ping is Servarr's own unauthenticated liveness endpoint.
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/ping"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # forward_auth: the app runs AuthenticationMethod External (vars/app-defaults/sonarr.yml).
     wiring_identity_mode: "{{ _sonarr_cfg.routing.identity | default('forward_auth') }}"
     wiring_access: "{{ _sonarr_cfg.routing.access | default('internal') }}"
 
@@ -275,6 +283,8 @@
         record_guest_url: "https://{{ wiring_domain }}/"
       when: _sonarr_k8s | bool
 
+    # App-to-app wiring belongs to playbooks/stacks/wire-media-stack.yml, which finds
+    # this app through the registry entry written above.
     - name: Report how to wire this app into the media stack
       ansible.builtin.debug:
         msg: >-

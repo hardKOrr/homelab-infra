@@ -10,11 +10,23 @@
 sonarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   stack: media
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   recovery:
     methods: [native]
@@ -29,7 +41,13 @@ sonarr_defaults:
     # deployed instance discoverable to wire-media-stack.yml.
     media_kind: sonarr
 
-    image: "lscr.io/linuxserver/sonarr:latest"
+    image: "lscr.io/linuxserver/sonarr:4.0.20.3014-ls4"
+    # Native: the Sonarr v4 release tarball the Servarr wiki's Debian install downloads
+    # (https://wiki.servarr.com/sonarr/installation/linux), at the same exact build as the
+    # image and verified against its checksum. Sonarr publishes it as a GitHub release asset.
+    native_version: "4.0.20.3014"
+    native_url: "https://github.com/Sonarr/Sonarr/releases/download/v4.0.20.3014/Sonarr.main.4.0.20.3014.linux-x64.tar.gz"
+    native_sha256: 1fc48544b5a3401b2fc3df8d0642c1e6a73a28e41a351169edd9cd8f54770db5
     port: 8989
     container_port: 8989
     # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
