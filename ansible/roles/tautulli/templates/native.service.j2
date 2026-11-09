@@ -1,0 +1,22 @@
+# Tautulli ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Tautulli's Linux install: a git clone in {{ tautulli_native_dir }} run by its own script.
+# State lives under config_path (--datadir), the layout the Docker image's /config has.
+[Unit]
+Description=Tautulli ({{ instance }})
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ tautulli_service }}
+Group={{ tautulli_service }}
+UMask=0027
+EnvironmentFile={{ tautulli_native_env }}
+WorkingDirectory={{ tautulli_native_dir }}
+ExecStart=/usr/bin/python3 {{ tautulli_native_dir }}/Tautulli.py --datadir {{ app_config.app.config_path }} --port {{ app_config.app.port }} --nolaunch
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

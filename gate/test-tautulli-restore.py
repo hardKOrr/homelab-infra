@@ -38,7 +38,8 @@ def check_swap():
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == [
+        "{{ tautulli_service if _tautulli_restore_runtime == 'native' else instance }}"]
     assert swap["recovery_swap_compose_project"] == "{{ tautulli_project_dir }}"
     assert swap["recovery_swap_health_url"] == "http://localhost:{{ app_config.app.port }}"
 
@@ -89,7 +90,7 @@ def main():
     try:
         # Run the deployment check's exact curl argv through Ansible against an
         # authenticated local endpoint; only the Docker exec boundary is substituted.
-        deploy = yaml.safe_load((repo / "ansible/roles/tautulli/tasks/main.yml").read_text())
+        deploy = yaml.safe_load((repo / "ansible/roles/tautulli/tasks/docker.yml").read_text())
         task = copy.deepcopy(next(t for t in deploy if t["name"] ==
                                   "Verify Tautulli can reach the selected Plex container"))
         task["ansible.builtin.command"] = {

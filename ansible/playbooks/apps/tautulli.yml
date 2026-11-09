@@ -1,6 +1,7 @@
 ---
-# Deploy Tautulli on the estate-resolved media stack, or on Kubernetes when
-# `hosting.method: kubernetes` (no stack host). It observes the selected Plex instance
+# Deploy Tautulli on the estate-resolved media stack, on Kubernetes when
+# `hosting.method: kubernetes` (no stack host), or natively on its own LXC or VM when
+# `hosting.method: native` (with `proxmox.guest_type`). It observes the selected Plex instance
 # using the server token Plex has published to Vaultwarden.
 - name: "Tautulli | Provision"
   hosts: localhost
@@ -13,6 +14,11 @@
       ansible.builtin.assert:
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=tautulli"
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
     - name: Load app defaults
       ansible.builtin.include_vars:
         file: ../../vars/app-defaults/tautulli.yml
@@ -41,14 +47,17 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: tautulli
+      when: app_config.hosting.method == 'native'
+
     - name: Prepare and deploy Tautulli on Kubernetes
       when: app_config.hosting.method == 'kubernetes'
       block:
-        - name: Load infrastructure facts
-          ansible.builtin.include_vars:
-            file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-            name: homelabinfra_infra
-          failed_when: false
         - name: Resolve estate scope
           ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
           vars:
@@ -92,9 +101,11 @@
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Tautulli
       ansible.builtin.include_role:
         name: tautulli
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Tautulli | Wire"
   hosts: localhost
@@ -162,7 +173,9 @@
         record_guest_names: >-
           {{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list
              if _tautulli_k8s | bool else groups['deploy_' ~ instance] }}
-        record_guest_kind: "{{ 'kubernetes' if _tautulli_k8s | bool else 'docker' }}"
+        record_guest_kind: >-
+          {{ 'kubernetes' if _tautulli_k8s | bool
+             else 'native' if _tautulli_cfg.hosting.method == 'native' else 'docker' }}
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

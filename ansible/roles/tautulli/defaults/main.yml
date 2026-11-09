@@ -2,3 +2,10 @@
 tautulli_project_dir: "/opt/{{ instance }}"
 tautulli_http_retries: 30
 tautulli_http_delay: 2
+
+# Native: the systemd unit and account, the clone of the pinned release and the environment
+# file that carries the Plex token and API key (tasks/native-install.yml, tasks/native.yml).
+tautulli_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+tautulli_service: tautulli
+tautulli_native_dir: /opt/Tautulli
+tautulli_native_env: "{{ tautulli_project_dir }}/tautulli.env"

@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: tautulli
-  description: "Deploys Tautulli as a Docker container on a homelab-infra media stack host"
+  description: "Deploys Tautulli on a stack host, natively on its own guest, or on Kubernetes"
   min_ansible_version: "2.15"
 
 # Recovery task dispatch must not configure the shared Docker host.

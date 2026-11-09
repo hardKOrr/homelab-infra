@@ -1,0 +1,71 @@
+---
+# Included by main.yml (native only): write the environment file and the systemd unit, start
+# Tautulli and install the helpers. The settings are the TAUTULLI_* variables the Compose file
+# sets, and config_path is the --datadir (the Docker image's /config layout), so one backup
+# and restore serves both methods.
+
+- name: Tautulli native | Write the environment file
+  ansible.builtin.template:
+    src: native.env.j2
+    dest: "{{ tautulli_native_env }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart tautulli
+  no_log: true   # the file carries the Plex token and the API key
+
+- name: Tautulli native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ tautulli_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart tautulli
+
+- name: Tautulli native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ tautulli_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Tautulli native | Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Tautulli native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ tautulli_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ tautulli_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Tautulli native | Verify Tautulli can reach the selected Plex server
+  ansible.builtin.uri:
+    url: "{{ _tautulli_plex_url }}/identity"
+    headers:
+      X-Plex-Token: "{{ _tautulli_plex_token }}"
+    return_content: true
+    timeout: 30
+  register: _tautulli_plex_identity
+  until:
+    - _tautulli_plex_identity.status | default(0) == 200
+    - _tautulli_plex_identity.content | default('') is search('MediaContainer')
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
