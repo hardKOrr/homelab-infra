@@ -38,7 +38,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert result.returncode == 0, result.stdout + result.stderr
     lines = set((root / "env").read_text().splitlines())
 for expected in ('UN_SONARR_0_API_KEY="key-a"', 'UN_SONARR_1_URL="http://10.0.0.6:8989"',
-                 'UN_RADARR_0_PATHS_0="/mnt/downloads"', 'UN_PARALLEL="1"', 'UN_WEBSERVER_LISTEN_ADDR=""'):
+                 'UN_RADARR_0_PATHS_0="/mnt/downloads"', 'UN_PARALLEL="1"', 'UN_WEBSERVER_LISTEN_ADDR=""',
+                 'UN_QUIET="false"', 'UN_LOG_FILE=""'):
     assert expected in lines, expected
+
+# The environment file overrides the packaged unit's quiet mode and log file only as a drop-in
+# (drop-ins load after the unit), and the log helper reads the journal.
+assert "service.d/homelabinfra.conf" in install and "EnvironmentFile={{ unpackerr_native_env }}" in install
+assert "journalctl -u {{ unpackerr_service }}" in install
 
 print("unpackerr native pins one release and renders its environment")
