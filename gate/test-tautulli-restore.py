@@ -50,17 +50,23 @@ def check_plex_endpoint():
              "Resolve the runtime URL")
     picked = [t for t in tasks if t["name"].split(" | ")[1] in names]
     assert len(picked) == 3, picked
-    expected = {
-        "tautulli-host": ("plex", "32400", "http://plex:32400", "http://10.0.0.5:32400/identity"),
-        "other-host": ("10.0.0.5", "32401", "http://10.0.0.5:32401", "http://10.0.0.5:32401/identity"),
-    }
-    for resolved, (host, port, url, discovery) in expected.items():
+    cases = [
+        ("tautulli-host", {"port": 32400}, "plex", "32400",
+         "http://plex:32400", "http://10.0.0.5:32400/identity"),
+        ("other-host", {"port": 32401}, "10.0.0.5", "32401",
+         "http://10.0.0.5:32401", "http://10.0.0.5:32401/identity"),
+        ("tautulli-host", {"port": 32401, "container_port": 32500}, "plex", "32500",
+         "http://plex:32500", "http://10.0.0.5:32401/identity"),
+        ("other-host", {"port": 32401, "container_port": 32500}, "10.0.0.5", "32401",
+         "http://10.0.0.5:32401", "http://10.0.0.5:32401/identity"),
+    ]
+    for resolved, app, host, port, url, discovery in cases:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "endpoint.yml"
             path.write_text(yaml.safe_dump([{
                 "hosts": "tautulli-host", "gather_facts": False,
                 "vars": {"resolve_stack_host": resolved, "_tautulli_plex_instance": "plex",
-                         "_tautulli_plex_config": {"app": {"port": 32400 if resolved == "tautulli-host" else 32401}}},
+                         "_tautulli_plex_config": {"app": app}},
                 "tasks": picked + [{"ansible.builtin.assert": {"that": [
                     f"_tautulli_plex_host == '{host}'", f"_tautulli_plex_url == '{url}'",
                     f"_tautulli_plex_runtime_port | string == '{port}'",

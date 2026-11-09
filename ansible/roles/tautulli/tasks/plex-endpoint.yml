@@ -44,7 +44,7 @@
 - name: Tautulli Plex endpoint | Resolve the runtime and discovery URLs
   ansible.builtin.set_fact:
     _tautulli_plex_host: "{{ _tautulli_plex_instance if _tautulli_plex_same_host | bool else _tautulli_plex_address }}"
-    _tautulli_plex_runtime_port: "{{ 32400 if _tautulli_plex_same_host | bool else _tautulli_plex_port }}"
+    _tautulli_plex_runtime_port: "{{ _tautulli_plex_config.app.container_port | default(32400) if _tautulli_plex_same_host | bool else _tautulli_plex_port }}"
     _tautulli_plex_discovery_url: "http://{{ _tautulli_plex_address }}:{{ _tautulli_plex_port }}/identity"
 
 - name: Tautulli Plex endpoint | Resolve the runtime URL
