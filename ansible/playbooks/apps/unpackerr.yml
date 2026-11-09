@@ -1,5 +1,5 @@
 ---
-# Deploy Unpackerr on the estate-resolved media stack. It has no browser UI: the role reads every registered Arr endpoint and API key from the media registry, then configures Unpackerr to extract completed downloads on their shared mounts.
+# Deploy Unpackerr on the estate-resolved media stack, or on Kubernetes when `hosting.method: kubernetes` (no stack host). It has no browser UI: the role reads every registered Arr endpoint and API key from the media registry, then configures Unpackerr to extract completed downloads on their shared mounts.
 - name: "Unpackerr | Provision"
   hosts: localhost
   become: false
@@ -35,13 +35,34 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
     - name: Attach Unpackerr media paths to the stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
-      when: app_config.app.mounts | default([], true) | length > 0
+      when:
+        - app_config.hosting.method == 'docker'
+        - app_config.app.mounts | default([], true) | length > 0
+- name: "Unpackerr | Prepare Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Resolve Unpackerr's existing media shares for Kubernetes
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-media-nfs.yml
+      vars:
+        k8s_media_mounts: "{{ app_config.app.mounts | default([], true) }}"
+      when:
+        - app_config.hosting.method == 'kubernetes'
+        - app_config.app.mounts | default([], true) | length > 0
+    - name: Refresh inventory for cluster access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open Unpackerr's declared access from the Kubernetes node alias
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 - name: "Unpackerr | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -63,15 +84,45 @@
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Unpackerr
       ansible.builtin.include_role:
         name: unpackerr
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+- name: "Unpackerr | Deploy on Kubernetes"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Deploy Unpackerr into its Kubernetes namespace
+      ansible.builtin.include_role:
+        name: unpackerr
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
 - name: "Unpackerr | Record app"
   hosts: localhost
   become: false
   gather_facts: false
   vars:
-    _unpackerr_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _unpackerr_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    _unpackerr_deploy_host: "{{ {} if _unpackerr_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}"
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
   tasks:
-    - name: Record the app on its Proxmox guest
+    - name: Record the app on its Proxmox guests
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | default([]) | map(attribute='name') | list
+             if _unpackerr_k8s | bool else groups['deploy_' ~ instance] }}
+        record_guest_kind: "{{ 'kubernetes' if _unpackerr_k8s | bool else 'docker' }}"
