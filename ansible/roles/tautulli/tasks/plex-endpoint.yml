@@ -1,0 +1,52 @@
+---
+# Resolve where the selected Plex instance can be reached from this host. Plex may
+# share this stack host (Docker network name) or live on another one (its host's
+# published port). Plex is never moved or changed.
+# Outputs: _tautulli_plex_host, _tautulli_plex_runtime_port, _tautulli_plex_url,
+# _tautulli_plex_discovery_url.
+
+- name: Tautulli Plex endpoint | Load the Plex defaults and instance config
+  ansible.builtin.include_vars:
+    file: "{{ item.file }}"
+    name: "{{ item.name }}"
+  loop:
+    - file: "{{ role_path }}/../../vars/app-defaults/plex.yml"
+      name: _tautulli_plex_defaults_file
+    - file: "{{ playbook_dir }}/../../../config/apps/{{ _tautulli_plex_instance }}.yml"
+      name: _tautulli_plex_instance_file
+  failed_when: false
+  no_log: true
+
+- name: Tautulli Plex endpoint | Merge the Plex configuration
+  ansible.builtin.set_fact:
+    _tautulli_plex_config: >-
+      {{ _tautulli_plex_defaults_file.plex_defaults | default({})
+         | combine(_tautulli_plex_instance_file | default({}), recursive=True) }}
+
+- name: Tautulli Plex endpoint | Find the Plex stack host
+  ansible.builtin.include_tasks: ../../../tasks/stack/resolve-existing-host.yml
+  vars:
+    stack_name: "{{ _tautulli_plex_config.stack }}"
+    stack_estate: "{{ _tautulli_plex_config.routing.estate | default('', true) }}"
+    resolve_stack_deploy_group: "tautulli_plex_{{ instance }}"
+    resolve_stack_app_instance: "{{ _tautulli_plex_instance }}"
+
+- name: Tautulli Plex endpoint | Choose a reachable Plex host
+  ansible.builtin.set_fact:
+    _tautulli_plex_same_host: "{{ resolve_stack_host == inventory_hostname }}"
+    _tautulli_plex_port: "{{ _tautulli_plex_config.app.port | default(32400) }}"
+    _tautulli_plex_address: >-
+      {{ hostvars[resolve_stack_host].ansible_host
+         | default(hostvars[resolve_stack_host].ansible_default_ipv4.address) }}
+
+# Same host: the shared Docker network resolves the container name on Plex's own
+# port. Another host: use that host's address and Plex's published port.
+- name: Tautulli Plex endpoint | Resolve the runtime and discovery URLs
+  ansible.builtin.set_fact:
+    _tautulli_plex_host: "{{ _tautulli_plex_instance if _tautulli_plex_same_host | bool else _tautulli_plex_address }}"
+    _tautulli_plex_runtime_port: "{{ 32400 if _tautulli_plex_same_host | bool else _tautulli_plex_port }}"
+    _tautulli_plex_discovery_url: "http://{{ _tautulli_plex_address }}:{{ _tautulli_plex_port }}/identity"
+
+- name: Tautulli Plex endpoint | Resolve the runtime URL
+  ansible.builtin.set_fact:
+    _tautulli_plex_url: "http://{{ _tautulli_plex_host }}:{{ _tautulli_plex_runtime_port }}"
