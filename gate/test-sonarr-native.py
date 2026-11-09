@@ -15,7 +15,9 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/sonarr.yml").read_t
 # One exact build for both methods, and a verified tarball.
 app = defaults["app"]
 assert app["image"].split(":")[1].startswith(f"{app['native_version']}-ls")
-assert len(app["native_sha256"]) == 64 and f"/releases/download/v{app['native_version']}/Sonarr.main.{app['native_version']}.linux-x64.tar.gz" in app["native_url"]
+assert len(app["native_sha256"]) == 64
+assert app["native_url"] == "https://api.github.com/repos/Sonarr/Sonarr/releases/assets/568369830"
+assert app["native_headers"] == {"Accept": "application/octet-stream"}
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 native_text = (role / "tasks/native.yml").read_text()
 native = native_text
@@ -32,6 +34,7 @@ def find_url(tasks):
         if "ansible.builtin.get_url" in task:
             return task["ansible.builtin.get_url"]["url"]
 get_url = find_url(yaml.safe_load(native_text))
+assert 'headers: "{{ app_config.app.native_headers | default(omit) }}"' in native_text
 with tempfile.TemporaryDirectory() as directory:
     play = Path(directory) / "url.yml"
     cases = {"sonarr": app, "other": {"native_version": "1.2.3", "native_branch": "nightly"}}

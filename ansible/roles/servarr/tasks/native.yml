@@ -4,7 +4,7 @@
 # version and checksum pinned in the app defaults, run by a systemd unit as the app's own
 # user. Its state is the config directory alone, which backup and restore archive.
 # main.yml has already checked the mounts and resolved _servarr_api_key.
-# Inputs: app_config.app.{native_version, native_branch or native_url, native_sha256, puid, pgid, config_path}.
+# Inputs: app_config.app.{native_version, native_branch or native_url, native_headers, native_sha256, puid, pgid, config_path}.
 - name: Servarr native | Assert the supported guest
   ansible.builtin.assert:
     that:
@@ -89,6 +89,7 @@
                   ~ '/updatefile?version=' ~ app_config.app.native_version ~ '&os=linux&runtime=netcore&arch=x64' }}
         dest: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
         checksum: "sha256:{{ app_config.app.native_sha256 }}"
+        headers: "{{ app_config.app.native_headers | default(omit) }}"
         mode: "0644"
 
     # Unpack beside the live install: a full disk or a bad archive fails here, with the

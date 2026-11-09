@@ -46,7 +46,10 @@ sonarr_defaults:
     # (https://wiki.servarr.com/sonarr/installation/linux), at the same exact build as the
     # image and verified against its checksum. Sonarr publishes it as a GitHub release asset.
     native_version: "4.0.20.3014"
-    native_url: "https://github.com/sonarr/sonarr/releases/download/v4.0.20.3014/Sonarr.main.4.0.20.3014.linux-x64.tar.gz"
+    # Sonarr.main.4.0.20.3014.linux-x64.tar.gz; the browser download endpoint can return 504.
+    native_url: "https://api.github.com/repos/Sonarr/Sonarr/releases/assets/568369830"
+    native_headers:
+      Accept: application/octet-stream
     native_sha256: 1fc48544b5a3401b2fc3df8d0642c1e6a73a28e41a351169edd9cd8f54770db5
     port: 8989
     container_port: 8989
