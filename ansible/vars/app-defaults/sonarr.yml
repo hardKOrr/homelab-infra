@@ -10,7 +10,7 @@
 sonarr_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
