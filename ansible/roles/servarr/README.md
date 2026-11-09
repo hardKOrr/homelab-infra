@@ -53,3 +53,7 @@ against private runner scratch. Run with `tools/lab-browser` and instance
 It checks an unmonitored The Matrix movie, its tag and profile associations, the
 media-management settings and the canonical API key against private runner scratch.
 Add `&scope=<drill-name>` to isolate the canary label and saved comparison between drills.
+
+`browser/sonarr-recovery.js` checks an unmonitored The Office series, its tag and
+season/profile associations, media-management settings and canonical API key using
+`sonarr-drill-owner` with the same modes and scope option.

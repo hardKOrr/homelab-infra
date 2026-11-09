@@ -13,6 +13,9 @@
 # Sonarr runs on a shared Docker stack host, so its CPU/RAM belong to that host,
 # not to this file. The per-app knob is which stack host to place it on.
 stack: media
+# To use Docker on an LXC, set stack: media-lxc and
+# infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
 
 # ── App config ─────────────────────────────────────────────────────────────────
 # app:
