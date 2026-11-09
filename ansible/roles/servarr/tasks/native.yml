@@ -83,7 +83,10 @@
   block:
     - name: Servarr native | Download the release tarball
       ansible.builtin.get_url:
-        url: "{{ app_config.app.native_url | default('https://' ~ servarr_service ~ '.servarr.com/v1/update/' ~ app_config.app.native_branch ~ '/updatefile?version=' ~ app_config.app.native_version ~ '&os=linux&runtime=netcore&arch=x64') }}"
+        url: >-
+          {{ app_config.app.native_url if app_config.app.native_url is defined
+             else 'https://' ~ servarr_service ~ '.servarr.com/v1/update/' ~ app_config.app.native_branch
+                  ~ '/updatefile?version=' ~ app_config.app.native_version ~ '&os=linux&runtime=netcore&arch=x64' }}
         dest: "{{ servarr_project_dir }}/{{ servarr_service }}-{{ app_config.app.native_version }}.tar.gz"
         checksum: "sha256:{{ app_config.app.native_sha256 }}"
         mode: "0644"

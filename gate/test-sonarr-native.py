@@ -17,8 +17,33 @@ app = defaults["app"]
 assert app["image"].split(":")[1].startswith(f"{app['native_version']}-ls")
 assert len(app["native_sha256"]) == 64 and f"/releases/download/v{app['native_version']}/Sonarr.main.{app['native_version']}.linux-x64.tar.gz" in app["native_url"]
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
-native = (role / "tasks/native.yml").read_text()
+native_text = (role / "tasks/native.yml").read_text()
+native = native_text
 assert "native_sha256" in native and "native_url" in native
+
+# The download URL expression from native.yml renders with Sonarr's real defaults (a native_url,
+# no native_branch) and still falls back to the update service for a branch-only app.
+def find_url(tasks):
+    for task in tasks:
+        for key in ("block", "rescue"):
+            hit = find_url(task.get(key) or [])
+            if hit:
+                return hit
+        if "ansible.builtin.get_url" in task:
+            return task["ansible.builtin.get_url"]["url"]
+get_url = find_url(yaml.safe_load(native_text))
+with tempfile.TemporaryDirectory() as directory:
+    play = Path(directory) / "url.yml"
+    cases = {"sonarr": app, "other": {"native_version": "1.2.3", "native_branch": "nightly"}}
+    play.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False, "tasks": [
+        {"ansible.builtin.assert": {"that": [f"({get_url.strip().removeprefix("{{").removesuffix("}}")}) == {expected!r}"]},
+         "vars": {"app_config": {"app": values}, "servarr_service": name, "instance": name}}
+        for name, values, expected in [
+            ("sonarr", app, app["native_url"]),
+            ("other", cases["other"], "https://other.servarr.com/v1/update/nightly/updatefile?version=1.2.3&os=linux&runtime=netcore&arch=x64")]]}]))
+    result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
+                            text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
