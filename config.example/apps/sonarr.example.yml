@@ -31,7 +31,7 @@ stack: media
 #                            # this platform never creates or manages that storage,
 #                            # it only attaches what the node already mounts.
 #   port: 8989               # override only when running two Sonarrs on one stack host
-#   image: "lscr.io/linuxserver/sonarr:latest"   # pin a tag to stop Watchtower moving it
+#   image: "lscr.io/linuxserver/sonarr:4.0.20.3014-ls4"   # the exact tag the defaults pin
 #   puid: 1000               # uid/gid the app runs as; must be able to write the library
 #   pgid: 1000
 #   extra_env: {}            # any additional container environment variables
@@ -51,3 +51,11 @@ stack: media
 #     auth_method: External  # External | Forms | Basic
 #     auth_required: Enabled # Enabled | DisabledForLocalAddresses. Enabled is what
 #                            # makes the API demand its key from every caller.
+
+# To run Sonarr natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides. Deploy installs the pinned release as a systemd service; app.port
+# still sets the web port, and the library mounts attach to the guest like on the stack host.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc
