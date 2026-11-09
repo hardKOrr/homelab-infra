@@ -45,6 +45,8 @@ with tempfile.TemporaryDirectory() as directory:
     env = (root / "env").read_text()
 assert "ExecStart=/opt/slskd/app/slskd" in unit and "EnvironmentFile=/opt/slskd/slskd.env" in unit
 assert "fixture-key" not in unit and "web-pass" not in unit
+assert "CacheDirectory=slskd" in unit
+assert "Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/cache/slskd" in unit
 lines = set(env.splitlines())
 for expected in ('SLSKD_APP_DIR="/opt/slskd/config"', f'SLSKD_HTTP_PORT="{app["port"]}"',
                  'SLSKD_API_KEY="fixture-key"', 'SLSKD_DOWNLOADS_DIR="/mnt/data/downloads/complete"',

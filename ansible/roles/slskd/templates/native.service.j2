@@ -11,6 +11,9 @@ Type=simple
 User={{ slskd_service }}
 Group={{ slskd_service }}
 UMask=0002
+# The self-contained .NET bundle needs a writable extraction cache.
+CacheDirectory={{ instance }}
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/cache/{{ instance }}
 EnvironmentFile={{ slskd_native_env }}
 WorkingDirectory={{ slskd_native_dir }}
 ExecStart={{ slskd_native_dir }}/slskd
