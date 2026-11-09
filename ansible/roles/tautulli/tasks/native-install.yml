@@ -1,0 +1,72 @@
+---
+# Included by main.yml (native only): Tautulli's Linux install
+# (https://github.com/Tautulli/Tautulli/wiki/Installation#linux), a git clone into
+# /opt/Tautulli at the exact tag pinned in the app defaults, the service account, the data
+# directories and the PBS client when this lab declares app backups. The clone is owned by
+# the service account, as upstream's instructions do, so git and Tautulli agree on it.
+# Inputs: app_config.app.{native_version, puid, pgid, config_path}.
+
+- name: Tautulli native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native Tautulli supports Debian 12.
+
+- name: Tautulli native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+- name: Tautulli native | Install git and Python
+  ansible.builtin.apt:
+    name: [ca-certificates, git, python3]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Tautulli native | Create the app group
+  ansible.builtin.group:
+    name: "{{ tautulli_service }}"
+    gid: "{{ app_config.app.pgid | default(1313) }}"
+
+- name: Tautulli native | Create the app user
+  ansible.builtin.user:
+    name: "{{ tautulli_service }}"
+    uid: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ tautulli_service }}"
+    home: "{{ tautulli_project_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Tautulli native | Create the project directory
+  ansible.builtin.file:
+    path: "{{ tautulli_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Tautulli native | Create the clone and data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ tautulli_service }}"
+    group: "{{ tautulli_service }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ tautulli_native_dir }}", mode: "0755"}
+    - {path: "{{ app_config.app.config_path }}", mode: "0750"}
+
+- name: Tautulli native | Clone the pinned release
+  ansible.builtin.git:
+    repo: https://github.com/Tautulli/Tautulli.git
+    dest: "{{ tautulli_native_dir }}"
+    version: "{{ app_config.app.native_version }}"
+    force: true
+  become: true
+  become_user: "{{ tautulli_service }}"
+  register: _tautulli_clone
+  notify: Restart tautulli

@@ -15,3 +15,11 @@
 
 # To run on the Kubernetes cluster instead, set hosting.method: kubernetes (and drop the
 # stack line). Tautulli mounts no media shares; it reaches Plex's published port.
+
+# To run Tautulli natively on its own LXC (or set guest_type: vm for a VM), set these
+# instance overrides and drop the stack line. Deploy clones the pinned release into
+# /opt/Tautulli and runs it as a systemd service; app.port sets the web port.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

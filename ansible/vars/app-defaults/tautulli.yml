@@ -4,10 +4,24 @@
 tautulli_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
+  # Docker and native archive the config directory through the shared PBS operations
+  # (roles/tautulli/tasks/backup.yml, restore-guest.yml).
   recovery:
     methods: [native]
     native:
@@ -15,7 +29,11 @@ tautulli_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: "ghcr.io/tautulli/tautulli:latest"
+    # Docker and native run the same upstream release. Native clones this tag of
+    # https://github.com/Tautulli/Tautulli into /opt/Tautulli (its Linux install,
+    # https://github.com/Tautulli/Tautulli/wiki/Installation#linux).
+    image: "ghcr.io/tautulli/tautulli:v2.18.2"
+    native_version: "v2.18.2"
     port: 8181
     container_port: 8181
     config_path: "/opt/{{ instance }}/config"
