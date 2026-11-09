@@ -63,6 +63,10 @@ def main():
     assert "secretKeyRef" in manifest and "kind: Ingress" in manifest
     assert "storageClassName" not in manifest
     assert "mountPath: /config" in manifest
+    # A rotated credential must roll the pod: env from a Secret is read at start.
+    assert "checksum/credentials" in manifest
+    assert "_tautulli_plex_token" in manifest.split("checksum/credentials")[1].split("\n")[0]
+    assert "_tautulli_api_key" in manifest.split("checksum/credentials")[1].split("\n")[0]
 
     restore = read_yaml(f"{ROLE}/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")

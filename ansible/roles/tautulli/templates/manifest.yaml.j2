@@ -37,6 +37,9 @@ spec:
         app.kubernetes.io/instance: {{ instance }}
         app.kubernetes.io/managed-by: homelab-infra
         app.kubernetes.io/component: web
+      annotations:
+        # Env from a Secret is read at start: rolling on a credential change.
+        checksum/credentials: {{ (_tautulli_plex_token ~ ':' ~ _tautulli_api_key) | hash('sha256') | to_json }}
     spec:
       automountServiceAccountToken: false
       containers:
