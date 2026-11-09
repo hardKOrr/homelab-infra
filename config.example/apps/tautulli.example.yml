@@ -8,3 +8,7 @@
 
 # routing:
 #   identity: catalog    # Tautulli signs users in with Plex; do not use forward_auth.
+
+# To use Docker on an LXC, set stack: media-lxc and
+# infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
