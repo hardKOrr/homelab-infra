@@ -4,7 +4,7 @@
 tautulli_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
 
@@ -25,12 +25,23 @@ tautulli_defaults:
     # Deploy that Plex instance first; its role records the server token after
     # proving that its claim completed.
     plex_instance: plex
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 2
   routing:
     subdomain: tautulli
     proxy: internal
     access: internal
     # Tautulli uses Plex authentication itself. A forward-auth proxy would
     # interfere with its Plex sign-in flow.
+
+  # The Kubernetes pod reaches Plex's published port through the cluster-node alias; the
+  # role resolves the address before the firewall step. Docker keeps its guest access.
+  firewall:
+    egress:
+      - name: plex
+        protocol: TCP
+        port: "{{ _tautulli_plex_port | default(32400) }}"
+        destination: "{{ _tautulli_plex_address | default('') }}"
 
   # Stop the one service and archive config, excluding disposable logs and cache.
   backup:
@@ -40,3 +51,10 @@ tautulli_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # The PBS client Job on Kubernetes.
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

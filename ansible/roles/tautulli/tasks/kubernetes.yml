@@ -1,0 +1,63 @@
+---
+# Tautulli on Kubernetes, run from the playbook's localhost play after the Plex endpoint
+# is resolved (plex.yml). Settings and history live on one default-StorageClass PVC. The
+# Plex token and API key reach the pod through a Secret downstream of Vaultwarden.
+# Tautulli mounts no media shares, so there is no NFS volume to prepare.
+- name: Tautulli Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Tautulli Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# The canonical key is stored before the workload reads it, so a rerun after a failed
+# first run finds the key the Secret already holds.
+- name: Tautulli Kubernetes | Store the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _tautulli_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
+
+- name: Tautulli Kubernetes | Sync the Plex token and API key into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      plex-token: "{{ _tautulli_plex_token }}"
+      api-key: "{{ _tautulli_api_key }}"
+  no_log: true
+
+- name: Tautulli Kubernetes | Render the workload manifest
+  ansible.builtin.set_fact:
+    _tautulli_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Tautulli Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _tautulli_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Tautulli Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        Tautulli's settings and history database in one application-consistent recovery point
+
+# The API answers through the cluster ingress with the instance hostname.
+- name: Tautulli Kubernetes | Resolve the API endpoint
+  ansible.builtin.set_fact:
+    _tautulli_base: "http://{{ k8s_cluster_facts.ingress_vip }}"
+    _tautulli_host_headers: {Host: "{{ tautulli_fqdn }}"}
+
+- name: Tautulli Kubernetes | Verify the API and store its key
+  ansible.builtin.include_tasks: verify.yml

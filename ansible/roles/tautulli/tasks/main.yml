@@ -3,52 +3,14 @@
   ansible.builtin.include_role:
     name: docker
 
-# Tautulli's official image accepts settings as TAUTULLI_<setting> environment variables. The Plex token comes from the Plex role's verified Vaultwarden item; this role deliberately never reads another app's on-disk configuration.
-- name: Resolve Tautulli paths and Plex credentials
+- name: Resolve the Plex endpoint and credentials
+  ansible.builtin.include_tasks: plex.yml
+
+- name: Resolve the Docker network and API endpoint
   ansible.builtin.set_fact:
-    _tautulli_base: "http://localhost:{{ app_config.app.port }}"
-    _tautulli_plex_instance: "{{ app_config.app.plex_instance | default('plex', true) }}"
     _tautulli_media_network: "homelabinfra-{{ app_config.stack }}"
-    _tautulli_plex_token: >-
-      {{ ((homelabinfra_vault.media | default({}))[app_config.app.plex_instance | default('plex', true)] | default({})).token | default('', true) }}
-    _tautulli_api_key: >-
-      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-  no_log: true
-
-- name: Require the selected Plex server token
-  ansible.builtin.assert:
-    that: _tautulli_plex_token | length > 0
-    fail_msg: >-
-      Plex instance {{ _tautulli_plex_instance }} has no server token in Vaultwarden. Deploy or converge that Plex instance first, then rerun {{ instance }}.
-  no_log: true
-
-- name: Resolve a reachable endpoint for the selected Plex instance
-  ansible.builtin.include_tasks: plex-endpoint.yml
-
-- name: Read the selected Plex server identity without changing Plex
-  ansible.builtin.uri:
-    url: "{{ _tautulli_plex_discovery_url }}"
-    headers:
-      X-Plex-Token: "{{ _tautulli_plex_token }}"
-    return_content: true
-    timeout: 30
-  register: _tautulli_plex_discovery
-  until:
-    - _tautulli_plex_discovery.status | default(0) == 200
-    - >-
-      (_tautulli_plex_discovery.content | default('')
-       | regex_findall('machineIdentifier="([a-zA-Z0-9_-]+)"')) | length == 1
-  retries: "{{ tautulli_http_retries }}"
-  delay: "{{ tautulli_http_delay }}"
-  changed_when: false
-  no_log: true
-
-- name: Resolve the verified Plex machine identifier for Tautulli
-  ansible.builtin.set_fact:
-    _tautulli_plex_identifier: >-
-      {{ (_tautulli_plex_discovery.content
-          | regex_findall('machineIdentifier="([a-zA-Z0-9_-]+)"')) | first }}
-  no_log: true
+    _tautulli_base: "http://localhost:{{ app_config.app.port }}"
+    _tautulli_host_headers: {}
 
 - name: Create Tautulli project and persistent directories
   ansible.builtin.file:
@@ -115,43 +77,5 @@
   changed_when: false
   no_log: true
 
-- name: Verify Tautulli can answer through its API
-  ansible.builtin.uri:
-    url: "{{ _tautulli_base }}/api/v2?cmd=get_server_identity&apikey={{ _tautulli_api_key }}"
-    return_content: true
-    status_code: 200
-  register: _tautulli_server_identity
-  until:
-    - _tautulli_server_identity.status | default(0) == 200
-    - >-
-      (_tautulli_server_identity.json.response.data.machine_identifier | default(''))
-      == _tautulli_plex_identifier
-  retries: "{{ tautulli_http_retries }}"
-  delay: "{{ tautulli_http_delay }}"
-  changed_when: false
-  no_log: true
-
-- name: Wait for Tautulli to import the selected Plex admin
-  ansible.builtin.uri:
-    url: "{{ _tautulli_base }}/api/v2?cmd=get_users&apikey={{ _tautulli_api_key }}"
-    return_content: true
-    status_code: 200
-  register: _tautulli_users
-  until:
-    - _tautulli_users.status | default(0) == 200
-    - >-
-      (_tautulli_users.json.response.data | default([])
-       | selectattr('is_admin', 'equalto', 1) | list | length) > 0
-  retries: "{{ tautulli_http_retries }}"
-  delay: "{{ tautulli_http_delay }}"
-  changed_when: false
-  no_log: true
-
-- name: Store and verify the Tautulli API key
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/media/{{ instance }}"
-    vault_item_fields:
-      api_key: "{{ _tautulli_api_key }}"
-    vault_item_secret_fields: [api_key]
-  no_log: true
+- name: Verify the Tautulli API and store its key
+  ansible.builtin.include_tasks: verify.yml

@@ -1,0 +1,46 @@
+---
+# Prove Tautulli's API answers for the selected Plex server and has imported its admin,
+# then store the API key. Needs _tautulli_base and _tautulli_host_headers.
+
+- name: Verify Tautulli can answer through its API
+  ansible.builtin.uri:
+    url: "{{ _tautulli_base }}/api/v2?cmd=get_server_identity&apikey={{ _tautulli_api_key }}"
+    return_content: true
+    status_code: 200
+    headers: "{{ _tautulli_host_headers }}"
+  register: _tautulli_server_identity
+  until:
+    - _tautulli_server_identity.status | default(0) == 200
+    - >-
+      (_tautulli_server_identity.json.response.data.machine_identifier | default(''))
+      == _tautulli_plex_identifier
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Wait for Tautulli to import the selected Plex admin
+  ansible.builtin.uri:
+    url: "{{ _tautulli_base }}/api/v2?cmd=get_users&apikey={{ _tautulli_api_key }}"
+    return_content: true
+    status_code: 200
+    headers: "{{ _tautulli_host_headers }}"
+  register: _tautulli_users
+  until:
+    - _tautulli_users.status | default(0) == 200
+    - >-
+      (_tautulli_users.json.response.data | default([])
+       | selectattr('is_admin', 'equalto', 1) | list | length) > 0
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Store and verify the Tautulli API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _tautulli_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
