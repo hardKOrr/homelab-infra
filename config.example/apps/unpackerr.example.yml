@@ -8,3 +8,7 @@ app:
   # parallel: 2
   # puid: 1313
   # pgid: 1313
+
+# To use Docker on an LXC, set stack: media-lxc and
+# infrastructure.stacks.media-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
