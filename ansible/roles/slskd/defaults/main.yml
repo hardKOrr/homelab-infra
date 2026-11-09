@@ -5,6 +5,13 @@
 
 slskd_project_dir: "/opt/{{ instance }}"
 
+# Native: the systemd unit and account, the unpacked release and the environment file that
+# carries the credentials (tasks/native-install.yml, tasks/native.yml).
+slskd_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+slskd_service: slskd
+slskd_native_dir: "{{ slskd_project_dir }}/app"
+slskd_native_env: "{{ slskd_project_dir }}/slskd.env"
+
 # How long to wait for the web interface to answer after the container
 # starts, and again after a key repair (mirrors roles/sabnzbd).
 slskd_webui_retries: 30

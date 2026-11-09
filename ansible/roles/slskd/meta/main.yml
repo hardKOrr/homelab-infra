@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: slskd
-  description: "Deploys slskd on a stack host or Kubernetes"
+  description: "Deploys slskd on a stack host, natively on its own guest, or on Kubernetes"
   min_ansible_version: "2.15"
 
 dependencies: [] # The playbook installs Docker only for the Docker method.

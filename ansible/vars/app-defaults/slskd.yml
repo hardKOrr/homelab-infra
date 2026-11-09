@@ -11,13 +11,25 @@
 slskd_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
 
-  # Application recovery is the Kubernetes method's: Backup App runs its CronJob and Restore
-  # App replaces the /app volume. The Docker method has none (backup.application_consistent
-  # stays false, so Backup App refuses it).
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
+  # Application recovery: on Kubernetes Backup App runs the CronJob and Restore App replaces
+  # the /app volume; on Docker and native roles/slskd/tasks/backup.yml and restore-guest.yml
+  # archive the app directory through the shared PBS operations.
   recovery:
     methods: [native]
     native:
@@ -29,7 +41,12 @@ slskd_defaults:
     # declared there as a download client that speaks the `slskd` protocol.
     media_kind: slskd
 
-    image: "slskd/slskd:latest"
+    # Docker and native run the same upstream release. Native installs the release zip
+    # from slskd's GitHub releases (https://github.com/slskd/slskd#with-binaries),
+    # verified against this checksum of slskd-<native_version>-linux-x64.zip.
+    image: "slskd/slskd:0.26.2"
+    native_version: "0.26.2"
+    native_sha256: 53102e91e0123f62d17627d5e02a24d9dcd08a165e75182c0f1d76d087510f37
     port: 5030
     container_port: 5030
 
@@ -118,7 +135,7 @@ slskd_defaults:
   # point; downloads and shared directories live on the media shares, outside it.
   backup:
     enabled: true
-    application_consistent: false
+    application_consistent: true
     schedule: "0 3 * * *"
     retention_days: 14
     datastore: ""

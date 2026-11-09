@@ -56,3 +56,11 @@ app:
 #                              # API authenticates every *arr with its own API key, and a
 #                              # forward_auth proxy in front of it would intercept that
 #                              # traffic and break every download client entry in the lab.
+
+# To run slskd natively on its own LXC (or set guest_type: vm for a VM), set these instance
+# overrides. Deploy installs the pinned release as a systemd service; app.port still sets the
+# web port, and the download mounts attach to the guest like on the stack host.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc

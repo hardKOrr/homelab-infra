@@ -45,8 +45,8 @@
     fail_msg: >-
       {{ instance }} refused the API key this deploy holds
       ({{ _slskd_state.status | default('no response') }}). Check
-      `docker logs {{ instance }}` — SLSKD_API_KEY is set unconditionally by
-      this role's Compose template, so a mismatch means the container has
+      `docker logs {{ instance }}` (or `journalctl -u {{ slskd_service }}` natively) — SLSKD_API_KEY is set unconditionally by
+      this role's Compose template and environment file, so a mismatch means the container has
       not restarted onto the current environment yet.
 
 # Soulseek login is a separate, slower handshake than the container starting
@@ -72,7 +72,8 @@
       {{ instance }} is up and answers its API key, but never logged into the
       Soulseek network. Check that the slsk_username and slsk_password
       fields in Vaultwarden item homelab-infra/apps/{{ instance }} are a
-      current, working Soulseek account — `docker logs {{ instance }}` shows
+      current, working Soulseek account — `docker logs {{ instance }}` (or
+      `journalctl -u {{ slskd_service }}` natively) shows
       the server's own rejection.
 
 # The mirror of the servarr, qbittorrent and sabnzbd unauthenticated-API

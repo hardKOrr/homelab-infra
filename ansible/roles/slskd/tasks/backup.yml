@@ -1,0 +1,44 @@
+---
+# Quiesce slskd so its settings and shares database share one recovery point. Logs and
+# downloads never enter the archive; the media shares stay outside it. Kubernetes is backed
+# up by its CronJob, not by this file.
+
+- name: slskd backup | Assert the backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      slskd needs its declared application-consistent backup contract and a configured PBS
+      before an on-demand backup can run.
+
+- name: slskd backup | Check the application data path
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}"
+  register: _slskd_backup_data
+  changed_when: false
+
+- name: slskd backup | Assert the data path is a directory
+  ansible.builtin.assert:
+    that:
+      - _slskd_backup_data.stat.exists
+      - _slskd_backup_data.stat.isdir
+    fail_msg: >-
+      slskd data path {{ app_config.app.config_path }} is missing; refusing to create a
+      backup that would not contain the application's persistent state.
+
+- name: slskd backup | Quiesce slskd and archive its app directory to PBS
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+  vars:
+    pbs_client_runtime: "{{ 'native' if slskd_native | bool else 'docker' }}"
+    pbs_client_compose_project: "{{ slskd_project_dir }}"
+    pbs_client_stop_services: ["{{ slskd_service if slskd_native | bool else instance }}"]
+    pbs_client_backup_args: [--exclude, /logs]
+    pbs_client_archives:
+      - name: data.pxar
+        path: "{{ app_config.app.config_path }}"
+
+- name: slskd backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true
