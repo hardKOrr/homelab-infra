@@ -1,0 +1,51 @@
+---
+- name: Resolve hi-events's Kubernetes default and opt-in Docker stacks
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance: hi-events
+    hosting_app_slug: hi-events
+    hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/hi-events.yml"
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    _hi_events_defaults: >-
+      {{ (lookup('ansible.builtin.file', hosting_app_defaults_file) | from_yaml).hi_events_defaults }}
+    homelabinfra_config:
+      infrastructure:
+        stacks:
+          hi-events-lxc:
+            guest_type: lxc
+  tasks:
+    - name: Validate the default configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: "{{ _hi_events_defaults }}"
+
+    - name: Require the unchanged Kubernetes default
+      ansible.builtin.assert:
+        that: _hosting_combination == 'kubernetes'
+
+    - name: Validate the VM drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _hi_events_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'hi-events'}, recursive=True) }}
+
+    - name: Require the VM combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-vm'
+          - _hosting_stack_name == 'hi-events'
+
+    - name: Validate the LXC drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _hi_events_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'hi-events-lxc'}, recursive=True) }}
+
+    - name: Require the LXC combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-lxc'
+          - _hosting_stack_name == 'hi-events-lxc'

@@ -1,0 +1,4 @@
+---
+hi_events_project_dir: "/opt/{{ instance }}"
+hi_events_env_file: "{{ hi_events_project_dir }}/hi-events.env"
+hi_events_data_path: "{{ app_config.app.data_path | default('', true) or hi_events_project_dir ~ '/storage' }}"

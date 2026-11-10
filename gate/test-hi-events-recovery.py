@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     defaults = (ROOT / "ansible/vars/app-defaults/hi-events.yml").read_text(encoding="utf-8")
-    deploy = (ROOT / "ansible/roles/hi-events/tasks/main.yml").read_text(encoding="utf-8")
-    restore = (ROOT / "ansible/roles/hi-events/tasks/restore.yml").read_text(encoding="utf-8")
+    deploy = (ROOT / "ansible/roles/hi-events/tasks/kubernetes.yml").read_text(encoding="utf-8")
+    restore = (ROOT / "ansible/roles/hi-events/tasks/restore-kubernetes.yml").read_text(encoding="utf-8")
 
     assert "methods: [native]" in defaults
     # Backup and restore go through the shared Kubernetes recovery pair

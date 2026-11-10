@@ -1,0 +1,87 @@
+---
+# Restore Hi.Events' application-consistent PostgreSQL database and storage directory on
+# Docker through the shared swap. The restored database was written under the source's
+# application keys, so the replaced hook gives them to the target; a failure after the
+# stop puts the original storage, database and keys back and starts the application.
+
+- name: Hi.Events restore | Resolve the target's keys and database identity
+  ansible.builtin.set_fact:
+    _he_restore_target_keys:
+      app_key: "{{ app_config.app.app_key | default('') }}"
+      jwt_secret: "{{ app_config.app.jwt_secret | default('') }}"
+    _he_restore_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           app_config.app.database.instance | default(''), {}) }}
+    _he_restore_source_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           (restore_source_database | default({})).get('instance', ''), {}) }}
+  no_log: true
+
+- name: Hi.Events restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - _he_restore_database_backend.provider | default('') == 'postgresql'
+      - _he_restore_database_backend.host | default('') | length > 0
+      - app_config.app.database.name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - restore_source_hi_events_secrets.app_key | default('') | length > 0
+      - restore_source_hi_events_secrets.jwt_secret | default('') | length > 0
+      - _he_restore_target_keys.app_key | length > 0
+      - _he_restore_target_keys.jwt_secret | length > 0
+      - hi_events_data_path is match('^/[^/].*')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Hi.Events restore needs a target, its named PostgreSQL backend, the source and target
+      application keys, a non-root storage path, and a snapshot when overwrite=true.
+  no_log: true
+
+- name: Hi.Events restore | Require a separate target database for a new destination
+  ansible.builtin.assert:
+    that:
+      - restore_source_database is mapping
+      - restore_source_database.name | default('') | length > 0
+      - _he_restore_source_backend.host | default('') | length > 0
+      - >-
+        not (
+          restore_source_database.name == app_config.app.database.name
+          and _he_restore_source_backend.host == _he_restore_database_backend.host
+          and (_he_restore_source_backend.port | int) == (_he_restore_database_backend.port | int)
+        )
+    fail_msg: >-
+      A new Hi.Events restore must use a target database name or PostgreSQL backend distinct
+      from the source. Never let an isolated instance overwrite the source's database.
+  when: restore_destination == 'new'
+  no_log: true
+
+- name: Hi.Events restore | Preview or replace the storage directory and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, data.pxar]
+    recovery_swap_paths:
+      - path: "{{ hi_events_data_path }}"
+        source: data
+        owner: live
+        group: live
+        mode: "0755"
+        allow_empty: true
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/hi-events.dump
+    recovery_swap_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
+    recovery_swap_compose_project: "{{ hi_events_project_dir }}"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/verify.yml"
+
+- name: Hi.Events restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg:
+      - "PLAN ONLY — nothing was changed."
+      - >-
+        A selected Hi.Events snapshot contains database.pxar (named PostgreSQL database
+        {{ app_config.app.database.name }}) and data.pxar ({{ hi_events_data_path }}).
+      - "Re-run with recovery_point=<snapshot> and overwrite=true only after verifying the target."
+  when: not (restore_overwrite | bool)

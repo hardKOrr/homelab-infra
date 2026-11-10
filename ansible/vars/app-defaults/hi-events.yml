@@ -29,7 +29,7 @@ hi_events_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   recovery:
@@ -68,6 +68,12 @@ hi_events_defaults:
     # /var/www/html.
     storage: 10   # GB
 
+    # Docker method only (`hosting.method: docker` plus `stack: <name>`): the host
+    # directory mounted where the Kubernetes volume is. Empty means /opt/<instance>/storage
+    # (roles/hi-events/defaults/main.yml); no Jinja here, because the public-DNS status
+    # task renders this file without an instance.
+    data_path: ""
+
     cache:
       image: "redis:7-alpine"
 
@@ -90,6 +96,8 @@ hi_events_defaults:
     enabled: true
     schedule: "0 3 * * *"
     retention_days: 14
+    # Docker method: roles/hi-events/tasks/backup.yml is the on-demand backup.
+    application_consistent: true
     datastore: ""
     backup_id: ""
     timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
