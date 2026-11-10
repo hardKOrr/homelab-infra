@@ -1,0 +1,21 @@
+---
+# Runs inside the shared PBS backup while Hi.Events is stopped, before the upload.
+
+- name: Hi.Events backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_client_runtime: docker
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _he_backup_scratch.path }}/hi-events.dump"
+
+- name: Hi.Events backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _he_backup_scratch.path }}/hi-events.dump"
+  register: _he_backup_dump
+  changed_when: false
+
+- name: Hi.Events backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _he_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: Hi.Events' database dump is empty; refusing to publish the recovery point.

@@ -1,0 +1,31 @@
+---
+# restore-swap.yml replaced hook. The restored database was written under the source's
+# application keys: record them against the target and render them into the environment
+# the application starts with.
+- name: Hi.Events restore | Record that the target keys are being replaced
+  ansible.builtin.set_fact:
+    _he_restore_keys_replaced: true
+
+- name: Hi.Events restore | Carry the source keys into the target Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      app_key: "{{ restore_source_hi_events_secrets.app_key }}"
+      jwt_secret: "{{ restore_source_hi_events_secrets.jwt_secret }}"
+    vault_item_secret_fields: [app_key, jwt_secret]
+  no_log: true
+
+- name: Hi.Events restore | Render the carried keys
+  ansible.builtin.lineinfile:
+    path: "{{ hi_events_env_file }}"
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}='{{ item.value }}'"
+    mode: "0600"
+  loop:
+    - {key: APP_KEY, value: "{{ restore_source_hi_events_secrets.app_key }}"}
+    - {key: JWT_SECRET, value: "{{ restore_source_hi_events_secrets.jwt_secret }}"}
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true

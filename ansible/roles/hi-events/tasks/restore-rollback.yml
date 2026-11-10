@@ -1,0 +1,30 @@
+---
+# restore-swap.yml rollback hook: the original storage and database are back, so once the
+# replaced hook gave the target the source keys, the target gets its own keys back in
+# Vaultwarden and in the environment.
+- name: Hi.Events restore | Give the target its own keys back
+  when: _he_restore_keys_replaced | default(false) | bool
+  block:
+    - name: Hi.Events restore | Put the target's own keys back in Vaultwarden
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          app_key: "{{ _he_restore_target_keys.app_key }}"
+          jwt_secret: "{{ _he_restore_target_keys.jwt_secret }}"
+        vault_item_secret_fields: [app_key, jwt_secret]
+      no_log: true
+
+    - name: Hi.Events restore | Put the target's own keys back in the environment
+      ansible.builtin.lineinfile:
+        path: "{{ hi_events_env_file }}"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}='{{ item.value }}'"
+        mode: "0600"
+      loop:
+        - {key: APP_KEY, value: "{{ _he_restore_target_keys.app_key }}"}
+        - {key: JWT_SECRET, value: "{{ _he_restore_target_keys.jwt_secret }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true

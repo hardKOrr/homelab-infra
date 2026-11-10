@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+services:
+  {{ instance }}-redis:
+    image: "{{ app_config.app.cache.image }}"
+    container_name: "{{ instance }}-redis"
+    restart: unless-stopped
+    env_file:
+      - "{{ hi_events_env_file }}"
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    depends_on:
+      - {{ instance }}-redis
+    env_file:
+      - "{{ hi_events_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:80"
+    volumes:
+      # Below storage/app, like the Kubernetes volume: storage/framework and storage/logs
+      # are recreated by the image on every start.
+      - "{{ hi_events_data_path }}:/app/backend/storage/app"

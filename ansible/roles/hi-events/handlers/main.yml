@@ -1,0 +1,5 @@
+---
+- name: Restart hi-events
+  community.docker.docker_compose_v2:
+    project_src: "{{ hi_events_project_dir }}"
+    state: restarted

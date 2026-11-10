@@ -1,0 +1,83 @@
+---
+# Deploy Hi.Events onto the Kubernetes hosting backend (hosting.method: kubernetes; main.yml
+# is the Docker method).
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance                — the app instance name
+#   app_config               — merged defaults + user config, with the database connection
+#                              already resolved onto app_config.app (see
+#                              playbooks/apps/hi-events.yml, which runs
+#                              tasks/database/provision.yml before including this role)
+#   hi_events_fqdn           — the hostname the Ingress answers on
+#
+# Idempotent: secrets are generated once and reused from Vaultwarden thereafter, and a
+# converged manifest applies with no change.
+
+- name: Hi.Events | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Hi.Events | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Hi.Events | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Hi.Events | Sync the component credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      redis-password: "{{ _he_redis_password }}"
+      db-password: "{{ app_config.app.database_password }}"
+
+- name: Hi.Events | Assemble the application environment
+  ansible.builtin.include_tasks: env.yml
+
+- name: Hi.Events | Sync the application environment into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data: "{{ _he_env }}"
+
+- name: Hi.Events | Render the workload manifest
+  ansible.builtin.set_fact:
+    _he_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Hi.Events | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _he_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-redis"
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+#
+# One PBS snapshot contains a custom-format dump of this instance's named PostgreSQL
+# database and its uploaded event/ticket media. The backend guest remains independently
+# managed; Hi.Events removes and restores only its own database and storage volume.
+
+- name: Hi.Events | Describe the database step of the backup
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Hi.Events | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: storage
+          claim: "{{ instance }}-storage"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        a custom-format dump of {{ app_config.app.database.name }} plus the storage
+        volume (uploaded event/ticket media)

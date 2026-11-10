@@ -1,0 +1,65 @@
+---
+# Application-consistent Hi.Events recovery point on Docker: a custom-format dump of the
+# named PostgreSQL database plus the storage directory (uploaded event/ticket media),
+# taken while the application is stopped. The app and its Redis are the only services
+# stopped; the PostgreSQL backend and the stack host's other apps stay untouched.
+
+- name: Hi.Events backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - hi_events_data_path is match('^/[^/].*')
+      - app_config.app.database.name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Hi.Events needs its application-consistent backup contract, a non-root storage path,
+      a named database and a configured PBS before a backup can run.
+
+- name: Hi.Events backup | Check the storage directory
+  ansible.builtin.stat:
+    path: "{{ hi_events_data_path }}"
+  register: _he_backup_data
+  changed_when: false
+
+- name: Hi.Events backup | Require a complete storage directory
+  ansible.builtin.assert:
+    that:
+      - _he_backup_data.stat.exists
+      - _he_backup_data.stat.isdir
+    fail_msg: >-
+      Hi.Events storage {{ hi_events_data_path }} is missing; refusing to create a
+      recovery point that would omit uploaded media.
+
+# The dump directory is outside /tmp, which the client's tmpfs replaces.
+- name: Hi.Events backup | Allocate private scratch space
+  ansible.builtin.tempfile:
+    state: directory
+    path: /var/tmp
+    prefix: hi-events-backup-
+  register: _he_backup_scratch
+  changed_when: true
+
+- name: Hi.Events backup | Stop the application, dump its database and push both archives
+  block:
+    - name: Hi.Events backup | Run the shared PBS backup
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "{{ hi_events_project_dir }}"
+        pbs_client_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_archives:
+          - name: database.pxar
+            path: "{{ _he_backup_scratch.path }}"
+          - name: data.pxar
+            path: "{{ hi_events_data_path }}"
+
+    - name: Hi.Events backup | Mark the paired recovery artifact complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: Hi.Events backup | Remove private scratch data
+      ansible.builtin.file:
+        path: "{{ _he_backup_scratch.path }}"
+        state: absent

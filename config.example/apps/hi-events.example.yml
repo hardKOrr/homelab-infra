@@ -1,5 +1,6 @@
 ---
-# Hi.Events — event ticketing and registration, on the Kubernetes hosting backend.
+# Hi.Events — event ticketing and registration, on the Kubernetes hosting backend by
+# default, or on Docker on an LXC or a VM (see the end of this file).
 #
 # Copy to config/apps/hi-events.yml and change what differs for your lab. Anything you
 # leave out falls through to ansible/vars/app-defaults/hi-events.yml, which is
@@ -40,3 +41,11 @@ backup:
 # database and storage volume from the same recovery point. The PostgreSQL backend guest
 # and its other databases are shared infrastructure and are never removed by this app's
 # recovery.
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: hi-events          # a stack with guest_type: vm (the default), or
+# # stack: hi-events-lxc    # one declared guest_type: lxc under
+# #                         # infrastructure.stacks in config/infrastructure.yml.
+# Storage is app.data_path on the stack host; Redis runs beside the application.

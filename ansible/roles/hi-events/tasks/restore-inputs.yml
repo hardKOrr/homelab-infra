@@ -1,0 +1,9 @@
+---
+# Restore App hook, run on localhost before the target identity checks. The application
+# keys must follow the restored database to a new target; they never enter the plan.
+- name: Resolve the source Hi.Events keys without exposing them
+  ansible.builtin.set_fact:
+    restore_source_hi_events_secrets:
+      app_key: "{{ app_config.app.app_key | default('') }}"
+      jwt_secret: "{{ app_config.app.jwt_secret | default('') }}"
+  no_log: true

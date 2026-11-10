@@ -1,0 +1,36 @@
+---
+# Restore one Hi.Events instance's named PostgreSQL database and storage volume from one
+# PBS recovery point, into the namespace of a Hi.Events instance that is already deployed.
+# Called by playbooks/maintenance/restore-app.yml, whose header is the operator procedure;
+# tasks/kubernetes/recovery-restore.yml is the mechanism. The PostgreSQL backend guest
+# remains in place; this touches only the database and role declared for the target.
+
+- name: Restore | Describe the target's database step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: Restore | Restore Hi.Events through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Hi.Events
+      archives:
+        - name: storage
+          claim: "{{ restore_target }}-storage"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      # Redis has no volume. Restarted so cached organizer settings and queued work from
+      # before the restore are not reused.
+      restart:
+        - "{{ restore_target }}-redis"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the {{ restore_target }}-storage volume
+      verify:
+        - >-
+          Now verify the application, not the artifact: open
+          https://{{ restore_target }}.<estate domain>/, sign in as an organizer, and check
+          that event cover images and previously generated tickets are present.
