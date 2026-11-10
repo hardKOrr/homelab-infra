@@ -1,5 +1,5 @@
 ---
 galaxy_info:
   role_name: homepage
-  description: "Deploys Homepage on a Docker stack host or on Kubernetes"
+  description: "Deploys Homepage on Kubernetes, on a Docker stack host, or natively on its own guest"
   min_ansible_version: "2.15"

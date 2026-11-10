@@ -1,0 +1,212 @@
+---
+# Homepage native (hosting.method: native, on an LXC or a VM): upstream's source install,
+# a git clone built with pnpm (https://gethomepage.dev/installation/source/), at the tag
+# pinned in app.native_version, with the pinned Node.js and pnpm. Stateless.
+- name: Homepage native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native Homepage supports Debian 12 on x86_64.
+
+- name: Homepage native | Install prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git, xz-utils, iputils-ping]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Homepage native | Create the app group
+  ansible.builtin.group:
+    name: "{{ homepage_native_user }}"
+    system: true
+
+- name: Homepage native | Create the app user
+  ansible.builtin.user:
+    name: "{{ homepage_native_user }}"
+    group: "{{ homepage_native_user }}"
+    home: "/var/lib/{{ homepage_native_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Homepage native | Generate the dashboard configuration
+  ansible.builtin.include_tasks: dashboard.yml
+
+- name: Homepage native | Download the pinned Node.js
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ app_config.app.native_node_sha256 }}"
+    dest: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Homepage native | Extract the pinned Node.js
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64"
+
+- name: Homepage native | Link node into the path
+  ansible.builtin.file:
+    src: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin/node"
+    dest: /usr/local/bin/node
+    state: link
+
+- name: Homepage native | Install the pinned pnpm
+  ansible.builtin.get_url:
+    url: "https://github.com/pnpm/pnpm/releases/download/v{{ app_config.app.native_pnpm_version }}/pnpm-linux-x64"
+    checksum: "sha256:{{ app_config.app.native_pnpm_sha256 }}"
+    dest: "/usr/local/bin/pnpm-{{ app_config.app.native_pnpm_version }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Homepage native | Link pnpm into the path
+  ansible.builtin.file:
+    src: "/usr/local/bin/pnpm-{{ app_config.app.native_pnpm_version }}"
+    dest: /usr/local/bin/pnpm
+    state: link
+
+- name: Homepage native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ homepage_native_root }}/.release"
+  register: _homepage_release
+  failed_when: false
+
+# Built in a stage beside the install and swapped in whole, so a failed build leaves the
+# running release alone.
+- name: Homepage native | Build the pinned release
+  when: >-
+    _homepage_release.content is not defined
+    or (_homepage_release.content | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Homepage native | Clear a partial stage
+      ansible.builtin.file:
+        path: "{{ homepage_native_root }}.stage"
+        state: absent
+
+    - name: Homepage native | Clone the pinned tag
+      ansible.builtin.command:
+        argv:
+          - git
+          - clone
+          - --depth=1
+          - "--branch=v{{ app_config.app.native_version }}"
+          - https://github.com/gethomepage/homepage.git
+          - "{{ homepage_native_root }}.stage"
+      changed_when: true
+
+    - name: Homepage native | Install the dependencies and build
+      ansible.builtin.shell:
+        cmd: pnpm install --frozen-lockfile && pnpm run build
+        chdir: "{{ homepage_native_root }}.stage"
+      environment:
+        NEXT_TELEMETRY_DISABLED: "1"
+        NODE_OPTIONS: --max-old-space-size=3072
+        HOME: /root
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+      changed_when: true
+
+    - name: Homepage native | Mark the stage with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          printf '%s\n' '{{ app_config.app.native_version }}' > .release
+          chown -R {{ homepage_native_user }}:{{ homepage_native_user }} .
+        chdir: "{{ homepage_native_root }}.stage"
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Homepage native | Stop the service for the swap
+      ansible.builtin.systemd:
+        name: "{{ homepage_service }}"
+        state: stopped
+      failed_when: false
+
+    - name: Homepage native | Swap the staged release into place
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -rf "{{ homepage_native_root }}"
+          mv "{{ homepage_native_root }}.stage" "{{ homepage_native_root }}"
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart homepage service
+
+- name: Homepage native | Create the configuration directory
+  ansible.builtin.file:
+    path: "{{ homepage_native_config }}"
+    state: directory
+    owner: "{{ homepage_native_user }}"
+    group: "{{ homepage_native_user }}"
+    mode: "0755"
+
+- name: Homepage native | Write the generated configuration
+  ansible.builtin.copy:
+    content: "{{ item.content | to_nice_yaml(indent=2, width=120) }}"
+    dest: "{{ homepage_native_config }}/{{ item.name }}"
+    owner: "{{ homepage_native_user }}"
+    group: "{{ homepage_native_user }}"
+    mode: "0644"
+  loop:
+    - { name: services.yaml, content: "{{ homepage_service_groups }}" }
+    - { name: settings.yaml, content: "{{ homepage_settings }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart homepage service
+
+- name: Homepage native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ homepage_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart homepage service
+
+- name: Homepage native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ homepage_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Homepage native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Homepage native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ homepage_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ homepage_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Homepage native | Wait for the dashboard
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/"
+    headers:
+      Host: "{{ homepage_fqdn }}"
+    status_code: 200
+  register: _homepage_health
+  retries: 30
+  delay: 5
+  until: _homepage_health.status | default(0) == 200
+  changed_when: false

@@ -33,7 +33,7 @@ EXTRA_IMPLEMENTED = {
     "frigate": {"docker-lxc"},
     "hi-events": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "home-assistant": {"docker-lxc"},
-    "homepage": {"docker-lxc", "docker-vm"},
+    "homepage": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},
     "lidarr": {"docker-lxc"},
