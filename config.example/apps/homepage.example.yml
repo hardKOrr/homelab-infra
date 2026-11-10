@@ -19,3 +19,10 @@ presentation:
   # platform_group: Platform
   # media_group: Media
   # layout: {}      # Homepage layout settings only; it cannot define service entries
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: homepage          # a stack with guest_type: vm (the default), or
+# # stack: homepage-lxc    # one declared guest_type: lxc under
+# #                        # infrastructure.stacks in config/infrastructure.yml.
