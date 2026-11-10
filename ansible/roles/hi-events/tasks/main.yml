@@ -12,12 +12,14 @@
     mode: "0750"
 
 - name: Hi.Events | Create the storage directory
+  # The Alpine image's startup.sh owns storage as www-data (82) and chmods it 0775.
+  # Match it so deploy preserves write access and converges after container startup.
   ansible.builtin.file:
     path: "{{ hi_events_data_path }}"
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    owner: "82"
+    group: "82"
+    mode: "0775"
 
 - name: Hi.Events | Resolve and store the application secrets
   ansible.builtin.include_tasks: secrets.yml
