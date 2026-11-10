@@ -1,0 +1,41 @@
+{{ ansible_managed | comment }}
+{% if _he_unit == 'web' %}
+[Unit]
+Description=Hi.Events frontend ({{ instance }})
+After=network-online.target php{{ hi_events_php_version }}-fpm.service
+Wants=network-online.target
+
+[Service]
+User={{ hi_events_native_user }}
+WorkingDirectory={{ hi_events_native_frontend }}
+Environment=NODE_ENV=production
+EnvironmentFile={{ hi_events_env_file }}
+ExecStart=/usr/local/bin/node server.js
+{% elif _he_unit == 'queue' %}
+[Unit]
+Description=Hi.Events queue worker ({{ instance }})
+After=network-online.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+User={{ hi_events_native_user }}
+WorkingDirectory={{ hi_events_native_backend }}
+EnvironmentFile={{ hi_events_env_file }}
+ExecStart=/usr/bin/php artisan queue:work --queue=default,webhook-queue --sleep=3 --tries=3 --timeout=60
+{% else %}
+[Unit]
+Description=Hi.Events scheduler ({{ instance }})
+After=network-online.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+User={{ hi_events_native_user }}
+WorkingDirectory={{ hi_events_native_backend }}
+EnvironmentFile={{ hi_events_env_file }}
+ExecStart=/bin/sh -c 'while true; do /usr/bin/php artisan schedule:run --no-interaction; sleep 60; done'
+{% endif %}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

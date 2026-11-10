@@ -1,0 +1,9 @@
+#!/bin/sh
+{{ ansible_managed | comment }}
+# Run artisan as the web user with the application environment, the one every unit gets.
+set -eu
+exec systemd-run --quiet --pipe --wait --collect \
+  -p User={{ hi_events_native_user }} -p Group={{ hi_events_native_user }} \
+  -p WorkingDirectory={{ hi_events_native_backend }} \
+  -p EnvironmentFile={{ hi_events_env_file }} \
+  php artisan "$@"

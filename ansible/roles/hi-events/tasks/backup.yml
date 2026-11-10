@@ -1,8 +1,9 @@
 ---
-# Application-consistent Hi.Events recovery point on Docker: a custom-format dump of the
-# named PostgreSQL database plus the storage directory (uploaded event/ticket media),
-# taken while the application is stopped. The app and its Redis are the only services
-# stopped; the PostgreSQL backend and the stack host's other apps stay untouched.
+# Application-consistent Hi.Events recovery point on Docker or natively: a custom-format
+# dump of the named PostgreSQL database plus the storage directory (uploaded event/ticket
+# media), taken while the application is stopped. Only the application and its Redis
+# (natively: nginx and the web, queue and scheduler units) are stopped; the PostgreSQL
+# backend and the host's other apps stay untouched.
 
 - name: Hi.Events backup | Assert the application recovery contract
   ansible.builtin.assert:
@@ -45,9 +46,9 @@
     - name: Hi.Events backup | Run the shared PBS backup
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ 'native' if hi_events_native | bool else 'docker' }}"
         pbs_client_compose_project: "{{ hi_events_project_dir }}"
-        pbs_client_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
+        pbs_client_stop_services: "{{ hi_events_stop_services }}"
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
         pbs_client_archives:
           - name: database.pxar

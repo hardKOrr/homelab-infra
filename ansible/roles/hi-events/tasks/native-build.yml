@@ -1,0 +1,132 @@
+---
+# Hi.Events native: the pinned Node.js and Yarn, then the pinned release built in a stage
+# beside the install and swapped in whole. Included by native.yml.
+# The pinned Node and Yarn builds, which Debian does not package at these versions.
+- name: Hi.Events native | Install the pinned Node.js and Yarn
+  ansible.builtin.unarchive:
+    src: "{{ item.url }}"
+    dest: /opt
+    remote_src: true
+    checksum: "sha256:{{ item.sha256 }}"
+    creates: "/opt/{{ item.dir }}"
+    extra_opts: [--transform, "s,^[^/]*,{{ item.dir }},"]
+  loop:
+    - url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+      sha256: "{{ app_config.app.native_node_sha256 }}"
+      dir: "node-v{{ app_config.app.native_node_version }}"
+    - url: "https://github.com/yarnpkg/yarn/releases/download/v{{ app_config.app.native_yarn_version }}/yarn-v{{ app_config.app.native_yarn_version }}.tar.gz"
+      sha256: "{{ app_config.app.native_yarn_sha256 }}"
+      dir: "yarn-v{{ app_config.app.native_yarn_version }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+- name: Hi.Events native | Link node and yarn into the path
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "/usr/local/bin/{{ item.name }}"
+    state: link
+  loop:
+    - {name: node, src: "/opt/node-v{{ app_config.app.native_node_version }}/bin/node"}
+    - {name: yarn, src: "/opt/yarn-v{{ app_config.app.native_yarn_version }}/bin/yarn"}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Hi.Events native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ hi_events_native_root }}/.release"
+  register: _he_native_release
+  failed_when: false
+
+- name: Hi.Events native | Build the pinned release
+  when: >-
+    _he_native_release.content is not defined
+    or (_he_native_release.content | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Hi.Events native | Download the source archive
+      ansible.builtin.get_url:
+        url: "https://github.com/HiEventsDev/hi.events/archive/refs/tags/v{{ app_config.app.native_version }}.tar.gz"
+        dest: "{{ hi_events_native_work_dir }}/hi-events-{{ app_config.app.native_version }}.tar.gz"
+        checksum: "sha256:{{ app_config.app.native_sha256 }}"
+        mode: "0600"
+
+    - name: Hi.Events native | Clear a partial stage
+      ansible.builtin.file:
+        path: "{{ hi_events_native_root }}.stage"
+        state: absent
+
+    - name: Hi.Events native | Create the stage directory beside the install
+      ansible.builtin.file:
+        path: "{{ hi_events_native_root }}.stage"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Hi.Events native | Extract the source into the stage
+      ansible.builtin.unarchive:
+        src: "{{ hi_events_native_work_dir }}/hi-events-{{ app_config.app.native_version }}.tar.gz"
+        dest: "{{ hi_events_native_root }}.stage"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+
+    # The image's own flags: its PHP is 8.3 and composer.json only requires ^8.2.
+    - name: Hi.Events native | Install the backend dependencies
+      ansible.builtin.command:
+        argv:
+          - composer
+          - install
+          - "--working-dir={{ hi_events_native_root }}.stage/backend"
+          - --ignore-platform-reqs
+          - --no-interaction
+          - --no-dev
+          - --optimize-autoloader
+          - --prefer-dist
+      environment:
+        COMPOSER_ALLOW_SUPERUSER: "1"
+        COMPOSER_HOME: "{{ hi_events_native_work_dir }}/composer"
+      changed_when: true
+
+    - name: Hi.Events native | Build the frontend
+      ansible.builtin.shell:
+        cmd: >-
+          yarn install --network-timeout 600000 --frozen-lockfile &&
+          yarn build
+        chdir: "{{ hi_events_native_root }}.stage/frontend"
+      environment:
+        NODE_OPTIONS: --max-old-space-size=3072
+        HOME: "{{ hi_events_native_work_dir }}"
+      changed_when: true
+
+    - name: Hi.Events native | Finish the stage and mark it with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          cp VERSION backend/VERSION
+          mkdir -p backend/bootstrap/cache backend/storage/framework/cache/data \
+            backend/storage/framework/sessions backend/storage/framework/views backend/storage/logs
+          chown -R {{ hi_events_native_user }}:{{ hi_events_native_user }} backend
+          printf '%s\n' '{{ app_config.app.native_version }}' > .release
+        chdir: "{{ hi_events_native_root }}.stage"
+        executable: /bin/bash
+      changed_when: true
+
+    # The running install stays until the stage is complete; the services stop only for the
+    # swap. State is not in the tree: storage/app is relinked below and the environment
+    # lives in hi_events_env_file.
+    - name: Hi.Events native | Stop the application for the swap
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ hi_events_native_app_services }}"
+      failed_when: false
+
+    - name: Hi.Events native | Swap the staged release into place
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -rf "{{ hi_events_native_root }}.previous"
+          if [ -e "{{ hi_events_native_root }}" ]; then mv "{{ hi_events_native_root }}" "{{ hi_events_native_root }}.previous"; fi
+          mv "{{ hi_events_native_root }}.stage" "{{ hi_events_native_root }}"
+          rm -rf "{{ hi_events_native_root }}.previous"
+        executable: /bin/bash
+      changed_when: true

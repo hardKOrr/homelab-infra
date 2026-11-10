@@ -49,3 +49,11 @@ backup:
 # # stack: hi-events-lxc    # one declared guest_type: lxc under
 # #                         # infrastructure.stacks in config/infrastructure.yml.
 # Storage is app.data_path on the stack host; Redis runs beside the application.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy builds the release pinned in app.native_version from upstream's source and runs
+# it under nginx and PHP-FPM, with a local Redis. Storage is app.data_path on the guest.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm

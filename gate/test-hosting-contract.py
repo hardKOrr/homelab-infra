@@ -31,7 +31,7 @@ EXTRA_IMPLEMENTED = {
     "flaresolverr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo": {"docker-lxc"},
     "frigate": {"docker-lxc"},
-    "hi-events": {"docker-lxc", "docker-vm"},
+    "hi-events": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "home-assistant": {"docker-lxc"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},

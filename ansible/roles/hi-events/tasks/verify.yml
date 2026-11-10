@@ -5,6 +5,7 @@
 # startup continues after a failed migration, so an HTTP 200 alone proves too little.
 # The image ships neither curl nor wget, hence PHP's own http:// wrapper.
 - name: Hi.Events | Wait for the frontend, the API and the migrated schema
+  when: not (hi_events_native | bool)
   ansible.builtin.command:
     argv:
       - docker
@@ -20,6 +21,23 @@
         [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending
   register: _he_ready
   until: _he_ready.rc == 0
+  retries: 90
+  delay: 5
+  changed_when: false
+
+# Native: the same three checks from the guest, through nginx on the application port
+# (curl is installed by the guest bootstrap) and the artisan wrapper.
+- name: Hi.Events | Wait for the native frontend, the API and the migrated schema
+  when: hi_events_native | bool
+  ansible.builtin.shell:
+    cmd: >-
+      curl -fsS -o /dev/null http://127.0.0.1:{{ app_config.app.port }}/ &&
+      curl -fsS -o /dev/null http://127.0.0.1:{{ app_config.app.port }}/api/public/color-themes &&
+      OUT=$({{ hi_events_artisan }} migrate:status 2>&1); RC=$?;
+      [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending
+    executable: /bin/bash
+  register: _he_native_ready
+  until: _he_native_ready.rc == 0
   retries: 90
   delay: 5
   changed_when: false

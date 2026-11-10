@@ -1,5 +1,5 @@
 ---
 galaxy_info:
   role_name: hi-events
-  description: "Deploys Hi.Events on a Docker stack host or on Kubernetes"
+  description: "Deploys Hi.Events natively on its own LXC or VM, on a Docker stack host, or on Kubernetes"
   min_ansible_version: "2.15"

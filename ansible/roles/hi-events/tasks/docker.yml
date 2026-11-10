@@ -1,0 +1,66 @@
+---
+# Hi.Events on Docker on a stack host (hosting.method: docker, LXC or VM): the all-in-one
+# image plus a password-protected Redis, with the database on the named PostgreSQL backend
+# (playbooks/apps/hi-events.yml provisions it before this role). Kubernetes is
+# kubernetes.yml. Both share secrets.yml and env.yml.
+- name: Hi.Events | Create the project directory
+  ansible.builtin.file:
+    path: "{{ hi_events_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Hi.Events | Create the storage directory
+  # The Alpine image's startup.sh owns storage as www-data (82) and chmods it 0775.
+  # Match it so deploy preserves write access and converges after container startup.
+  ansible.builtin.file:
+    path: "{{ hi_events_data_path }}"
+    state: directory
+    owner: "82"
+    group: "82"
+    mode: "0775"
+
+- name: Hi.Events | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Hi.Events | Assemble the application environment
+  ansible.builtin.include_tasks: env.yml
+
+- name: Hi.Events | Write the environment file
+  ansible.builtin.template:
+    src: hi-events.env.j2
+    dest: "{{ hi_events_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart hi-events
+
+- name: Hi.Events | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ hi_events_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart hi-events
+
+- name: Hi.Events | Pull the images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ hi_events_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Hi.Events | Start the services
+  community.docker.docker_compose_v2:
+    project_src: "{{ hi_events_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Hi.Events | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+# The first start runs the database migrations before the application is ready.
+- name: Hi.Events | Wait until the application is ready
+  ansible.builtin.include_tasks: verify.yml
