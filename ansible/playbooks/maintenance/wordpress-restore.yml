@@ -76,6 +76,12 @@
         resolve_stack_app_instance: "{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Resolve the native guest, which owns the guest named for the instance
+      ansible.builtin.include_role:
+        name: wordpress
+        tasks_from: resolve-native-guest
+      when: app_config.hosting.method == 'native'
+
 - name: "WordPress Restore | Run"
   hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
   become: true
@@ -95,7 +101,7 @@
         restore_snapshot: "{{ snapshot | default('') }}"
         restore_pre_restore_point: "{{ pre_restore_point | default('') }}"
         restore_destination: existing
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
     - name: Record the completed WordPress plan or restore
       ansible.builtin.set_fact:
@@ -137,7 +143,7 @@
       when:
         - overwrite | default(false) | bool
         - >-
-          (app_config.hosting.method == 'docker'
+          (app_config.hosting.method in ['docker', 'native']
            and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'
@@ -145,7 +151,7 @@
     - name: Fail if WordPress restore did not complete
       ansible.builtin.assert:
         that: >-
-          (app_config.hosting.method == 'docker'
+          (app_config.hosting.method in ['docker', 'native']
            and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'

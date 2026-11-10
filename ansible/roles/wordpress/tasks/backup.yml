@@ -1,0 +1,68 @@
+---
+# Native backup: one PBS point with the named database's dump (database.pxar) and
+# wp-content (content.pxar), taken with Apache stopped so both are one moment. Docker keeps
+# its guest-side helper (files/wordpress-recovery); both write the same point layout, so
+# restore.yml serves either. Core and wp-config.php are not in the point.
+- name: WordPress backup | Resolve the recovery identity and paths
+  ansible.builtin.set_fact:
+    _wordpress_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _wordpress_backup_root: "{{ wordpress_project_dir }}/.pbs-backup-root"
+    _application_backup_complete: false
+
+- name: WordPress backup | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _wordpress_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - wordpress_content_path is match('^/[^/].*')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      WordPress backup needs its application-consistent contract, a safe backup id and
+      data path, and a configured PBS target.
+
+- name: WordPress backup | Check wp-content
+  ansible.builtin.stat:
+    path: "{{ wordpress_content_path }}"
+  register: _wordpress_backup_content
+  changed_when: false
+
+- name: WordPress backup | Require wp-content
+  ansible.builtin.assert:
+    that:
+      - _wordpress_backup_content.stat.exists
+      - _wordpress_backup_content.stat.isdir
+      - not _wordpress_backup_content.stat.islnk
+    fail_msg: >-
+      WordPress content path {{ wordpress_content_path }} is missing or linked; refusing
+      to create a recovery point without wp-content.
+
+- name: WordPress backup | Create the dump directory
+  ansible.builtin.file:
+    path: "{{ _wordpress_backup_root }}/database"
+    state: directory
+    mode: "0700"
+
+- name: WordPress backup | Quiesce WordPress, dump its database and push one point
+  block:
+    - name: WordPress backup | Stop this instance, dump its database and upload both archives
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      vars:
+        pbs_client_runtime: native
+        pbs_client_backup_id: "{{ _wordpress_backup_id }}"
+        pbs_client_stop_services: "{{ wordpress_native_services }}"
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_archives:
+          - name: database.pxar
+            path: "{{ _wordpress_backup_root }}/database"
+          - name: content.pxar
+            path: "{{ wordpress_content_path }}"
+
+    - name: WordPress backup | Mark the recovery artifact complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: WordPress backup | Remove the database dump
+      ansible.builtin.file:
+        path: "{{ _wordpress_backup_root }}"
+        state: absent

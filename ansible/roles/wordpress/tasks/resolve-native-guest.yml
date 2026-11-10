@@ -1,0 +1,20 @@
+---
+# Day-2 playbooks run on localhost first: put the native guest, which carries the
+# instance's name, in the wordpress_recovery_<instance> group they run on.
+- name: WordPress native guest | Refresh inventory to get current Proxmox state
+  ansible.builtin.meta: refresh_inventory
+
+- name: WordPress native guest | Require the guest
+  ansible.builtin.assert:
+    that: instance in hostvars
+    fail_msg: "No Proxmox guest is named {{ instance }}; deploy the app or check the instance name."
+
+- name: WordPress native guest | Put it in the recovery group
+  ansible.builtin.add_host:
+    name: "{{ instance }}"
+    groups: "wordpress_recovery_{{ instance }}"
+    ansible_host: >-
+      {{ hostvars[instance].ansible_host
+         | default(hostvars[instance].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+  changed_when: false

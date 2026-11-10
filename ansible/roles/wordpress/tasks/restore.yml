@@ -1,7 +1,7 @@
 ---
 # Restore WordPress's named database and wp-content from one PBS point (database.pxar,
 # content.pxar), possibly another instance's, through the shared swap. Run by
-# playbooks/maintenance/wordpress-restore.yml on the Docker host. WordPress core and
+# playbooks/maintenance/wordpress-restore.yml on the Docker host or the native guest. WordPress core and
 # wp-config.php come from the target's pinned image and environment, never the point, so
 # a point from another instance is safe. A plan lists or previews the point and changes
 # nothing; an overwrite needs a distinct pre-restore point of the target, taken within the
@@ -47,14 +47,14 @@
 - name: WordPress restore | Preview or replace wp-content and the database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ 'native' if wordpress_native | bool else 'docker' }}"
     recovery_swap_backup_id: "{{ wordpress_restore_backup_id }}"
     recovery_swap_pre_restore_backup_id: "{{ _wordpress_restore_target_backup_id }}"
     recovery_swap_archives: [database.pxar, content.pxar]
     # wp-content's parent is the served document root; stage beside it instead.
     recovery_swap_staging_parent: "{{ wordpress_project_dir }}"
     recovery_swap_paths:
-      # The pinned Apache image serves PHP as www-data (uid/gid 33).
+      # Apache serves PHP as www-data (uid/gid 33) in the image and on a native guest.
       - path: "{{ wordpress_content_path }}"
         source: content
         owner: 33
@@ -63,7 +63,7 @@
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: database/database.sql
-    recovery_swap_stop_services: [wordpress]
+    recovery_swap_stop_services: "{{ wordpress_native_services if wordpress_native | bool else ['wordpress'] }}"
     recovery_swap_compose_project: "{{ wordpress_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/wp-login.php"

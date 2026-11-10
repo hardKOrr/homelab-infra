@@ -147,11 +147,6 @@ def fake_docker(root):
     def stub(tasks):
         for task in tasks:
             task.pop("no_log", None)
-            argv = task["ansible.builtin.command"]["argv"]
-            if isinstance(argv, list):
-                argv[0] = str(root / "docker")
-            else:
-                task["ansible.builtin.command"]["argv"] = argv.replace("['docker',", repr([str(root / "docker")])[:-1] + ",")
         return tasks
     return stub
 
@@ -164,6 +159,7 @@ def check_replaced_hook():
             os.environ.update(WORDPRESS_TEST_ROOT=str(root), WORDPRESS_TEST_CASE=case)
             result = run_hook("wordpress", "replaced", {
                 "wordpress_project_dir": str(root), "wordpress_fqdn": "wordpress.example.invalid",
+                "wordpress_cli_argv": [str(root / "docker"), "compose", "run", "--rm", "--no-deps", "wordpress-cli"],
                 "app_config": {"app": {"admin_user": "admin", "admin_email": "admin@example.invalid",
                                        "admin_name": "Fixture Admin", "admin_password": "fixture-only"}},
             }, fake_docker(root))

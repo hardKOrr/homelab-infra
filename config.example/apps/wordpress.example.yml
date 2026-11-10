@@ -23,6 +23,13 @@ app:
 #   method: docker
 # stack: services-lxc
 
+# To run WordPress natively (release archive under Apache) on its own guest instead,
+# uncomment these and choose the guest type; the guest is created on first deploy.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc   # or vm
+
 routing:
   access: public
   identity: catalog

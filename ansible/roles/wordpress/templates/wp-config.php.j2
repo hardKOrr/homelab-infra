@@ -1,0 +1,18 @@
+<?php
+{{ ansible_managed | comment('c') }}
+define( 'DB_NAME', '{{ app_config.app.database.name | replace('\\', '\\\\') | replace("'", "\\'") }}' );
+define( 'DB_USER', '{{ app_config.app.database_user | replace('\\', '\\\\') | replace("'", "\\'") }}' );
+define( 'DB_PASSWORD', '{{ app_config.app.database_password | replace('\\', '\\\\') | replace("'", "\\'") }}' );
+define( 'DB_HOST', '{{ app_config.app.database_host }}:{{ app_config.app.database_port }}' );
+define( 'DB_CHARSET', 'utf8' );
+define( 'DB_COLLATE', '' );
+require_once '{{ wordpress_native_keys }}';
+$table_prefix = '{{ app_config.app.table_prefix }}';
+define( 'WP_DEBUG', false );
+// The release is pinned by the app's defaults; an upgrade is a reviewed config change.
+define( 'WP_AUTO_UPDATE_CORE', false );
+define( 'FS_METHOD', 'direct' );
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+require_once ABSPATH . 'wp-settings.php';

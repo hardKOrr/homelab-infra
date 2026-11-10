@@ -1,0 +1,20 @@
+---
+# Runs inside the shared PBS backup while Apache is stopped, before the upload.
+- name: WordPress backup | Dump the stopped instance's database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_client_runtime: native
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _wordpress_backup_root }}/database/database.sql"
+
+- name: WordPress backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _wordpress_backup_root }}/database/database.sql"
+  register: _wordpress_backup_dump
+  changed_when: false
+
+- name: WordPress backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _wordpress_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: WordPress's database dump is empty; refusing to publish the recovery point.

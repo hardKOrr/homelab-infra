@@ -4,43 +4,19 @@
 # before WordPress starts.
 - name: WordPress restore | Point the site URLs at the target
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - option
-      - update
-      - "{{ item }}"
-      - "https://{{ wordpress_fqdn }}"
-      - --skip-plugins
-      - --skip-themes
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['option', 'update', item, 'https://' ~ wordpress_fqdn,
+            '--skip-plugins', '--skip-themes', '--allow-root'] }}
   loop: [home, siteurl]
   changed_when: true
 
 - name: WordPress restore | Look for the target administrator
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - user
-      - get
-      - "{{ app_config.app.admin_user }}"
-      - --field=ID
-      - --skip-plugins
-      - --skip-themes
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['user', 'get', app_config.app.admin_user, '--field=ID',
+            '--skip-plugins', '--skip-themes', '--allow-root'] }}
   register: _wordpress_restore_admin
   changed_when: false
   failed_when: false
@@ -48,8 +24,7 @@
 - name: WordPress restore | Give the target administrator its own credential
   ansible.builtin.command:
     argv: >-
-      {{ ['docker', 'compose', '--project-directory', wordpress_project_dir,
-          'run', '--rm', '--no-deps', 'wordpress-cli', 'user']
+      {{ wordpress_cli_argv + ['user']
          + (['update', app_config.app.admin_user,
              '--user_pass=' ~ app_config.app.admin_password,
              '--user_email=' ~ app_config.app.admin_email]
