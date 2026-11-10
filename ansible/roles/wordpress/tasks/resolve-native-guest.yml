@@ -1,20 +1,33 @@
 ---
-# Day-2 playbooks run on localhost first: put the native guest, which carries the
-# instance's name, in the wordpress_recovery_<instance> group they run on.
+# Day-2 playbooks run on localhost first: put the instance's own native guest in the
+# wordpress_recovery_<instance> group they run on. The shared resolver accepts only a
+# `_+lab` guest (tagged for the instance, or the one unclaimed owned guest of that exact
+# name) of the configured type; an untagged or ambiguous match fails before any remote
+# mutation.
 - name: WordPress native guest | Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory
 
-- name: WordPress native guest | Require the guest
+- name: WordPress native guest | Resolve the owned guest of the configured type
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/resolve-instance-guest.yml
+  vars:
+    resolve_guest_instance: "{{ instance }}"
+    resolve_guest_type: "{{ app_config.proxmox.guest_type | default('') }}"
+
+- name: WordPress native guest | Require exactly one owned guest
   ansible.builtin.assert:
-    that: instance in hostvars
-    fail_msg: "No Proxmox guest is named {{ instance }}; deploy the app or check the instance name."
+    that:
+      - resolve_guest_hosts | length == 1
+      - resolve_guest_hosts[0] in (groups['lab_managed'] | default([]))
+    fail_msg: >-
+      No owned (_+lab) {{ app_config.proxmox.guest_type | default('') }} guest was found for
+      {{ instance }}; deploy the app or check the instance name. Untagged guests are never used.
 
 - name: WordPress native guest | Put it in the recovery group
   ansible.builtin.add_host:
-    name: "{{ instance }}"
+    name: "{{ resolve_guest_hosts[0] }}"
     groups: "wordpress_recovery_{{ instance }}"
     ansible_host: >-
-      {{ hostvars[instance].ansible_host
-         | default(hostvars[instance].ansible_default_ipv4.address | default('')) }}
+      {{ hostvars[resolve_guest_hosts[0]].ansible_host
+         | default(hostvars[resolve_guest_hosts[0]].ansible_default_ipv4.address | default('')) }}
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
   changed_when: false

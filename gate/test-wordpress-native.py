@@ -66,6 +66,9 @@ assert "tasks/database/dump.yml" in (role / "tasks/backup-quiesced.yml").read_te
 schedule = (role / "tasks/recovery-schedule.yml").read_text()
 assert "'native' if wordpress_native" in schedule and "ansible.builtin.cron" in schedule
 assert "recovery-schedule.yml" in main and "recovery-docker" not in main
+guest = (role / "tasks/resolve-native-guest.yml").read_text()
+assert "tasks/proxmox/resolve-instance-guest.yml" in guest and "lab_managed" in guest
+assert "instance in hostvars" not in guest, "an untagged same-name guest is never accepted"
 restore = (role / "tasks/restore.yml").read_text()
 assert "wordpress_native | bool" in restore and "tasks/recovery/restore-swap.yml" in restore
 
