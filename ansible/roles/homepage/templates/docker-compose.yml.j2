@@ -1,0 +1,16 @@
+# docker-compose.yml for Homepage ({{ instance }})
+# Managed by homelab-infra.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - HOMEPAGE_ALLOWED_HOSTS={{ homepage_fqdn }}
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"
+    volumes:
+      - "/opt/{{ instance }}/config:/app/config"
