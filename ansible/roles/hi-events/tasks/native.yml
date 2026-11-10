@@ -52,7 +52,9 @@
     group: "{{ item.owner }}"
     mode: "{{ item.mode }}"
   loop:
-    - {path: "{{ hi_events_project_dir }}", owner: root, mode: "0750"}
+    # Traverse-only for others: www-data reaches src/ and storage/ below; the environment
+    # file and the build work directory stay private.
+    - {path: "{{ hi_events_project_dir }}", owner: root, mode: "0711"}
     - {path: "{{ hi_events_native_work_dir }}", owner: root, mode: "0700"}
     - {path: "{{ hi_events_data_path }}", owner: "{{ hi_events_native_user }}", mode: "0775"}
     - {path: "{{ hi_events_data_path }}/public", owner: "{{ hi_events_native_user }}", mode: "0775"}
