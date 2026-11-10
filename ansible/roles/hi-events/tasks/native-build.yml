@@ -2,21 +2,36 @@
 # Hi.Events native: the pinned Node.js and Yarn, then the pinned release built in a stage
 # beside the install and swapped in whole. Included by native.yml.
 # The pinned Node and Yarn builds, which Debian does not package at these versions.
-- name: Hi.Events native | Install the pinned Node.js and Yarn
+- name: Hi.Events native | Name the pinned toolchain archives
+  ansible.builtin.set_fact:
+    _he_native_toolchain:
+      - url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        sha256: "{{ app_config.app.native_node_sha256 }}"
+        dir: "node-v{{ app_config.app.native_node_version }}"
+      - url: "https://github.com/yarnpkg/yarn/releases/download/v{{ app_config.app.native_yarn_version }}/yarn-v{{ app_config.app.native_yarn_version }}.tar.gz"
+        sha256: "{{ app_config.app.native_yarn_sha256 }}"
+        dir: "yarn-v{{ app_config.app.native_yarn_version }}"
+
+- name: Hi.Events native | Download the pinned Node.js and Yarn archives
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ hi_events_native_work_dir }}/{{ item.url | basename }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _he_native_toolchain }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+- name: Hi.Events native | Extract the pinned Node.js and Yarn
   ansible.builtin.unarchive:
-    src: "{{ item.url }}"
+    src: "{{ hi_events_native_work_dir }}/{{ item.url | basename }}"
     dest: /opt
     remote_src: true
-    checksum: "sha256:{{ item.sha256 }}"
     creates: "/opt/{{ item.dir }}"
     extra_opts: [--transform, "s,^[^/]*,{{ item.dir }},"]
-  loop:
-    - url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
-      sha256: "{{ app_config.app.native_node_sha256 }}"
-      dir: "node-v{{ app_config.app.native_node_version }}"
-    - url: "https://github.com/yarnpkg/yarn/releases/download/v{{ app_config.app.native_yarn_version }}/yarn-v{{ app_config.app.native_yarn_version }}.tar.gz"
-      sha256: "{{ app_config.app.native_yarn_sha256 }}"
-      dir: "yarn-v{{ app_config.app.native_yarn_version }}"
+  loop: "{{ _he_native_toolchain }}"
   loop_control:
     label: "{{ item.dir }}"
 
