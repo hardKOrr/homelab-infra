@@ -35,13 +35,14 @@
   loop_control:
     label: "{{ item.dir }}"
 
-- name: Hi.Events native | Link node and yarn into the path
+- name: Hi.Events native | Link node, npm and yarn into the path
   ansible.builtin.file:
     src: "{{ item.src }}"
     dest: "/usr/local/bin/{{ item.name }}"
     state: link
   loop:
     - {name: node, src: "/opt/node-v{{ app_config.app.native_node_version }}/bin/node"}
+    - {name: npm, src: "/opt/node-v{{ app_config.app.native_node_version }}/bin/npm"}
     - {name: yarn, src: "/opt/yarn-v{{ app_config.app.native_yarn_version }}/bin/yarn"}
   loop_control:
     label: "{{ item.name }}"
