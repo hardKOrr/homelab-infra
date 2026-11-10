@@ -22,6 +22,10 @@ assert "native_version" in install and "node_version" in install
 
 playbook = (repo / "ansible/playbooks/apps/uptime-kuma.yml").read_text()
 assert "tasks_from: provision" in playbook and "in ['docker', 'native']" in playbook
+# A native guest gets the same OS baseline as a Docker stack host (bootstrap marker kept).
+for task in yaml.safe_load(playbook)[1]["tasks"]:
+    if task["name"] in ("Bootstrap guest", "Configure OS update notifications"):
+        assert "hosting.method in ['docker', 'native']" in str(task["when"]), task["name"]
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
