@@ -108,7 +108,7 @@
         wordpress_restore_complete: >-
           {{ _application_restore_complete | default(false) | bool
              or not (overwrite | default(false) | bool) }}
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "WordPress Restore | Run on Kubernetes"
   hosts: localhost

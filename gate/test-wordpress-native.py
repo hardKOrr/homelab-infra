@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from jinja2 import Environment
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
@@ -29,6 +30,14 @@ deploy = next(play for play in plays if play["name"] == "WordPress | Deploy")
 for task in deploy["tasks"]:
     if task["name"] in ("Bootstrap guest", "Deploy WordPress"):
         assert "in ['docker', 'native']" in str(task["when"]), task["name"]
+
+# A successful native plan/restore must reach the final completion assertion too.
+restore_plays = yaml.safe_load((repo / "ansible/playbooks/maintenance/wordpress-restore.yml").read_text())
+completion = next(task for play in restore_plays for task in play.get("tasks", [])
+                  if task["name"] == "Record the completed WordPress plan or restore")
+condition = Environment().compile_expression(completion["when"])
+for method in ("docker", "native", "kubernetes"):
+    assert condition(hostvars={"localhost": {"app_config": {"hosting": {"method": method}}}}) == (method != "kubernetes")
 
 # Docker's Compose-only pieces stay out of the native path, and every WP-CLI call goes
 # through one prefix that the method selects.
