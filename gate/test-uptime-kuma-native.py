@@ -27,10 +27,16 @@ for task in yaml.safe_load(playbook)[1]["tasks"]:
     if task["name"] in ("Bootstrap guest", "Configure OS update notifications"):
         assert "hosting.method in ['docker', 'native']" in str(task["when"]), task["name"]
 
+# Creating the data directory before Git clone must leave the clone directory empty.
+role_defaults = yaml.safe_load((role / "defaults/main.yml").read_text())
+source = Path(role_defaults["uptime_kuma_native_dir"])
+data = Path(app["data_path"].replace("{{ instance }}", "uptime-kuma"))
+assert source != data and source not in data.parents, (source, data)
+
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     variables = {"instance": "uptime-kuma", "uptime_kuma_service": "uptime-kuma",
-                 "uptime_kuma_native_dir": "/opt/uptime-kuma", "uptime_kuma_node_dir": "/opt/node-v24-linux-x64",
+                 "uptime_kuma_native_dir": str(source), "uptime_kuma_node_dir": "/opt/node-v24-linux-x64",
                  "homelabinfra_config": {"timezone": "UTC"},
                  "app_config": {"app": {**app, "data_path": "/opt/uptime-kuma/data"}}}
     play = root / "render.yml"
@@ -40,7 +46,7 @@ with tempfile.TemporaryDirectory() as directory:
                             text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     unit = (root / "unit").read_text()
-assert "ExecStart=/opt/node-v24-linux-x64/bin/node /opt/uptime-kuma/server/server.js" in unit
+assert "ExecStart=/opt/node-v24-linux-x64/bin/node /opt/uptime-kuma/source/server/server.js" in unit
 for expected in ('Environment="DATA_DIR=/opt/uptime-kuma/data/"', f'Environment="UPTIME_KUMA_PORT={app["port"]}"',
                  "User=uptime-kuma"):
     assert expected in unit, expected

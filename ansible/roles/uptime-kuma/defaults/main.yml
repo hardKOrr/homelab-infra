@@ -12,5 +12,5 @@ uptime_kuma_env_file: "/opt/{{ instance }}/.env"
 # release (tasks/native-install.yml, tasks/native.yml). State stays in app.data_path.
 uptime_kuma_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
 uptime_kuma_service: uptime-kuma
-uptime_kuma_native_dir: /opt/uptime-kuma
+uptime_kuma_native_dir: /opt/uptime-kuma/source
 uptime_kuma_node_dir: "/opt/node-v{{ app_config.app.node_version | default('') }}-linux-x64"
