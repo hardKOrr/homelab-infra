@@ -1,7 +1,8 @@
 ---
 # Deploy Homepage, a lab-wide dashboard generated from config/.generated/facts.yml, onto
-# the Kubernetes hosting backend (default), or on Docker on a stack host (LXC or VM) with
-# `hosting.method: docker` and `stack: <name>`.
+# the Kubernetes hosting backend (default), on Docker on a stack host (LXC or VM) with
+# `hosting.method: docker` and `stack: <name>`, or natively on its own LXC or VM with
+# `hosting.method: native` and `proxmox.guest_type: lxc|vm`.
 - name: "Homepage | Deploy"
   hosts: localhost
   become: false
@@ -36,6 +37,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: homepage
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_homepage_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Homepage runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the dashboard estate
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -53,6 +62,13 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: homepage
+      when: app_config.hosting.method == 'native'
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -65,7 +81,7 @@
         tasks_from: kubernetes
       when: app_config.hosting.method == 'kubernetes'
 
-- name: "Homepage | Deploy on Docker"
+- name: "Homepage | Deploy on Docker or natively"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -86,21 +102,25 @@
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Homepage
       ansible.builtin.include_role:
         name: homepage
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Homepage | Wire"
   hosts: localhost
   become: false
   gather_facts: false
   vars:
-    _hp_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
+    _hp_docker: "{{ hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
@@ -143,14 +163,14 @@
           {{ groups['deploy_' ~ instance] if _hp_docker | bool
              else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
                   | map(attribute='name') | list }}
-        record_guest_kind: "{{ 'docker' if _hp_docker | bool else 'kubernetes' }}"
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method if _hp_docker | bool else 'kubernetes' }}"
         record_guest_url: "https://{{ hostvars['localhost'].homepage_fqdn }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: Homepage deployed
         notify_message: >-
-          {{ instance }} is running on {{ 'Docker' if _hp_docker | bool else 'the Kubernetes backend' }} at
+          {{ instance }} is running on {{ {'docker': 'Docker', 'native': 'its own guest'}[hostvars['localhost'].app_config.hosting.method] | default('the Kubernetes backend') }} at
           https://{{ hostvars['localhost'].homepage_fqdn }}
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

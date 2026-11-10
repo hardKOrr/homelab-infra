@@ -1,0 +1,7 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/homepage.yml and config/apps/<instance>.yml.
+homepage_service: "{{ instance }}"
+homepage_native_root: "/opt/{{ instance }}"
+homepage_native_config: "/etc/{{ instance }}"
+homepage_native_user: "{{ instance }}"

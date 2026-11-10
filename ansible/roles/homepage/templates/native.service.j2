@@ -1,0 +1,23 @@
+# Homepage ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Source install, release {{ app_config.app.native_version }}.
+[Unit]
+Description=Homepage ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ homepage_native_user }}
+Group={{ homepage_native_user }}
+WorkingDirectory={{ homepage_native_root }}
+Environment="NODE_ENV=production"
+Environment="NEXT_TELEMETRY_DISABLED=1"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="HOMEPAGE_ALLOWED_HOSTS={{ homepage_fqdn }}"
+Environment="HOMEPAGE_CONFIG_DIR={{ homepage_native_config }}"
+ExecStart=/usr/local/bin/node {{ homepage_native_root }}/node_modules/next/dist/bin/next start -H 0.0.0.0 -p {{ app_config.app.port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

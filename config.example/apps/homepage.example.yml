@@ -26,3 +26,11 @@ presentation:
 # stack: homepage          # a stack with guest_type: vm (the default), or
 # # stack: homepage-lxc    # one declared guest_type: lxc under
 # #                        # infrastructure.stacks in config/infrastructure.yml.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy builds the release pinned in app.native_version from Homepage's source with
+# pnpm and runs it as a systemd service.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm
