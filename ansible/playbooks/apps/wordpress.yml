@@ -1,6 +1,7 @@
 ---
 # Deploy an instanced WordPress service with the method selected in hosting.method.
-# Configurations that do not select a method keep using the services Docker stack.
+# Configurations that do not select a method keep using the services Docker stack on a VM;
+# an LXC stack (guest_type: lxc) selects Docker on an LXC.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/wordpress.yml -e instance=wordpress
@@ -139,6 +140,10 @@
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy WordPress
       ansible.builtin.include_role:
         name: wordpress
