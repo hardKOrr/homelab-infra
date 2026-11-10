@@ -21,7 +21,8 @@
   ansible.builtin.lineinfile:
     path: "{{ hi_events_env_file }}"
     regexp: "^{{ item.key }}="
-    line: "{{ item.key }}='{{ item.value }}'"
+    line: >-
+      {{ item.key }}="{{ item.value | regex_replace('([\\"$])', '\\\1') | regex_replace('\n', '\\n') }}"
     mode: "0600"
   loop:
     - {key: APP_KEY, value: "{{ restore_source_hi_events_secrets.app_key }}"}
