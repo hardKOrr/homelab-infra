@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ wordpress_project_dir }}"
     state: restarted
+  when: not (wordpress_native | bool)
+
+- name: Restart native WordPress
+  ansible.builtin.systemd:
+    name: apache2
+    state: restarted
+  listen: Restart WordPress
+  when: wordpress_native | bool

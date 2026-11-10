@@ -1,13 +1,26 @@
 ---
-# Default configuration for WordPress on the services Docker stack. Kubernetes is
-# opt-in through hosting.method. The application database is deliberately external:
-# deploy the named MariaDB backend first.
+# Default configuration for WordPress on the services Docker stack. Kubernetes and
+# native (an own LXC or VM, from the instance's proxmox.guest_type) are opt-in through
+# hosting.method. The application database is deliberately external: deploy the named
+# MariaDB backend first.
 wordpress_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: services
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 1024
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
     # The official Apache image keeps the WordPress core, wp-config.php, wp-content,
@@ -15,6 +28,13 @@ wordpress_defaults:
     # is pinned so an image update is an explicit, reviewable config change.
     image: wordpress:6.9.4-php8.3-apache
     cli_image: wordpress:cli-2.12.0-php8.3
+    # Native: the release archive from wordpress.org, at the same version as the image
+    # (https://developer.wordpress.org/advanced-administration/before-install/howto-install/),
+    # and the WP-CLI phar matching cli_image.
+    native_version: "6.9.4"
+    native_sha256: db610ad9f549e0abb5af3e3d5c6729c58d874439654cdf0afea425b2ea895f35
+    native_cli_version: "2.12.0"
+    native_cli_sha256: ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c
     # Kubernetes persists wp-content on the cluster's default StorageClass. Docker keeps
     # using data_path below and ignores this Kubernetes-only size.
     storage: 10

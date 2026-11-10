@@ -147,11 +147,6 @@ def fake_docker(root):
     def stub(tasks):
         for task in tasks:
             task.pop("no_log", None)
-            argv = task["ansible.builtin.command"]["argv"]
-            if isinstance(argv, list):
-                argv[0] = str(root / "docker")
-            else:
-                task["ansible.builtin.command"]["argv"] = argv.replace("['docker',", repr([str(root / "docker")])[:-1] + ",")
         return tasks
     return stub
 
@@ -164,6 +159,7 @@ def check_replaced_hook():
             os.environ.update(WORDPRESS_TEST_ROOT=str(root), WORDPRESS_TEST_CASE=case)
             result = run_hook("wordpress", "replaced", {
                 "wordpress_project_dir": str(root), "wordpress_fqdn": "wordpress.example.invalid",
+                "wordpress_cli_argv": [str(root / "docker"), "compose", "run", "--rm", "--no-deps", "wordpress-cli"],
                 "app_config": {"app": {"admin_user": "admin", "admin_email": "admin@example.invalid",
                                        "admin_name": "Fixture Admin", "admin_password": "fixture-only"}},
             }, fake_docker(root))
@@ -229,20 +225,33 @@ def check_wordpress_health_redirects():
     assert swap["recovery_swap_health_url"].endswith("/wp-login.php")
 
 
-def check_backup(case):
+# Native runtime: `systemctl <action> <unit>` and the shared database client run directly.
+SYSTEMCTL = r'''#!/bin/sh
+echo "systemctl $1 $2" >> "$WORDPRESS_TEST_ROOT/docker.log"
+'''
+DATABASE_CLIENT = r'''#!/bin/sh
+echo "db $1" >> "$WORDPRESS_TEST_ROOT/docker.log"
+echo DATABASE > "$2"
+'''
+
+
+def check_backup(case, runtime="docker"):
     with tempfile.TemporaryDirectory(prefix="wordpress-recovery-test-") as directory:
         root = Path(directory)
         bin_dir = root / "bin"
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
         write_executable(bin_dir / "pbs-client.sh", PBS)
+        write_executable(bin_dir / "systemctl", SYSTEMCTL)
+        write_executable(bin_dir / "database-client.sh", DATABASE_CLIENT)
         (root / "project").mkdir()
         content = root / "data/wp-content"
         content.mkdir(parents=True)
         config = root / "wordpress.env"
         values = {
             "WORDPRESS_PROJECT_DIR": str(root / "project"),
-            "WORDPRESS_SERVICE": "wordpress",
+            "WORDPRESS_RUNTIME": runtime,
+            "WORDPRESS_SERVICE": "apache2" if runtime == "native" else "wordpress",
             "WORDPRESS_CONTENT_PATH": str(content),
             "WORDPRESS_DB_HOST": "127.0.0.1",
             "WORDPRESS_DB_PORT": "3306",
@@ -251,7 +260,8 @@ def check_backup(case):
             "WORDPRESS_DB_PASSWORD": "fixture-only",
             "WORDPRESS_DB_PROVIDER": "mariadb",
             "WORDPRESS_DB_CLIENT_IMAGE": "mariadb:test",
-            "DATABASE_CLIENT_SCRIPT": "/usr/local/lib/homelab-infra/database-client.sh",
+            "DATABASE_CLIENT_SCRIPT": str(bin_dir / "database-client.sh")
+            if runtime == "native" else "/usr/local/lib/homelab-infra/database-client.sh",
             "PBS_CLIENT_SCRIPT": str(bin_dir / "pbs-client.sh"),
             "PBS_CLIENT_CONFIG": str(root / "pbs-client.env"),
             "PBS_BACKUP_ID": "wordpress",
@@ -271,7 +281,9 @@ def check_backup(case):
                                 capture_output=True, check=False)
         assert (result.returncode == 0) == (case == "success"), result.stdout + result.stderr
         calls = (root / "docker.log").read_text().splitlines()
-        assert calls[0] == "compose stop" and calls[1] == "db dump" and calls[-1] == "compose start", calls
+        stop, start = (("systemctl stop apache2", "systemctl start apache2") if runtime == "native"
+                       else ("compose stop", "compose start"))
+        assert calls[0] == stop and calls[1] == "db dump" and calls[-1] == start, calls
         assert calls[2].startswith("pbs database.pxar:/var/tmp/homelab-wordpress.")
         assert calls[2].endswith(f" content.pxar:{content}")
         for mode in ("--restore", "--plan"):
@@ -287,6 +299,8 @@ def main():
     check_replaced_hook()
     check_backup("success")
     check_backup("upload-failure")
+    check_backup("success", "native")
+    check_backup("upload-failure", "native")
     print("WordPress: restore through the shared swap, target identity repair and backup helper passed")
 
 

@@ -67,41 +67,13 @@
     vault_item_secret_fields: [admin_password, database_password]
   no_log: true
 
-- name: WordPress | Render environment file
-  ansible.builtin.template:
-    src: wordpress.env.j2
-    dest: "{{ wordpress_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart WordPress
+- name: WordPress | Deploy the Compose project
+  ansible.builtin.include_tasks: docker.yml
+  when: not (wordpress_native | bool)
 
-- name: WordPress | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ wordpress_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  no_log: true
-  notify: Restart WordPress
-
-- name: WordPress | Pull application images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ wordpress_project_dir }}"
-    policy: missing
-  no_log: true
-
-- name: WordPress | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ wordpress_project_dir }}"
-    state: present
-    remove_orphans: true
-  no_log: true
-
-- name: WordPress | Apply pending restart
-  ansible.builtin.meta: flush_handlers
+- name: WordPress | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: wordpress_native | bool
 
 - name: WordPress | Wait for login endpoint
   ansible.builtin.uri:
@@ -116,18 +88,11 @@
 
 - name: WordPress | Check whether core is installed
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - core
-      - is-installed
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['core',
+            'is-installed',
+            '--allow-root'] }}
   register: _wordpress_core_installed
   changed_when: false
   failed_when: false
@@ -145,24 +110,17 @@
 
 - name: WordPress | Initialize the administrator without printing credentials
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - core
-      - install
-      - "--url=https://{{ wordpress_fqdn }}"
-      - "--title={{ app_config.app.site_title }}"
-      - "--admin_user={{ app_config.app.admin_user }}"
-      - "--admin_password={{ _wordpress_admin_password }}"
-      - "--admin_email={{ app_config.app.admin_email }}"
-      - --skip-email
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['core',
+            'install',
+            '--url=https://' ~ wordpress_fqdn,
+            '--title=' ~ app_config.app.site_title,
+            '--admin_user=' ~ app_config.app.admin_user,
+            '--admin_password=' ~ _wordpress_admin_password,
+            '--admin_email=' ~ app_config.app.admin_email,
+            '--skip-email',
+            '--allow-root'] }}
   register: _wordpress_core_install
   changed_when: true
   no_log: true
@@ -195,21 +153,14 @@
 
 - name: WordPress | Install and activate the maintained block theme
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - theme
-      - install
-      - "{{ app_config.app.default_theme }}"
-      - --activate
-      - --force
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['theme',
+            'install',
+            app_config.app.default_theme,
+            '--activate',
+            '--force',
+            '--allow-root'] }}
   register: _wordpress_theme_install
   changed_when: true
   no_log: true
@@ -219,22 +170,15 @@
 
 - name: WordPress | Set the initial administrator display name
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - user
-      - update
-      - "{{ app_config.app.admin_user }}"
-      - "--display_name={{ app_config.app.admin_name }}"
-      - --skip-plugins
-      - --skip-themes
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['user',
+            'update',
+            app_config.app.admin_user,
+            '--display_name=' ~ app_config.app.admin_name,
+            '--skip-plugins',
+            '--skip-themes',
+            '--allow-root'] }}
   changed_when: true
   no_log: true
   when:
@@ -243,19 +187,12 @@
 
 - name: WordPress | Verify the maintained block theme is active
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ wordpress_project_dir }}"
-      - run
-      - --rm
-      - --no-deps
-      - wordpress-cli
-      - theme
-      - is-active
-      - "{{ app_config.app.default_theme }}"
-      - --allow-root
+    argv: >-
+      {{ wordpress_cli_argv
+         + ['theme',
+            'is-active',
+            app_config.app.default_theme,
+            '--allow-root'] }}
   changed_when: false
   no_log: true
   when:
@@ -289,84 +226,5 @@
     - app_config.backup.enabled | default(false) | bool
     - not (wordpress_pbs_available | default(false) | bool)
 
-- name: WordPress | Install the shared PBS client and this instance's settings
-  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
-  vars:
-    pbs_client_runtime: docker
-    pbs_client_config_state: >-
-      {{ 'present' if wordpress_pbs_available | default(false) | bool
-         and app_config.backup.enabled | default(false) | bool else 'absent' }}
-    k8s_pbs_available: "{{ wordpress_pbs_available | default(false) }}"
-    k8s_pbs_repository: "{{ wordpress_pbs_repository | default('') }}"
-    k8s_pbs_fingerprint: "{{ wordpress_pbs_fingerprint | default('') }}"
-    k8s_pbs_password: "{{ wordpress_pbs_password | default('') }}"
-
-- name: WordPress | Resolve the server-matched database client
-  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
-  vars:
-    database_app_instance: "{{ instance }}"
-    database_app_config: "{{ app_config.app.database }}"
-
-- name: WordPress | Install the shared database client
-  ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
-
-- name: WordPress | Install recovery helper
-  ansible.builtin.copy:
-    src: wordpress-recovery
-    dest: "{{ wordpress_recovery_script }}"
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: WordPress | Create recovery configuration directory
-  ansible.builtin.file:
-    path: "{{ wordpress_recovery_config_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: WordPress | Validate backup schedule
-  ansible.builtin.assert:
-    that:
-      - (app_config.backup.schedule | string).split() | length == 5
-      - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
-      - app_config.backup.retention_days | int > 0
-    fail_msg: "WordPress backup.schedule must be a five-field cron expression and retention_days must be positive."
-  when: app_config.backup.enabled | default(false) | bool
-
-- name: WordPress | Write recovery configuration
-  ansible.builtin.template:
-    src: wordpress-recovery.env.j2
-    dest: "{{ wordpress_recovery_config }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  when: wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
-
-- name: WordPress | Schedule application-consistent backup
-  ansible.builtin.cron:
-    name: "homelab-infra WordPress backup {{ instance }}"
-    cron_file: "homelab-infra-wordpress-{{ instance }}"
-    user: root
-    minute: "{{ (app_config.backup.schedule.split())[0] }}"
-    hour: "{{ (app_config.backup.schedule.split())[1] }}"
-    day: "{{ (app_config.backup.schedule.split())[2] }}"
-    month: "{{ (app_config.backup.schedule.split())[3] }}"
-    weekday: "{{ (app_config.backup.schedule.split())[4] }}"
-    job: "WORDPRESS_INSTANCE={{ instance }} {{ wordpress_recovery_script }} --backup"
-  when: wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
-
-- name: WordPress | Remove stale recovery schedule when backup is unavailable
-  ansible.builtin.cron:
-    name: "homelab-infra WordPress backup {{ instance }}"
-    cron_file: "homelab-infra-wordpress-{{ instance }}"
-    state: absent
-  when: not (wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)
-
-- name: WordPress | Remove stale recovery configuration when backup is unavailable
-  ansible.builtin.file:
-    path: "{{ wordpress_recovery_config }}"
-    state: absent
-  when: not (wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)
+- name: WordPress | Install the recovery helper and schedule
+  ansible.builtin.include_tasks: recovery-schedule.yml

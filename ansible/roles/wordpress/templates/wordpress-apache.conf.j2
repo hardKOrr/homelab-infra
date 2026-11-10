@@ -1,0 +1,15 @@
+{{ ansible_managed | comment }}
+<VirtualHost *:{{ app_config.app.port }}>
+    DocumentRoot {{ wordpress_native_root }}
+{% if homelabinfra_infra.reverse_proxy.host | default('') | length > 0 %}
+    # Caddy terminates TLS. Trust the scheme header only from that proxy.
+    SetEnvIfExpr "%{REMOTE_ADDR} == '{{ homelabinfra_infra.reverse_proxy.host | urlsplit('hostname') }}' && req('X-Forwarded-Proto') == 'https'" HTTPS=on
+{% endif %}
+    <Directory {{ wordpress_native_root }}>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>

@@ -1,0 +1,37 @@
+---
+# Docker method: the Compose project, its environment file and the first start.
+- name: WordPress | Render environment file
+  ansible.builtin.template:
+    src: wordpress.env.j2
+    dest: "{{ wordpress_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart WordPress
+
+- name: WordPress | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ wordpress_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart WordPress
+
+- name: WordPress | Pull application images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ wordpress_project_dir }}"
+    policy: missing
+  no_log: true
+
+- name: WordPress | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ wordpress_project_dir }}"
+    state: present
+    remove_orphans: true
+  no_log: true
+
+- name: WordPress | Apply pending restart
+  ansible.builtin.meta: flush_handlers

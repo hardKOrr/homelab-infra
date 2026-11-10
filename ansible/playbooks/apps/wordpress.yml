@@ -1,7 +1,8 @@
 ---
 # Deploy an instanced WordPress service with the method selected in hosting.method.
 # Configurations that do not select a method keep using the services Docker stack on a VM;
-# an LXC stack (guest_type: lxc) selects Docker on an LXC.
+# an LXC stack (guest_type: lxc) selects Docker on an LXC. `hosting.method: native` (with
+# `proxmox.guest_type`: lxc or vm) runs WordPress's release archive under Apache on its own guest.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/wordpress.yml -e instance=wordpress
@@ -45,6 +46,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: wordpress
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native WordPress runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Require the named MariaDB backend
       ansible.builtin.assert:
@@ -100,19 +109,27 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: wordpress
+      when: app_config.hosting.method == 'native'
+
 - name: "WordPress | Open Docker network access"
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: Open the app's declared access from its Docker host
+    - name: Open the app's declared access from its Docker host or native guest
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
       vars:
-        _wordpress_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if hostvars['localhost'].app_config.hosting.method == 'docker' else {} }}"
+        _wordpress_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] else {} }}"
         app_config: "{{ hostvars['localhost'].app_config }}"
         wiring_app_name: "{{ instance }}"
         wiring_upstream_host: "{{ _wordpress_fw_host.ansible_host }}"
         wiring_firewall: "{{ app_config.firewall | default({}) }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "WordPress | Open Kubernetes network access"
   hosts: localhost
@@ -137,9 +154,10 @@
         name: homelabinfra_infra
       failed_when: false
   tasks:
-    - name: Bootstrap Docker guest
+    - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
@@ -153,7 +171,7 @@
         wordpress_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
         wordpress_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
         wordpress_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "WordPress | Deploy on Kubernetes"
   hosts: localhost
@@ -176,7 +194,7 @@
   gather_facts: false
   vars:
     app_config: "{{ hostvars['localhost'].app_config }}"
-    _wordpress_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method == 'docker' else {} }}"
+    _wordpress_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method in ['docker', 'native'] else {} }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ homelabinfra_infra.kubernetes.ingress_vip
@@ -207,13 +225,13 @@
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
       when: homelabinfra_infra.dns.provider | default('none') != 'none'
-    - name: Record WordPress on its stack host
+    - name: Record WordPress on its stack host or native guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _wordpress_host.inventory_hostname }}"]
-        record_guest_kind: docker
+        record_guest_kind: "{{ app_config.hosting.method }}"
         record_guest_url: "https://{{ hostvars['localhost'].wordpress_fqdn }}"
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
     - name: Record WordPress on each Kubernetes node
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:

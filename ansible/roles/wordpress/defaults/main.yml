@@ -8,3 +8,20 @@ wordpress_content_path: "{{ app_config.app.data_path }}/wp-content"
 wordpress_recovery_config_dir: /etc/homelab-infra/wordpress
 wordpress_recovery_config: "{{ wordpress_recovery_config_dir }}/{{ instance }}.env"
 wordpress_recovery_script: /usr/local/sbin/homelab-infra-wordpress-recovery
+
+# Native method: the release tree is replaced whole on a version change; wp-content (the
+# only state besides the database) is a link to app.data_path, which the recovery point
+# covers. The web user is www-data (uid/gid 33) on the native guest, as in the Docker image.
+wordpress_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+wordpress_native_root: /var/www/wordpress
+wordpress_native_work_dir: "{{ wordpress_project_dir }}/native"
+wordpress_native_services: [apache2]
+wordpress_native_cli: /usr/local/bin/wp
+# The prefix every WP-CLI call runs behind: the disposable tools container, or the web
+# user on the native guest.
+wordpress_cli_argv: >-
+  {{ ['runuser', '-u', 'www-data', '--', wordpress_native_cli, '--path=' ~ wordpress_native_root]
+     if wordpress_native | bool else
+     ['docker', 'compose', '--project-directory', wordpress_project_dir,
+      'run', '--rm', '--no-deps', 'wordpress-cli'] }}
+wordpress_native_keys: "{{ wordpress_project_dir }}/keys.php"

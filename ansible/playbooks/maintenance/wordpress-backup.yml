@@ -1,6 +1,7 @@
 ---
 # Run the application-consistent WordPress backup for the hosting method selected by the
-# instance. Docker uses the installed helper; Kubernetes runs the shared backup CronJob.
+# instance. Docker uses the installed helper; native runs the role's backup through the
+# shared PBS client; Kubernetes runs the shared backup CronJob.
 
 - name: "WordPress Backup | Resolve"
   hosts: localhost
@@ -36,6 +37,12 @@
         resolve_stack_app_instance: "{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Resolve the native guest, which owns the guest named for the instance
+      ansible.builtin.include_role:
+        name: wordpress
+        tasks_from: resolve-native-guest
+      when: app_config.hosting.method == 'native'
+
     - name: Resolve the PBS target for a Kubernetes backup
       ansible.builtin.include_tasks: ../../tasks/backup/resolve-pbs-target.yml
       vars:
@@ -50,7 +57,7 @@
         tasks_from: backup.yml
       when: app_config.hosting.method == 'kubernetes'
 
-- name: "WordPress Backup | Run on Docker"
+- name: "WordPress Backup | Run on Docker or the native guest"
   hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
@@ -63,6 +70,16 @@
       register: wordpress_backup_result
       changed_when: true
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+    - name: Run the native WordPress backup
+      ansible.builtin.include_role:
+        name: wordpress
+        tasks_from: backup
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+      when: hostvars['localhost'].app_config.hosting.method == 'native'
 
 - name: "WordPress Backup | Notify"
   hosts: localhost
@@ -82,6 +99,9 @@
         (app_config.hosting.method == 'docker'
          and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_backup_result.rc | default(1) == 0)
         or
+        (app_config.hosting.method == 'native'
+         and hostvars[groups['wordpress_recovery_' ~ instance][0]]._application_backup_complete | default(false) | bool)
+        or
         (app_config.hosting.method == 'kubernetes'
          and wordpress_backup_result.rc | default(1) == 0)
     - name: Fail if WordPress backup did not complete
@@ -89,6 +109,9 @@
         that: >-
           (app_config.hosting.method == 'docker'
            and hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_backup_result.rc | default(1) == 0)
+          or
+          (app_config.hosting.method == 'native'
+           and hostvars[groups['wordpress_recovery_' ~ instance][0]]._application_backup_complete | default(false) | bool)
           or
           (app_config.hosting.method == 'kubernetes'
            and wordpress_backup_result.rc | default(1) == 0)

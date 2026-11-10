@@ -42,7 +42,6 @@ size:
   ansible/roles/plane/templates/manifest.yaml.j2: 703
   ansible/roles/uptime-kuma/tasks/configure.yml: 484
   ansible/roles/vaultwarden/tasks/main.yml: 341
-  ansible/roles/wordpress/tasks/main.yml: 377
   ansible/scripts/config-doctor.sh: 848
   ansible/tasks/bitwarden/upsert-item.yml: 617
   ansible/tasks/bootstrap/configure-pbs-second-copy.yml: 480

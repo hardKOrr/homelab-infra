@@ -1,0 +1,100 @@
+---
+# The guest-side recovery helper, its settings and the backup schedule, for Docker and
+# native alike. The on-demand native backup (backup.yml) writes the same point layout.
+- name: WordPress | Install the recovery scheduler
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: WordPress | Enable the recovery scheduler
+  ansible.builtin.service:
+    name: cron
+    state: started
+    enabled: true
+
+- name: WordPress | Install the shared PBS client and this instance's settings
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
+  vars:
+    pbs_client_runtime: "{{ 'native' if wordpress_native | bool else 'docker' }}"
+    pbs_client_config_state: >-
+      {{ 'present' if wordpress_pbs_available | default(false) | bool
+         and app_config.backup.enabled | default(false) | bool else 'absent' }}
+    k8s_pbs_available: "{{ wordpress_pbs_available | default(false) }}"
+    k8s_pbs_repository: "{{ wordpress_pbs_repository | default('') }}"
+    k8s_pbs_fingerprint: "{{ wordpress_pbs_fingerprint | default('') }}"
+    k8s_pbs_password: "{{ wordpress_pbs_password | default('') }}"
+
+- name: WordPress | Resolve the server-matched database client
+  ansible.builtin.include_tasks: ../../../tasks/database/resolve-app-database.yml
+  vars:
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+
+- name: WordPress | Install the shared database client
+  ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
+  vars:
+    database_client_runtime: "{{ 'native' if wordpress_native | bool else 'docker' }}"
+
+- name: WordPress | Install recovery helper
+  ansible.builtin.copy:
+    src: wordpress-recovery
+    dest: "{{ wordpress_recovery_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: WordPress | Create recovery configuration directory
+  ansible.builtin.file:
+    path: "{{ wordpress_recovery_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: WordPress | Validate backup schedule
+  ansible.builtin.assert:
+    that:
+      - (app_config.backup.schedule | string).split() | length == 5
+      - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
+      - app_config.backup.retention_days | int > 0
+    fail_msg: "WordPress backup.schedule must be a five-field cron expression and retention_days must be positive."
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: WordPress | Write recovery configuration
+  ansible.builtin.template:
+    src: wordpress-recovery.env.j2
+    dest: "{{ wordpress_recovery_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: WordPress | Schedule application-consistent backup
+  ansible.builtin.cron:
+    name: "homelab-infra WordPress backup {{ instance }}"
+    cron_file: "homelab-infra-wordpress-{{ instance }}"
+    user: root
+    minute: "{{ (app_config.backup.schedule.split())[0] }}"
+    hour: "{{ (app_config.backup.schedule.split())[1] }}"
+    day: "{{ (app_config.backup.schedule.split())[2] }}"
+    month: "{{ (app_config.backup.schedule.split())[3] }}"
+    weekday: "{{ (app_config.backup.schedule.split())[4] }}"
+    job: "WORDPRESS_INSTANCE={{ instance }} {{ wordpress_recovery_script }} --backup"
+  when: wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: WordPress | Remove stale recovery schedule when backup is unavailable
+  ansible.builtin.cron:
+    name: "homelab-infra WordPress backup {{ instance }}"
+    cron_file: "homelab-infra-wordpress-{{ instance }}"
+    state: absent
+  when: not (wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)
+
+- name: WordPress | Remove stale recovery configuration when backup is unavailable
+  ansible.builtin.file:
+    path: "{{ wordpress_recovery_config }}"
+    state: absent
+  when: not (wordpress_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)

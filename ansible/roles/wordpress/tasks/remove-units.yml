@@ -1,0 +1,5 @@
+---
+# Shared native removal stops the unit that serves WordPress.
+- name: WordPress remove | Select the native service
+  ansible.builtin.set_fact:
+    _rm_service_names: [apache2]
