@@ -50,7 +50,7 @@ flaresolverr_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY. See the identical comment in
@@ -66,6 +66,9 @@ flaresolverr_defaults:
     # redeploy. Inside the platform's NodePort band (30000-32767) and distinct from the
     # apps this platform already assigns ports to.
     node_port: 30191
+
+    # Docker method only: `hosting.method: docker` plus `stack: <name>` (a stack whose
+    # guest_type is lxc or vm) publishes `port` on the stack host's own address.
 
   routing:
     proxy: none
