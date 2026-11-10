@@ -1,0 +1,25 @@
+---
+# Hi.Events is ready only when all three hold, the same checks as the Kubernetes
+# readinessProbe in templates/manifest.yaml.j2: the frontend answers `/`, PHP-FPM and
+# Laravel answer an unauthenticated API route, and no migration is pending. The image's
+# startup continues after a failed migration, so an HTTP 200 alone proves too little.
+# The image ships neither curl nor wget, hence PHP's own http:// wrapper.
+- name: Hi.Events | Wait for the frontend, the API and the migrated schema
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ instance }}"
+      - sh
+      - -c
+      - >-
+        php -r 'exit(@file_get_contents("http://127.0.0.1/") !== false ? 0 : 1);' &&
+        php -r 'exit(@file_get_contents("http://127.0.0.1/api/public/color-themes") !== false ? 0 : 1);' &&
+        cd /app/backend &&
+        OUT=$(php artisan migrate:status 2>&1); RC=$?;
+        [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending
+  register: _he_ready
+  until: _he_ready.rc == 0
+  retries: 90
+  delay: 5
+  changed_when: false

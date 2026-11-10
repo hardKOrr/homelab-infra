@@ -59,14 +59,6 @@
 - name: Hi.Events | Apply pending restarts
   ansible.builtin.meta: flush_handlers
 
-# The first start runs the database migrations before nginx answers. This route is served
-# by PHP-FPM and Laravel's router, so a 200 proves the whole stack, not only the frontend.
-- name: Hi.Events | Wait for the API
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ app_config.app.port }}/api/public/color-themes"
-    status_code: 200
-  register: _he_health
-  retries: 90
-  delay: 5
-  until: _he_health.status | default(0) == 200
-  changed_when: false
+# The first start runs the database migrations before the application is ready.
+- name: Hi.Events | Wait until the application is ready
+  ansible.builtin.include_tasks: verify.yml

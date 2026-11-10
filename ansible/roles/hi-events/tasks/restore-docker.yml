@@ -74,8 +74,7 @@
     recovery_swap_compose_project: "{{ hi_events_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
-    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/public/color-themes"
-    recovery_swap_health_retries: 90
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/verify.yml"
 
 - name: Hi.Events restore | Explain the read-only plan
   ansible.builtin.debug:
