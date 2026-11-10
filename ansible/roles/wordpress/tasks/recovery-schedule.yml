@@ -1,10 +1,10 @@
 ---
-# Docker method: the guest-side recovery helper, its settings and the backup schedule.
-# Native backup runs through backup.yml and the shared PBS client instead.
+# The guest-side recovery helper, its settings and the backup schedule, for Docker and
+# native alike. The on-demand native backup (backup.yml) writes the same point layout.
 - name: WordPress | Install the shared PBS client and this instance's settings
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-script.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ 'native' if wordpress_native | bool else 'docker' }}"
     pbs_client_config_state: >-
       {{ 'present' if wordpress_pbs_available | default(false) | bool
          and app_config.backup.enabled | default(false) | bool else 'absent' }}
@@ -21,6 +21,8 @@
 
 - name: WordPress | Install the shared database client
   ansible.builtin.include_tasks: ../../../tasks/database/install-client.yml
+  vars:
+    database_client_runtime: "{{ 'native' if wordpress_native | bool else 'docker' }}"
 
 - name: WordPress | Install recovery helper
   ansible.builtin.copy:

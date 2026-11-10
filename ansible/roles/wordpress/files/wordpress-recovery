@@ -33,6 +33,7 @@ done
   exit 1
 }
 
+runtime=${WORDPRESS_RUNTIME:-docker}
 compose=(docker compose --project-directory "$WORDPRESS_PROJECT_DIR" -f "$WORDPRESS_PROJECT_DIR/docker-compose.yml")
 work=$(mktemp -d /var/tmp/homelab-wordpress.XXXXXX)
 stopped=0
@@ -41,7 +42,7 @@ finish() {
   local rc=$?
   trap - EXIT
   if [[ "$stopped" == 1 ]]; then
-    "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null 2>&1 || true
+    service start >/dev/null 2>&1 || true
   fi
   rm -rf -- "$work"
   exit "$rc"
@@ -52,6 +53,12 @@ trap finish EXIT
 # database-client.sh) in the server-matched image, as the application's own login.
 database_client() {
   local action=$1 file=$2
+  if [[ "$runtime" == native ]]; then
+    DB_ENGINE="$WORDPRESS_DB_PROVIDER" DB_HOST="$WORDPRESS_DB_HOST" DB_PORT="$WORDPRESS_DB_PORT" \
+      DB_NAME="$WORDPRESS_DB_NAME" DB_USER="$WORDPRESS_DB_USER" DB_PASSWORD="$WORDPRESS_DB_PASSWORD" \
+      "$DATABASE_CLIENT_SCRIPT" "$action" "$file"
+    return
+  fi
   DB_ENGINE="$WORDPRESS_DB_PROVIDER" DB_HOST="$WORDPRESS_DB_HOST" DB_PORT="$WORDPRESS_DB_PORT" \
     DB_NAME="$WORDPRESS_DB_NAME" DB_USER="$WORDPRESS_DB_USER" DB_PASSWORD="$WORDPRESS_DB_PASSWORD" \
     docker run --rm --network host \
@@ -60,6 +67,15 @@ database_client() {
     -e DB_ENGINE -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
     --entrypoint /bin/sh "$WORDPRESS_DB_CLIENT_IMAGE" \
     /usr/local/bin/database-client.sh "$action" "/work/$(basename -- "$file")"
+}
+
+# Stop or start WordPress: its Compose service, or the native Apache unit.
+service() {
+  if [[ "$runtime" == native ]]; then
+    systemctl "$1" "$WORDPRESS_SERVICE"
+  else
+    "${compose[@]}" "$1" "$WORDPRESS_SERVICE"
+  fi
 }
 
 pbs_client() {
@@ -73,7 +89,7 @@ backup() {
   }
   # WordPress is stopped before the dump and archive. The external backend remains
   # available to every other application on it; only this application's writes pause.
-  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
+  service stop >/dev/null
   stopped=1
   mkdir -p "$work/database"
   database_client dump "$work/database/database.sql"
@@ -82,7 +98,7 @@ backup() {
   pbs_client backup --id "$PBS_BACKUP_ID" --keep-last 2 --keep-daily "$PBS_RETENTION_DAYS" \
     database.pxar:"$work/database" content.pxar:"$WORDPRESS_CONTENT_PATH"
   echo "WordPress backup complete"
-  "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
+  service start >/dev/null
   stopped=0
 }
 

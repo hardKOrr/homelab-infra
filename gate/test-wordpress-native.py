@@ -63,6 +63,9 @@ backup = (role / "tasks/backup.yml").read_text()
 assert "tasks/backup/pbs-client-backup.yml" in backup and "pbs_client_runtime: native" in backup
 assert "database.pxar" in backup and "content.pxar" in backup
 assert "tasks/database/dump.yml" in (role / "tasks/backup-quiesced.yml").read_text()
+schedule = (role / "tasks/recovery-schedule.yml").read_text()
+assert "'native' if wordpress_native" in schedule and "ansible.builtin.cron" in schedule
+assert "recovery-schedule.yml" in main and "recovery-docker" not in main
 restore = (role / "tasks/restore.yml").read_text()
 assert "wordpress_native | bool" in restore and "tasks/recovery/restore-swap.yml" in restore
 

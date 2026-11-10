@@ -226,6 +226,5 @@
     - app_config.backup.enabled | default(false) | bool
     - not (wordpress_pbs_available | default(false) | bool)
 
-- name: WordPress | Install the Docker recovery helper and schedule
-  ansible.builtin.include_tasks: recovery-docker.yml
-  when: not (wordpress_native | bool)
+- name: WordPress | Install the recovery helper and schedule
+  ansible.builtin.include_tasks: recovery-schedule.yml
