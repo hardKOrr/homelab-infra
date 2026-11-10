@@ -1,6 +1,6 @@
 ---
 # Deploy Uptime Kuma — uptime monitoring for every app (bootstrap step 5).
-# Docker on the monitoring VM remains the default; an instance may opt into Kubernetes.
+# Docker on the monitoring VM remains the default (an LXC stack is opt-in); an instance may opt into Kubernetes.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/uptime-kuma.yml -e instance=uptime-kuma

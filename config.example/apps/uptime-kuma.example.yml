@@ -25,6 +25,9 @@
 
 # ── Stack placement ────────────────────────────────────────────────────────────
 # stack: monitoring
+#   To use Docker on an LXC, set stack: monitoring-lxc and
+#   infrastructure.stacks.monitoring-lxc.guest_type: lxc in config/infrastructure.yml,
+#   with hosting.method: docker.
 
 # ── Other app config ───────────────────────────────────────────────────────────
 # app:
