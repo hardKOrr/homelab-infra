@@ -33,7 +33,7 @@ def task_named(tasks, name):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/uptime-kuma.yml"))["uptime_kuma_defaults"]
 assert defaults["hosting"] == {
-    "method": "docker", "supported": ["docker-vm", "kubernetes"], "impossible": {}
+    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}
 }
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
