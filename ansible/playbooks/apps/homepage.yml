@@ -77,6 +77,11 @@
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         name: homelabinfra_infra
       failed_when: false
+    # load-user-vars discards the estate overlay add_host forwarded, so resolve it again.
+    - name: Resolve the dashboard estate
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
   tasks:
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
