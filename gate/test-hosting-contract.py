@@ -28,6 +28,7 @@ EXTRA_IMPLEMENTED = {
     "bookstack": {"docker-lxc"},
     "comfyui": {"docker-lxc"},
     "deemix": {"docker-lxc"},
+    "flaresolverr": {"docker-lxc", "docker-vm"},
     "forgejo": {"docker-lxc"},
     "frigate": {"docker-lxc"},
     "home-assistant": {"docker-lxc"},
@@ -102,7 +103,8 @@ def current_combination(slug, defaults):
                 or proxmox.get("type")
                 or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
             )
-        elif re.search(r"community\.docker\.|docker_compose_v2|docker_container", source):
+        elif (defaults.get("hosting", {}).get("method") != "kubernetes"
+              and re.search(r"community\.docker\.|docker_compose_v2|docker_container", source)):
             # Docker on the app's own guest with Kubernetes as an opt-in path (ComfyUI);
             # its proxmox.vm block is the Docker VM, and proxmox.guest_type is native-only.
             method = "docker"
@@ -280,7 +282,7 @@ def main():
     check_rendered_defaults(expected_by_slug)
     check_unsupported_fails_before_state_change()
     check_mariadb_vm_instance_override()
-    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-forgejo.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-lidarr.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml", "hosting-observability.yml", "hosting-odoo.yml", "hosting-ollama.yml", "hosting-open-webui.yml", "hosting-plane.yml", "hosting-prowlarr.yml", "hosting-qbittorrent.yml", "hosting-radarr.yml", "hosting-sabnzbd.yml", "hosting-slskd.yml", "hosting-sonarr.yml", "hosting-tautulli.yml", "hosting-unpackerr.yml", "hosting-uptime-kuma.yml", "hosting-wordpress.yml"):
+    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-flaresolverr.yml", "hosting-forgejo.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-lidarr.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml", "hosting-observability.yml", "hosting-odoo.yml", "hosting-ollama.yml", "hosting-open-webui.yml", "hosting-plane.yml", "hosting-prowlarr.yml", "hosting-qbittorrent.yml", "hosting-radarr.yml", "hosting-sabnzbd.yml", "hosting-slskd.yml", "hosting-sonarr.yml", "hosting-tautulli.yml", "hosting-unpackerr.yml", "hosting-uptime-kuma.yml", "hosting-wordpress.yml"):
         result = run_ansible(fixture)
         assert result.returncode == 0, result.stdout + result.stderr
     print(f"Hosting contract passed for {len(paths)} app defaults and preflight refusal.")

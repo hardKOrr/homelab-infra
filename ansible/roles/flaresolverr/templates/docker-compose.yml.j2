@@ -1,0 +1,15 @@
+# docker-compose.yml for FlareSolverr ({{ instance }})
+# Managed by homelab-infra.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - PORT={{ app_config.app.port }}
+      - LOG_LEVEL={{ app_config.app.log_level }}
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"

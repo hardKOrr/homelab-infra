@@ -1,0 +1,6 @@
+---
+- name: Restart flaresolverr
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    recreate: always

@@ -26,3 +26,11 @@
 #   # Kubernetes reject the Service silently.
 #   # FlareSolverr LOG_LEVEL: debug, info, warning or error.
 #   log_level: info
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: flaresolverr          # a stack with guest_type: vm (the default), or
+# # stack: flaresolverr-lxc    # one declared guest_type: lxc under
+# #                            # infrastructure.stacks in config/infrastructure.yml.
+# Prowlarr connects to port app.port (8191) of the stack host's address.
