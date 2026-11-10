@@ -1,5 +1,5 @@
 ---
-# Deploy Unpackerr on the estate-resolved media stack, or on Kubernetes when `hosting.method: kubernetes` (no stack host). It has no browser UI: the role reads every registered Arr endpoint and API key from the media registry, then configures Unpackerr to extract completed downloads on their shared mounts.
+# Deploy Unpackerr on the estate-resolved media stack, on Kubernetes when `hosting.method: kubernetes` (no stack host), or natively on its own LXC or VM when `hosting.method: native` (with `proxmox.guest_type`). It has no browser UI: the role reads every registered Arr endpoint and API key from the media registry, then configures Unpackerr to extract completed downloads on their shared mounts.
 - name: "Unpackerr | Provision"
   hosts: localhost
   become: false
@@ -11,6 +11,11 @@
       ansible.builtin.assert:
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=unpackerr"
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
     - name: Load app defaults
       ansible.builtin.include_vars:
         file: ../../vars/app-defaults/unpackerr.yml
@@ -36,14 +41,23 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
-    - name: Attach Unpackerr media paths to the stack host
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: unpackerr
+      when: app_config.hosting.method == 'native'
+    - name: Attach Unpackerr media paths to the guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
       vars:
-        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_guest: >-
+          {{ groups['deploy_' ~ instance][0] if app_config.hosting.method == 'native'
+             else homelabinfra_instance.stack.hostname }}
         attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
         attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when:
-        - app_config.hosting.method == 'docker'
+        - app_config.hosting.method in ['docker', 'native']
         - app_config.app.mounts | default([], true) | length > 0
 - name: "Unpackerr | Prepare Kubernetes"
   hosts: localhost
@@ -88,7 +102,7 @@
     - name: Deploy Unpackerr
       ansible.builtin.include_role:
         name: unpackerr
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 - name: "Unpackerr | Deploy on Kubernetes"
   hosts: localhost
   become: false
@@ -125,4 +139,6 @@
         record_guest_names: >-
           {{ homelabinfra_infra.kubernetes.nodes | default([]) | map(attribute='name') | list
              if _unpackerr_k8s | bool else groups['deploy_' ~ instance] }}
-        record_guest_kind: "{{ 'kubernetes' if _unpackerr_k8s | bool else 'docker' }}"
+        record_guest_kind: >-
+          {{ 'kubernetes' if _unpackerr_k8s | bool
+             else 'native' if app_config.hosting.method == 'native' else 'docker' }}

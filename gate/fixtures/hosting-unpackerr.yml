@@ -38,3 +38,27 @@
         that:
           - _hosting_combination == 'docker-lxc'
           - _hosting_stack_name == 'media-lxc'
+
+    - name: Validate the native LXC drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _unpackerr_defaults
+             | combine({'hosting': {'method': 'native'}, 'stack': '',
+                        'proxmox': {'guest_type': 'lxc'}}, recursive=True) }}
+
+    - name: Require the native LXC combination
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-lxc'
+
+    - name: Validate the native VM drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _unpackerr_defaults
+             | combine({'hosting': {'method': 'native'}, 'stack': '',
+                        'proxmox': {'guest_type': 'vm'}}, recursive=True) }}
+
+    - name: Require the native VM combination
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-vm'

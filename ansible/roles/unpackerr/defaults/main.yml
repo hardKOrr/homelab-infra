@@ -1,0 +1,6 @@
+---
+# Native: the GoLift package's service and account, and the environment file that carries the
+# Arr API keys (tasks/native.yml).
+unpackerr_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+unpackerr_service: unpackerr
+unpackerr_native_env: /etc/unpackerr/unpackerr.env

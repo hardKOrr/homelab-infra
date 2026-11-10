@@ -4,3 +4,11 @@
     project_src: "/opt/{{ instance }}"
     state: present
     recreate: always
+  when: not (unpackerr_native | bool)
+- name: Restart native unpackerr
+  ansible.builtin.systemd:
+    name: "{{ unpackerr_service }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart unpackerr
+  when: unpackerr_native | bool

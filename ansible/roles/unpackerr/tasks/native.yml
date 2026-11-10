@@ -1,0 +1,145 @@
+---
+# Included by main.yml (native only): Unpackerr's Linux install from the GoLift APT repository
+# (https://unpackerr.zip/docs/install/linux; its repo.sh adds the same key and source), pinned
+# to the exact package version in app.native_version. The package's systemd unit runs it; a
+# drop-in adds the environment file with the same UN_* settings the Compose file sets.
+
+- name: Unpackerr native | Assert the supported guest
+  ansible.builtin.assert:
+    that: ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native Unpackerr supports Debian 12.
+
+- name: Unpackerr native | Install repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, gpg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Unpackerr native | Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Unpackerr native | Download the repository signing key
+  ansible.builtin.get_url:
+    url: https://packagecloud.io/golift/pkgs/gpgkey
+    dest: /etc/apt/keyrings/golift-archive.asc
+    mode: "0644"
+
+- name: Unpackerr native | Read the signing key
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, /etc/apt/keyrings/golift-archive.asc]
+  register: _unpackerr_key
+  changed_when: false
+
+- name: Unpackerr native | Assert the GoLift signing key
+  ansible.builtin.assert:
+    that: >-
+      _unpackerr_key.stdout is search("^fpr:::::::::552A075A7B63AC7A6116E93708653AE3B7E40B70:", multiline=True)
+    fail_msg: GoLift repository key fingerprint did not match the upstream-published key.
+
+- name: Unpackerr native | Configure the GoLift APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/golift-archive.asc] https://packagecloud.io/golift/pkgs/ubuntu focal main"
+    filename: golift
+    state: present
+    update_cache: true
+
+- name: Unpackerr native | Create the app group
+  ansible.builtin.group:
+    name: "{{ unpackerr_service }}"
+    gid: "{{ app_config.app.pgid | default(1313) }}"
+
+- name: Unpackerr native | Create the app user
+  ansible.builtin.user:
+    name: "{{ unpackerr_service }}"
+    uid: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ unpackerr_service }}"
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Unpackerr native | Install the pinned package
+  ansible.builtin.apt:
+    name: "unpackerr={{ app_config.app.native_version }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 300
+  notify: Restart unpackerr
+
+- name: Unpackerr native | Create the unit drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ unpackerr_service }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Unpackerr native | Write the environment file
+  ansible.builtin.template:
+    src: native.env.j2
+    dest: "{{ unpackerr_native_env }}"
+    owner: root
+    group: "{{ unpackerr_service }}"
+    mode: "0640"
+  notify: Restart unpackerr
+  no_log: true   # the file carries the Arr API keys
+
+- name: Unpackerr native | Write the unit drop-in
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ unpackerr_service }}.service.d/homelabinfra.conf"
+    content: |
+      # Managed by homelab-infra.
+      [Service]
+      EnvironmentFile={{ unpackerr_native_env }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart unpackerr
+
+- name: Unpackerr native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ unpackerr_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Unpackerr native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Unpackerr native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ unpackerr_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ unpackerr_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Unpackerr native | Read the service state
+  ansible.builtin.systemd:
+    name: "{{ unpackerr_service }}"
+  register: _unpackerr_unit
+  changed_when: false
+
+- name: Unpackerr native | Assert Unpackerr is running after Arr credential preflight
+  ansible.builtin.assert:
+    that: _unpackerr_unit.status.ActiveState == 'active'
+    fail_msg: >-
+      Unpackerr did not remain running after its Arr credential preflight. Run lab-tail-applog on the guest.
