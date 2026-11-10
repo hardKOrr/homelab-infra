@@ -191,10 +191,9 @@ def check_admin_email_validation():
 
 
 def check_wordpress_data_directory_access():
-    task = next(
-        item for item in WORDPRESS_ROLE_TASKS
-        if item.get("name") == "WordPress | Create project and durable data directories"
-    )
+    task = yaml.safe_load(
+        (ROOT / "ansible/roles/wordpress/tasks/directories.yml").read_text()
+    )[0]
     file_task = task["ansible.builtin.file"]
     assert file_task["owner"] == "{{ item.owner }}"
     assert file_task["group"] == "{{ item.group }}"
