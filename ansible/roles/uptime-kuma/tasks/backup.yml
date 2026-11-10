@@ -47,10 +47,10 @@
 - name: Uptime Kuma backup | Quiesce Uptime Kuma and archive its data directory to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ 'native' if uptime_kuma_native | bool else 'docker' }}"
     pbs_client_backup_id: "{{ _kuma_backup_id }}"
     pbs_client_compose_project: "{{ uptime_kuma_project_dir }}"
-    pbs_client_stop_services: [uptime-kuma]
+    pbs_client_stop_services: ["{{ uptime_kuma_service if uptime_kuma_native | bool else 'uptime-kuma' }}"]
     pbs_client_archives:
       - name: data.pxar
         path: "{{ _kuma_backup_data_path }}"

@@ -14,7 +14,7 @@ from restore_swap_inputs import swap_inputs
 ROOT = Path(__file__).resolve().parents[1]
 BACKUP = yaml.safe_load((ROOT / "ansible/roles/uptime-kuma/tasks/backup.yml").read_text())
 RESTORE = yaml.safe_load(
-    (ROOT / "ansible/roles/uptime-kuma/tasks/restore-docker.yml").read_text()
+    (ROOT / "ansible/roles/uptime-kuma/tasks/restore-guest.yml").read_text()
 )
 
 
@@ -38,8 +38,10 @@ def check_contract_and_backup():
     )
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
     shared = upload["vars"]
-    assert shared["pbs_client_runtime"] == "docker"
-    assert shared["pbs_client_stop_services"] == ["uptime-kuma"]
+    assert shared["pbs_client_runtime"] == "{{ 'native' if uptime_kuma_native | bool else 'docker' }}"
+    assert shared["pbs_client_stop_services"] == [
+        "{{ uptime_kuma_service if uptime_kuma_native | bool else 'uptime-kuma' }}"
+    ]
     assert [a["name"] for a in shared["pbs_client_archives"]] == ["data.pxar"]
 
 
@@ -54,13 +56,15 @@ def check_restore():
         "ansible.builtin.assert"
     ]["that"]
 
-    swap = swap_inputs("uptime-kuma", "restore-docker.yml")
-    assert swap["recovery_swap_runtime"] == "docker"
+    swap = swap_inputs("uptime-kuma", "restore-guest.yml")
+    assert swap["recovery_swap_runtime"] == "{{ _kuma_restore_runtime }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["uptime-kuma"]
+    native = "{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 'uptime-kuma' }}"
+    assert swap["recovery_swap_stop_services"] == [native]
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _kuma_restore_target_backup_id }}"
     [path] = swap["recovery_swap_paths"]
-    assert path == {"path": "{{ app_config.app.data_path }}", "owner": 0, "group": 0, "mode": "0750"}
+    assert path == {"path": "{{ app_config.app.data_path }}", "owner": "{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 0 }}",
+                    "group": "{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 0 }}", "mode": "0750"}
     staged = (ROOT / "ansible/roles/uptime-kuma/tasks/restore-staged.yml").read_text()
     assert "{{ recovery_swap_stage }}/data/kuma.db" in staged
     verified = (ROOT / "ansible/roles/uptime-kuma/tasks/restore-verified.yml").read_text()

@@ -1,6 +1,6 @@
 ---
-# Restore the complete Uptime Kuma data directory through the shared swap. The staged point
-# must hold kuma.db, and the restored server must answer as the initialized server.
+# Restore the complete Uptime Kuma data directory through the shared swap, on a Docker or
+# native guest. The staged point must hold kuma.db, and the restored server must answer as the initialized server.
 - name: Uptime Kuma restore | Resolve the recovery identities
   ansible.builtin.set_fact:
     _kuma_restore_source_backup_id: >-
@@ -9,6 +9,11 @@
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
     _kuma_restore_snapshot: "{{ restore_snapshot | default('') }}"
+
+- name: Uptime Kuma restore | Resolve the guest runtime
+  ansible.builtin.set_fact:
+    _kuma_restore_runtime: >-
+      {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('docker')) }}
 
 - name: Uptime Kuma restore | Assert the recovery contract
   ansible.builtin.assert:
@@ -41,16 +46,16 @@
 - name: Uptime Kuma restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ _kuma_restore_runtime }}"
     recovery_swap_backup_id: "{{ _kuma_restore_source_backup_id }}"
     recovery_swap_pre_restore_backup_id: "{{ _kuma_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.data_path }}"
-        owner: 0
-        group: 0
+        owner: "{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 0 }}"
+        group: "{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 0 }}"
         mode: "0750"
-    recovery_swap_stop_services: [uptime-kuma]
+    recovery_swap_stop_services: ["{{ uptime_kuma_service if _kuma_restore_runtime == 'native' else 'uptime-kuma' }}"]
     recovery_swap_compose_project: "{{ uptime_kuma_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/entry-page"

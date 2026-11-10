@@ -6,7 +6,7 @@
 uptime_kuma_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   # Uptime Kuma owns the monitor database, login account and settings for every app.
   # Its complete data directory is quiesced as one native recovery unit.
@@ -15,6 +15,18 @@ uptime_kuma_defaults:
     native:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 1024
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
@@ -28,8 +40,12 @@ uptime_kuma_defaults:
 
     # Uptime Kuma 2.x. Neither version has a REST API for monitors — the wiring drives
     # socket.io either way — so what the 2.x pin buys is the scripted database setup.
-    # See slice 404 notes.md. Pin a patch tag here to freeze upgrades.
-    image_tag: "2"
+    # See slice 404 notes.md. Docker and native run the same exact upstream release: native
+    # clones this tag and runs `npm run setup` (the non-Docker install), with the Node
+    # runtime upstream needs (>= 20.4; Debian 12 packages 18).
+    image_tag: "2.5.9"
+    native_version: "2.5.9"
+    node_version: "24.21.0"
 
     # Signs the socket in: this is the credential the wiring authenticates with.
     admin_user: admin

@@ -1,0 +1,117 @@
+---
+# Included by native.yml: Uptime Kuma's non-Docker install
+# (https://github.com/louislam/uptime-kuma/wiki/%F0%9F%94%A7-How-to-Install), a git clone
+# at the exact tag pinned in the app defaults followed by `npm run setup`, run by the
+# service account with a pinned Node runtime (upstream needs Node >= 20.4; Debian 12 ships 18).
+# Inputs: app_config.app.{native_version, node_version, data_path}.
+
+- name: Uptime Kuma native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native Uptime Kuma supports Debian 12 on x86_64 (the pinned Node runtime).
+
+- name: Uptime Kuma native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - ((homelabinfra_infra | default({})).get('backups', {}).get('host', '') | length) > 0
+
+- name: Uptime Kuma native | Install prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git, xz-utils, python3, build-essential]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Uptime Kuma native | Create the app group
+  ansible.builtin.group:
+    name: "{{ uptime_kuma_service }}"
+    system: true
+
+- name: Uptime Kuma native | Create the app user
+  ansible.builtin.user:
+    name: "{{ uptime_kuma_service }}"
+    group: "{{ uptime_kuma_service }}"
+    home: "{{ app_config.app.data_path }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Uptime Kuma native | Create the project directory
+  ansible.builtin.file:
+    path: "{{ uptime_kuma_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Uptime Kuma native | Create the clone and data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ uptime_kuma_service }}"
+    group: "{{ uptime_kuma_service }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ uptime_kuma_native_dir }}", mode: "0755"}
+    - {path: "{{ app_config.app.data_path }}", mode: "0750"}
+
+- name: Uptime Kuma native | Download the pinned Node runtime
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.node_version }}/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:https://nodejs.org/dist/v{{ app_config.app.node_version }}/SHASUMS256.txt"
+    dest: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Uptime Kuma native | Unpack the pinned Node runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "{{ uptime_kuma_node_dir }}/bin/node"
+  notify: Restart uptime-kuma
+
+- name: Uptime Kuma native | Clone the pinned release
+  ansible.builtin.git:
+    repo: https://github.com/louislam/uptime-kuma.git
+    dest: "{{ uptime_kuma_native_dir }}"
+    version: "{{ app_config.app.native_version }}"
+    force: true
+  become: true
+  become_user: "{{ uptime_kuma_service }}"
+  notify: Restart uptime-kuma
+
+# npm's exit status is the install boundary; the marker is written last, so an interrupted
+# setup runs again.
+- name: Uptime Kuma native | Check the setup marker
+  ansible.builtin.stat:
+    path: "{{ uptime_kuma_native_dir }}/.setup-{{ app_config.app.native_version }}-node{{ app_config.app.node_version }}"
+  register: _kuma_setup_marker
+
+- name: Uptime Kuma native | Run the upstream setup
+  ansible.builtin.command:
+    argv: [npm, run, setup]
+    chdir: "{{ uptime_kuma_native_dir }}"
+  environment:
+    PATH: "{{ uptime_kuma_node_dir }}/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    HOME: "{{ uptime_kuma_native_dir }}"
+  become: true
+  become_user: "{{ uptime_kuma_service }}"
+  when: not _kuma_setup_marker.stat.exists
+  changed_when: true
+  notify: Restart uptime-kuma
+
+- name: Uptime Kuma native | Record the completed setup
+  ansible.builtin.file:
+    path: "{{ uptime_kuma_native_dir }}/.setup-{{ app_config.app.native_version }}-node{{ app_config.app.node_version }}"
+    state: touch
+    owner: "{{ uptime_kuma_service }}"
+    group: "{{ uptime_kuma_service }}"
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
