@@ -7,7 +7,7 @@
     _he_native_toolchain:
       - url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
         sha256: "{{ app_config.app.native_node_sha256 }}"
-        dir: "node-v{{ app_config.app.native_node_version }}"
+        dir: "node-v{{ app_config.app.native_node_version }}-linux-x64"
       - url: "https://github.com/yarnpkg/yarn/releases/download/v{{ app_config.app.native_yarn_version }}/yarn-v{{ app_config.app.native_yarn_version }}.tar.gz"
         sha256: "{{ app_config.app.native_yarn_sha256 }}"
         dir: "yarn-v{{ app_config.app.native_yarn_version }}"
@@ -30,7 +30,6 @@
     dest: /opt
     remote_src: true
     creates: "/opt/{{ item.dir }}"
-    extra_opts: [--transform, "s,^[^/]*,{{ item.dir }},"]
   loop: "{{ _he_native_toolchain }}"
   loop_control:
     label: "{{ item.dir }}"
@@ -41,8 +40,8 @@
     dest: "/usr/local/bin/{{ item.name }}"
     state: link
   loop:
-    - {name: node, src: "/opt/node-v{{ app_config.app.native_node_version }}/bin/node"}
-    - {name: npm, src: "/opt/node-v{{ app_config.app.native_node_version }}/bin/npm"}
+    - {name: node, src: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin/node"}
+    - {name: npm, src: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin/npm"}
     - {name: yarn, src: "/opt/yarn-v{{ app_config.app.native_yarn_version }}/bin/yarn"}
   loop_control:
     label: "{{ item.name }}"
