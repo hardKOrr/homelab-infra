@@ -65,7 +65,7 @@
         source: data
         owner: "{{ hi_events_native_user if hi_events_native | bool else 'live' }}"
         group: "{{ hi_events_native_user if hi_events_native | bool else 'live' }}"
-        mode: "0755"
+        mode: "{{ '0775' if hi_events_native | bool else '0755' }}"
         allow_empty: true
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
