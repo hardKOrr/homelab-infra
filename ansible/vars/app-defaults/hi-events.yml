@@ -29,7 +29,7 @@ hi_events_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -37,6 +37,18 @@ hi_events_defaults:
     native:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
+
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). 4 GiB because the frontend is built on the guest.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 4096
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
   # vars/app-defaults/jellyseerr.yml.
@@ -49,6 +61,17 @@ hi_events_defaults:
     # vars/app-defaults/odoo.yml's `odoo:18.0`; `latest` at the time of writing resolves
     # to a `v2.0.0-rc.*` pre-release, which this default deliberately avoids.
     image: "docker.io/daveearley/hi.events-all-in-one:v1.11.1-beta"
+
+    # Native: the same release built from its source archive
+    # (https://github.com/HiEventsDev/hi.events; upstream documents only the Docker install,
+    # https://hi.events/docs/getting-started), with the Node.js and Yarn its Dockerfile
+    # builds with. The version must match the image tag above.
+    native_version: "1.11.1-beta"
+    native_sha256: 59b4200f7fa641cf6ec37e2425d685d4f969179220fc79db2e38689e3f1c5075
+    native_node_version: "22.11.0"
+    native_node_sha256: 83bf07dd343002a26211cf1fcd46a9d9534219aad42ee02847816940bf610a72
+    native_yarn_version: "1.22.22"
+    native_yarn_sha256: 88268464199d1611fcf73ce9c0a6c4d44c7d5363682720d8506f6508addf36a0
 
     # The container's own fixed listening port (Dockerfile.all-in-one EXPOSEs 80; the
     # upstream compose's `8123:80` is only that example's host-side choice, which this

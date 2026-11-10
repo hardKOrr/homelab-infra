@@ -3,3 +3,13 @@
   community.docker.docker_compose_v2:
     project_src: "{{ hi_events_project_dir }}"
     state: restarted
+  when: not (hi_events_native | bool)
+
+- name: Restart native hi-events
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: "{{ ['php' ~ hi_events_php_version ~ '-fpm'] + hi_events_native_app_services }}"
+  listen: Restart hi-events
+  when: hi_events_native | bool

@@ -2,3 +2,23 @@
 hi_events_project_dir: "/opt/{{ instance }}"
 hi_events_env_file: "{{ hi_events_project_dir }}/hi-events.env"
 hi_events_data_path: "{{ app_config.app.data_path | default('', true) or hi_events_project_dir ~ '/storage' }}"
+
+# Native method (native.yml): the pinned upstream release is built under hi_events_native_root
+# and replaced whole on a version change; its storage/app is a link to hi_events_data_path,
+# the only state besides the database. nginx, PHP-FPM, a local Redis and three systemd
+# units (web, queue worker, scheduler) replace the all-in-one image's supervisord.
+hi_events_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+hi_events_native_root: "{{ hi_events_project_dir }}/src"
+hi_events_native_work_dir: "{{ hi_events_project_dir }}/native"
+hi_events_native_backend: "{{ hi_events_native_root }}/backend"
+hi_events_native_frontend: "{{ hi_events_native_root }}/frontend"
+hi_events_native_user: www-data
+# PHP's own packaging: 8.2 on Debian 12, 8.3 on Ubuntu 24.04.
+hi_events_php_version: "{{ '8.3' if (ansible_facts.distribution_release | default('')) == 'noble' else '8.2' }}"
+hi_events_native_app_services: [hi-events-web, hi-events-queue, hi-events-scheduler, nginx]
+# Quiesced for a backup: the web entry points and the workers. A restore also restarts
+# PHP-FPM and Redis so a changed environment and cached state are not carried over.
+hi_events_native_restore_services: "{{ hi_events_native_app_services + ['php' ~ hi_events_php_version ~ '-fpm', 'redis-server'] }}"
+hi_events_stop_services: >-
+  {{ hi_events_native_app_services if hi_events_native | bool else [instance, instance ~ '-redis'] }}
+hi_events_artisan: /usr/local/bin/hi-events-artisan

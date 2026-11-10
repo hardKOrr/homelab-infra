@@ -1,0 +1,137 @@
+---
+# Hi.Events native: Redis, the migration, PHP-FPM, nginx and the three systemd units.
+# Included by native.yml after the release is built and storage is linked.
+- name: Hi.Events native | Configure Redis as a private, password-protected cache
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {regexp: '^#?\s*bind\s', line: "bind 127.0.0.1 -::1"}
+    - {regexp: '^#?\s*requirepass\s', line: "requirepass {{ _he_redis_password }}"}
+    - {regexp: '^#?\s*save\s', line: 'save ""'}
+  loop_control:
+    label: "{{ item.regexp }}"
+  no_log: true
+  register: _he_native_redis
+
+# Restarted here, not by the handler, whose units do not exist yet on a first deploy.
+- name: Hi.Events native | Start Redis, restarting it when its configuration changed
+  ansible.builtin.systemd:
+    name: redis-server
+    state: "{{ 'restarted' if _he_native_redis.changed else 'started' }}"
+    enabled: true
+
+# Upstream's startup.sh migrates on every start. Done here, before the web units run, so
+# a failed migration fails the deploy instead of being logged and ignored.
+- name: Hi.Events native | Migrate the database
+  ansible.builtin.command:
+    argv: ["{{ hi_events_artisan }}", migrate, --force]
+  register: _he_native_migrate
+  changed_when: "'Nothing to migrate' not in _he_native_migrate.stdout"
+
+- name: Hi.Events native | Create the PHP-FPM unit drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/php{{ hi_events_php_version }}-fpm.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Hi.Events native | Let PHP-FPM read the application environment
+  ansible.builtin.copy:
+    dest: "{{ item.path }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - path: "/etc/php/{{ hi_events_php_version }}/fpm/pool.d/zz-hi-events.conf"
+      content: |
+        [www]
+        clear_env = no
+    - path: "/etc/php/{{ hi_events_php_version }}/fpm/conf.d/90-hi-events.ini"
+      content: |
+        date.timezone={{ homelabinfra_config.timezone | default('UTC') }}
+        upload_max_filesize=20M
+        post_max_size=20M
+        memory_limit=256M
+        expose_php=Off
+    - path: "/etc/systemd/system/php{{ hi_events_php_version }}-fpm.service.d/hi-events.conf"
+      content: |
+        [Service]
+        EnvironmentFile={{ hi_events_env_file }}
+  loop_control:
+    label: "{{ item.path }}"
+  notify: Restart hi-events
+
+- name: Hi.Events native | Render the nginx site and the systemd units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: nginx-site.conf.j2, dest: /etc/nginx/sites-available/hi-events.conf}
+    - {src: native.service.j2, dest: /etc/systemd/system/hi-events-web.service}
+    - {src: native.service.j2, dest: /etc/systemd/system/hi-events-queue.service}
+    - {src: native.service.j2, dest: /etc/systemd/system/hi-events-scheduler.service}
+  loop_control:
+    label: "{{ item.dest }}"
+  vars:
+    _he_unit: "{{ item.dest | basename | regex_replace('^hi-events-(.*)[.]service$', '\\1') }}"
+  notify: Restart hi-events
+
+- name: Hi.Events native | Enable the site and drop nginx's default
+  ansible.builtin.file:
+    path: "/etc/nginx/sites-enabled/{{ item.name }}"
+    src: "{{ item.src | default(omit) }}"
+    state: "{{ item.state }}"
+  loop:
+    - {name: hi-events.conf, state: link, src: /etc/nginx/sites-available/hi-events.conf}
+    - {name: default, state: absent}
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart hi-events
+
+- name: Hi.Events native | Reload systemd and start PHP-FPM
+  ansible.builtin.systemd:
+    name: "php{{ hi_events_php_version }}-fpm"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Hi.Events native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Hi.Events native | Enable and start the application
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ hi_events_native_app_services }}"
+
+- name: Hi.Events native | Wait until the application is ready
+  ansible.builtin.include_tasks: verify.yml
+
+- name: Hi.Events native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ hi_events_native_restore_services | join(' ') }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl --no-pager -n "${1:-50}" -u hi-events-web -u hi-events-queue -u hi-events-scheduler -u nginx
+  loop_control:
+    label: "{{ item.name }}"

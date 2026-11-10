@@ -58,19 +58,20 @@
 - name: Hi.Events restore | Preview or replace the storage directory and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ 'native' if hi_events_native | bool else 'docker' }}"
     recovery_swap_archives: [database.pxar, data.pxar]
     recovery_swap_paths:
       - path: "{{ hi_events_data_path }}"
         source: data
-        owner: live
-        group: live
-        mode: "0755"
+        owner: "{{ hi_events_native_user if hi_events_native | bool else 'live' }}"
+        group: "{{ hi_events_native_user if hi_events_native | bool else 'live' }}"
+        mode: "{{ '0775' if hi_events_native | bool else '0755' }}"
         allow_empty: true
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: database/hi-events.dump
-    recovery_swap_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
+    recovery_swap_stop_services: >-
+      {{ hi_events_native_restore_services if hi_events_native | bool else hi_events_stop_services }}
     recovery_swap_compose_project: "{{ hi_events_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"

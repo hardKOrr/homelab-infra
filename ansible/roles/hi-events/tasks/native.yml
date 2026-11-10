@@ -1,0 +1,110 @@
+---
+# Hi.Events natively on its own LXC or VM. Upstream documents only a Docker install
+# (https://hi.events/docs/getting-started), so this reproduces what its all-in-one image
+# builds (Dockerfile.all-in-one in https://github.com/HiEventsDev/hi.events): the pinned
+# release's Laravel backend (composer) and Node frontend (yarn build), served by nginx and
+# PHP-FPM, with the frontend, queue worker and scheduler as systemd units and a local
+# password-protected Redis. The database stays on the named PostgreSQL backend.
+- name: Hi.Events native | Assert the supported guest
+  ansible.builtin.assert:
+    that: ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: Native Hi.Events supports Debian 12 and Ubuntu 24.04 (PHP 8.2 or 8.3).
+
+- name: Hi.Events native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Hi.Events native | Install nginx, PHP-FPM with its extensions, Redis and the build tools
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - composer
+      - git
+      - nginx
+      - redis-server
+      - unzip
+      - xz-utils
+      - "php{{ hi_events_php_version }}-fpm"
+      - php-bcmath
+      - php-cli
+      - php-curl
+      - php-gd
+      - php-intl
+      - php-mbstring
+      - php-pgsql
+      - php-redis
+      - php-xml
+      - php-zip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Hi.Events native | Create the project and storage directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    # Traverse-only for others: www-data reaches src/ and storage/ below; the environment
+    # file and the build work directory stay private.
+    - {path: "{{ hi_events_project_dir }}", owner: root, mode: "0711"}
+    - {path: "{{ hi_events_native_work_dir }}", owner: root, mode: "0700"}
+    - {path: "{{ hi_events_data_path }}", owner: "{{ hi_events_native_user }}", mode: "0775"}
+    - {path: "{{ hi_events_data_path }}/public", owner: "{{ hi_events_native_user }}", mode: "0775"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Hi.Events native | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Hi.Events native | Assemble the application environment
+  ansible.builtin.include_tasks: env.yml
+
+- name: Hi.Events native | Write the environment file
+  ansible.builtin.template:
+    src: hi-events.env.j2
+    dest: "{{ hi_events_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart hi-events
+
+- name: Hi.Events native | Install the pinned Node.js and Yarn and build the release
+  ansible.builtin.include_tasks: native-build.yml
+
+- name: Hi.Events native | Install the artisan wrapper
+  ansible.builtin.template:
+    src: artisan.sh.j2
+    dest: "{{ hi_events_artisan }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+# The release's own storage/app seeds the durable directory once; an existing one, such
+# as a restored point, is never overwritten.
+- name: Hi.Events native | Link storage/app to the durable directory
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      link="{{ hi_events_native_backend }}/storage/app"
+      target="{{ hi_events_data_path }}"
+      if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then exit 0; fi
+      if [ -d "$link" ] && [ ! -L "$link" ]; then cp -an "$link"/. "$target"/; rm -rf "$link"; else rm -f "$link"; fi
+      ln -s "$target" "$link"
+      chown -h {{ hi_events_native_user }}:{{ hi_events_native_user }} "$link"
+      chown -R {{ hi_events_native_user }}:{{ hi_events_native_user }} "$target"
+      echo changed
+    executable: /bin/bash
+  register: _he_native_link
+  changed_when: "'changed' in _he_native_link.stdout"
+
+- name: Hi.Events native | Configure and start the services
+  ansible.builtin.include_tasks: native-services.yml
