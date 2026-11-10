@@ -33,7 +33,7 @@ def task_named(tasks, name):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/uptime-kuma.yml"))["uptime_kuma_defaults"]
 assert defaults["hosting"] == {
-    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes"], "impossible": {}
+    "method": "docker", "supported": ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"], "impossible": {}
 }
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
@@ -46,7 +46,7 @@ assert stack["when"] == "app_config.hosting.method == 'docker'"
 
 docker = playbook[1]
 docker_role = task_named(docker["tasks"], "Deploy Uptime Kuma")
-assert docker_role["when"] == "hostvars['localhost'].app_config.hosting.method == 'docker'"
+assert docker_role["when"] == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
 assert "configure.yml" in read("ansible/roles/uptime-kuma/tasks/main.yml")
 
 kubernetes = playbook[2]
@@ -87,7 +87,7 @@ assert pvc["spec"]["resources"]["requests"]["storage"] == "5Gi"
 deployment = objects["Deployment"]
 assert deployment["spec"]["strategy"]["type"] == "Recreate"
 container = deployment["spec"]["template"]["spec"]["containers"][0]
-assert container["image"] == "louislam/uptime-kuma:2"
+assert container["image"] == f"louislam/uptime-kuma:{defaults['app']['image_tag']}"
 assert container["volumeMounts"] == [{"name": "data", "mountPath": "/app/data"}]
 assert container["startupProbe"]["httpGet"] == {"path": "/api/entry-page", "port": "http"}
 
@@ -114,7 +114,7 @@ assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]
 restore_dispatch = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/restore.yml"))
 assert any(task.get("ansible.builtin.include_tasks") == "restore-kubernetes.yml"
            for task in restore_dispatch)
-assert any(task.get("ansible.builtin.include_tasks") == "restore-docker.yml"
+assert any(task.get("ansible.builtin.include_tasks") == "restore-guest.yml"
            for task in restore_dispatch)
 restore = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/restore-kubernetes.yml"))
 shared_restore = task_named(restore, "Uptime Kuma Kubernetes restore | Use the shared recovery Job")
@@ -133,7 +133,7 @@ docker_upload = task_named(
     docker_backup,
     "Uptime Kuma backup | Quiesce Uptime Kuma and archive its data directory to PBS",
 )
-docker_restore = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/restore-docker.yml"))
+docker_restore = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/restore-guest.yml"))
 assert docker_upload["vars"]["pbs_client_archives"] == [
     {"name": "data.pxar", "path": "{{ _kuma_backup_data_path }}"}
 ]

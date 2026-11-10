@@ -1,0 +1,27 @@
+# Uptime Kuma ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Uptime Kuma's non-Docker install: a git clone in {{ uptime_kuma_native_dir }} run by Node.
+# State lives under data_path (DATA_DIR), the layout the Docker image's /app/data has.
+[Unit]
+Description=Uptime Kuma ({{ instance }})
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ uptime_kuma_service }}
+Group={{ uptime_kuma_service }}
+UMask=0027
+WorkingDirectory={{ uptime_kuma_native_dir }}
+Environment="PATH={{ uptime_kuma_node_dir }}/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="NODE_ENV=production"
+Environment="DATA_DIR={{ app_config.app.data_path }}/"
+Environment="UPTIME_KUMA_HOST=0.0.0.0"
+Environment="UPTIME_KUMA_PORT={{ app_config.app.port }}"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+ExecStart={{ uptime_kuma_node_dir }}/bin/node {{ uptime_kuma_native_dir }}/server/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

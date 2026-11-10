@@ -4,3 +4,12 @@
     project_src: "{{ uptime_kuma_project_dir }}"
     state: present
     recreate: always
+  when: not (uptime_kuma_native | bool)
+
+- name: Restart native uptime-kuma
+  ansible.builtin.systemd:
+    name: "{{ uptime_kuma_service }}"
+    state: restarted
+    daemon_reload: true
+  listen: Restart uptime-kuma
+  when: uptime_kuma_native | bool

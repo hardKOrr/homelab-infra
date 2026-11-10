@@ -1,6 +1,7 @@
 ---
 # Deploy Uptime Kuma — uptime monitoring for every app (bootstrap step 5).
-# Docker on the monitoring VM remains the default (an LXC stack is opt-in); an instance may opt into Kubernetes.
+# Docker on the monitoring VM remains the default (an LXC stack is opt-in); an instance may opt into Kubernetes or
+# `hosting.method: native` (with `proxmox.guest_type`: its own LXC or VM).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/uptime-kuma.yml -e instance=uptime-kuma
@@ -91,6 +92,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: uptime-kuma
+      when: app_config.hosting.method == 'native'
+
 
 # ── Play 2: Docker deploy ─────────────────────────────────────────────────────
 # The default method runs on the stack host to install and configure Uptime Kuma.
@@ -119,29 +128,17 @@
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when:
-        - hostvars['localhost'].app_config.hosting.method == 'docker'
+        - hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
         - not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
-    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
-    # on homelabinfra_infra.notifications, which does not exist yet when the first
-    # baseline guests are created. Running it every deploy is what gives them the
-    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    # Unconditional: the Ntfy notify hook needs notifications facts that do not exist when
+    # the first baseline guests are created; running every deploy adds it once Ntfy is up.
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
-    # Unconditional, and deliberately not gated on homelabinfra_stack_host_created.
-    # That fact means "I created this host in THIS run", which is not the same question as
-    # "does this host have Docker". A host created by a run that then failed before Play 2
-    # is an existing host on every later run, so the install was skipped forever and the
-    # deploy died at the first compose task with
-    #
-    #   Cannot find docker CLI in path
-    #
-    # Same shape as the guest-reuse defect that never started a stopped guest: state was
-    # inferred from what this run did rather than from what is actually there. The docker
-    # role is idempotent, so running it every deploy costs an apt check and removes the
-    # failure mode.
+    # Unconditional, not gated on homelabinfra_stack_host_created: that fact means "created in
+    # THIS run", and a host left by a failed earlier run has no Docker. The role is idempotent.
     - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
@@ -151,7 +148,7 @@
     - name: Deploy Uptime Kuma
       ansible.builtin.include_role:
         name: uptime-kuma
-      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "Uptime Kuma | Deploy on Kubernetes"
   hosts: localhost
@@ -195,7 +192,7 @@
     _kuma_hosting_method: "{{ app_config.hosting.method }}"
     _kuma_deploy_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if _kuma_hosting_method == 'docker' else hostvars['localhost'] }}
+         if _kuma_hosting_method in ['docker', 'native'] else hostvars['localhost'] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
@@ -292,7 +289,7 @@
           {{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list
              if _kuma_hosting_method == 'kubernetes'
              else [groups['deploy_' ~ instance][0]] }}
-        record_guest_kind: "{{ 'kubernetes' if _kuma_hosting_method == 'kubernetes' else 'docker' }}"
+        record_guest_kind: "{{ 'docker' if _kuma_hosting_method == 'docker' else _kuma_hosting_method }}"
 
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml
