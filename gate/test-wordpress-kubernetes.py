@@ -55,7 +55,7 @@ def check_defaults_and_dispatch():
         (ROOT / "ansible/vars/app-defaults/wordpress.yml").read_text(encoding="utf-8")
     )["wordpress_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "python:3.12-bookworm"
 
