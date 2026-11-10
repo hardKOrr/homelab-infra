@@ -1,7 +1,8 @@
 ---
 # Deploy FlareSolverr — the Cloudflare-solving proxy Prowlarr calls out to for indexers it
-# cannot reach directly — on the Kubernetes hosting backend (default), or on Docker on a
-# stack host (LXC or VM) with `hosting.method: docker` and `stack: <name>`.
+# cannot reach directly — on the Kubernetes hosting backend (default), on Docker on a
+# stack host (LXC or VM) with `hosting.method: docker` and `stack: <name>`, or natively on
+# its own LXC or VM with `hosting.method: native` and `proxmox.guest_type`.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/flaresolverr.yml -e instance=flaresolverr
@@ -73,6 +74,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: flaresolverr
+      when: app_config.hosting.method == 'native'
+
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -88,7 +97,7 @@
       when: app_config.hosting.method == 'kubernetes'
 
 
-- name: "FlareSolverr | Deploy on Docker"
+- name: "FlareSolverr | Deploy on a guest"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -106,6 +115,7 @@
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy FlareSolverr
       ansible.builtin.include_role:
@@ -134,7 +144,7 @@
           {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
              | map(attribute='name') | list
              if _fs_k8s | bool else groups['deploy_' ~ instance] }}
-        record_guest_kind: "{{ 'kubernetes' if _fs_k8s | bool else 'docker' }}"
+        record_guest_kind: "{{ app_config.hosting.method }}"
 
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
@@ -143,8 +153,8 @@
         notify_message: >-
           {{ instance }} is running on {{ 'the Kubernetes backend, reachable on port '
           ~ app_config.app.node_port ~ " of any cluster node's address"
-          if _fs_k8s | bool else 'Docker, reachable on port '
-          ~ app_config.app.port ~ " of its stack host's address" }}. Point Prowlarr's
+          if _fs_k8s | bool else 'its ' ~ ('Docker stack host' if app_config.hosting.method == 'docker'
+          else 'native guest') ~ ', reachable on port ' ~ app_config.app.port ~ " of its address" }}. Point Prowlarr's
           FlareSolverr indexer-proxy setting at it; that connection is not automated.
 
     - name: Fail if anything could not be wired

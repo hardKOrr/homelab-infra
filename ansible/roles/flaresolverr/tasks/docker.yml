@@ -1,0 +1,44 @@
+---
+# FlareSolverr on Docker on a stack host (hosting.method: docker). Prowlarr reaches it at
+# http://<stack host address>:<app.port>.
+- name: FlareSolverr | Create the project directory
+  ansible.builtin.file:
+    path: "/opt/{{ instance }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: FlareSolverr | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart flaresolverr
+
+- name: FlareSolverr | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+    policy: missing
+  changed_when: false
+
+- name: FlareSolverr | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    remove_orphans: true
+
+- name: FlareSolverr | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: FlareSolverr | Wait for the API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _flaresolverr_health
+  retries: 30
+  delay: 5
+  until: _flaresolverr_health.status | default(0) == 200
+  changed_when: false

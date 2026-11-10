@@ -28,7 +28,7 @@ EXTRA_IMPLEMENTED = {
     "bookstack": {"docker-lxc"},
     "comfyui": {"docker-lxc"},
     "deemix": {"docker-lxc"},
-    "flaresolverr": {"docker-lxc", "docker-vm"},
+    "flaresolverr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo": {"docker-lxc"},
     "frigate": {"docker-lxc"},
     "home-assistant": {"docker-lxc"},

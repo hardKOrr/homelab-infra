@@ -18,7 +18,7 @@
 # one yet. See the same comment in ansible/vars/app-defaults/flaresolverr.yml.
 
 # app:
-#   image: "flaresolverr/flaresolverr:latest"
+#   image: "flaresolverr/flaresolverr:v3.5.2"   # the same exact release the native install runs
 #   node_port: 30191
 #   # What Prowlarr connects to on port 8191 of any cluster node. NodePorts are
 #   # cluster-wide: a second FlareSolverr instance MUST set this to a different, unused
@@ -34,3 +34,11 @@
 # # stack: flaresolverr-lxc    # one declared guest_type: lxc under
 # #                            # infrastructure.stacks in config/infrastructure.yml.
 # Prowlarr connects to port app.port (8191) of the stack host's address.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy installs upstream's pre-compiled Linux x64 binary (the release pinned in
+# app.native_version) as a systemd service. Prowlarr connects to port app.port (8191).
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm

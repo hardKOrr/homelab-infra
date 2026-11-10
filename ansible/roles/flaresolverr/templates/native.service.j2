@@ -1,0 +1,23 @@
+# FlareSolverr ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Upstream's pre-compiled Linux x64 binary, release {{ app_config.app.native_version }}.
+[Unit]
+Description=FlareSolverr ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ flaresolverr_service }}
+Group={{ flaresolverr_service }}
+WorkingDirectory={{ flaresolverr_native_dir }}/flaresolverr
+Environment="HOME={{ flaresolverr_home }}"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="HOST=0.0.0.0"
+Environment="PORT={{ app_config.app.port }}"
+Environment="LOG_LEVEL={{ app_config.app.log_level }}"
+ExecStart={{ flaresolverr_native_dir }}/flaresolverr/flaresolverr
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
