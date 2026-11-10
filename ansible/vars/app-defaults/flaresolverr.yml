@@ -50,14 +50,31 @@ flaresolverr_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY. See the identical comment in
   # vars/app-defaults/jellyseerr.yml — the resolver has no per-app selector yet.
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). The upstream binary bundles Chrome, hence the memory.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "flaresolverr/flaresolverr:latest"
+    # Docker and Kubernetes run the same exact upstream release as the native install,
+    # FlareSolverr's pre-compiled Linux x64 binary
+    # (https://github.com/FlareSolverr/FlareSolverr#precompiled-binaries).
+    image: "flaresolverr/flaresolverr:v3.5.2"
+    native_version: "3.5.2"
+    native_sha256: "84f6df48849b2e1742692841805c4f284118fe4e2798b49d3a78159e89a46a91"
     port: 8191
     log_level: info
 
@@ -67,8 +84,8 @@ flaresolverr_defaults:
     # apps this platform already assigns ports to.
     node_port: 30191
 
-    # Docker method only: `hosting.method: docker` plus `stack: <name>` (a stack whose
-    # guest_type is lxc or vm) publishes `port` on the stack host's own address.
+    # Docker and native methods: `hosting.method: docker` plus `stack: <name>` (a stack whose
+    # guest_type is lxc or vm) publishes `port` on the stack host's (or the native guest's) own address.
 
   routing:
     proxy: none

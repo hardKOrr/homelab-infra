@@ -1,0 +1,131 @@
+---
+# FlareSolverr native (hosting.method: native, on an LXC or a VM): upstream's pre-compiled
+# Linux x64 binary, which bundles Chrome
+# (https://github.com/FlareSolverr/FlareSolverr#precompiled-binaries), at the exact release
+# pinned in app.native_version and checked against app.native_sha256. Stateless.
+- name: FlareSolverr native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native FlareSolverr supports Debian 12 on x86_64 (the pre-compiled binary).
+
+# Xvfb is what FlareSolverr's non-headless Chrome runs on; the rest are Chrome's libraries.
+- name: FlareSolverr native | Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - xvfb
+      - fonts-liberation
+      - libasound2
+      - libatk-bridge2.0-0
+      - libatk1.0-0
+      - libcups2
+      - libgbm1
+      - libgtk-3-0
+      - libnss3
+      - libxkbcommon0
+      - libxss1
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: FlareSolverr native | Create the app group
+  ansible.builtin.group:
+    name: "{{ flaresolverr_service }}"
+    system: true
+
+- name: FlareSolverr native | Create the app user
+  ansible.builtin.user:
+    name: "{{ flaresolverr_service }}"
+    group: "{{ flaresolverr_service }}"
+    home: "{{ flaresolverr_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: FlareSolverr native | Download the pinned release
+  ansible.builtin.get_url:
+    url: "https://github.com/FlareSolverr/FlareSolverr/releases/download/v{{ app_config.app.native_version }}/flaresolverr_linux_x64.tar.gz"
+    checksum: "sha256:{{ app_config.app.native_sha256 }}"
+    dest: "/var/cache/flaresolverr-{{ app_config.app.native_version }}-linux-x64.tar.gz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: FlareSolverr native | Create the release directory
+  ansible.builtin.file:
+    path: "{{ flaresolverr_native_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The archive holds one `flaresolverr/` directory; unpacking beside it keeps a version
+# bump from touching the running release until the unit restarts.
+- name: FlareSolverr native | Unpack the pinned release
+  ansible.builtin.unarchive:
+    src: "/var/cache/flaresolverr-{{ app_config.app.native_version }}-linux-x64.tar.gz"
+    dest: "{{ flaresolverr_native_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ flaresolverr_native_dir }}/flaresolverr/flaresolverr"
+  notify: Restart flaresolverr service
+
+- name: FlareSolverr native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ flaresolverr_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart flaresolverr service
+
+- name: FlareSolverr native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ flaresolverr_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: FlareSolverr native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: FlareSolverr native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ flaresolverr_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ flaresolverr_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+# The root document answers only once the browser stack started, and reports the version.
+- name: FlareSolverr native | Wait for the API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/"
+    return_content: true
+  register: _flaresolverr_health
+  retries: 30
+  delay: 5
+  until: _flaresolverr_health.status | default(0) == 200
+  changed_when: false
+
+- name: FlareSolverr native | Verify the running version is the pinned one
+  ansible.builtin.assert:
+    that: _flaresolverr_health.json.version | default('') == app_config.app.native_version
+    fail_msg: "FlareSolverr reports {{ _flaresolverr_health.json.version | default('no version') }}, expected {{ app_config.app.native_version }}."

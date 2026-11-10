@@ -1,0 +1,6 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/flaresolverr.yml and config/apps/<instance>.yml.
+flaresolverr_service: flaresolverr
+flaresolverr_native_dir: "/opt/flaresolverr-{{ app_config.app.native_version | default('') }}"
+flaresolverr_home: /var/lib/flaresolverr

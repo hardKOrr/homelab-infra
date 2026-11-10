@@ -4,3 +4,11 @@
     project_src: "/opt/{{ instance }}"
     state: present
     recreate: always
+  when: app_config.hosting.method == 'docker'
+
+- name: Restart flaresolverr service
+  ansible.builtin.systemd:
+    name: "{{ flaresolverr_service }}"
+    state: restarted
+    daemon_reload: true
+  when: app_config.hosting.method == 'native'
