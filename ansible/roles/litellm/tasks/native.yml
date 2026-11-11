@@ -1,0 +1,119 @@
+---
+# LiteLLM natively on its own LXC or VM: the litellm[proxy] package from PyPI, pinned in
+# app.native_version, in a venv, with the extra_proxy extra that carries prisma (the proxy
+# refuses to start with DATABASE_URL set and no prisma, as every deploy here has), run as a systemd service. The proxy keeps no files of its
+# own; its routing config and keys are written by main.yml and its state is in the named
+# PostgreSQL database.
+- name: LiteLLM native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native LiteLLM supports Debian 12 on x86_64.
+
+- name: LiteLLM native | Install prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, libatomic1, python3-venv]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: LiteLLM native | Install the shared PBS client
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+
+- name: LiteLLM native | Create the app group
+  ansible.builtin.group:
+    name: "{{ litellm_native_user }}"
+    system: true
+
+- name: LiteLLM native | Create the app user
+  ansible.builtin.user:
+    name: "{{ litellm_native_user }}"
+    group: "{{ litellm_native_user }}"
+    home: "/var/lib/{{ litellm_native_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+# Debian 12's pip predates PEP 685 extra normalization and silently omits Prisma.
+- name: LiteLLM native | Prepare pip with normalized extras support
+  ansible.builtin.pip:
+    name: pip==26.3
+    virtualenv: "{{ litellm_native_venv }}"
+    virtualenv_command: python3 -m venv
+
+- name: LiteLLM native | Install the pinned package
+  ansible.builtin.pip:
+    name: "litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}"
+    virtualenv: "{{ litellm_native_venv }}"
+    virtualenv_command: python3 -m venv
+  notify: Restart litellm
+  register: _litellm_native_package
+
+- name: LiteLLM native | Check the generated database client
+  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'from prisma import Prisma'"
+  changed_when: false
+  failed_when: false
+  register: _litellm_native_client
+
+- name: LiteLLM native | Generate the database client from the pinned schema
+  ansible.builtin.command:
+    argv:
+      - "{{ litellm_native_venv }}/bin/prisma"
+      - generate
+      - --schema
+      - "{{ litellm_native_venv }}/lib/python3.11/site-packages/litellm/proxy/schema.prisma"
+  environment:
+    HOME: "/var/lib/{{ litellm_native_user }}"
+    PATH: "{{ litellm_native_venv }}/bin:/var/lib/{{ litellm_native_user }}/.cache/prisma-python/nodeenv/bin:{{ ansible_env.PATH }}"
+  when: _litellm_native_package.changed or _litellm_native_client.rc != 0
+  notify: Restart litellm
+
+- name: LiteLLM native | Keep the runtime toolchain cache owned by the service user
+  ansible.builtin.file:
+    path: "/var/lib/{{ litellm_native_user }}/.cache"
+    owner: "{{ litellm_native_user }}"
+    group: "{{ litellm_native_user }}"
+    recurse: true
+
+- name: LiteLLM native | Require the generated database client
+  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'from prisma import Prisma'"
+  changed_when: false
+
+- name: LiteLLM native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart litellm
+
+- name: LiteLLM native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: LiteLLM native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ instance }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ instance }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

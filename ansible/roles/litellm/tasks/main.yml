@@ -1,6 +1,6 @@
 ---
-# LiteLLM Proxy on Docker on a stack host (hosting.method: docker, LXC or VM). Kubernetes
-# is kubernetes.yml. The proxy keeps no files of its own: its routing config is rendered
+# LiteLLM Proxy on a guest: Docker on a stack host (docker.yml) or natively on its own LXC
+# or VM (native.yml). Kubernetes is kubernetes.yml. The proxy keeps no files of its own: its routing config is rendered
 # below, its keys are in Vaultwarden, and virtual keys, spend and usage are in the named
 # PostgreSQL database that playbooks/apps/litellm.yml provisions before this role.
 
@@ -40,26 +40,13 @@
   no_log: true
   notify: Restart litellm
 
-- name: LiteLLM | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ litellm_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart litellm
+- name: LiteLLM | Run on Docker
+  ansible.builtin.include_tasks: docker.yml
+  when: app_config.hosting.method | default('kubernetes') == 'docker'
 
-- name: LiteLLM | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ litellm_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: LiteLLM | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "{{ litellm_project_dir }}"
-    state: present
-    remove_orphans: true
+- name: LiteLLM | Run natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('kubernetes') == 'native'
 
 - name: LiteLLM | Apply pending restarts
   ansible.builtin.meta: flush_handlers

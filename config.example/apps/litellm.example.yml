@@ -39,3 +39,11 @@ backup:
 # # stack: litellm-lxc      # one declared guest_type: lxc under
 # #                         # infrastructure.stacks in config/infrastructure.yml.
 # # The model routes, credentials and database are unchanged; the proxy listens on app.port.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy installs the litellm[proxy] release pinned in app.native_version from PyPI into a
+# venv and runs it as a systemd service. Routes, credentials and database are unchanged.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm

@@ -1,0 +1,22 @@
+# LiteLLM Proxy ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# litellm[proxy] {{ app_config.app.native_version }} from PyPI.
+[Unit]
+Description=LiteLLM Proxy ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ litellm_native_user }}
+Group={{ litellm_native_user }}
+WorkingDirectory=/var/lib/{{ litellm_native_user }}
+Environment="HOME=/var/lib/{{ litellm_native_user }}"
+# Prisma's downloaded npm uses /usr/bin/env node; generated clients use the venv.
+Environment="PATH={{ litellm_native_venv }}/bin:/var/lib/{{ litellm_native_user }}/.cache/prisma-python/nodeenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile={{ litellm_env_file }}
+ExecStart={{ litellm_native_venv }}/bin/litellm --config {{ litellm_config_dir }}/config.yaml --port {{ app_config.app.port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

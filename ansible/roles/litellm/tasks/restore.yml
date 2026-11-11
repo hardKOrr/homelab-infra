@@ -3,6 +3,6 @@
   ansible.builtin.include_tasks: restore-kubernetes.yml
   when: app_config.hosting.method | default('kubernetes') == 'kubernetes'
 
-- name: LiteLLM restore | Use the Docker restore path
+- name: LiteLLM restore | Use the restore swap on a Docker or native guest
   ansible.builtin.include_tasks: restore-guest.yml
-  when: app_config.hosting.method | default('kubernetes') == 'docker'
+  when: app_config.hosting.method | default('kubernetes') in ['docker', 'native']

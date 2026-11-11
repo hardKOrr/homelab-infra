@@ -1,5 +1,6 @@
 ---
-# Default configuration for LiteLLM Proxy — the stateless Kubernetes AI gateway.
+# Default configuration for LiteLLM Proxy — the stateless AI gateway (Kubernetes by default,
+# or Docker, or natively on its own LXC or VM).
 # Users override specific values in config/apps/litellm.yml. Provider credentials are
 # deliberately absent: the `app.credentials` map names Vaultwarden fields only.
 #
@@ -18,7 +19,7 @@ litellm_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -29,8 +30,23 @@ litellm_defaults:
 
   cluster: k3s-cluster
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "docker.litellm.ai/berriai/litellm:main-stable"
+    # Docker and Kubernetes run the image of the same release the native install gets from
+    # PyPI as litellm[proxy] (https://github.com/BerriAI/litellm#readme).
+    image: "docker.litellm.ai/berriai/litellm:v1.109.0"
+    native_version: "1.109.0"
     port: 4000
 
     # LiteLLM virtual keys, key metadata, spend logs and usage records. This is a named

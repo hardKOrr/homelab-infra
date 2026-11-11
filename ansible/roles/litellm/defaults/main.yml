@@ -3,3 +3,7 @@ litellm_project_dir: "/opt/{{ instance }}"
 litellm_config_dir: "{{ litellm_project_dir }}/config"
 litellm_env_file: "{{ litellm_project_dir }}/litellm.env"
 litellm_config_owner: root
+# Native method (native.yml): the litellm[proxy] package lives in a venv of its own.
+litellm_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+litellm_native_user: "{{ instance }}"
+litellm_native_venv: "{{ litellm_project_dir }}/venv"
