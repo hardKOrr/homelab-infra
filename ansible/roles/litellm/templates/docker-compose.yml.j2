@@ -1,0 +1,13 @@
+{{ ansible_managed | comment }}
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    command: ["--config", "/app/config/config.yaml", "--port", "{{ app_config.app.port }}"]
+    env_file:
+      - "{{ litellm_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"
+    volumes:
+      - "{{ litellm_config_dir }}:/app/config:ro"

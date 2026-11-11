@@ -18,7 +18,7 @@ litellm_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   recovery:
@@ -66,6 +66,8 @@ litellm_defaults:
     enabled: true
     schedule: "0 3 * * *"
     retention_days: 14
+    # Docker method: roles/litellm/tasks/backup.yml is the on-demand backup.
+    application_consistent: true
     datastore: ""
     backup_id: ""
     timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"

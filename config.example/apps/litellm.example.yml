@@ -31,3 +31,11 @@ backup:
   # retention_days: 14
   # datastore: REPLACE_WITH_PBS_DATASTORE
   # backup_id: ""
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: litellm            # a stack with guest_type: vm (the default), or
+# # stack: litellm-lxc      # one declared guest_type: lxc under
+# #                         # infrastructure.stacks in config/infrastructure.yml.
+# # The model routes, credentials and database are unchanged; the proxy listens on app.port.

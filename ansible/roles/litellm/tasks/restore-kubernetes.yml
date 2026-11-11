@@ -1,0 +1,49 @@
+---
+# Restore LiteLLM's external PostgreSQL state and the exact routing ConfigMap captured
+# beside it by the application backup. Called by maintenance/restore-app.yml;
+# tasks/kubernetes/recovery-restore.yml is the mechanism.
+#
+# Provider credentials and stable master/salt keys are deliberately not in the PBS
+# artifact. The target must already have its own Vaultwarden item, so a restored database
+# remains decryptable and provider access remains Vaultwarden-only.
+
+- name: Restore | Require matching PostgreSQL state contracts
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database_name == restore_target_config.app.database_name
+      - (app_config.app.database_provider | default(app_config.app.database.provider))
+        == (restore_target_config.app.database_provider
+            | default(restore_target_config.app.database.provider))
+      - app_config.app.database.version | int == restore_target_config.app.database.version | int
+    fail_msg: >-
+      Source and target LiteLLM instances must use the same database name, provider and
+      PostgreSQL major version. A dump must land in the target's compatible named database,
+      not a silently different backend.
+
+- name: Restore | Describe the target's database step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+# The routing ConfigMap comes back from the recovery point, which keeps a renamed drill
+# target routing the source's models. It holds model routing only; credentials are
+# environment references.
+- name: Restore | Restore LiteLLM through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: LiteLLM
+      archives:
+        - name: config
+          config_map: "{{ restore_target }}-config"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the {{ restore_target }}-config ConfigMap
+      verify:
+        - >-
+          Verify /health/readiness, the configured model route, virtual keys and usage
+          records before removing a disposable target.

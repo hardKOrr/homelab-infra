@@ -1,0 +1,61 @@
+---
+# Application-consistent LiteLLM recovery point on Docker: a custom-format dump of the
+# named PostgreSQL database plus the rendered routing config, taken while the proxy is
+# stopped. Master/salt and provider keys stay in Vaultwarden and are never archived.
+
+- name: LiteLLM backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - app_config.app.database.name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      LiteLLM needs its application-consistent backup contract, a named database and a
+      configured PBS before a backup can run.
+
+- name: LiteLLM backup | Check the config directory
+  ansible.builtin.stat:
+    path: "{{ litellm_config_dir }}/config.yaml"
+  register: _litellm_backup_config
+  changed_when: false
+
+- name: LiteLLM backup | Require the rendered routing config
+  ansible.builtin.assert:
+    that: _litellm_backup_config.stat.exists
+    fail_msg: >-
+      {{ litellm_config_dir }}/config.yaml is missing; refusing to create a recovery point
+      that would omit the routing config.
+
+# The dump directory is outside /tmp, which the client's tmpfs replaces.
+- name: LiteLLM backup | Allocate private scratch space
+  ansible.builtin.tempfile:
+    state: directory
+    path: /var/tmp
+    prefix: litellm-backup-
+  register: _litellm_backup_scratch
+  changed_when: true
+
+- name: LiteLLM backup | Stop the proxy, dump its database and push both archives
+  block:
+    - name: LiteLLM backup | Run the shared PBS backup
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      vars:
+        pbs_client_runtime: docker
+        pbs_client_compose_project: "{{ litellm_project_dir }}"
+        pbs_client_stop_services: ["{{ instance }}"]
+        pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
+        pbs_client_archives:
+          - name: database.pxar
+            path: "{{ _litellm_backup_scratch.path }}"
+          - name: config.pxar
+            path: "{{ litellm_config_dir }}"
+
+    - name: LiteLLM backup | Mark the paired recovery artifact complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: LiteLLM backup | Remove private scratch data
+      ansible.builtin.file:
+        path: "{{ _litellm_backup_scratch.path }}"
+        state: absent
