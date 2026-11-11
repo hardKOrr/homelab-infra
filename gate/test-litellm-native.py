@@ -18,7 +18,7 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 # prisma lives in extra_proxy, not proxy; the proxy exits without it when DATABASE_URL is set.
 assert 'litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}' in install
-assert "import prisma" in install
+assert "from prisma import Prisma" in install
 
 playbook = (repo / "ansible/playbooks/apps/litellm.yml").read_text()
 assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook

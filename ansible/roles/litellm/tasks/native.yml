@@ -46,9 +46,36 @@
     virtualenv: "{{ litellm_native_venv }}"
     virtualenv_command: python3 -m venv
   notify: Restart litellm
+  register: _litellm_native_package
 
-- name: LiteLLM native | Require the database toolchain in the venv
-  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'import prisma'"
+- name: LiteLLM native | Check the generated database client
+  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'from prisma import Prisma'"
+  changed_when: false
+  failed_when: false
+  register: _litellm_native_client
+
+- name: LiteLLM native | Generate the database client from the pinned schema
+  ansible.builtin.command:
+    argv:
+      - "{{ litellm_native_venv }}/bin/prisma"
+      - generate
+      - --schema
+      - "{{ litellm_native_venv }}/lib/python3.11/site-packages/litellm/proxy/schema.prisma"
+  environment:
+    HOME: "/var/lib/{{ litellm_native_user }}"
+    PATH: "{{ litellm_native_venv }}/bin:/var/lib/{{ litellm_native_user }}/.cache/prisma-python/nodeenv/bin:{{ ansible_env.PATH }}"
+  when: _litellm_native_package.changed or _litellm_native_client.rc != 0
+  notify: Restart litellm
+
+- name: LiteLLM native | Keep the runtime toolchain cache owned by the service user
+  ansible.builtin.file:
+    path: "/var/lib/{{ litellm_native_user }}/.cache"
+    owner: "{{ litellm_native_user }}"
+    group: "{{ litellm_native_user }}"
+    recurse: true
+
+- name: LiteLLM native | Require the generated database client
+  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'from prisma import Prisma'"
   changed_when: false
 
 - name: LiteLLM native | Write the systemd unit
