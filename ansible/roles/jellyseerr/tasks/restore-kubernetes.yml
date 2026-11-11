@@ -1,0 +1,23 @@
+---
+# Restore one Jellyseerr instance's config volume from a PBS recovery point, into the namespace of
+# a Jellyseerr instance that is already deployed. Called by playbooks/maintenance/restore-app.yml,
+# whose header is the operator procedure; tasks/kubernetes/recovery-restore.yml is the
+# mechanism. Jellyseerr keeps everything — settings, its own API key, its connections — in
+# the one volume, so there is no database or key to carry across.
+
+- name: Restore | Restore Jellyseerr through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Jellyseerr
+      archives:
+        - name: config
+          claim: "{{ restore_target }}-config"
+      stop:
+        - "{{ restore_target }}"
+      describe: "the {{ restore_target }}-config volume"
+      verify:
+        - >-
+          Now verify the application, not the artifact: open
+          https://{{ restore_target }}.<estate domain>/, sign in with the credentials
+          that worked on {{ instance }}, and check that requests, users and the Sonarr/Radarr/media-server connections are all present.

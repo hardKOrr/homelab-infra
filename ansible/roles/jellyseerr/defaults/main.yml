@@ -1,0 +1,4 @@
+---
+jellyseerr_project_dir: "/opt/{{ instance }}"
+jellyseerr_http_retries: 30
+jellyseerr_http_delay: 5
