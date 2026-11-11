@@ -37,7 +37,7 @@ EXTRA_IMPLEMENTED = {
     "jellyseerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},
-    "kometa": {"docker-lxc", "docker-vm"},
+    "kometa": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "lidarr": {"docker-lxc"},
     "mautic": {"docker-lxc"},
     "n8n": {"docker-lxc"},

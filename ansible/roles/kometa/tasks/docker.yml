@@ -1,0 +1,62 @@
+---
+# Kometa on a Docker stack host (hosting.method: docker). Kubernetes has its own entry
+# (kubernetes.yml), native on its own guest is native.yml. Kometa keeps only a cache and logs under /config; its credentials-bearing
+# config.yml stays canonical in Vaultwarden and is rewritten each deploy, so there is no
+# data to back up or restore.
+
+- name: Kometa | Read and validate the operator-owned configuration
+  ansible.builtin.include_tasks: config.yml
+
+- name: Kometa | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ kometa_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+
+- name: Kometa | Write the operator-owned configuration files
+  ansible.builtin.include_tasks: files.yml
+  vars:
+    _kometa_files_owner: root
+
+- name: Kometa | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ kometa_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart kometa
+
+- name: Kometa | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ kometa_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Kometa | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "{{ kometa_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Kometa | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Kometa | Read the container state
+  community.docker.docker_container_info:
+    name: "{{ instance }}"
+  register: _kometa_container
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: _kometa_container.container.State.Running | default(false) | bool
+
+- name: Kometa | Assert Kometa is running
+  ansible.builtin.assert:
+    that: _kometa_container.container.State.Running | default(false) | bool
+    fail_msg: Kometa is not running. Check docker logs {{ instance }} on the stack host.

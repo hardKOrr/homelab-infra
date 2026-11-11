@@ -1,7 +1,7 @@
 ---
 # Default configuration for Kometa — a scheduled media metadata and collection worker on
-# the Kubernetes hosting backend. Users override scheduling and storage in
-# config/apps/kometa.yml; the operator-owned Kometa config.yml itself belongs in the
+# the Kubernetes hosting backend (or Docker, or natively on its own LXC or VM). Users
+# override scheduling and storage in config/apps/kometa.yml; the operator-owned Kometa config.yml itself belongs in the
 # canonical Vaultwarden item, not in a tracked or runner-local config file.
 #
 # Kometa's config normally contains Plex, TMDb, Trakt, and often *arr credentials. Store
@@ -13,15 +13,34 @@
 kometa_defaults:
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). uv fetches the Python the project requires.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "kometateam/kometa:latest"
+    # Docker and Kubernetes run the image of the same release the native install clones
+    # (https://kometa.wiki/en/latest/kometa/install/#path-local).
+    image: "kometateam/kometa:v2.5.4"
+    native_version: "2.5.4"
+    # Match the pinned release's docker/Dockerfile.base; newer interpreters may lack wheels.
+    native_python_version: "3.13"
+    native_uv_version: "0.13.7"
+    native_uv_sha256: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
     # Kometa persists its cache and run logs here. The config itself is a Secret mounted
     # over config.yml, so this volume never becomes a second canonical copy of credentials.
     storage: 1
-    # Docker method only: Kometa's own scheduler runs it daily at these HH:MM times (the
+    # Docker and native methods: Kometa's own scheduler runs it daily at these HH:MM times (the
     # Kubernetes method uses `schedule`), and its cache and logs live in config_path.
     run_times: "05:00"
     config_path: "/opt/{{ instance }}/config"
