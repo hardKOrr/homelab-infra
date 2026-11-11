@@ -36,3 +36,11 @@
 #   ansible/vars/app-defaults/jellyseerr.yml for what that trade-off costs.
 #   enabled: true
 #   schedule: "0 3 * * *"
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: jellyseerr          # a stack with guest_type: vm (the default), or
+# # stack: jellyseerr-lxc    # one declared guest_type: lxc under
+# #                          # infrastructure.stacks in config/infrastructure.yml.
+# # On Docker the backup stops the container and archives its config directory.

@@ -28,7 +28,7 @@ jellyseerr_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   recovery:
@@ -51,6 +51,12 @@ jellyseerr_defaults:
   app:
     image: "fallenbagel/jellyseerr:latest"
     port: 5055
+
+    # Docker method only: the config directory on the stack host, owned by the image's
+    # `node` user. Kubernetes uses the PersistentVolume below instead.
+    config_path: "/opt/{{ instance }}/config"
+    puid: 1000
+    pgid: 1000
 
     # Settings, cached images and the application's own SQLite database. Small — this is
     # not a media library — but not disposable: it is the only copy of every request,
@@ -90,6 +96,10 @@ jellyseerr_defaults:
   # to find out whether a given nightly snapshot came out clean.
   backup:
     enabled: true
+
+    # Docker method: the service is stopped for the PBS upload, so the SQLite file and
+    # settings share one recovery point (roles/jellyseerr/tasks/backup.yml).
+    application_consistent: true
 
     # Cron in the CronJob's own timezone (see `timezone` below), not in UTC-by-default.
     schedule: "0 3 * * *"

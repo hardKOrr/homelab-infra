@@ -42,7 +42,7 @@ APPS = {
                   "archives": ["storage"]},
     "maintainerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
                     "archives": ["config"]},
-    "jellyseerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
+    "jellyseerr": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": None,
                    "archives": ["config"]},
     "hi-events": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "postgresql",
                   "archives": ["storage"]},
