@@ -4,7 +4,7 @@
 - name: LiteLLM backup | Dump the named PostgreSQL database
   ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
   vars:
-    database_client_runtime: docker
+    database_client_runtime: "{{ 'native' if litellm_native | bool else 'docker' }}"
     database_app_instance: "{{ instance }}"
     database_app_config: "{{ app_config.app.database }}"
     database_dump_file: "{{ _litellm_backup_scratch.path }}/litellm.dump"

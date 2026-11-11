@@ -5,4 +5,12 @@
     state: present
     recreate: always
   # gate/test-litellm-docker.py renders the config without a Docker host.
-  when: not (litellm_skip_restart | default(false) | bool)
+  when: not (litellm_skip_restart | default(false) | bool) and not (litellm_native | bool)
+
+- name: Restart litellm service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true
+  when: litellm_native | bool
+  listen: Restart litellm

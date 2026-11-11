@@ -1,6 +1,7 @@
 ---
 # Deploy LiteLLM Proxy — an external-state AI gateway, on Kubernetes by default or on
-# Docker on a stack host (hosting.method: docker, LXC or VM).
+# Docker on a stack host (hosting.method: docker, LXC or VM) or natively on its own LXC or VM
+# (hosting.method: native).
 #
 # On Kubernetes the pod, ConfigMap and runtime Secret live in an instance namespace on the
 # separately deployed k3s cluster; on Docker the container lives on the stack host. Either
@@ -49,6 +50,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: litellm
+
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native LiteLLM runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -88,6 +98,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: litellm
+      when: app_config.hosting.method == 'native'
+
     - name: Refresh inventory to get current cluster state
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -104,7 +122,7 @@
         litellm_fqdn: "{{ hostvars['localhost'].litellm_fqdn }}"
       when: app_config.hosting.method == 'kubernetes'
 
-- name: "LiteLLM | Deploy on Docker"
+- name: "LiteLLM | Deploy on Docker or natively"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -120,16 +138,20 @@
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy LiteLLM
       ansible.builtin.include_role:
         name: litellm
       vars:
         litellm_fqdn: "{{ hostvars['localhost'].litellm_fqdn }}"
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 - name: "LiteLLM | Wire"
   hosts: localhost
@@ -137,7 +159,7 @@
   gather_facts: false
 
   vars:
-    _litellm_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
+    _litellm_docker: "{{ hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
@@ -205,7 +227,7 @@
           {{ groups['deploy_' ~ instance] if _litellm_docker | bool
              else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
                   | map(attribute='name') | list }}
-        record_guest_kind: "{{ 'docker' if _litellm_docker | bool else 'kubernetes' }}"
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method if _litellm_docker | bool else 'kubernetes' }}"
         record_guest_url: "https://{{ hostvars['localhost'].litellm_fqdn }}"
 
     - name: Notify
@@ -213,7 +235,7 @@
       vars:
         notify_title: "LiteLLM deployed"
         notify_message: >-
-          {{ instance }} is running on {{ 'Docker' if _litellm_docker | bool else 'the Kubernetes backend' }} at
+          {{ instance }} is running on {{ ('Docker' if hostvars['localhost'].app_config.hosting.method == 'docker' else 'its own guest') if _litellm_docker | bool else 'the Kubernetes backend' }} at
           https://{{ hostvars['localhost'].litellm_fqdn }}. Provider keys remain in Vaultwarden.
 
     - name: Fail if anything could not be wired

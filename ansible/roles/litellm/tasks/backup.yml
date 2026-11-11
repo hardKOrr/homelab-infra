@@ -1,5 +1,5 @@
 ---
-# Application-consistent LiteLLM recovery point on Docker: a custom-format dump of the
+# Application-consistent LiteLLM recovery point on Docker or natively: a custom-format dump of the
 # named PostgreSQL database plus the rendered routing config, taken while the proxy is
 # stopped. Master/salt and provider keys stay in Vaultwarden and are never archived.
 
@@ -41,7 +41,7 @@
     - name: LiteLLM backup | Run the shared PBS backup
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ 'native' if litellm_native | bool else 'docker' }}"
         pbs_client_compose_project: "{{ litellm_project_dir }}"
         pbs_client_stop_services: ["{{ instance }}"]
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
