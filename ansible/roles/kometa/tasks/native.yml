@@ -59,16 +59,25 @@
     group: root
     mode: "0644"
 
+- name: Kometa native | Create the versioned uv directory
+  ansible.builtin.file:
+    path: "/opt/uv-{{ app_config.app.native_uv_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Kometa native | Extract the pinned uv
   ansible.builtin.unarchive:
     src: "/var/cache/uv-{{ app_config.app.native_uv_version }}.tar.gz"
-    dest: /opt
+    dest: "/opt/uv-{{ app_config.app.native_uv_version }}"
+    extra_opts: [--strip-components=1]
     remote_src: true
-    creates: "/opt/uv-x86_64-unknown-linux-gnu/uv"
+    creates: "/opt/uv-{{ app_config.app.native_uv_version }}/uv"
 
 - name: Kometa native | Link uv into the path
   ansible.builtin.file:
-    src: /opt/uv-x86_64-unknown-linux-gnu/uv
+    src: "/opt/uv-{{ app_config.app.native_uv_version }}/uv"
     dest: /usr/local/bin/uv
     state: link
 
