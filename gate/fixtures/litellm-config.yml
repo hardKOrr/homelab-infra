@@ -1,0 +1,20 @@
+---
+# Runs roles/litellm/tasks/config.yml against a scratch directory (gate/test-litellm-docker.py).
+- name: LiteLLM routing config on Docker
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance: litellm
+    litellm_skip_restart: true
+    litellm_config_owner: "{{ lookup('env', 'USER') }}"
+    litellm_config_dir: "{{ scratch }}"
+    app_config:
+      app:
+        models:
+          - model_name: target-route
+            litellm_params: {model: "openai/target"}
+  tasks:
+    - name: Run the role's config task
+      ansible.builtin.include_role:
+        name: litellm
+        tasks_from: config

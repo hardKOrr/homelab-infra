@@ -18,14 +18,8 @@
     - "{{ litellm_project_dir }}"
     - "{{ litellm_config_dir }}"
 
-- name: LiteLLM | Write the routing configuration
-  ansible.builtin.template:
-    src: config.yaml.j2
-    dest: "{{ litellm_config_dir }}/config.yaml"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart litellm
+- name: LiteLLM | Write or keep the routing configuration
+  ansible.builtin.include_tasks: config.yml
 
 - name: LiteLLM | Assemble the runtime environment
   ansible.builtin.set_fact:
