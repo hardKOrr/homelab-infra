@@ -33,6 +33,8 @@ kometa_defaults:
     # (https://kometa.wiki/en/latest/kometa/install/#path-local).
     image: "kometateam/kometa:v2.5.4"
     native_version: "2.5.4"
+    # Match the pinned release's docker/Dockerfile.base; newer interpreters may lack wheels.
+    native_python_version: "3.13"
     native_uv_version: "0.13.7"
     native_uv_sha256: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
     # Kometa persists its cache and run logs here. The config itself is a Secret mounted

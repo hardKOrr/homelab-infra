@@ -19,6 +19,9 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "/opt/uv-{{ app_config.app.native_uv_version }}/uv" in install, "uv path must follow the pin"
 assert "git" in install and "uv sync --frozen" in install and "native_uv_sha256" in install
+assert app["native_python_version"] == "3.13", "match the pinned upstream base image"
+assert "--python {{ app_config.app.native_python_version }}" in install
+assert "app_config.app.native_version ~ '-python-' ~ app_config.app.native_python_version" in install
 
 playbook = (repo / "ansible/playbooks/apps/kometa.yml").read_text()
 assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook

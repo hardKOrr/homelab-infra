@@ -95,7 +95,8 @@
 - name: Kometa native | Install the pinned release
   when: >-
     _kometa_release.content is not defined
-    or (_kometa_release.content | b64decode | trim) != app_config.app.native_version
+    or (_kometa_release.content | b64decode | trim) !=
+       (app_config.app.native_version ~ '-python-' ~ app_config.app.native_python_version)
   block:
     - name: Kometa native | Stop the service for the swap
       ansible.builtin.systemd:
@@ -121,7 +122,7 @@
 
     - name: Kometa native | Sync the locked dependencies
       ansible.builtin.command:
-        cmd: uv sync --frozen --no-dev
+        cmd: "uv sync --frozen --no-dev --python {{ app_config.app.native_python_version }}"
         chdir: "{{ kometa_native_root }}"
       environment:
         HOME: /root
@@ -132,7 +133,7 @@
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
-          printf '%s\n' '{{ app_config.app.native_version }}' > .release
+          printf '%s\n' '{{ app_config.app.native_version }}-python-{{ app_config.app.native_python_version }}' > .release
           chown -R {{ kometa_native_user }}:{{ kometa_native_user }} .
         chdir: "{{ kometa_native_root }}"
         executable: /bin/bash
