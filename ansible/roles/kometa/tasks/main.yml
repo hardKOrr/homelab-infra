@@ -1,87 +1,77 @@
 ---
-# Deploy Kometa as a scheduled Kubernetes workload. Its complete config.yml is authored
-# by the operator because the collection and metadata policy is theirs, and because it
-# contains credentials to the media services it drives.
+# Kometa on a Docker stack host (hosting.method: docker). Kubernetes has its own entry
+# (kubernetes.yml). Kometa keeps only a cache and logs under /config; its credentials-bearing
+# config.yml stays canonical in Vaultwarden and is rewritten each deploy, so there is no
+# data to back up or restore.
 
-- name: Kometa | Resolve the cluster and its API host
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+- name: Kometa | Read and validate the operator-owned configuration
+  ansible.builtin.include_tasks: config.yml
 
-- name: Kometa | Ensure the instance namespace exists
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+- name: Kometa | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ kometa_project_dir }}"
+    - "{{ app_config.app.config_path }}"
 
-- name: Kometa | Read the operator-owned configuration
-  ansible.builtin.set_fact:
-    _kometa_config_yml: "{{ app_config.app.config_yml | default('', true) }}"
+- name: Kometa | Write the operator-owned configuration files
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ app_config.app.config_path }}/{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _kometa_secret_data | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: Restart kometa
   no_log: true
 
-- name: Kometa | Require an operator-owned configuration
+- name: Kometa | Remove a collection file the operator no longer stores
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}/collections.yml"
+    state: absent
+  when: _kometa_collections_yml | length == 0
+  notify: Restart kometa
+
+- name: Kometa | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ kometa_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart kometa
+
+- name: Kometa | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ kometa_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Kometa | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "{{ kometa_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Kometa | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Kometa | Read the container state
+  community.docker.docker_container_info:
+    name: "{{ instance }}"
+  register: _kometa_container
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: _kometa_container.container.State.Running | default(false) | bool
+
+- name: Kometa | Assert Kometa is running
   ansible.builtin.assert:
-    that: _kometa_config_yml | length > 0
-    fail_msg: >-
-      No Kometa config.yml is stored for {{ instance }}. Use Store Secret to write the
-      complete YAML to homelab-infra/apps/{{ instance }}, field config_yml, then rerun
-      this deployment.
-  no_log: true
-
-- name: Kometa | Validate the configuration is YAML
-  ansible.builtin.set_fact:
-    _kometa_config_document: "{{ _kometa_config_yml | from_yaml }}"
-  no_log: true
-
-- name: Kometa | Require a mapping configuration
-  ansible.builtin.assert:
-    that: _kometa_config_document is mapping
-    fail_msg: >-
-      homelab-infra/apps/{{ instance }} field config_yml must contain a YAML mapping.
-  no_log: true
-
-- name: Kometa | Read the optional operator-owned collection file
-  ansible.builtin.set_fact:
-    _kometa_collections_yml: "{{ app_config.app.collections_yml | default('', true) }}"
-  no_log: true
-
-- name: Kometa | Validate the optional collection file as YAML
-  ansible.builtin.set_fact:
-    _kometa_collections_document: "{{ _kometa_collections_yml | from_yaml }}"
-  when: _kometa_collections_yml | length > 0
-  no_log: true
-
-- name: Kometa | Require a collection mapping when a collection file is stored
-  ansible.builtin.assert:
-    that:
-      - _kometa_collections_document is mapping
-      - (_kometa_collections_document.collections | default({})) is mapping
-      - (_kometa_collections_document.dynamic_collections | default({})) is mapping
-      - >-
-        (_kometa_collections_document.collections | default({}) | length) > 0
-        or (_kometa_collections_document.dynamic_collections | default({}) | length) > 0
-    fail_msg: >-
-      homelab-infra/apps/{{ instance }} field collections_yml must contain a non-empty
-      Kometa collections or dynamic_collections mapping.
-  when: _kometa_collections_yml | length > 0
-  no_log: true
-
-- name: Kometa | Assemble the operator-owned configuration files
-  ansible.builtin.set_fact:
-    _kometa_secret_data: >-
-      {{ {'config.yml': _kometa_config_yml}
-         | combine({'collections.yml': _kometa_collections_yml}
-                   if _kometa_collections_yml | length > 0 else {}) }}
-  no_log: true
-
-- name: Kometa | Sync the configuration into the namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-  vars:
-    k8s_secret_name: "{{ instance }}-config"
-    k8s_secret_data: "{{ _kometa_secret_data }}"
-  no_log: true
-
-- name: Kometa | Render the scheduled workload manifest
-  ansible.builtin.set_fact:
-    _kometa_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-
-# Do not start a metadata-changing job outside the schedule the operator selected.
-- name: Kometa | Apply the scheduled workload manifest
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
-  vars:
-    k8s_manifest: "{{ _kometa_manifest }}"
+    that: _kometa_container.container.State.Running | default(false) | bool
+    fail_msg: Kometa is not running. Check docker logs {{ instance }} on the stack host.

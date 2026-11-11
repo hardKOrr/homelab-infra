@@ -1,0 +1,17 @@
+# docker-compose.yml for Kometa ({{ instance }})
+# Managed by homelab-infra — edit config/apps/{{ instance }}.yml, not this file.
+# Kometa has no UI or port; its built-in scheduler runs it daily at KOMETA_TIMES.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    init: true
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - KOMETA_TIMES={{ app_config.app.run_times }}
+      - KOMETA_READ_ONLY_CONFIG=true
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"

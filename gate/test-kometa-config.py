@@ -27,7 +27,7 @@ def render(value, variables):
 
 def test_collection_file_is_optional_and_validated():
     tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/kometa/tasks/main.yml").read_text(encoding="utf-8")
+        (ROOT / "ansible/roles/kometa/tasks/config.yml").read_text(encoding="utf-8")
     )
 
     read = task_named(tasks, "Kometa | Read the optional operator-owned collection file")
@@ -84,7 +84,7 @@ def test_collection_file_is_optional_and_validated():
 
 def test_secret_data_contains_only_config_when_collection_file_is_absent():
     tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/kometa/tasks/main.yml").read_text(encoding="utf-8")
+        (ROOT / "ansible/roles/kometa/tasks/config.yml").read_text(encoding="utf-8")
     )
     task = task_named(tasks, "Kometa | Assemble the operator-owned configuration files")
     expression = task["ansible.builtin.set_fact"]["_kometa_secret_data"]

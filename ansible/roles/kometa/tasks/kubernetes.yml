@@ -1,0 +1,30 @@
+---
+# Deploy Kometa as a scheduled Kubernetes workload. Its complete config.yml is authored
+# by the operator because the collection and metadata policy is theirs, and because it
+# contains credentials to the media services it drives.
+
+- name: Kometa | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Kometa | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Kometa | Read and validate the operator-owned configuration
+  ansible.builtin.include_tasks: config.yml
+
+- name: Kometa | Sync the configuration into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-config"
+    k8s_secret_data: "{{ _kometa_secret_data }}"
+  no_log: true
+
+- name: Kometa | Render the scheduled workload manifest
+  ansible.builtin.set_fact:
+    _kometa_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+# Do not start a metadata-changing job outside the schedule the operator selected.
+- name: Kometa | Apply the scheduled workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _kometa_manifest }}"

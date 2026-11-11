@@ -15,3 +15,13 @@
 #   storage: 1
 #   schedule: "0 5 * * *"
 #   timeout_seconds: 7200
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: kometa             # a stack with guest_type: vm (the default), or
+# # stack: kometa-lxc       # one declared guest_type: lxc under
+# #                         # infrastructure.stacks in config/infrastructure.yml.
+# # On Docker Kometa's own scheduler runs it daily at app.run_times (default "05:00").
+# # app:
+# #   run_times: "05:00"

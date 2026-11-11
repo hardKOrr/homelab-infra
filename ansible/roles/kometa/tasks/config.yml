@@ -1,0 +1,64 @@
+---
+# Read and validate the operator-owned Kometa config.yml and optional collections.yml from
+# Vaultwarden (shared by every hosting method); leaves _kometa_secret_data and the parsed
+# documents for the method's own tasks.
+
+- name: Kometa | Read the operator-owned configuration
+  ansible.builtin.set_fact:
+    _kometa_config_yml: "{{ app_config.app.config_yml | default('', true) }}"
+  no_log: true
+
+- name: Kometa | Require an operator-owned configuration
+  ansible.builtin.assert:
+    that: _kometa_config_yml | length > 0
+    fail_msg: >-
+      No Kometa config.yml is stored for {{ instance }}. Use Store Secret to write the
+      complete YAML to homelab-infra/apps/{{ instance }}, field config_yml, then rerun
+      this deployment.
+  no_log: true
+
+- name: Kometa | Validate the configuration is YAML
+  ansible.builtin.set_fact:
+    _kometa_config_document: "{{ _kometa_config_yml | from_yaml }}"
+  no_log: true
+
+- name: Kometa | Require a mapping configuration
+  ansible.builtin.assert:
+    that: _kometa_config_document is mapping
+    fail_msg: >-
+      homelab-infra/apps/{{ instance }} field config_yml must contain a YAML mapping.
+  no_log: true
+
+- name: Kometa | Read the optional operator-owned collection file
+  ansible.builtin.set_fact:
+    _kometa_collections_yml: "{{ app_config.app.collections_yml | default('', true) }}"
+  no_log: true
+
+- name: Kometa | Validate the optional collection file as YAML
+  ansible.builtin.set_fact:
+    _kometa_collections_document: "{{ _kometa_collections_yml | from_yaml }}"
+  when: _kometa_collections_yml | length > 0
+  no_log: true
+
+- name: Kometa | Require a collection mapping when a collection file is stored
+  ansible.builtin.assert:
+    that:
+      - _kometa_collections_document is mapping
+      - (_kometa_collections_document.collections | default({})) is mapping
+      - (_kometa_collections_document.dynamic_collections | default({})) is mapping
+      - >-
+        (_kometa_collections_document.collections | default({}) | length) > 0
+        or (_kometa_collections_document.dynamic_collections | default({}) | length) > 0
+    fail_msg: >-
+      homelab-infra/apps/{{ instance }} field collections_yml must contain a non-empty
+      Kometa collections or dynamic_collections mapping.
+  when: _kometa_collections_yml | length > 0
+  no_log: true
+
+- name: Kometa | Assemble the operator-owned configuration files
+  ansible.builtin.set_fact:
+    _kometa_secret_data: >-
+      {{ {'config.yml': _kometa_config_yml}
+         | combine({'collections.yml': _kometa_collections_yml}
+                   if _kometa_collections_yml | length > 0 else {}) }}
+  no_log: true

@@ -13,7 +13,7 @@
 kometa_defaults:
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   app:
@@ -21,6 +21,10 @@ kometa_defaults:
     # Kometa persists its cache and run logs here. The config itself is a Secret mounted
     # over config.yml, so this volume never becomes a second canonical copy of credentials.
     storage: 1
+    # Docker method only: Kometa's own scheduler runs it daily at these HH:MM times (the
+    # Kubernetes method uses `schedule`), and its cache and logs live in config_path.
+    run_times: "05:00"
+    config_path: "/opt/{{ instance }}/config"
     # Kubernetes owns the wake-up schedule; Kometa is invoked with --run rather than its
     # own background scheduler. 05:00 follows Kometa's upstream default run time.
     schedule: "0 5 * * *"
