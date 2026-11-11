@@ -1,6 +1,6 @@
 ---
 galaxy_info:
   role_name: jellyseerr
-  description: "Deploys Jellyseerr on Docker on a stack host or on Kubernetes"
+  description: "Deploys Jellyseerr on Kubernetes, on a Docker stack host, or natively on its own guest"
   min_ansible_version: "2.15"
 dependencies: []

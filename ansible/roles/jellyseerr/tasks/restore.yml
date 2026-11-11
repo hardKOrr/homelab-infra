@@ -5,17 +5,17 @@
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('kubernetes')) == 'kubernetes'
 
-- name: Jellyseerr restore | Use the restore swap on a Docker guest
+- name: Jellyseerr restore | Use the restore swap on a Docker or native guest
   ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('kubernetes')) == 'docker'
+    | default(app_config.hosting.method | default('kubernetes')) in ['docker', 'native']
 
 - name: Jellyseerr restore | Reject an unsupported restore hosting method
   ansible.builtin.assert:
     that: >-
       restore_target_config.hosting.method
-      | default(app_config.hosting.method | default('kubernetes')) in ['docker', 'kubernetes']
+      | default(app_config.hosting.method | default('kubernetes')) in ['docker', 'native', 'kubernetes']
     fail_msg: >-
-      Jellyseerr restore supports hosting.method docker or kubernetes; refusing to mutate
+      Jellyseerr restore supports hosting.method docker, native or kubernetes; refusing to mutate
       a target hosted by an unsupported method.

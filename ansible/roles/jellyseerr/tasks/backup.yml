@@ -30,7 +30,7 @@
 - name: Jellyseerr backup | Quiesce Jellyseerr and archive its config to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ 'native' if jellyseerr_native | bool else 'docker' }}"
     pbs_client_compose_project: "{{ jellyseerr_project_dir }}"
     pbs_client_stop_services: ["{{ instance }}"]
     pbs_client_archives:

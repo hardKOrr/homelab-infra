@@ -1,5 +1,5 @@
 ---
-# Restore one application-consistent Jellyseerr config archive into a Docker guest through the shared swap.
+# Restore one application-consistent Jellyseerr config archive into a Docker or native guest through the shared swap.
 
 - name: Jellyseerr restore | Assert the restore contract
   ansible.builtin.assert:
@@ -16,12 +16,12 @@
 - name: Jellyseerr restore | Preview or replace the config directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ 'native' if jellyseerr_native | bool else 'docker' }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.config_path }}"
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
+        owner: "{{ jellyseerr_native_user if jellyseerr_native | bool else app_config.app.puid }}"
+        group: "{{ jellyseerr_native_user if jellyseerr_native | bool else app_config.app.pgid }}"
         mode: "0750"
     recovery_swap_stop_services: ["{{ instance }}"]
     recovery_swap_compose_project: "{{ jellyseerr_project_dir }}"

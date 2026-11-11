@@ -1,0 +1,22 @@
+# Jellyseerr / Seerr ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Build from source, release {{ app_config.app.native_version }}.
+[Unit]
+Description=Seerr ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ jellyseerr_native_user }}
+Group={{ jellyseerr_native_user }}
+WorkingDirectory={{ jellyseerr_native_root }}
+Environment="NODE_ENV=production"
+Environment="CONFIG_DIRECTORY={{ app_config.app.config_path }}"
+Environment="PORT={{ app_config.app.port }}"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+ExecStart=/usr/local/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

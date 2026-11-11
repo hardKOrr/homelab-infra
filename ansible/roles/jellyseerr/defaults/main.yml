@@ -2,3 +2,9 @@
 jellyseerr_project_dir: "/opt/{{ instance }}"
 jellyseerr_http_retries: 30
 jellyseerr_http_delay: 5
+
+# Native method (native.yml): Seerr's build from source lives under jellyseerr_native_root
+# and is replaced whole on a version change; its state is only app.config_path.
+jellyseerr_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+jellyseerr_native_root: "{{ jellyseerr_project_dir }}/src"
+jellyseerr_native_user: "{{ instance }}"
