@@ -33,6 +33,13 @@
     shell: /usr/sbin/nologin
     system: true
 
+# Debian 12's pip predates PEP 685 extra normalization and silently omits Prisma.
+- name: LiteLLM native | Prepare pip with normalized extras support
+  ansible.builtin.pip:
+    name: pip==26.3
+    virtualenv: "{{ litellm_native_venv }}"
+    virtualenv_command: python3 -m venv
+
 - name: LiteLLM native | Install the pinned package
   ansible.builtin.pip:
     name: "litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}"
