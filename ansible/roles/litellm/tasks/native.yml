@@ -19,6 +19,9 @@
     cache_valid_time: 3600
     lock_timeout: 300
 
+- name: LiteLLM native | Install the shared PBS client
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+
 - name: LiteLLM native | Create the app group
   ansible.builtin.group:
     name: "{{ litellm_native_user }}"
