@@ -1,6 +1,7 @@
 ---
 # LiteLLM natively on its own LXC or VM: the litellm[proxy] package from PyPI, pinned in
-# app.native_version, in a venv, run as a systemd service. The proxy keeps no files of its
+# app.native_version, in a venv, with the extra_proxy extra that carries prisma (the proxy
+# refuses to start with DATABASE_URL set and no prisma, as every deploy here has), run as a systemd service. The proxy keeps no files of its
 # own; its routing config and keys are written by main.yml and its state is in the named
 # PostgreSQL database.
 - name: LiteLLM native | Assert the supported guest
@@ -34,10 +35,14 @@
 
 - name: LiteLLM native | Install the pinned package
   ansible.builtin.pip:
-    name: "litellm[proxy]=={{ app_config.app.native_version }}"
+    name: "litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}"
     virtualenv: "{{ litellm_native_venv }}"
     virtualenv_command: python3 -m venv
   notify: Restart litellm
+
+- name: LiteLLM native | Require the database toolchain in the venv
+  ansible.builtin.command: "{{ litellm_native_venv }}/bin/python -c 'import prisma'"
+  changed_when: false
 
 - name: LiteLLM native | Write the systemd unit
   ansible.builtin.template:
