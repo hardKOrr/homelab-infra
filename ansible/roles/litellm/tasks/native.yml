@@ -13,7 +13,7 @@
 
 - name: LiteLLM native | Install prerequisites
   ansible.builtin.apt:
-    name: [ca-certificates, python3-venv]
+    name: [ca-certificates, libatomic1, python3-venv]
     state: present
     update_cache: true
     cache_valid_time: 3600
