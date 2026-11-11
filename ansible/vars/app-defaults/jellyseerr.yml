@@ -28,7 +28,7 @@ jellyseerr_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -48,12 +48,31 @@ jellyseerr_defaults:
   # targeting is unimplemented platform-wide (see the same resolver Mixpost's role uses);
   # this file will not claim otherwise until the resolver actually reads a selector.
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). The source build needs the memory.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 4096
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "fallenbagel/jellyseerr:latest"
+    # Docker and Kubernetes run the image of the same Seerr release the native install
+    # builds from source (https://github.com/seerr-team/seerr/blob/develop/docs/getting-started/buildfromsource.mdx).
+    image: "ghcr.io/seerr-team/seerr:v3.5.1"
+    native_version: "3.5.1"
+    native_node_version: "22.19.0"
+    native_node_sha256: c0649af18e6a24f6fe5535a3e86b341dd49a8e71117c8b68bde973ef834f16f2
+    native_pnpm_version: "10.24.0"
+    native_pnpm_sha256: 985824ae016db3c7bbd7b39dcb4e6f5740b11cce79f5c43d5e5e640768fd4806
     port: 5055
 
-    # Docker method only: the config directory on the stack host, owned by the image's
-    # `node` user. Kubernetes uses the PersistentVolume below instead.
+    # Docker and native methods: the config directory on the guest (Docker: owned by the
+    # image's `node` user; native: by the service user). Kubernetes uses the PersistentVolume below instead.
     config_path: "/opt/{{ instance }}/config"
     puid: 1000
     pgid: 1000

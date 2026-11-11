@@ -34,7 +34,7 @@ EXTRA_IMPLEMENTED = {
     "hi-events": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "home-assistant": {"docker-lxc"},
     "homepage": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
-    "jellyseerr": {"docker-lxc", "docker-vm"},
+    "jellyseerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},
     "lidarr": {"docker-lxc"},

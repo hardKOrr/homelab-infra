@@ -1,0 +1,208 @@
+---
+# Jellyseerr natively on its own LXC or VM: Seerr's build from source
+# (https://github.com/seerr-team/seerr/blob/develop/docs/getting-started/buildfromsource.mdx),
+# a git clone of the tag pinned in app.native_version built with pnpm, with the pinned
+# Node.js and pnpm, run as a systemd service. State is app.config_path only.
+- name: Jellyseerr native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native Jellyseerr supports Debian 12 on x86_64.
+
+- name: Jellyseerr native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Jellyseerr native | Install prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git, xz-utils]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Jellyseerr native | Create the app group
+  ansible.builtin.group:
+    name: "{{ jellyseerr_native_user }}"
+    system: true
+
+- name: Jellyseerr native | Create the app user
+  ansible.builtin.user:
+    name: "{{ jellyseerr_native_user }}"
+    group: "{{ jellyseerr_native_user }}"
+    home: "/var/lib/{{ jellyseerr_native_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Jellyseerr native | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ jellyseerr_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.config_path }}", owner: "{{ jellyseerr_native_user }}", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Jellyseerr native | Download the pinned Node.js
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ app_config.app.native_node_sha256 }}"
+    dest: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Jellyseerr native | Extract the pinned Node.js
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64"
+
+- name: Jellyseerr native | Link node into the path
+  ansible.builtin.file:
+    src: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin/node"
+    dest: /usr/local/bin/node
+    state: link
+
+- name: Jellyseerr native | Install the pinned pnpm
+  ansible.builtin.get_url:
+    url: "https://github.com/pnpm/pnpm/releases/download/v{{ app_config.app.native_pnpm_version }}/pnpm-linux-x64"
+    checksum: "sha256:{{ app_config.app.native_pnpm_sha256 }}"
+    dest: "/usr/local/bin/pnpm-{{ app_config.app.native_pnpm_version }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Jellyseerr native | Link pnpm into the path
+  ansible.builtin.file:
+    src: "/usr/local/bin/pnpm-{{ app_config.app.native_pnpm_version }}"
+    dest: /usr/local/bin/pnpm
+    state: link
+
+- name: Jellyseerr native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ jellyseerr_native_root }}/.release"
+  register: _jellyseerr_release
+  failed_when: false
+
+# Built in a stage beside the install and swapped in whole, so a failed build leaves the
+# running release alone.
+- name: Jellyseerr native | Build the pinned release
+  when: >-
+    _jellyseerr_release.content is not defined
+    or (_jellyseerr_release.content | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Jellyseerr native | Clear a partial stage
+      ansible.builtin.file:
+        path: "{{ jellyseerr_native_root }}.stage"
+        state: absent
+
+    - name: Jellyseerr native | Clone the pinned tag
+      ansible.builtin.command:
+        argv:
+          - git
+          - clone
+          - --depth=1
+          - "--branch=v{{ app_config.app.native_version }}"
+          - https://github.com/seerr-team/seerr.git
+          - "{{ jellyseerr_native_root }}.stage"
+      changed_when: true
+
+    - name: Jellyseerr native | Install the dependencies and build
+      ansible.builtin.shell:
+        cmd: pnpm install --frozen-lockfile && pnpm build
+        chdir: "{{ jellyseerr_native_root }}.stage"
+      environment:
+        CYPRESS_INSTALL_BINARY: "0"
+        NEXT_TELEMETRY_DISABLED: "1"
+        NODE_OPTIONS: --max-old-space-size=3072
+        HOME: /root
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+      changed_when: true
+
+    - name: Jellyseerr native | Mark the stage with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          printf '%s\n' '{{ app_config.app.native_version }}' > .release
+          chown -R {{ jellyseerr_native_user }}:{{ jellyseerr_native_user }} .
+        chdir: "{{ jellyseerr_native_root }}.stage"
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Jellyseerr native | Stop the service for the swap
+      ansible.builtin.systemd:
+        name: "{{ instance }}"
+        state: stopped
+      failed_when: false
+
+    - name: Jellyseerr native | Swap the staged release into place
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -rf "{{ jellyseerr_native_root }}"
+          mv "{{ jellyseerr_native_root }}.stage" "{{ jellyseerr_native_root }}"
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart jellyseerr service
+
+- name: Jellyseerr native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart jellyseerr service
+
+- name: Jellyseerr native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Jellyseerr native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Jellyseerr native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ instance }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ instance }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Jellyseerr native | Wait for the application
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/api/v1/status"
+    status_code: 200
+  register: _jellyseerr_health
+  retries: "{{ jellyseerr_http_retries }}"
+  delay: "{{ jellyseerr_http_delay }}"
+  until: _jellyseerr_health.status | default(0) == 200
+  changed_when: false
