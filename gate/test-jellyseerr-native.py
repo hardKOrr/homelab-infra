@@ -18,6 +18,7 @@ for key in ("native_node_sha256", "native_pnpm_sha256"):
     assert len(app[key]) == 64, key
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
+assert "-linux-x64/bin:/usr/local/bin" in install, "the build PATH must reach the pinned Node's npx"
 assert "seerr-team/seerr.git" in install and "--frozen-lockfile" in install and "native_pnpm_sha256" in install
 
 playbook = (repo / "ansible/playbooks/apps/jellyseerr.yml").read_text()

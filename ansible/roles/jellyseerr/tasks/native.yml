@@ -128,7 +128,8 @@
         NEXT_TELEMETRY_DISABLED: "1"
         NODE_OPTIONS: --max-old-space-size=3072
         HOME: /root
-        PATH: "/usr/local/bin:/usr/bin:/bin"
+        # The pinned Node distribution's bin holds npx, which the preinstall script `npx only-allow pnpm` needs.
+        PATH: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
       changed_when: true
 
     - name: Jellyseerr native | Mark the stage with its release
