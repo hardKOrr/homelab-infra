@@ -1,0 +1,98 @@
+---
+# Deploy LiteLLM Proxy onto the Kubernetes hosting backend.
+#
+# Durable state is intentionally outside the pod: route configuration is a ConfigMap,
+# provider keys plus stable master/salt keys are Vaultwarden-backed runtime Secrets, and
+# virtual keys, key metadata, spend records and usage logs are in the named external
+# PostgreSQL database. A pod restart therefore does not lose gateway state and a cluster
+# node loss does not strand an application PVC.
+
+- name: LiteLLM | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: LiteLLM | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: LiteLLM | Resolve credentials, keys and the database URL
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: LiteLLM | Sync runtime credentials into the instance namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-runtime"
+    k8s_secret_data: >-
+      {{ {'LITELLM_MASTER_KEY': _litellm_master_key,
+          'LITELLM_SALT_KEY': _litellm_salt_key,
+          'DATABASE_URL': _litellm_database_url}
+         | combine(_litellm_provider_secrets | default({})) }}
+  no_log: true
+
+- name: LiteLLM | Read the archived routing ConfigMap during restore reconciliation
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - get
+      - configmap
+      - "{{ instance }}-config"
+      - -o
+      - jsonpath={.data.config\.yaml}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _litellm_restored_config
+  changed_when: false
+  when: recovery_restore_config | default(false) | bool
+
+- name: LiteLLM | Require the archived routing ConfigMap during restore reconciliation
+  ansible.builtin.assert:
+    that:
+      - _litellm_restored_config.rc == 0
+      - _litellm_restored_config.stdout | trim | length > 0
+    fail_msg: >-
+      LiteLLM restore reconciliation could not read {{ instance }}-config. The target
+      remains on the restored database; inspect the namespace before retrying.
+  when: recovery_restore_config | default(false) | bool
+
+- name: LiteLLM | Render the routing configuration
+  ansible.builtin.set_fact:
+    _litellm_config: >-
+      {{ _litellm_restored_config.stdout
+         if (recovery_restore_config | default(false) | bool)
+         else lookup('ansible.builtin.template', 'config.yaml.j2') }}
+
+- name: LiteLLM | Render and apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+# The external PostgreSQL database is the source of truth for virtual keys, key metadata,
+# spend records and usage logs. The CronJob dumps it and archives the rendered ConfigMap in
+# one PBS snapshot. Provider credentials remain Vaultwarden-only and are never archived.
+
+- name: LiteLLM | Describe the database step of the backup
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+# The pod has no durable filesystem: the recovery point is the external database plus the
+# rendered routing ConfigMap. Provider keys and master/salt keys stay in Vaultwarden and
+# are never archived.
+- name: LiteLLM | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        an application-consistent PostgreSQL dump plus the rendered routing ConfigMap
+        (provider keys and master/salt keys remain in Vaultwarden)

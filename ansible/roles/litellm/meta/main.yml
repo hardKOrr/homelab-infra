@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: litellm
+  description: Deploys LiteLLM Proxy on Docker on an LXC or a VM, or on Kubernetes
+  min_ansible_version: "2.15"
+dependencies: []

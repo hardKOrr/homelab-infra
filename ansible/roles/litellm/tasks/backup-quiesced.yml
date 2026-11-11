@@ -1,0 +1,21 @@
+---
+# Runs inside the shared PBS backup while LiteLLM is stopped, before the upload.
+
+- name: LiteLLM backup | Dump the named PostgreSQL database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_client_runtime: docker
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _litellm_backup_scratch.path }}/litellm.dump"
+
+- name: LiteLLM backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _litellm_backup_scratch.path }}/litellm.dump"
+  register: _litellm_backup_dump
+  changed_when: false
+
+- name: LiteLLM backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _litellm_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: LiteLLM's database dump is empty; refusing to publish the recovery point.

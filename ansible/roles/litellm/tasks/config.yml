@@ -1,0 +1,31 @@
+---
+# The routing config on a Docker host. A restore reconciliation (recovery_restore_config)
+# keeps the config.yaml that restore-guest.yml installed from the recovery point, so a
+# renamed drill target still routes the source's models, as the Kubernetes method does with
+# its archived ConfigMap; every other run renders it from the instance config.
+
+- name: LiteLLM | Render the routing configuration
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ litellm_config_dir }}/config.yaml"
+    owner: "{{ litellm_config_owner }}"
+    group: "{{ litellm_config_owner }}"
+    mode: "0644"
+  notify: Restart litellm
+  when: not (recovery_restore_config | default(false) | bool)
+
+- name: LiteLLM | Read the restored routing configuration
+  ansible.builtin.slurp:
+    src: "{{ litellm_config_dir }}/config.yaml"
+  register: _litellm_restored_config
+  when: recovery_restore_config | default(false) | bool
+
+- name: LiteLLM | Require a valid restored routing configuration
+  ansible.builtin.assert:
+    that:
+      - (_litellm_restored_config.content | b64decode | from_yaml) is mapping
+      - (_litellm_restored_config.content | b64decode | from_yaml).general_settings is mapping
+    fail_msg: >-
+      LiteLLM restore reconciliation found no valid {{ litellm_config_dir }}/config.yaml.
+      The target remains on the restored database; inspect the guest before retrying.
+  when: recovery_restore_config | default(false) | bool

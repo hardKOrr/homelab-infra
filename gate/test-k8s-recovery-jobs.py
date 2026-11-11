@@ -46,7 +46,7 @@ APPS = {
                    "archives": ["config"]},
     "hi-events": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "postgresql",
                   "archives": ["storage"]},
-    "litellm": {"file": "main.yml", "restore": "restore.yml", "engine": "postgresql",
+    "litellm": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "postgresql",
                 "archives": ["config"]},
     "mixpost": {"file": "main.yml", "restore": "restore.yml", "engine": "namespace-mysql",
                 "archives": ["storage"]},
@@ -723,7 +723,7 @@ def app_render(app, spec, steps):
 
 def app_contracts():
     # A dump lands only in a compatible named database of the same major version.
-    contract = task_named(tasks_of("ansible/roles/litellm/tasks/restore.yml"),
+    contract = task_named(tasks_of("ansible/roles/litellm/tasks/restore-kubernetes.yml"),
                           "Restore | Require matching PostgreSQL state contracts")
     that = " ".join(contract["ansible.builtin.assert"]["that"])
     assert "app_config.app.database.version" in that

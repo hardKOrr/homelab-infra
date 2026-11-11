@@ -1,0 +1,73 @@
+---
+# Restore LiteLLM's PostgreSQL database and routing config on Docker through the shared
+# swap. Master/salt and provider keys are not in the recovery point: the target keeps its
+# own Vaultwarden item, as on Kubernetes. A failure after the stop puts the original
+# config and database back and starts the proxy.
+
+- name: LiteLLM restore | Resolve the target's database identity
+  ansible.builtin.set_fact:
+    _litellm_restore_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           app_config.app.database.instance | default(''), {}) }}
+    _litellm_restore_source_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           (restore_source_database | default({})).get('instance', ''), {}) }}
+
+- name: LiteLLM restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - _litellm_restore_database_backend.provider | default('') == 'postgresql'
+      - _litellm_restore_database_backend.host | default('') | length > 0
+      - app_config.app.database.name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      LiteLLM restore needs a target, its named PostgreSQL backend and a snapshot when
+      overwrite=true.
+
+- name: LiteLLM restore | Require a separate target database for a new destination
+  ansible.builtin.assert:
+    that:
+      - restore_source_database is mapping
+      - restore_source_database.name | default('') | length > 0
+      - _litellm_restore_source_backend.host | default('') | length > 0
+      - >-
+        not (
+          restore_source_database.name == app_config.app.database.name
+          and _litellm_restore_source_backend.host == _litellm_restore_database_backend.host
+          and (_litellm_restore_source_backend.port | int) == (_litellm_restore_database_backend.port | int)
+        )
+    fail_msg: >-
+      A new LiteLLM restore must use a target database name or PostgreSQL backend distinct
+      from the source. Never let an isolated instance overwrite the source's database.
+  when: restore_destination == 'new'
+
+- name: LiteLLM restore | Preview or replace the routing config and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, config.pxar]
+    recovery_swap_paths:
+      - path: "{{ litellm_config_dir }}"
+        source: config
+        owner: root
+        group: root
+        mode: "0755"
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/litellm.dump
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ litellm_project_dir }}"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/verify.yml"
+
+- name: LiteLLM restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg:
+      - "PLAN ONLY — nothing was changed."
+      - >-
+        A selected LiteLLM snapshot contains database.pxar (named PostgreSQL database
+        {{ app_config.app.database.name }}) and config.pxar ({{ litellm_config_dir }}).
+      - "Re-run with recovery_point=<snapshot> and overwrite=true only after verifying the target."
+  when: not (restore_overwrite | bool)

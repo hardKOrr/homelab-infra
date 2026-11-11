@@ -33,6 +33,7 @@ EXTRA_IMPLEMENTED = {
     "frigate": {"docker-lxc"},
     "hi-events": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "home-assistant": {"docker-lxc"},
+    "litellm": {"docker-lxc", "docker-vm"},
     "homepage": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "jellyseerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
@@ -286,7 +287,7 @@ def main():
     check_rendered_defaults(expected_by_slug)
     check_unsupported_fails_before_state_change()
     check_mariadb_vm_instance_override()
-    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-flaresolverr.yml", "hosting-forgejo.yml", "hosting-hi-events.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-homepage.yml", "hosting-jellyseerr.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-kometa.yml", "hosting-lidarr.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml", "hosting-observability.yml", "hosting-odoo.yml", "hosting-ollama.yml", "hosting-open-webui.yml", "hosting-plane.yml", "hosting-prowlarr.yml", "hosting-qbittorrent.yml", "hosting-radarr.yml", "hosting-sabnzbd.yml", "hosting-slskd.yml", "hosting-sonarr.yml", "hosting-tautulli.yml", "hosting-unpackerr.yml", "hosting-uptime-kuma.yml", "hosting-wordpress.yml"):
+    for fixture in ("hosting-bazarr.yml", "hosting-bookstack.yml", "hosting-comfyui.yml", "hosting-deemix.yml", "hosting-flaresolverr.yml", "hosting-forgejo.yml", "hosting-hi-events.yml", "hosting-frigate.yml", "hosting-home-assistant.yml", "hosting-homepage.yml", "hosting-jellyseerr.yml", "hosting-forgejo-runner.yml", "hosting-karakeep.yml", "hosting-kometa.yml", "hosting-lidarr.yml", "hosting-litellm.yml", "hosting-mautic.yml", "hosting-n8n.yml", "hosting-navidrome.yml", "hosting-observability.yml", "hosting-odoo.yml", "hosting-ollama.yml", "hosting-open-webui.yml", "hosting-plane.yml", "hosting-prowlarr.yml", "hosting-qbittorrent.yml", "hosting-radarr.yml", "hosting-sabnzbd.yml", "hosting-slskd.yml", "hosting-sonarr.yml", "hosting-tautulli.yml", "hosting-unpackerr.yml", "hosting-uptime-kuma.yml", "hosting-wordpress.yml"):
         result = run_ansible(fixture)
         assert result.returncode == 0, result.stdout + result.stderr
     print(f"Hosting contract passed for {len(paths)} app defaults and preflight refusal.")

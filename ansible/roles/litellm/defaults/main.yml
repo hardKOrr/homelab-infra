@@ -1,0 +1,5 @@
+---
+litellm_project_dir: "/opt/{{ instance }}"
+litellm_config_dir: "{{ litellm_project_dir }}/config"
+litellm_env_file: "{{ litellm_project_dir }}/litellm.env"
+litellm_config_owner: root

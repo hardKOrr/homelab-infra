@@ -1,0 +1,12 @@
+---
+# The same readiness route as the Kubernetes readinessProbe: the proxy has connected to
+# its database. Also the restore-swap health check, run from the guest.
+- name: LiteLLM | Wait for /health/readiness
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/health/readiness"
+    status_code: 200
+  register: _litellm_ready
+  until: _litellm_ready.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
