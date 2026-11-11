@@ -1,0 +1,23 @@
+---
+# Write the operator-owned config files into app.config_path for a Docker or native guest
+# (owner in _kometa_files_owner) and drop a collection file the operator no longer stores.
+
+- name: Kometa | Write the operator-owned configuration files
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ app_config.app.config_path }}/{{ item.key }}"
+    owner: "{{ _kometa_files_owner }}"
+    group: "{{ _kometa_files_owner }}"
+    mode: "0600"
+  loop: "{{ _kometa_secret_data | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: Restart kometa
+  no_log: true
+
+- name: Kometa | Remove a collection file the operator no longer stores
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}/collections.yml"
+    state: absent
+  when: _kometa_collections_yml | length == 0
+  notify: Restart kometa

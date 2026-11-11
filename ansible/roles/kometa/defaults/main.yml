@@ -1,2 +1,5 @@
 ---
 kometa_project_dir: "/opt/{{ instance }}"
+kometa_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+kometa_native_root: "{{ kometa_project_dir }}/src"
+kometa_native_user: "{{ instance }}"

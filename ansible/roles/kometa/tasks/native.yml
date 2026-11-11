@@ -1,0 +1,184 @@
+---
+# Kometa natively on its own LXC or VM: Kometa's local Python install
+# (https://kometa.wiki/en/latest/kometa/install/#path-local), a git clone of the tag pinned
+# in app.native_version with its dependencies synced by the pinned uv (which also fetches the
+# Python the project requires), run as a systemd service on Kometa's own scheduler. Only a
+# cache and logs live in app.config_path; the config files are rewritten each deploy from
+# Vaultwarden, so there is no data to back up or restore.
+- name: Kometa native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native Kometa supports Debian 12 on x86_64.
+
+- name: Kometa native | Read and validate the operator-owned configuration
+  ansible.builtin.include_tasks: config.yml
+
+- name: Kometa native | Install prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, git]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Kometa native | Create the app group
+  ansible.builtin.group:
+    name: "{{ kometa_native_user }}"
+    system: true
+
+- name: Kometa native | Create the app user
+  ansible.builtin.user:
+    name: "{{ kometa_native_user }}"
+    group: "{{ kometa_native_user }}"
+    home: "/var/lib/{{ kometa_native_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Kometa native | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ kometa_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.config_path }}", owner: "{{ kometa_native_user }}", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Kometa native | Download the pinned uv
+  ansible.builtin.get_url:
+    url: "https://github.com/astral-sh/uv/releases/download/{{ app_config.app.native_uv_version }}/uv-x86_64-unknown-linux-gnu.tar.gz"
+    checksum: "sha256:{{ app_config.app.native_uv_sha256 }}"
+    dest: "/var/cache/uv-{{ app_config.app.native_uv_version }}.tar.gz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Kometa native | Extract the pinned uv
+  ansible.builtin.unarchive:
+    src: "/var/cache/uv-{{ app_config.app.native_uv_version }}.tar.gz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/uv-x86_64-unknown-linux-gnu/uv"
+
+- name: Kometa native | Link uv into the path
+  ansible.builtin.file:
+    src: /opt/uv-x86_64-unknown-linux-gnu/uv
+    dest: /usr/local/bin/uv
+    state: link
+
+- name: Kometa native | Write the operator-owned configuration files
+  ansible.builtin.include_tasks: files.yml
+  vars:
+    _kometa_files_owner: "{{ kometa_native_user }}"
+
+- name: Kometa native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ kometa_native_root }}/.release"
+  register: _kometa_release
+  failed_when: false
+
+- name: Kometa native | Install the pinned release
+  when: >-
+    _kometa_release.content is not defined
+    or (_kometa_release.content | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Kometa native | Stop the service for the swap
+      ansible.builtin.systemd:
+        name: "{{ instance }}"
+        state: stopped
+      failed_when: false
+
+    - name: Kometa native | Clear the previous release
+      ansible.builtin.file:
+        path: "{{ kometa_native_root }}"
+        state: absent
+
+    - name: Kometa native | Clone the pinned tag
+      ansible.builtin.command:
+        argv:
+          - git
+          - clone
+          - --depth=1
+          - "--branch=v{{ app_config.app.native_version }}"
+          - https://github.com/Kometa-Team/Kometa.git
+          - "{{ kometa_native_root }}"
+      changed_when: true
+
+    - name: Kometa native | Sync the locked dependencies
+      ansible.builtin.command:
+        cmd: uv sync --frozen --no-dev
+        chdir: "{{ kometa_native_root }}"
+      environment:
+        HOME: /root
+        UV_PYTHON_INSTALL_DIR: /opt/uv-python
+      changed_when: true
+
+    - name: Kometa native | Mark the install with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          printf '%s\n' '{{ app_config.app.native_version }}' > .release
+          chown -R {{ kometa_native_user }}:{{ kometa_native_user }} .
+        chdir: "{{ kometa_native_root }}"
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart kometa
+
+- name: Kometa native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kometa
+
+- name: Kometa native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Kometa native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Kometa native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ instance }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ instance }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Kometa native | Read the service state
+  ansible.builtin.command: systemctl is-active {{ instance }}
+  register: _kometa_service
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: _kometa_service.stdout | trim == 'active'
+
+- name: Kometa native | Assert Kometa is running
+  ansible.builtin.assert:
+    that: _kometa_service.stdout | trim == 'active'
+    fail_msg: Kometa is not running. Check journalctl -u {{ instance }} on the guest.

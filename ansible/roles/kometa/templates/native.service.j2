@@ -1,0 +1,22 @@
+# Kometa ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Local Python install, release {{ app_config.app.native_version }}.
+[Unit]
+Description=Kometa ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ kometa_native_user }}
+Group={{ kometa_native_user }}
+WorkingDirectory={{ kometa_native_root }}
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="KOMETA_CONFIG={{ app_config.app.config_path }}/config.yml"
+Environment="KOMETA_TIMES={{ app_config.app.run_times }}"
+Environment="KOMETA_READ_ONLY_CONFIG=true"
+ExecStart={{ kometa_native_root }}/.venv/bin/python kometa.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
