@@ -1,0 +1,2 @@
+---
+kometa_project_dir: "/opt/{{ instance }}"

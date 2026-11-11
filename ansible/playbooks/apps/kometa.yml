@@ -33,11 +33,47 @@
       vars:
         hosting_app_slug: kometa
   tasks:
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
     - name: Open the app's declared network access
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
     - name: Deploy Kometa onto the cluster
+      ansible.builtin.include_role:
+        name: kometa
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
+
+- name: "Kometa | Deploy on Docker"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load generated topology facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap the stack host
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+    - name: Deploy Kometa
       ansible.builtin.include_role:
         name: kometa
 
@@ -45,17 +81,25 @@
   hosts: localhost
   become: false
   gather_facts: false
+  vars:
+    _kometa_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
   tasks:
-    - name: Record the app on every node of its cluster
+    - name: Record the app on every node of its cluster or its stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_names: "{{ (homelabinfra_infra.kubernetes | default({})).nodes | default([]) | map(attribute='name') | list }}"
-        record_guest_kind: kubernetes
+        record_guest_names: >-
+          {{ groups['deploy_' ~ instance] if _kometa_docker | bool
+             else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+                  | map(attribute='name') | list }}
+        record_guest_kind: "{{ 'docker' if _kometa_docker | bool else 'kubernetes' }}"
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: "Kometa deployed"
-        notify_message: "{{ instance }} is scheduled on Kubernetes as {{ hostvars['localhost'].app_config.app.schedule }} in {{ homelabinfra_config.timezone | default('UTC') }}."
+        notify_message: >-
+          {{ instance }} is scheduled on {{ 'Docker daily at ' ~ hostvars['localhost'].app_config.app.run_times
+             if _kometa_docker | bool else 'Kubernetes as ' ~ hostvars['localhost'].app_config.app.schedule }}
+          in {{ homelabinfra_config.timezone | default('UTC') }}.
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
