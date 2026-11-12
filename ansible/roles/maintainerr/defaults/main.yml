@@ -2,3 +2,10 @@
 maintainerr_project_dir: "/opt/{{ instance }}"
 maintainerr_http_retries: 30
 maintainerr_http_delay: 5
+
+# Native method (native.yml): the source build lives under maintainerr_native_root and is
+# replaced whole on a version or Node change; its state is only app.data_path.
+maintainerr_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+maintainerr_native_root: "{{ maintainerr_project_dir }}/src"
+maintainerr_native_user: "{{ instance }}"
+maintainerr_native_release: "{{ app_config.app.native_version }}-node-{{ app_config.app.native_node_version }}"

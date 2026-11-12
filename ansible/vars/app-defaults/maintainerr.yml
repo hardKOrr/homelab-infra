@@ -28,7 +28,7 @@ maintainerr_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   recovery:
@@ -48,12 +48,32 @@ maintainerr_defaults:
   # targeting is unimplemented platform-wide (see the same resolver Mixpost's role uses);
   # this file will not claim otherwise until the resolver actually reads a selector.
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). The source build needs the memory.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 4096
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "ghcr.io/maintainerr/maintainerr:latest"
+    # Docker and Kubernetes run the image of the same release the native install builds
+    # from source (https://github.com/Maintainerr/Maintainerr, which documents only Docker).
+    # The native Node.js is the major its Dockerfile builds on; Yarn is the release the tag
+    # checks in.
+    image: "ghcr.io/maintainerr/maintainerr:3.32.0"
+    native_version: "3.32.0"
+    native_node_version: "26.13.0"
+    native_node_sha256: d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997
+    native_yarn_version: "4.17.1"
     port: 6246
 
-    # Docker method only: the data directory on the stack host, owned by the image's
-    # `node` user. Kubernetes uses the PersistentVolume below instead.
+    # Docker and native methods: the data directory on the guest (Docker: owned by the
+    # image's `node` user; native: by the service user). Kubernetes uses the PersistentVolume below instead.
     data_path: "/opt/{{ instance }}/data"
     puid: 1000
     pgid: 1000

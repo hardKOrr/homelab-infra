@@ -1,5 +1,5 @@
 ---
-# Restore one application-consistent Maintainerr data archive into a Docker guest through the shared swap.
+# Restore one application-consistent Maintainerr data archive into a Docker or native guest through the shared swap.
 
 - name: Maintainerr restore | Assert the restore contract
   ansible.builtin.assert:
@@ -16,12 +16,12 @@
 - name: Maintainerr restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ 'native' if maintainerr_native | bool else 'docker' }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.data_path }}"
-        owner: "{{ app_config.app.puid }}"
-        group: "{{ app_config.app.pgid }}"
+        owner: "{{ maintainerr_native_user if maintainerr_native | bool else app_config.app.puid }}"
+        group: "{{ maintainerr_native_user if maintainerr_native | bool else app_config.app.pgid }}"
         mode: "0750"
     recovery_swap_stop_services: ["{{ instance }}"]
     recovery_swap_compose_project: "{{ maintainerr_project_dir }}"

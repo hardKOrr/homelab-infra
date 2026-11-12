@@ -4,3 +4,11 @@
     project_src: "{{ maintainerr_project_dir }}"
     state: present
     recreate: always
+  when: not (maintainerr_native | bool)
+
+- name: Restart maintainerr service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: restarted
+    daemon_reload: true
+  when: maintainerr_native | bool

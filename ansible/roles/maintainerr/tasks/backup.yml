@@ -1,6 +1,6 @@
 ---
 # Stop Maintainerr so its SQLite database and settings share one recovery point, and archive
-# the data directory through the shared PBS client. Docker only; Kubernetes runs its CronJob.
+# the data directory through the shared PBS client. Docker or native; Kubernetes runs its CronJob.
 
 - name: Maintainerr backup | Assert the backup contract
   ansible.builtin.assert:
@@ -30,7 +30,7 @@
 - name: Maintainerr backup | Quiesce Maintainerr and archive its data to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ 'native' if maintainerr_native | bool else 'docker' }}"
     pbs_client_compose_project: "{{ maintainerr_project_dir }}"
     pbs_client_stop_services: ["{{ instance }}"]
     pbs_client_archives:

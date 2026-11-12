@@ -1,0 +1,14 @@
+#!/bin/sh
+# Maintainerr ({{ instance }}) — managed by homelab-infra. Mirrors the upstream image's
+# docker/start.sh with an empty base path.
+set -eu
+bundled="{{ maintainerr_native_root }}/apps/ui/dist"
+served="{{ app_config.app.data_path }}/ui"
+rm -rf "$served"
+mkdir -p "$served"
+cp -R "$bundled/." "$served/"
+find "$served" -type f -print0 | xargs -0 sed -i 's,/__PATH_PREFIX__,,g'
+cd {{ maintainerr_native_root }}/apps/server
+npm_package_version="$(node -p "require('./package.json').version")"
+export npm_package_version
+exec node dist/main

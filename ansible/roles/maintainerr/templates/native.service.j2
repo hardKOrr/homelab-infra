@@ -1,0 +1,24 @@
+# Maintainerr ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Build from source, release {{ app_config.app.native_version }}.
+[Unit]
+Description=Maintainerr ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ maintainerr_native_user }}
+Group={{ maintainerr_native_user }}
+WorkingDirectory={{ maintainerr_native_root }}/apps/server
+Environment="NODE_ENV=production"
+Environment="DATA_DIR={{ app_config.app.data_path }}"
+Environment="UI_PORT={{ app_config.app.port }}"
+Environment="UI_HOSTNAME=0.0.0.0"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+Environment="UV_USE_IO_URING=0"
+ExecStart={{ maintainerr_project_dir }}/start.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

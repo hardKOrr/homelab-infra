@@ -36,7 +36,7 @@ EXTRA_IMPLEMENTED = {
     "litellm": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "homepage": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "jellyseerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
-    "maintainerr": {"docker-lxc", "docker-vm"},
+    "maintainerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
     "karakeep": {"docker-lxc"},
     "kometa": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
