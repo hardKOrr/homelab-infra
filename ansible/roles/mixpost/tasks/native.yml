@@ -129,6 +129,13 @@
         cmd: |
           set -euo pipefail
           rm -f .env public/storage
+          # Composer publishes these with the build time. Stable migration identities
+          # keep a fresh guest from trying to recreate tables after database restore.
+          for name in job_batches_table mixpost_tables; do
+            for migration in database/migrations/*_create_"$name".php; do
+              mv "$migration" "database/migrations/2020_01_01_000000_create_$name.php"
+            done
+          done
           mkdir -p bootstrap/cache storage/framework/cache/data storage/framework/sessions \
             storage/framework/views storage/logs
           chown -R {{ mixpost_native_user }}:{{ mixpost_native_user }} .
