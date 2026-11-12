@@ -12,6 +12,7 @@
 # Inputs:
 #   tag_group_tag   one raw platform tag, e.g. `_+lab`, `_.stack+media`, `_sonarr-foxglove`
 #   tag_group_guest_type  optional Proxmox type (`lxc` or `qemu`) used to disambiguate
+#   tag_group_exclude_tag_pattern optional topology-tag regex to exclude before selection
 #                         a shared instance tag after every matching host is ownership-checked
 #
 # Sets:
@@ -81,6 +82,16 @@
     - tag_group_guest_type is defined
     - tag_group_guest_type | length > 0
     - hostvars[item].proxmox_vmtype | default('') == tag_group_guest_type
+
+- name: Tag group | Exclude hosting topologies outside the caller's contract
+  ansible.builtin.set_fact:
+    tag_group_hosts: "{{ tag_group_hosts | difference([item]) }}"
+  loop: "{{ tag_group_hosts }}"
+  when:
+    - tag_group_exclude_tag_pattern | default('') | length > 0
+    - >-
+      hostvars[item].proxmox_tags_parsed | default([])
+      | select('match', tag_group_exclude_tag_pattern | default('')) | list | length > 0
 
 - name: Tag group | Require unambiguous instance or stack identity
   ansible.builtin.assert:
