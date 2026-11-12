@@ -1,0 +1,219 @@
+---
+# Maintainerr natively on its own LXC or VM: a build from source of the upstream tag pinned
+# in app.native_version (https://github.com/Maintainerr/Maintainerr; upstream documents only
+# Docker), mirroring its Dockerfile: the checked-in Yarn release, turbo build, production
+# dependencies only, with the pinned Node.js, run as a systemd service. State is
+# app.data_path only.
+- name: Maintainerr native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+      - ansible_architecture == 'x86_64'
+    fail_msg: Native Maintainerr supports Debian 12 on x86_64.
+
+- name: Maintainerr native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Maintainerr native | Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - ca-certificates
+      - curl
+      - git
+      - libcairo2-dev
+      - libpango1.0-dev
+      - libpixman-1-dev
+      - pkg-config
+      - python3
+      - xz-utils
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Maintainerr native | Create the app group
+  ansible.builtin.group:
+    name: "{{ maintainerr_native_user }}"
+    system: true
+
+- name: Maintainerr native | Create the app user
+  ansible.builtin.user:
+    name: "{{ maintainerr_native_user }}"
+    group: "{{ maintainerr_native_user }}"
+    home: "/var/lib/{{ maintainerr_native_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Maintainerr native | Create the project and data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ maintainerr_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ app_config.app.data_path }}", owner: "{{ maintainerr_native_user }}", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Maintainerr native | Download the pinned Node.js
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ app_config.app.native_node_sha256 }}"
+    dest: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Maintainerr native | Extract the pinned Node.js
+  ansible.builtin.unarchive:
+    src: "/var/cache/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64"
+
+- name: Maintainerr native | Link node into the path
+  ansible.builtin.file:
+    src: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin/node"
+    dest: /usr/local/bin/node
+    state: link
+
+- name: Maintainerr native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ maintainerr_native_root }}/.release"
+  register: _maintainerr_release
+  failed_when: false
+
+# Built in a stage beside the install and swapped in whole, so a failed build leaves the
+# running release alone.
+- name: Maintainerr native | Build the pinned release
+  when: >-
+    _maintainerr_release.content is not defined
+    or (_maintainerr_release.content | b64decode | trim) != maintainerr_native_release
+  block:
+    - name: Maintainerr native | Clear a partial stage
+      ansible.builtin.file:
+        path: "{{ maintainerr_native_root }}.stage"
+        state: absent
+
+    - name: Maintainerr native | Clone the pinned tag
+      ansible.builtin.command:
+        argv:
+          - git
+          - clone
+          - --depth=1
+          - "--branch=v{{ app_config.app.native_version }}"
+          - https://github.com/Maintainerr/Maintainerr.git
+          - "{{ maintainerr_native_root }}.stage"
+      changed_when: true
+
+    # Upstream's production migration glob assumes the Docker image's /opt/app.
+    - name: Maintainerr native | Point migrations at the native install
+      ansible.builtin.replace:
+        path: "{{ maintainerr_native_root }}.stage/apps/server/src/app/config/typeOrmConfig.ts"
+        regexp: /opt/app/apps/server/dist/database/migrations
+        replace: "{{ maintainerr_native_root }}/apps/server/dist/database/migrations"
+
+    - name: Maintainerr native | Install the dependencies and build
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          printf 'VITE_BASE_PATH=/__PATH_PREFIX__\n' >> apps/ui/.env
+          yarn="node .yarn/releases/yarn-{{ app_config.app.native_yarn_version }}.cjs"
+          $yarn install --network-timeout 99999999
+          $yarn turbo build
+          cp -R apps/server/assets apps/server/dist/assets
+          $yarn workspaces focus --all --production
+          mkdir -p packages/contracts/node_modules apps/server/node_modules
+        chdir: "{{ maintainerr_native_root }}.stage"
+        executable: /bin/bash
+      environment:
+        HOME: /root
+        NODE_OPTIONS: --max-old-space-size=3072
+        PATH: "/opt/node-v{{ app_config.app.native_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+      changed_when: true
+
+    - name: Maintainerr native | Mark the stage with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          printf '%s\n' '{{ maintainerr_native_release }}' > .release
+          chown -R {{ maintainerr_native_user }}:{{ maintainerr_native_user }} .
+        chdir: "{{ maintainerr_native_root }}.stage"
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Maintainerr native | Stop the service for the swap
+      ansible.builtin.systemd:
+        name: "{{ instance }}"
+        state: stopped
+      failed_when: false
+
+    - name: Maintainerr native | Swap the staged release into place
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -rf "{{ maintainerr_native_root }}"
+          mv "{{ maintainerr_native_root }}.stage" "{{ maintainerr_native_root }}"
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart maintainerr service
+
+# The upstream image's start.sh, for an empty base path: the UI bundle is staged under the
+# data directory with its path placeholder resolved, then the server starts.
+- name: Maintainerr native | Write the start script
+  ansible.builtin.template:
+    src: native-start.sh.j2
+    dest: "{{ maintainerr_project_dir }}/start.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart maintainerr service
+
+- name: Maintainerr native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ instance }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart maintainerr service
+
+- name: Maintainerr native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ instance }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Maintainerr native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Maintainerr native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ instance }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ instance }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

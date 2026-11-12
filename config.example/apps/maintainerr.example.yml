@@ -18,7 +18,7 @@
 # one yet. See the same comment in ansible/vars/app-defaults/maintainerr.yml.
 
 # app:
-#   image: "ghcr.io/maintainerr/maintainerr:latest"
+#   image: "ghcr.io/maintainerr/maintainerr:3.32.0"
 #   storage: 2             # GB — settings, cache and Maintainerr's own database
 
 # routing:
@@ -44,3 +44,11 @@
 # # stack: maintainerr-lxc    # one declared guest_type: lxc under
 # #                          # infrastructure.stacks in config/infrastructure.yml.
 # # On Docker the backup stops the container and archives its data directory.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy builds the release pinned in app.native_version from Maintainerr's source with
+# Yarn and runs it as a systemd service.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm

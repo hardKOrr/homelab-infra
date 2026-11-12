@@ -1,39 +1,16 @@
 ---
-# Maintainerr on a Docker stack host (hosting.method: docker); Kubernetes has its own entry
-# (kubernetes.yml). The role does not complete Maintainerr's first-run wizard — see
-# kubernetes.yml for why — so the deploy brings up an empty, persisted, backed-up app.
+# Maintainerr on a guest: Docker on a stack host (docker.yml) or natively on its own LXC or
+# VM (native.yml); Kubernetes has its own entry (kubernetes.yml). The role does not complete
+# Maintainerr's first-run wizard — see kubernetes.yml for why — so the deploy brings up an
+# empty, persisted, backed-up app.
 
-- name: Maintainerr | Create the project and config directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ app_config.app.puid }}"
-    group: "{{ app_config.app.pgid }}"
-    mode: "0750"
-  loop:
-    - "{{ maintainerr_project_dir }}"
-    - "{{ app_config.app.data_path }}"
+- name: Maintainerr | Run on Docker
+  ansible.builtin.include_tasks: docker.yml
+  when: app_config.hosting.method | default('kubernetes') == 'docker'
 
-- name: Maintainerr | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ maintainerr_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart maintainerr
-
-- name: Maintainerr | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ maintainerr_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Maintainerr | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "{{ maintainerr_project_dir }}"
-    state: present
-    remove_orphans: true
+- name: Maintainerr | Run natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('kubernetes') == 'native'
 
 - name: Maintainerr | Apply pending restarts
   ansible.builtin.meta: flush_handlers
