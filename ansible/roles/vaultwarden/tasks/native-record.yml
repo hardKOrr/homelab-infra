@@ -1,0 +1,27 @@
+---
+# Native hosting: lab maintenance scripts and the recorded installed version.
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
+# ── Record installed version ──────────────────────────────────────────────────
+# Local fact file so check-native-updates.yml / status.yml can read the version
+# without executing the binary.
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _latest_version }}"}'
+    dest: /etc/ansible/facts.d/vaultwarden.fact
+    mode: "0644"

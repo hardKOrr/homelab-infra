@@ -6,13 +6,17 @@
 vaultwarden_defaults:
   hosting:
     method: native
-    supported: [native-lxc]
+    supported: [native-lxc, docker-lxc, docker-vm]
     impossible: {}
   recovery:
     methods: [native]
     native:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
+
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
+  # official image on that stack host. The native default is unchanged.
+  stack: ""
 
   proxmox:
     type: lxc                   # native LXC — single binary, no Docker needed
@@ -41,7 +45,8 @@ vaultwarden_defaults:
     port: 80                    # web vault + API + /admin panel (one port for everything)
     data_path: "/opt/{{ instance }}/data"
     signups_allowed: false      # open registration off by default — invite via /admin
-    service_name: vaultwarden   # systemd unit — playbooks/apps/remove.yml stops this
+    service_name: vaultwarden   # systemd unit (Compose service on Docker) — playbooks/apps/remove.yml stops this
+    image: "vaultwarden/server:1.37.1"   # Docker method only; a deploy never re-pulls it
 
   update:
     github_repo: dani-garcia/vaultwarden

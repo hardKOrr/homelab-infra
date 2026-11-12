@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: vaultwarden
-  description: "Deploys Vaultwarden as a native service in a dedicated LXC container"
+  description: "Deploys Vaultwarden natively in a dedicated LXC container or on Docker on a stack host"
   min_ansible_version: "2.15"
 
 dependencies: []

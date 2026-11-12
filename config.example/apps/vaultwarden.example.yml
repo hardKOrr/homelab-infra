@@ -30,3 +30,10 @@
 #   access: internal # internal | public. The vault is the platform's root of trust;
 #                    # publishing it puts that front door on the internet.
 #   # auth stays false — Vaultwarden has its own login; do not put Authentik in front.
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# Runs the official image on a stack host; the stack's guest_type, lxc or vm, sets the
+# guest. app.port is then the host port published for the container.
+# hosting:
+#   method: docker
+# stack: vaultwarden       # set guest_type under infrastructure.stacks

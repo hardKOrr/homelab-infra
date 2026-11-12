@@ -1,0 +1,100 @@
+---
+# Native hosting: static binary + web-vault extracted by vaultwarden-fetch, run by systemd.
+- name: Install native dependencies
+  ansible.builtin.apt:
+    name:
+      - skopeo # image download for vaultwarden-fetch
+      - jq # manifest parsing in vaultwarden-fetch
+    state: present
+
+- name: Check installed vaultwarden version
+  ansible.builtin.command:
+    cmd: "{{ app_config['update'].binary_path }} --version"
+  register: _vw_installed
+  failed_when: false
+  changed_when: false
+
+- name: Get latest release info
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
+    return_content: true
+  register: _release
+  changed_when: false
+
+- name: Set version facts
+  ansible.builtin.set_fact:
+    _installed_version: >-
+      {{ (_vw_installed.stdout | default('') | regex_search('[0-9]+\.[0-9]+\.[0-9]+'))
+         if _vw_installed.rc == 0 else 'none' }}
+    _latest_version: "{{ _release.json.tag_name | regex_replace('^v', '') }}"
+
+- name: Install vaultwarden-fetch
+  ansible.builtin.copy:
+    src: vaultwarden-fetch
+    dest: /usr/local/bin/vaultwarden-fetch
+    mode: "0755"
+
+- name: Fetch vaultwarden {{ _latest_version }} (binary + web-vault)
+  ansible.builtin.command:
+    cmd: "/usr/local/bin/vaultwarden-fetch {{ _latest_version }}"
+  when: _installed_version != _latest_version
+  changed_when: true
+  notify: Restart vaultwarden
+
+# ── User and directories ──────────────────────────────────────────────────────
+- name: Create vaultwarden system user
+  ansible.builtin.user:
+    name: "{{ vaultwarden_user }}"
+    system: true
+    home: "{{ app_config.app.data_path | dirname }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "{{ vaultwarden_user }}"
+    group: "{{ vaultwarden_user }}"
+    mode: "0750"
+
+
+# ── Configure ─────────────────────────────────────────────────────────────────
+- name: Write environment file
+  ansible.builtin.template:
+    src: vaultwarden.env.j2
+    dest: "{{ vaultwarden_env_file }}"
+    owner: root
+    group: "{{ vaultwarden_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart vaultwarden
+
+- name: Write systemd unit
+  ansible.builtin.template:
+    src: vaultwarden.service.j2
+    dest: "/etc/systemd/system/{{ vaultwarden_service_name }}.service"
+    mode: "0644"
+  notify: Restart vaultwarden
+
+# ── Service ───────────────────────────────────────────────────────────────────
+- name: Enable and start vaultwarden service
+  ansible.builtin.systemd:
+    name: "{{ vaultwarden_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for vaultwarden to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/alive"
+    status_code: 200
+  register: _health
+  until: _health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+

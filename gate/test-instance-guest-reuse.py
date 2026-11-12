@@ -141,6 +141,9 @@ def check_playbooks_use_it():
         if "tasks_from: provision-vm" in text:
             role = playbook.stem
             text += (ROOT / f"ansible/roles/{role}/tasks/provision-vm.yml").read_text()
+        native_file = ROOT / f"ansible/roles/{playbook.stem}/tasks/provision-native.yml"
+        if f"roles/{playbook.stem}/tasks/provision-native.yml" in text:
+            text += native_file.read_text()
         if "name: _template-native" in text:
             text += (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
         if "tasks/proxmox/resolve-instance-guest.yml" in text:

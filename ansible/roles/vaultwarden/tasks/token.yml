@@ -1,0 +1,128 @@
+---
+# Admin token resolution shared by both hosting methods. It reads the environment file
+# of whichever method is active (vaultwarden_env_file) so the token hash survives re-runs.
+# ── Admin token ───────────────────────────────────────────────────────────────
+- name: Read current environment file (token continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ vaultwarden_env_file }}"
+  register: _vw_env_current
+  failed_when: false
+  no_log: true
+
+- name: Extract existing admin token hash
+  ansible.builtin.set_fact:
+    _existing_admin_hash: >-
+      {{ ((_vw_env_current.content | b64decode).splitlines()
+          | select('match', '^ADMIN_TOKEN=')
+          | map('regex_replace', "^ADMIN_TOKEN=|'", '')
+          | first | default(''))
+         if _vw_env_current.content is defined else '' }}
+  no_log: true
+
+# role_path anchors config/ deterministically. playbook_dir would not: it is
+# ansible/playbooks for a bootstrap run and ansible/playbooks/apps for a standalone
+# `ansible-playbook playbooks/apps/vaultwarden.yml`.
+- name: Resolve the controller-side token sink
+  ansible.builtin.import_tasks: ../../../tasks/vaultwarden/token-sink.yml
+  vars:
+    vaultwarden_token_config_dir: "{{ role_path }}/../../../config"
+
+- name: Resolve configured admin token (env var, then config file, then the sink)
+  ansible.builtin.set_fact:
+    _admin_token_plain: >-
+      {{ lookup('env', 'VAULTWARDEN_ADMIN_TOKEN')
+         | default(homelabinfra_config.infrastructure.vaultwarden.admin_token
+                   | default(''), true)
+         | default(vaultwarden_token_stored, true) }}
+  no_log: true
+
+- name: Generate admin token (first bootstrap only)
+  ansible.builtin.set_fact:
+    _admin_token_plain: "{{ lookup('password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+    _admin_token_generated: true
+  when:
+    - _admin_token_plain | length == 0
+    - _existing_admin_hash | length == 0
+  no_log: true
+
+# ── Persist the generated token (slice 013) ───────────────────────────────────
+# This is what collapses the two-pass bootstrap. The token is written to the
+# controller, not the guest, because the controller is what needs to read it back:
+# the bootstrap gate two plays later, and every later job through lab-run.sh.
+#
+# Writes only on the run that GENERATED the token. A token supplied from the env or
+# the config file already has a durable home and must not be copied into a second one.
+- name: Ensure the token sink directory exists
+  ansible.builtin.file:
+    path: "{{ vaultwarden_token_sink | dirname }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  failed_when: false
+  when: _admin_token_generated | default(false)
+
+- name: Write the admin token to the sink
+  ansible.builtin.copy:
+    dest: "{{ vaultwarden_token_sink }}"
+    mode: "0600"
+    content: |
+      # Vaultwarden admin token, written by roles/vaultwarden on first deploy.
+      # Sourced by ansible/scripts/lab-run.sh into every job's environment.
+      # This is the platform's durable copy — back it up, or lose /admin access.
+      VAULTWARDEN_ADMIN_TOKEN={{ _admin_token_plain }}
+  delegate_to: localhost
+  become: false
+  register: _vw_sink_write
+  # Preserve the module result long enough to emit a secret-free actionable failure.
+  ignore_errors: true  # noqa: ignore-errors
+  no_log: true
+  when: _admin_token_generated | default(false)
+
+- name: Report where the admin token was stored
+  ansible.builtin.debug:
+    msg:
+      - "Vaultwarden admin token generated and stored at:"
+      - "  {{ vaultwarden_token_sink }}"
+      - "Bootstrap reads it from there — no paste step, no re-run."
+      - "Only its argon2id hash is on the guest. Back this file up."
+  when:
+    - _admin_token_generated | default(false)
+    - not (_vw_sink_write.failed | default(true))
+
+- name: Stop before deployment when the generated token cannot be persisted
+  ansible.builtin.assert:
+    that:
+      - not (_vw_sink_write.failed | default(true))
+    fail_msg: >-
+      Vaultwarden was not configured because its generated admin token could not be
+      written to the controller-side recovery sink. Correct permissions for
+      {{ vaultwarden_token_sink }} and retry; no secret was printed or installed.
+  when:
+    - _admin_token_generated | default(false)
+  no_log: false
+
+# Deterministic salt (derived from the token itself) keeps the PHC string stable
+# across runs, so the env template stays idempotent — a random salt would rewrite
+# the file and bounce the service on every deploy.
+- name: Hash admin token (argon2id, OWASP parameters)
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    salt="$(printf '%s' "$VW_TOKEN" | sha256sum | cut -c1-32)";
+    printf '%s' "$VW_TOKEN" | argon2 "$salt" -id -e -m 16 -t 3 -p 4
+  args:
+    executable: /bin/bash
+  environment:
+    VW_TOKEN: "{{ _admin_token_plain }}"
+  register: _argon2
+  changed_when: false
+  no_log: true
+  when: _admin_token_plain | length > 0
+
+- name: Select admin token hash for the environment file
+  ansible.builtin.set_fact:
+    _admin_token_hash: >-
+      {{ (_argon2.stdout | trim)
+         if _admin_token_plain | length > 0 else _existing_admin_hash }}
+  no_log: true
+

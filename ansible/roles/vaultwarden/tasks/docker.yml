@@ -1,0 +1,60 @@
+---
+# Docker hosting: the official image under Compose on the stack host. The image carries
+# the web vault, so there is no fetch step; the admin token is the same argon2id hash.
+- name: Vaultwarden | Create the project directory
+  ansible.builtin.file:
+    path: "{{ vaultwarden_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Vaultwarden | Create the data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Vaultwarden | Write the environment file
+  ansible.builtin.template:
+    src: vaultwarden.env.j2
+    dest: "{{ vaultwarden_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart vaultwarden container
+
+- name: Vaultwarden | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ vaultwarden_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart vaultwarden container
+
+- name: Vaultwarden | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ vaultwarden_project_dir }}"
+
+- name: Vaultwarden | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Vaultwarden | Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Vaultwarden | Wait for the container to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/alive"
+    status_code: 200
+  register: _health
+  until: _health.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
