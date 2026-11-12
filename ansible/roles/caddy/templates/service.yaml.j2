@@ -1,0 +1,31 @@
+{#
+  Caddy's one address: the edge listeners (80, 443) and the admin API (2019) on a MetalLB
+  LoadBalancer IP of their own, apart from the ingress VIP. `Local` keeps the client's
+  source address, which the routes' internal-CIDR matchers depend on.
+#}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% if app_config.app.address | default('') | length > 0 %}
+  annotations:
+    metallb.io/loadBalancerIPs: "{{ app_config.app.address }}"
+{% endif %}
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+  ports:
+    - name: http
+      port: {{ app_config.app.http_port | int }}
+      targetPort: http
+    - name: https
+      port: {{ app_config.app.https_port | int }}
+      targetPort: https
+    - name: admin
+      port: {{ app_config.app.port | int }}
+      targetPort: admin

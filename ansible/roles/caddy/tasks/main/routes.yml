@@ -22,18 +22,14 @@
 # after the wildcard gate below succeeds. Fresh installs have no routes to preserve;
 # converged installs already have every wildcard and therefore skip the transition.
 - name: Check which estate wildcard certificates already exist
-  ansible.builtin.find:
-    paths: "{{ caddy_cert_dir }}"
-    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
-    recurse: true
-  loop: "{{ _caddy_automate_names }}"
-  register: _caddy_existing_wildcard_cert
-  changed_when: false
+  ansible.builtin.include_tasks: ../certificate-files.yml
+  vars:
+    caddy_certificate_wait: false
 
 - name: Collect estate wildcards still awaiting issuance
   ansible.builtin.set_fact:
     _caddy_pending_wildcards: >-
-      {{ _caddy_existing_wildcard_cert.results | default([])
+      {{ _caddy_certificate_results
          | selectattr('matched', 'equalto', 0)
          | map(attribute='item') | list }}
 
@@ -157,18 +153,9 @@
 # Caddy sanitizes `*.<domain>` to `wildcard_.<domain>` on disk and files it under the
 # issuer's directory, so the name is matched rather than a full path assembled.
 - name: Wait for each estate wildcard certificate to be issued
-  ansible.builtin.find:
-    paths: "{{ caddy_cert_dir }}"
-    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
-    recurse: true
-  loop: "{{ _caddy_automate_names }}"
-  register: _caddy_wildcard_cert
-  until: _caddy_wildcard_cert.matched | default(0) > 0
-  retries: 30
-  delay: 10
-  changed_when: false
-  # The assert below reports which estate failed and why; a bare retry timeout does not.
-  failed_when: false
+  ansible.builtin.include_tasks: ../certificate-files.yml
+  vars:
+    caddy_certificate_wait: true
 
 - name: Assert every estate wildcard was issued
   ansible.builtin.assert:
@@ -180,7 +167,7 @@
       dns_challenge provider and token, and the Caddy logs (`journalctl -u {{ caddy_service_name }}` or `docker logs {{ instance }}`)
       on this host for the ACME error. No app can be served over HTTPS on this
       estate until the wildcard exists.
-  loop: "{{ _caddy_wildcard_cert.results | default([]) }}"
+  loop: "{{ _caddy_certificate_results }}"
   loop_control:
     label: "{{ item.item }}"
 

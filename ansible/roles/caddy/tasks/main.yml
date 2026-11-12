@@ -3,6 +3,8 @@
 # hosting.method: docker) a host-network container on a stack host.
 # Called from Play 2 of playbooks/apps/caddy.yml. Target: dedicated LXC or stack host.
 #
+# With hosting.method: kubernetes the role runs on localhost and the pod replaces the guest.
+#
 # CONFIGURATION MODEL — read this before changing anything here.
 #
 # Caddy is configured as JSON through its admin API, not by a Caddyfile. An empty
@@ -43,13 +45,26 @@
   ansible.builtin.import_tasks: main/preflight.yml
 
 - name: Install Caddy natively
-  when: not (caddy_docker | bool)
+  when: caddy_native | bool
   block:
     - name: Install Caddy from its apt repository
       ansible.builtin.import_tasks: main/install.yml
 
 - name: Resolve the DNS-challenge TLS policies
   ansible.builtin.import_tasks: main/tls.yml
+
+# The DNS modules a container image or pod must compile in; native adds them with apt.
+- name: Resolve the modules to compile into the image
+  when: not (caddy_native | bool)
+  block:
+    - name: Resolve the image modules and tag
+      ansible.builtin.import_tasks: main/modules.yml
+
+- name: Prepare the Kubernetes namespace and Service
+  when: caddy_kubernetes | bool
+  block:
+    - name: Resolve the cluster, give Caddy its address and schedule its backup
+      ansible.builtin.import_tasks: main/kubernetes.yml
 
 - name: Prepare the Docker project
   when: caddy_docker | bool
@@ -75,7 +90,7 @@
 # Native only: the update-check and restart helpers drive apt and systemd, and the version
 # record is read from the host binary. A container is updated by changing its pinned image.
 - name: Record the native install
-  when: not (caddy_docker | bool)
+  when: caddy_native | bool
   block:
     - name: Install lab maintenance scripts and record the version
       ansible.builtin.import_tasks: main/native-record.yml

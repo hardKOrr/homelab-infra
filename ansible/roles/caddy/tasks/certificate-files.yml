@@ -1,0 +1,57 @@
+---
+# Inspect certificate storage where Caddy runs. Both initial migration and the issuance
+# gate consume the same item/matched results; only the latter waits for issuance.
+- name: Find estate certificates on the guest
+  ansible.builtin.find:
+    paths: "{{ caddy_cert_dir }}"
+    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+    recurse: true
+  when: not (caddy_kubernetes | bool)
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_guest_certificates
+  until: not (caddy_certificate_wait | bool) or _caddy_guest_certificates.matched | default(0) > 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  failed_when: false
+
+- name: Find estate certificates in the pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - exec
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - "deployment/{{ instance }}"
+      - -c
+      - caddy
+      - --
+      - find
+      - /data/caddy/certificates
+      - -type
+      - f
+      - -name
+      - "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: caddy_kubernetes | bool
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_pod_certificates
+  until: not (caddy_certificate_wait | bool) or (_caddy_pod_certificates.rc == 0 and _caddy_pod_certificates.stdout | length > 0)
+  retries: 30
+  delay: 10
+  changed_when: false
+  failed_when: false
+
+- name: Collect the certificate lookup results
+  ansible.builtin.set_fact:
+    _caddy_certificate_results: >-
+      {%- set results = [] -%}
+      {%- for result in _caddy_pod_certificates.results | default([]) -%}
+      {%- if not (result.skipped | default(false)) -%}
+      {%- set _ = results.append({'item': result.item,
+          'matched': (result.stdout_lines | default([]) | length) if result.rc == 0 else 0}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ results if caddy_kubernetes | bool else _caddy_guest_certificates.results | default([]) }}

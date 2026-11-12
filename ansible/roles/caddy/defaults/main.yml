@@ -4,6 +4,8 @@
 caddy_service_name: caddy
 # Docker method (hosting.method: docker): a host-network container on a stack host.
 caddy_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+caddy_kubernetes: "{{ app_config.hosting.method | default('native') == 'kubernetes' }}"
+caddy_native: "{{ app_config.hosting.method | default('native') == 'native' }}"
 caddy_project_dir: "/opt/{{ instance }}"
 # The Caddy image keeps its autosave under /config and certificates under /data; both are
 # bind mounts, so they survive a recreate and a restore swaps them as plain directories.

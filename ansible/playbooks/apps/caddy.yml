@@ -4,7 +4,8 @@
 # configuration (see the role header for why there is no Caddyfile). With
 # `hosting.method: docker` and `stack: <name>` (guest_type lxc or vm) Caddy runs as a
 # host-network container on that stack host instead; keep the stack dedicated to Caddy,
-# which binds the host's 80, 443 and admin port.
+# which binds the host's 80, 443 and admin port. With `hosting.method: kubernetes` Caddy
+# runs in its own namespace on a MetalLB address of its own (roles/caddy/tasks/main/kubernetes.yml).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/caddy.yml -e instance=caddy
@@ -87,6 +88,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method | default('native') == 'docker'
 
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+    - name: Deploy Caddy on Kubernetes
+      ansible.builtin.include_role:
+        name: caddy
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the target guest to install and configure Caddy.
@@ -132,6 +141,7 @@
     - name: Deploy Caddy
       ansible.builtin.include_role:
         name: caddy
+      when: app_config.hosting.method | default('native') in ['native', 'docker']
 
 
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
@@ -166,22 +176,14 @@
           instance: "{{ instance }}"
           host: "{{ _caddy_deploy_host.caddy_admin_host }}"
           port: "{{ _caddy_deploy_host.caddy_admin_port | int }}"
-          # The fallback maps over EVERY declared network, and a band declares only what
-          # differs from `default` — so it has to skip the entries that carry no cidr of
-          # their own rather than fail on them. Once the bands are really segmented each
-          # one has its own cidr and all of them appear here, which is the intent.
+          # The fallback skips networks that declare no cidr of their own.
           internal_cidrs: >-
             {{ _caddy_deploy_host.homelabinfra_config.infrastructure.reverse_proxy.internal_cidrs
                | default(_caddy_deploy_host.homelabinfra_config.networks.values()
                          | selectattr('cidr', 'defined')
                          | map(attribute='cidr') | unique | list, true) }}
 
-    # Belt-and-braces only. The key just written is already in the live
-    # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there
-    # with set_fact — and this include_vars CANNOT override that, because set_fact
-    # outranks include_vars in Ansible's precedence order. It stays for a play that
-    # never loaded the registry at all; it is not what makes the wiring below see
-    # this deploy's own key.
+    # Belt-and-braces only: set_fact (from write-generated-facts.yml) outranks this include_vars.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -196,30 +198,34 @@
         resolve_estate_name: "{{ _caddy_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _caddy_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    # Kubernetes has no guest: the role ran on localhost and exported the endpoint there.
+    _caddy_deploy_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]]
+         if groups.get('deploy_' ~ instance, []) | length > 0
+         else hostvars['localhost'] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _caddy_deploy_host.ansible_host }}"
+    wiring_upstream_host: >-
+      {{ _caddy_deploy_host.ansible_host
+         if groups.get('deploy_' ~ instance, []) | length > 0
+         else _caddy_deploy_host.caddy_admin_host | regex_replace('^https?://', '') }}
     wiring_upstream_port: "{{ _caddy_deploy_host.app_config.app.port }}"
     wiring_subdomain: "{{ _caddy_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_identity_mode: "{{ _caddy_deploy_host.app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ _caddy_deploy_host.app_config.routing.access | default('internal') }}"
     wiring_app_display: "Caddy ({{ instance }})"
-    # The admin API is the only endpoint that reliably answers 200 — Caddy replies
-    # 404 on :80 for a host it has no route for. Monitored over the LAN, not the
-    # public domain, because the admin API is never published.
+    # The admin API is the only endpoint that reliably answers 200, and it is never published.
     wiring_monitor_url: >-
       {{ _caddy_deploy_host.caddy_admin_host }}:{{
          _caddy_deploy_host.caddy_admin_port }}/config/apps/http/servers/srv0/routes
     wiring_auth_group: "homelab-users"   # Authentik group granted access
 
   tasks:
-    # Skipped for Caddy: routing.proxy is none in app-defaults — a reverse proxy
-    # must not be routed through itself.
+    # Skipped: routing.proxy is none — a reverse proxy is not routed through itself.
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:
@@ -228,8 +234,7 @@
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
         - _caddy_deploy_host.app_config.routing.proxy | default('internal') != 'none'
 
-    # Skipped for Caddy: routing.identity is none in app-defaults — Authentik in
-    # front of the admin API would break every app's route wiring.
+    # Skipped: routing.identity is none — Authentik would break every app's route wiring.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
@@ -256,6 +261,14 @@
     # aggregated per-app route failure cannot leave Caddy itself unrecorded.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: _caddy_deploy_host.app_config.hosting.method | default('native') != 'kubernetes'
+
+    - name: Record the app on every cluster node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+      when: _caddy_deploy_host.app_config.hosting.method | default('native') == 'kubernetes'
 
     # A fresh Caddy has an empty admin route table. Rebuild each deployed application's
     # route from its Proxmox instance tag and the same defaults/config used by Deploy.
@@ -275,9 +288,7 @@
           '{{ _caddy_deploy_host.app_config.app.tls_mode | default('acme') }}'.
           Routes for deployed applications were reconciled from their instance records.
 
-    # Last task in the play, deliberately. Wiring records what it could not do rather than
-    # aborting, so a failure in one provider does not strand the others; this is what stops
-    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    # Last task, deliberately: see tasks/report-degradation.yml.
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:

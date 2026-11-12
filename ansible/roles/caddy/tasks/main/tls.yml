@@ -17,6 +17,14 @@
 # Docker the same module list is compiled into the image instead (main/docker.yml).
 # Gathered on the Caddy guest, not the runner. Provisioning seeds resolv.conf from
 # the selected network's dns_servers; reused guests retain their current DNS path.
+- name: Collect runner DNS facts for Kubernetes TLS policies
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+      - '!min'
+      - dns
+  when: caddy_kubernetes | bool
+
 - name: Collect DNS-challenge resolver defaults
   ansible.builtin.set_fact:
     _caddy_default_resolvers: "{{ ansible_facts.dns.nameservers | default([]) }}"
@@ -100,7 +108,7 @@
   register: _caddy_modules
   changed_when: false
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
 
 - name: Install missing DNS provider modules
@@ -108,7 +116,7 @@
     cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
   loop: "{{ _caddy_dns_provider_names }}"
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_provider_names | length > 0
     - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
   changed_when: true
@@ -120,7 +128,7 @@
       caddy add-package
       {{ caddy_dynamicdns_module }}
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_public_dns_enabled_estates | length > 0
     - "'dynamic_dns' not in _caddy_modules.stdout | default('')"
   changed_when: true
@@ -132,7 +140,7 @@
       caddy add-package
       {{ caddy_dnsrec_module }}
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_records_enabled | bool
     - "'dns_records' not in _caddy_modules.stdout | default('')"
   changed_when: true

@@ -232,6 +232,7 @@ class CaddyRendering:
             "_caddy_dns_policies": policies,
             "_caddy_automate_names": ["*.alpha.example.test", "*.beta.example.test"],
             "_caddy_bind_ip": "192.0.2.10",
+            "caddy_kubernetes": False,
             "_caddy_public_dns_apps": public_dns_apps or {},
         }
         for key, expression in self.base_vars.items():

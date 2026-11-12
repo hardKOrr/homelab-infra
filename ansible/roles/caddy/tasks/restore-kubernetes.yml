@@ -1,0 +1,25 @@
+---
+# Replace the target's /data (certificates, ACME accounts) and /config (the autosaved
+# running configuration, with every wired route) from one PBS recovery point, through the
+# shared restore Job. The pod's start script re-points the restored autosave at the
+# target Service's admin origin (templates/manifest.yaml.j2).
+- name: Caddy Kubernetes restore | Restore the data and config volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Caddy
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+        - name: config
+          claim: "{{ restore_target }}-config"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the certificates and ACME accounts (/data) and the autosaved running configuration
+        with every wired route (/config)
+      verify:
+        - >-
+          Check that the Caddy admin API lists the expected routes and that the
+          certificates the recovery point held are present, then re-run Deploy Caddy to
+          reconcile routes and wiring.
