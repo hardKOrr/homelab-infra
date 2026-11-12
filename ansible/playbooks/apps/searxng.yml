@@ -1,6 +1,7 @@
 ---
-# Deploy SearXNG — a metasearch engine — onto the Kubernetes hosting backend (default), or
-# on Docker on a stack host (LXC or VM) with `hosting.method: docker` and `stack: <name>`.
+# Deploy SearXNG — a metasearch engine — onto the Kubernetes hosting backend (default), on
+# Docker on a stack host (LXC or VM) with `hosting.method: docker` and `stack: <name>`, or
+# natively on its own LXC or VM with `hosting.method: native` and `proxmox.guest_type`.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/searxng.yml -e instance=searxng
@@ -59,6 +60,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: searxng
+
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native SearXNG runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
@@ -79,6 +89,14 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: searxng
+      when: app_config.hosting.method == 'native'
+
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -93,7 +111,7 @@
       when: app_config.hosting.method == 'kubernetes'
 
 
-- name: "SearXNG | Deploy on Docker"
+- name: "SearXNG | Deploy on Docker or natively"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -106,17 +124,21 @@
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     - name: Deploy SearXNG
       ansible.builtin.include_role:
         name: searxng
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 
 # ── Play 2: Wire ───────────────────────────────────────────────────────────────
@@ -126,7 +148,7 @@
   gather_facts: false
 
   vars:
-    _sx_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
+    _sx_docker: "{{ hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
@@ -181,7 +203,7 @@
           {{ groups['deploy_' ~ instance] if _sx_docker | bool
              else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
                   | map(attribute='name') | list }}
-        record_guest_kind: "{{ 'docker' if _sx_docker | bool else 'kubernetes' }}"
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method if _sx_docker | bool else 'kubernetes' }}"
         record_guest_url: "https://{{ hostvars['localhost'].searxng_fqdn }}"
 
     - name: Notify
@@ -189,7 +211,7 @@
       vars:
         notify_title: "SearXNG deployed"
         notify_message: >-
-          {{ instance }} is running on {{ 'Docker' if _sx_docker | bool else 'the Kubernetes backend' }} at
+          {{ instance }} is running on {{ {'docker': 'Docker', 'native': 'its own guest'}[hostvars['localhost'].app_config.hosting.method] | default('the Kubernetes backend') }} at
           https://{{ hostvars['localhost'].searxng_fqdn }}
 
     - name: Fail if anything could not be wired

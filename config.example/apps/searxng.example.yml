@@ -20,7 +20,7 @@
 # stack: searxng
 
 app:
-  image: "searxng/searxng:latest"
+  image: "searxng/searxng:2026.11.9-57ff753ad"   # the same exact release the native install runs
   instance_name: "SearXNG"
 
 routing:
@@ -34,3 +34,12 @@ routing:
                        #   infrastructure.yml declares two or more estates, and the
                        #   instance file is then named searxng-<estate>[-<variant>].
   # subdomain: searxng  # override the published hostname; the app default is searxng
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy runs SearXNG's step-by-step install (a git clone at the commit pinned in
+# app.native_commit, in a Python virtualenv) as a systemd service on app.port (8080). The
+# bot limiter is off there: the guest runs no Valkey/Redis.
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm

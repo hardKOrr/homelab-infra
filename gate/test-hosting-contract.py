@@ -54,7 +54,7 @@ EXTRA_IMPLEMENTED = {
     "qbittorrent": {"docker-lxc"},
     "radarr": {"docker-lxc"},
     "sabnzbd": {"docker-lxc"},
-    "searxng": {"docker-lxc", "docker-vm"},
+    "searxng": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "slskd": {"docker-lxc"},
     "sonarr": {"docker-lxc"},
     "tautulli": {"docker-lxc"},

@@ -14,11 +14,19 @@ server:
   # The bot/rate limiter needs the Redis below to keep counters across the multiple uwsgi
   # workers the image starts in one pod — without it the limiter can only see the request
   # count on whichever worker answered, which defeats it.
+{% if app_config.hosting.method == 'native' %}
+  # The native guest runs no Valkey/Redis, so there is nowhere to keep limiter counters.
+  limiter: false
+{% else %}
   limiter: true
+{% endif %}
   public_instance: false
 
-redis:
-  url: "redis://:{{ _sx_redis_password }}@{{ instance }}-redis:6379/0"
+{% if app_config.hosting.method != 'native' %}
+# `valkey:` is the key the pinned release reads; the redis container speaks the same protocol.
+valkey:
+  url: "valkey://:{{ _sx_redis_password }}@{{ instance }}-redis:6379/0"
+{% endif %}
 
 search:
   formats:

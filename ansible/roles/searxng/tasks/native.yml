@@ -1,0 +1,141 @@
+---
+# SearXNG native (hosting.method: native, on an LXC or a VM): upstream's step-by-step
+# install, a `git clone` into a Python virtualenv
+# (https://docs.searxng.org/admin/installation-searxng.html), at the exact upstream commit
+# pinned in app.native_commit and served by granian. Stateless; the limiter is off because
+# the guest runs no Valkey/Redis.
+- name: SearXNG native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native SearXNG supports Debian 12 (Python 3.11).
+
+- name: SearXNG native | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: SearXNG native | Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - git
+      - build-essential
+      - python3-dev
+      - python3-venv
+      - python3-babel
+      - libxslt-dev
+      - zlib1g-dev
+      - libffi-dev
+      - libssl-dev
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: SearXNG native | Create the app group
+  ansible.builtin.group:
+    name: "{{ searxng_service }}"
+    system: true
+
+- name: SearXNG native | Create the app user
+  ansible.builtin.user:
+    name: "{{ searxng_service }}"
+    group: "{{ searxng_service }}"
+    home: "{{ searxng_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: SearXNG native | Clone SearXNG at the pinned commit
+  ansible.builtin.git:
+    repo: https://github.com/searxng/searxng
+    dest: "{{ searxng_src }}"
+    version: "{{ app_config.app.native_commit }}"
+    force: true
+  become_user: "{{ searxng_service }}"
+  register: _sx_clone
+  notify: Restart searxng service
+
+# The marker names the commit, so a version bump reinstalls and an unchanged run does not.
+- name: SearXNG native | Install SearXNG and its server into the virtualenv
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      python3 -m venv "{{ searxng_venv }}"
+      . "{{ searxng_venv }}/bin/activate"
+      pip install -U pip setuptools wheel pyyaml msgspec typing-extensions pybind11
+      cd "{{ searxng_src }}"
+      pip install --use-pep517 --no-build-isolation -e .
+      pip install -r requirements-server.txt
+      touch "{{ searxng_venv }}/.installed-{{ app_config.app.native_commit }}"
+    executable: /bin/bash
+    creates: "{{ searxng_venv }}/.installed-{{ app_config.app.native_commit }}"
+  become_user: "{{ searxng_service }}"
+  notify: Restart searxng service
+
+- name: SearXNG native | Create the settings directory
+  ansible.builtin.file:
+    path: "{{ searxng_settings_path | dirname }}"
+    state: directory
+    owner: root
+    group: "{{ searxng_service }}"
+    mode: "0750"
+
+- name: SearXNG native | Write the settings file
+  ansible.builtin.template:
+    src: settings.yml.j2
+    dest: "{{ searxng_settings_path }}"
+    owner: root
+    group: "{{ searxng_service }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart searxng service
+
+- name: SearXNG native | Write the systemd unit
+  ansible.builtin.template:
+    src: native.service.j2
+    dest: "/etc/systemd/system/{{ searxng_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart searxng service
+
+- name: SearXNG native | Enable and start the service
+  ansible.builtin.systemd:
+    name: "{{ searxng_service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: SearXNG native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: SearXNG native | Install the restart and log helpers
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ searxng_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ searxng_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: SearXNG native | Wait for the application
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/healthz"
+    status_code: 200
+  register: _sx_health
+  retries: 30
+  delay: 5
+  until: _sx_health.status | default(0) == 200
+  changed_when: false
