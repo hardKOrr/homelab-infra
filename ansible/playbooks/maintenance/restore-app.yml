@@ -231,6 +231,7 @@
         restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
         restore_source_open_webui_secret_key: "{{ hostvars['localhost'].restore_source_open_webui_secret_key | default('') }}"
         restore_source_hi_events_secrets: "{{ hostvars['localhost'].restore_source_hi_events_secrets | default({}) }}"
+        restore_source_mixpost_secrets: "{{ hostvars['localhost'].restore_source_mixpost_secrets | default({}) }}"
         restore_source_plane_secrets: "{{ hostvars['localhost'].restore_source_plane_secrets | default({}) }}"
         restore_source_emby_user: "{{ hostvars['localhost'].restore_source_emby_user | default('') }}"
         restore_source_emby_password: "{{ hostvars['localhost'].restore_source_emby_password | default('') }}"
