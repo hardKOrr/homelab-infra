@@ -1,0 +1,32 @@
+{{ ansible_managed | comment }}
+# Laravel's standard nginx site (https://laravel.com/docs/deployment#nginx) for the
+# application's public directory.
+server {
+    listen {{ app_config.app.port }};
+    listen [::]:{{ app_config.app.port }};
+    server_name _;
+
+    root {{ mixpost_native_root }}/public;
+    index index.php;
+    charset utf-8;
+    client_max_body_size 64M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/php/php{{ mixpost_php_version }}-fpm.sock;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

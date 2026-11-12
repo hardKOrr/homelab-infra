@@ -1,7 +1,8 @@
 ---
 # Deploy Mixpost — the first application on the Kubernetes hosting backend (slice 204) —
 # or, with `hosting.method: docker` and `stack: <name>`, on Docker on a stack host (LXC
-# or VM) with its database on the named MariaDB backend.
+# or VM), or natively on its own LXC or VM with `hosting.method: native` and
+# `proxmox.guest_type: lxc|vm`; both with the database on the named MariaDB backend.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/mixpost.yml -e instance=mixpost
@@ -61,6 +62,15 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: mixpost
+
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native Mixpost runs on its own guest: set proxmox.guest_type to lxc or vm in the
+          instance config.
   tasks:
     # The estate overlay has to run before the FQDN is built, not after: a multi-domain lab
     # resolves `routing.estate` into the domain, SSO and DNS this app is published under,
@@ -85,7 +95,7 @@
       vars:
         database_provision_app_instance: "{{ instance }}"
         database_provision_config: "{{ app_config.app.database }}"
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
 
     - name: Add database connection to Mixpost config
       ansible.builtin.set_fact:
@@ -97,7 +107,7 @@
             'database_password': database_provision_connection.password
           }}, recursive=True) }}
       no_log: true
-      when: app_config.hosting.method == 'docker'
+      when: app_config.hosting.method in ['docker', 'native']
 
     - name: Find or create the stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
@@ -106,6 +116,14 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
+
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: mixpost
+      when: app_config.hosting.method == 'native'
 
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
@@ -122,7 +140,7 @@
       when: app_config.hosting.method == 'kubernetes'
 
 
-- name: "Mixpost | Deploy on Docker"
+- name: "Mixpost | Deploy on Docker or natively"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
@@ -138,16 +156,20 @@
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+        and hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
     - name: Ensure Docker is installed
       ansible.builtin.include_role:
         name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - name: Deploy Mixpost
       ansible.builtin.include_role:
         name: mixpost
       vars:
         mixpost_fqdn: "{{ hostvars['localhost'].mixpost_fqdn }}"
+      when: hostvars['localhost'].app_config.hosting.method in ['docker', 'native']
 
 
 # ── Play 2: Wire ───────────────────────────────────────────────────────────────
@@ -165,7 +187,7 @@
   gather_facts: false
 
   vars:
-    _mp_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
+    _mp_docker: "{{ hostvars['localhost'].app_config.hosting.method in ['docker', 'native'] }}"
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
@@ -225,7 +247,7 @@
           {{ groups['deploy_' ~ instance] if _mp_docker | bool
              else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
                   | map(attribute='name') | list }}
-        record_guest_kind: "{{ 'docker' if _mp_docker | bool else 'kubernetes' }}"
+        record_guest_kind: "{{ hostvars['localhost'].app_config.hosting.method if _mp_docker | bool else 'kubernetes' }}"
         record_guest_url: "https://{{ hostvars['localhost'].mixpost_fqdn }}"
 
     - name: Notify
@@ -233,7 +255,7 @@
       vars:
         notify_title: "Mixpost deployed"
         notify_message: >-
-          {{ instance }} is running on {{ 'Docker' if _mp_docker | bool else 'the Kubernetes backend' }} at
+          {{ instance }} is running on {{ {'docker': 'Docker', 'native': 'its own guest'}[hostvars['localhost'].app_config.hosting.method] | default('the Kubernetes backend') }} at
           https://{{ hostvars['localhost'].mixpost_fqdn }}
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than

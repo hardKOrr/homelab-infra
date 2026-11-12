@@ -4,7 +4,7 @@
 - name: Mixpost backup | Dump the named MariaDB database
   ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
   vars:
-    database_client_runtime: docker
+    database_client_runtime: "{{ 'native' if mixpost_native | bool else 'docker' }}"
     database_app_instance: "{{ instance }}"
     database_app_config: "{{ app_config.app.database }}"
     database_dump_file: "{{ _mp_backup_scratch.path }}/mixpost.sql"

@@ -1,0 +1,9 @@
+#!/bin/sh
+{{ ansible_managed | comment }}
+# Run artisan as the web user with the application environment, the one every unit gets.
+set -eu
+exec systemd-run --quiet --pipe --wait --collect \
+  -p User={{ mixpost_native_user }} -p Group={{ mixpost_native_user }} \
+  -p WorkingDirectory={{ mixpost_native_root }} \
+  -p EnvironmentFile={{ mixpost_env_file }} \
+  php artisan "$@"

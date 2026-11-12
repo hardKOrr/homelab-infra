@@ -1,0 +1,194 @@
+---
+# Mixpost Lite natively on its own LXC or VM, from upstream's manual install
+# (https://docs.mixpost.app/lite/installation/manual): `composer create-project
+# inovector/MixpostApp`, pinned to an exact app version and an exact Mixpost package
+# version, served by nginx and PHP-FPM, with Horizon (the queue worker) and the scheduler
+# as systemd units and a local password-protected Redis. The database stays on the named
+# MariaDB backend.
+- name: Mixpost native | Assert the supported guest
+  ansible.builtin.assert:
+    that: ansible_facts.distribution_release in ['bookworm', 'noble']
+    fail_msg: Native Mixpost supports Debian 12 and Ubuntu 24.04 (PHP 8.2 or 8.3).
+
+- name: Mixpost native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Mixpost native | Install nginx, PHP-FPM with its extensions, Redis and the build tools
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - composer
+      - ffmpeg
+      - git
+      - nginx
+      - redis-server
+      - unzip
+      - "php{{ mixpost_php_version }}-fpm"
+      - php-bcmath
+      - php-cli
+      - php-curl
+      - php-gd
+      - php-intl
+      - php-mbstring
+      - php-mysql
+      - php-redis
+      - php-xml
+      - php-zip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Mixpost native | Create the project and storage directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    # Traverse-only for others: www-data reaches src/ and storage/ below; the environment
+    # file and the build work directory stay private.
+    - {path: "{{ mixpost_project_dir }}", owner: root, mode: "0711"}
+    - {path: "{{ mixpost_native_work_dir }}", owner: root, mode: "0700"}
+    - {path: "{{ mixpost_data_path }}", owner: "{{ mixpost_native_user }}", mode: "0775"}
+    - {path: "{{ mixpost_data_path }}/public", owner: "{{ mixpost_native_user }}", mode: "0775"}
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Mixpost native | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
+
+- name: Mixpost native | Write the environment file
+  ansible.builtin.template:
+    src: mixpost.env.j2
+    dest: "{{ mixpost_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart mixpost
+
+- name: Mixpost native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ mixpost_native_root }}/.release"
+  register: _mp_native_release
+  failed_when: false
+
+# Built in a stage beside the install and swapped in whole, so a failed build leaves the
+# running release alone. State is not in the tree: storage/app is relinked below and the
+# environment lives in mixpost_env_file.
+- name: Mixpost native | Build the pinned release
+  when: >-
+    _mp_native_release.content is not defined
+    or (_mp_native_release.content | b64decode | trim) != mixpost_native_release
+  block:
+    - name: Mixpost native | Clear a partial stage
+      ansible.builtin.file:
+        path: "{{ mixpost_native_root }}.stage"
+        state: absent
+
+    - name: Mixpost native | Create the application from the pinned MixpostApp version
+      ansible.builtin.command:
+        argv:
+          - composer
+          - create-project
+          - "inovector/MixpostApp:{{ app_config.app.native_app_version }}"
+          - "{{ mixpost_native_root }}.stage"
+          - --no-interaction
+          - --no-dev
+          - --prefer-dist
+      environment: &mixpost_composer_env
+        COMPOSER_ALLOW_SUPERUSER: "1"
+        COMPOSER_HOME: "{{ mixpost_native_work_dir }}/composer"
+      changed_when: true
+
+    # MixpostApp requires inovector/mixpost as a range; the exact package version is pinned
+    # here and matches the image's tag.
+    - name: Mixpost native | Pin the Mixpost package version
+      ansible.builtin.command:
+        argv:
+          - composer
+          - require
+          - "inovector/mixpost:{{ app_config.app.native_version }}"
+          - "--working-dir={{ mixpost_native_root }}.stage"
+          - --no-dev
+          - --update-with-all-dependencies
+          - --no-interaction
+      environment: *mixpost_composer_env
+      changed_when: true
+
+    # The create-project scripts leave a generated .env and a storage link into the stage.
+    - name: Mixpost native | Finish the stage and mark it with its release
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -f .env public/storage
+          mkdir -p bootstrap/cache storage/framework/cache/data storage/framework/sessions \
+            storage/framework/views storage/logs
+          chown -R {{ mixpost_native_user }}:{{ mixpost_native_user }} .
+          printf '%s\n' '{{ mixpost_native_release }}' > .release
+        chdir: "{{ mixpost_native_root }}.stage"
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Mixpost native | Stop the application for the swap
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ mixpost_native_app_services }}"
+      failed_when: false
+
+    - name: Mixpost native | Swap the staged release into place
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          rm -rf "{{ mixpost_native_root }}.previous"
+          if [ -e "{{ mixpost_native_root }}" ]; then mv "{{ mixpost_native_root }}" "{{ mixpost_native_root }}.previous"; fi
+          mv "{{ mixpost_native_root }}.stage" "{{ mixpost_native_root }}"
+          rm -rf "{{ mixpost_native_root }}.previous"
+        executable: /bin/bash
+      changed_when: true
+
+- name: Mixpost native | Install the artisan wrapper
+  ansible.builtin.template:
+    src: artisan.sh.j2
+    dest: "{{ mixpost_artisan }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+# The release's own storage/app seeds the durable directory once; an existing one, such
+# as a restored point, is never overwritten.
+- name: Mixpost native | Link storage/app to the durable directory
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      link="{{ mixpost_native_root }}/storage/app"
+      target="{{ mixpost_data_path }}"
+      if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then exit 0; fi
+      if [ -d "$link" ] && [ ! -L "$link" ]; then cp -an "$link"/. "$target"/; rm -rf "$link"; else rm -f "$link"; fi
+      ln -s "$target" "$link"
+      chown -h {{ mixpost_native_user }}:{{ mixpost_native_user }} "$link"
+      chown -R {{ mixpost_native_user }}:{{ mixpost_native_user }} "$target"
+      echo changed
+    executable: /bin/bash
+  register: _mp_native_link
+  changed_when: "'changed' in _mp_native_link.stdout"
+
+# Laravel's `storage:link`, to the durable directory.
+- name: Mixpost native | Publish the public media directory
+  ansible.builtin.file:
+    src: "{{ mixpost_data_path }}/public"
+    dest: "{{ mixpost_native_root }}/public/storage"
+    state: link
+    owner: "{{ mixpost_native_user }}"
+    group: "{{ mixpost_native_user }}"
+
+- name: Mixpost native | Configure and start the services
+  ansible.builtin.include_tasks: native-services.yml

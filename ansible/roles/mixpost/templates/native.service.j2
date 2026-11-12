@@ -1,0 +1,30 @@
+{{ ansible_managed | comment }}
+{% if _mp_unit == 'horizon' %}
+[Unit]
+Description=Mixpost Horizon queue worker ({{ instance }})
+After=network-online.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+User={{ mixpost_native_user }}
+WorkingDirectory={{ mixpost_native_root }}
+EnvironmentFile={{ mixpost_env_file }}
+ExecStart=/usr/bin/php artisan horizon
+ExecStop=/usr/bin/php artisan horizon:terminate
+{% else %}
+[Unit]
+Description=Mixpost scheduler ({{ instance }})
+After=network-online.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+User={{ mixpost_native_user }}
+WorkingDirectory={{ mixpost_native_root }}
+EnvironmentFile={{ mixpost_env_file }}
+ExecStart=/bin/sh -c 'while true; do /usr/bin/php artisan schedule:run --no-interaction; sleep 60; done'
+{% endif %}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
