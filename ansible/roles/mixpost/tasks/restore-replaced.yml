@@ -1,0 +1,30 @@
+---
+# restore-swap.yml replaced hook. The restored database was written under the source's
+# application keys: record them against the target and render them into the environment
+# the application starts with.
+- name: Mixpost restore | Record that the target keys are being replaced
+  ansible.builtin.set_fact:
+    _mp_restore_keys_replaced: true
+
+- name: Mixpost restore | Carry the source keys into the target Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      app_key: "{{ restore_source_mixpost_secrets.app_key }}"
+    vault_item_secret_fields: [app_key]
+  no_log: true
+
+- name: Mixpost restore | Render the carried keys
+  ansible.builtin.lineinfile:
+    path: "{{ mixpost_env_file }}"
+    regexp: "^{{ item.key }}="
+    line: >-
+      {{ item.key }}="{{ item.value | regex_replace('([\\"$])', '\\\1') | regex_replace('\n', '\\n') }}"
+    mode: "0600"
+  loop:
+    - {key: APP_KEY, value: "{{ restore_source_mixpost_secrets.app_key }}"}
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true

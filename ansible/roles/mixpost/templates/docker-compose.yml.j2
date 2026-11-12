@@ -1,0 +1,21 @@
+{{ ansible_managed | comment }}
+services:
+  {{ instance }}-redis:
+    image: "{{ app_config.app.cache.image }}"
+    container_name: "{{ instance }}-redis"
+    restart: unless-stopped
+    env_file:
+      - "{{ mixpost_env_file }}"
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    depends_on:
+      - {{ instance }}-redis
+    env_file:
+      - "{{ mixpost_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"
+    volumes:
+      - "{{ mixpost_data_path }}:/var/www/html/storage/app"

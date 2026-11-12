@@ -48,7 +48,7 @@ APPS = {
                   "archives": ["storage"]},
     "litellm": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "postgresql",
                 "archives": ["config"]},
-    "mixpost": {"file": "main.yml", "restore": "restore.yml", "engine": "namespace-mysql",
+    "mixpost": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "namespace-mysql",
                 "archives": ["storage"]},
     "n8n": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml",
             "engine": "postgresql", "archives": ["data"]},
@@ -728,7 +728,7 @@ def app_contracts():
     that = " ".join(contract["ansible.builtin.assert"]["that"])
     assert "app_config.app.database.version" in that
     assert "restore_target_config.app.database.version" in that
-    contract = task_named(tasks_of("ansible/roles/mixpost/tasks/restore.yml"),
+    contract = task_named(tasks_of("ansible/roles/mixpost/tasks/restore-kubernetes.yml"),
                           "Restore | Require both instances to use the same database name")
     assert "restore_target_config.app.database.name" in contract["ansible.builtin.assert"]["that"]
 

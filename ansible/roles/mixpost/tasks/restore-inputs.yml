@@ -1,0 +1,8 @@
+---
+# Restore App hook, run on localhost before the target identity checks. The application
+# keys must follow the restored database to a new target; they never enter the plan.
+- name: Resolve the source Mixpost keys without exposing them
+  ansible.builtin.set_fact:
+    restore_source_mixpost_secrets:
+      app_key: "{{ app_config.app.app_key | default('') }}"
+  no_log: true

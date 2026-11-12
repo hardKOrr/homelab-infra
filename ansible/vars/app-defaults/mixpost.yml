@@ -19,7 +19,7 @@ mixpost_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   # The Kubernetes CronJob and namespaced restore role are the application's native
@@ -49,16 +49,37 @@ mixpost_defaults:
       name: mixpost
       user: mixpost
       storage: 8          # GB — the database volume
+      # Docker method only: the named MariaDB backend (deploy it first) holds the
+      # database, provisioned by tasks/database/provision.yml. Kubernetes ignores these.
+      provider: mariadb
+      instance: mariadb-mixpost
+      role: mixpost
     cache:
       image: "redis:7-alpine"
 
     # The application's own uploads and generated media.
     storage: 10           # GB
 
+    # Docker method only: the host directory mounted where the Kubernetes volume is.
+    # Empty means /opt/<instance>/storage (roles/mixpost/defaults/main.yml); no Jinja
+    # here, because the public-DNS status task renders this file without an instance.
+    data_path: ""
+
     # No worker or scheduler Deployment. Mixpost Lite's image runs Laravel's queue and
     # scheduler inside the application container itself — upstream's compose file has one
     # service, not three — so splitting them here would mean running processes the image
     # already starts.
+
+  # Used by the Docker method: the size of the stack host's guest.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 4096
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   routing:
     subdomain: mixpost                     # hostname on the estate domain, independent of the instance name
@@ -116,6 +137,9 @@ mixpost_defaults:
   #                live data and is always a decision somebody makes.
   backup:
     enabled: true
+
+    # Docker method: roles/mixpost/tasks/backup.yml is the on-demand backup.
+    application_consistent: true
 
     # Cron in the CronJob's own timezone (see `timezone` below), not in UTC-by-default.
     schedule: "0 3 * * *"
