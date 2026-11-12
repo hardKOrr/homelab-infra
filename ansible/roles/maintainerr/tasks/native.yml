@@ -115,6 +115,13 @@
           - "{{ maintainerr_native_root }}.stage"
       changed_when: true
 
+    # Upstream's production migration glob assumes the Docker image's /opt/app.
+    - name: Maintainerr native | Point migrations at the native install
+      ansible.builtin.replace:
+        path: "{{ maintainerr_native_root }}.stage/apps/server/src/app/config/typeOrmConfig.ts"
+        regexp: /opt/app/apps/server/dist/database/migrations
+        replace: "{{ maintainerr_native_root }}/apps/server/dist/database/migrations"
+
     - name: Maintainerr native | Install the dependencies and build
       ansible.builtin.shell:
         cmd: |
@@ -123,6 +130,7 @@
           yarn="node .yarn/releases/yarn-{{ app_config.app.native_yarn_version }}.cjs"
           $yarn install --network-timeout 99999999
           $yarn turbo build
+          cp -R apps/server/assets apps/server/dist/assets
           $yarn workspaces focus --all --production
           mkdir -p packages/contracts/node_modules apps/server/node_modules
         chdir: "{{ maintainerr_native_root }}.stage"
