@@ -176,6 +176,7 @@
       ln -s "$target" "$link"
       chown -h {{ mixpost_native_user }}:{{ mixpost_native_user }} "$link"
       chown -R {{ mixpost_native_user }}:{{ mixpost_native_user }} "$target"
+      chmod 0775 "$target" "$target/public"
       echo changed
     executable: /bin/bash
   register: _mp_native_link

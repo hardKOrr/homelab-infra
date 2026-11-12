@@ -1,0 +1,12 @@
+---
+# Native Redis persists across restarts, including settings from the replaced database.
+# Drop only derived caches after the services start; preserve queued work and sessions.
+- name: Mixpost restore | Invalidate cached settings and service configuration
+  ansible.builtin.command:
+    argv: ["{{ mixpost_artisan }}", "{{ item }}"]
+  loop: [mixpost:clear-settings-cache, mixpost:clear-services-cache]
+  when: mixpost_native | bool
+  changed_when: true
+
+- name: Mixpost restore | Verify the restored application
+  ansible.builtin.include_tasks: verify.yml

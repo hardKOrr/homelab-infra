@@ -72,7 +72,7 @@
     recovery_swap_compose_project: "{{ mixpost_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"
-    recovery_swap_verified_hook: "{{ role_path }}/tasks/verify.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
 
 - name: Mixpost restore | Explain the read-only plan
   ansible.builtin.debug:
