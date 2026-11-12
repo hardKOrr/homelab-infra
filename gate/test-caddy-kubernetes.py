@@ -27,6 +27,11 @@ def render(name, **extra):
 
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/caddy.yml"))["caddy_defaults"]
+tls = yaml.safe_load(read(f"{ROLE}/tasks/main/tls.yml"))
+dns_facts = next(t for t in tls if "ansible.builtin.setup" in t)
+assert dns_facts["when"] == "caddy_kubernetes | bool"
+assert "dns" in dns_facts["ansible.builtin.setup"]["gather_subset"]
+assert tls.index(dns_facts) < next(i for i, t in enumerate(tls) if t.get("name") == "Collect DNS-challenge resolver defaults")
 assert defaults["hosting"]["method"] == "native" and "kubernetes" in defaults["hosting"]["supported"]
 assert defaults["app"]["storage"] > 0 and defaults["backup"]["enabled"] is True
 

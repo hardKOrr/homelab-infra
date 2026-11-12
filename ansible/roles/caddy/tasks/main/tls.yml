@@ -17,6 +17,14 @@
 # Docker the same module list is compiled into the image instead (main/docker.yml).
 # Gathered on the Caddy guest, not the runner. Provisioning seeds resolv.conf from
 # the selected network's dns_servers; reused guests retain their current DNS path.
+- name: Collect runner DNS facts for Kubernetes TLS policies
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+      - '!min'
+      - dns
+  when: caddy_kubernetes | bool
+
 - name: Collect DNS-challenge resolver defaults
   ansible.builtin.set_fact:
     _caddy_default_resolvers: "{{ ansible_facts.dns.nameservers | default([]) }}"
