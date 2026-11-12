@@ -33,7 +33,7 @@ searxng_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes]
+    supported: [kubernetes, docker-lxc, docker-vm]
     impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
@@ -42,6 +42,10 @@ searxng_defaults:
   app:
     image: "searxng/searxng:latest"
     port: 8080
+
+    # Docker method only: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or
+    # vm) publishes `port` on the stack host; `uid` owns the settings file (the image's user).
+    uid: 977
 
     # SearXNG's own instance name, shown in its UI and its opensearch descriptor. Distinct
     # from `instance` (the deployment identity) on purpose — a lab may rename the

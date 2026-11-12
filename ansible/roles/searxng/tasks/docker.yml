@@ -1,0 +1,83 @@
+---
+# SearXNG as a Compose project on a stack host (hosting.method: docker). Stateless like the
+# Kubernetes method: secret_key and the limiter's Redis password live in Vaultwarden, the
+# limiter Redis has no volume, so there is nothing to back up or restore.
+#
+# Inputs: instance, app_config, searxng_fqdn (from the localhost play).
+
+- name: SearXNG | Resolve application secrets
+  ansible.builtin.set_fact:
+    _sx_secret_key: >-
+      {{ app_config.app.secret_key
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _sx_redis_password: >-
+      {{ app_config.app.redis_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: SearXNG | Store the canonical application secrets
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      secret_key: "{{ _sx_secret_key }}"
+      redis_password: "{{ _sx_redis_password }}"
+    vault_item_secret_fields:
+      - secret_key
+      - redis_password
+  no_log: true
+
+- name: SearXNG | Create the project directory
+  ansible.builtin.file:
+    path: "/opt/{{ instance }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the image's searxng user so the container can read a file that carries secrets.
+- name: SearXNG | Write the settings file
+  ansible.builtin.template:
+    src: settings.yml.j2
+    dest: "/opt/{{ instance }}/settings.yml"
+    owner: "{{ app_config.app.uid }}"
+    group: "{{ app_config.app.uid }}"
+    mode: "0400"
+  no_log: true
+  notify: Restart searxng
+
+- name: SearXNG | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart searxng
+
+- name: SearXNG | Pull the images
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+    policy: missing
+  changed_when: false
+
+- name: SearXNG | Start the containers
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    remove_orphans: true
+
+- name: SearXNG | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: SearXNG | Wait for the application
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/healthz"
+    status_code: 200
+  register: _sx_health
+  retries: 30
+  delay: 5
+  until: _sx_health.status | default(0) == 200
+  changed_when: false
