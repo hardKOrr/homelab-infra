@@ -9,15 +9,21 @@
     # The wiring tasks reach the admin API from the Ansible controller, so it must
     # bind the LXC's own interface rather than the localhost default.
     _caddy_bind_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+  when: not (caddy_kubernetes | bool)
 
 - name: Build the desired base configuration
   ansible.builtin.set_fact:
+    # Kubernetes: the pod listens on every address and admits only the Service address as
+    # its Host (main/kubernetes.yml sets _caddy_admin_origin).
     # One dict expression keeps ports as ints in the JSON body.
     # srv0 starts with an empty route
     # table — every route is added later through the admin API by the wiring tasks.
     _caddy_base_config: >-
       {{ {
-           'admin': {'listen': _caddy_bind_ip ~ ':' ~ (app_config.app.port | int)},
+           'admin': ({'listen': ':' ~ (app_config.app.port | int),
+                      'origins': [_caddy_admin_origin]}
+                     if caddy_kubernetes | bool
+                     else {'listen': _caddy_bind_ip ~ ':' ~ (app_config.app.port | int)}),
            'apps': {
              'http': {
                'servers': {
@@ -47,6 +53,7 @@
                          if app_config.app.acme_ca | default('') | length > 0 else {})) }}
 
 - name: Write the base configuration
+  when: not (caddy_kubernetes | bool)
   ansible.builtin.copy:
     content: "{{ _caddy_base_config | to_nice_json }}"
     dest: "{{ caddy_config_file }}"
@@ -58,11 +65,33 @@
   # exception, as with the authentik compose env).
   no_log: "{{ _caddy_dns_domains | length > 0 }}"
 
+# Kubernetes: the configuration is the pod's first-boot seed, a Secret that carries the
+# DNS tokens when any dns_challenge is declared.
+- name: Apply the Kubernetes workload
+  when: caddy_kubernetes | bool
+  block:
+    - name: Sync the base configuration into the namespace
+      ansible.builtin.include_tasks: ../../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-config"
+        k8s_secret_data:
+          caddy.json: "{{ _caddy_base_config | to_nice_json }}"
+      no_log: true
+
+    - name: Apply the workload manifest
+      ansible.builtin.include_tasks: ../../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+        k8s_wait_for:
+          - "deployment/{{ instance }}"
+        # The first start may compile the DNS modules.
+        k8s_wait_timeout: 900
+
 # Native only: the packaged unit runs a Caddyfile; remove it so nothing can silently apply
 # an empty server set over the JSON config, and point the unit at the JSON config. The
 # container runs the JSON config directly (main/docker.yml renders its Compose file).
 - name: Point the native service at the JSON config
-  when: not (caddy_docker | bool)
+  when: caddy_native | bool
   block:
     - name: Remove the packaged Caddyfile
       ansible.builtin.file:
@@ -109,6 +138,7 @@
 # An autosave that DOES carry it is left alone, which is the steady state and is what
 # keeps admin-API routes across restarts — the property --resume exists for.
 - name: Check for an autosaved running configuration
+  when: not (caddy_kubernetes | bool)
   ansible.builtin.slurp:
     src: "{{ caddy_autosave_file }}"
   register: _caddy_autosave
@@ -119,6 +149,7 @@
     path: "{{ caddy_autosave_file }}"
     state: absent
   when:
+    - not (caddy_kubernetes | bool)
     - _caddy_autosave.content is defined
     - ((_caddy_autosave.content | b64decode | from_json).admin | default({})).listen | default('')
       != (_caddy_bind_ip ~ ':' ~ (app_config.app.port | int))
@@ -130,7 +161,7 @@
     state: started
     enabled: true
     daemon_reload: true
-  when: not (caddy_docker | bool)
+  when: caddy_native | bool
 
 # Builds the image first when it carries compiled-in modules and is not yet present.
 - name: Start the Caddy container

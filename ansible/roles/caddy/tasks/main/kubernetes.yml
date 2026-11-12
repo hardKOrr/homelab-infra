@@ -1,0 +1,58 @@
+---
+# Phase of main.yml (Kubernetes only): resolve the cluster and namespace, give Caddy its
+# own MetalLB address, and schedule its backup. The workload itself is applied by
+# config.yml once the base configuration exists. Imported in place; runs on localhost, like
+# every Kubernetes app role. Caddy is the edge, so it gets a LoadBalancer address of its own
+# (80, 443 and the admin API) apart from the ingress VIP it proxies cluster apps to; that
+# address is what DNS, the registry's `reverse_proxy.host` and the wiring tasks use.
+
+- name: Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../../tasks/kubernetes/ensure-namespace.yml
+
+# The Service comes first: its address is the admin API's Host and the base
+# configuration's origin.
+- name: Apply the Service
+  ansible.builtin.include_tasks: ../../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'service.yaml.j2') }}"
+
+- name: Read the address MetalLB assigned
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - svc
+      - "{{ instance }}"
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - "jsonpath={.status.loadBalancer.ingress[0].ip}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _caddy_lb
+  until: _caddy_lb.stdout | default('') is ansible.utils.ipv4_address
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Derive the admin endpoint from that address
+  ansible.builtin.set_fact:
+    _caddy_bind_ip: "{{ _caddy_lb.stdout }}"
+    _caddy_admin_origin: "{{ _caddy_lb.stdout }}:{{ app_config.app.port | int }}"
+
+- name: Schedule the application backup
+  ansible.builtin.include_tasks: ../../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+        - name: config
+          claim: "{{ instance }}-config"
+      describe: >-
+        the certificates and ACME accounts (/data) and the autosaved running configuration
+        with every wired route (/config)

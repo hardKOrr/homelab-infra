@@ -1,0 +1,18 @@
+---
+# Restore Caddy's recovery point. Only the Kubernetes method has an application archive;
+# a native or Docker Caddy recovers through the shared guest backup (backup-guest.yml and
+# restore-guest.yml), so this refuses to mutate it.
+- name: Caddy restore | Use the shared Kubernetes restore Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('native')) == 'kubernetes'
+
+- name: Caddy restore | Reject a hosting method with no application archive
+  ansible.builtin.assert:
+    that: >-
+      restore_target_config.hosting.method
+      | default(app_config.hosting.method | default('native')) == 'kubernetes'
+    fail_msg: >-
+      Caddy's application restore supports hosting.method kubernetes only; a native or
+      Docker Caddy restores through Restore Guest.

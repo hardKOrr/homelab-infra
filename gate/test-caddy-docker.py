@@ -34,6 +34,6 @@ assert "--with github.com/caddy-dns/cloudflare" in dockerfile and "--with github
 
 defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/caddy.yml").read_text())["caddy_defaults"]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == ["native-lxc", "docker-lxc", "docker-vm"]
+assert defaults["hosting"]["supported"] == ["native-lxc", "docker-lxc", "docker-vm", "kubernetes"]
 print("Caddy Docker method renders as expected.")
 sys.exit(0)

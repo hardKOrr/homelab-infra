@@ -1,0 +1,172 @@
+{#
+  Caddy's workload: one Deployment, a /data claim (certificates and ACME accounts), a
+  /config claim (the autosaved running config, so wired routes survive a restart), and
+  with compiled-in modules a small claim that caches the binary built for this module set.
+  The Service is applied separately (service.yaml.j2) because the base configuration needs
+  its address.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set binary = ('/bin-cache/caddy-' ~ _caddy_image_tag) if _caddy_modules_wanted | length > 0 else 'caddy' %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+{% if _caddy_modules_wanted | length > 0 %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-bin
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+{% endif %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+    spec:
+{% if _caddy_modules_wanted | length > 0 %}
+      # The stock image ships no DNS provider modules. Compile exactly the configured ones
+      # once per module set into the cache claim; a pod restart reuses the binary.
+      initContainers:
+        - name: build
+          image: {{ app_config.app.image }}-builder
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              out=/bin-cache/caddy-{{ _caddy_image_tag }}
+              if [ ! -x "$out" ]; then
+                xcaddy build{% for module in _caddy_modules_wanted %} \
+                  --with {{ module }}{% endfor %} \
+                  --output "$out.tmp"
+                mv "$out.tmp" "$out"
+              fi
+              find /bin-cache -name 'caddy-*' ! -name 'caddy-{{ _caddy_image_tag }}' -delete
+          env:
+            - name: GOPATH
+              value: /build/go
+            - name: GOCACHE
+              value: /build/cache
+            - name: TMPDIR
+              value: /build
+          volumeMounts:
+            - name: bin
+              mountPath: /bin-cache
+            - name: build
+              mountPath: /build
+{% endif %}
+      containers:
+        - name: caddy
+          image: {{ app_config.app.image }}
+          command: [/bin/sh, -ec]
+          args:
+            # --resume replays the autosaved running config (every wired route); the
+            # Secret is only the first-boot seed. A restored or re-addressed autosave still
+            # names the admin origin it was saved with, so point it at this Service first.
+            - |
+              autosave=/config/caddy/autosave.json
+              if [ -f "$autosave" ]; then
+                sed -i "s|\"origins\":\[[^]]*\]|\"origins\":[\"$CADDY_ADMIN_ORIGIN\"]|" "$autosave"
+              fi
+              exec {{ binary }} run --config /etc/caddy/caddy.json --resume
+          env:
+            - name: CADDY_ADMIN_ORIGIN
+              value: "{{ _caddy_admin_origin }}"
+          ports:
+            - name: http
+              containerPort: {{ app_config.app.http_port | int }}
+            - name: https
+              containerPort: {{ app_config.app.https_port | int }}
+            - name: admin
+              containerPort: {{ app_config.app.port | int }}
+          volumeMounts:
+            - name: caddy-json
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+{% if _caddy_modules_wanted | length > 0 %}
+            - name: bin
+              mountPath: /bin-cache
+              readOnly: true
+{% endif %}
+          startupProbe:
+            tcpSocket:
+              port: admin
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: admin
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: admin
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      volumes:
+        - name: caddy-json
+          secret:
+            secretName: {{ instance }}-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+{% if _caddy_modules_wanted | length > 0 %}
+        - name: bin
+          persistentVolumeClaim:
+            claimName: {{ instance }}-bin
+        - name: build
+          emptyDir: {}
+{% endif %}

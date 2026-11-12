@@ -7,7 +7,7 @@
     name: "{{ caddy_service_name }}"
     state: restarted
     daemon_reload: true
-  when: not (caddy_docker | bool)
+  when: caddy_native | bool
 
 # Recreate, which restarts the process with --resume, so autosaved routes are replayed.
 - name: Restart caddy container

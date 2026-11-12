@@ -6,6 +6,10 @@ Deploy runs `tasks/main.yml`, which imports its phases from `tasks/main/` in ord
 with the needed modules compiled in), `config.yml` (base config, service or container
 start), `public-dns.yml` (the apps below) and `routes.yml` (owned subtrees, wildcard gate).
 `provision-native.yml` creates the dedicated LXC; Docker uses a stack host instead.
+`hosting.method: kubernetes` runs `main/kubernetes.yml` and the Kubernetes branch of `config.yml` on the runner: a LoadBalancer
+Service gives Caddy its own address for 80, 443 and the admin API, the DNS modules are
+built into a cached binary by an init container, and `restore-kubernetes.yml` restores the
+`/data` and `/config` volumes through the shared Kubernetes recovery Job.
 
 Public DNS is opt-in per estate with `domains.<estate>.public_dns.enabled: true`.
 The lab-wide `public_dns` block supplies one address source, record TTL, and enabled

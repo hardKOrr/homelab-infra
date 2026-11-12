@@ -100,7 +100,7 @@
   register: _caddy_modules
   changed_when: false
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
 
 - name: Install missing DNS provider modules
@@ -108,7 +108,7 @@
     cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
   loop: "{{ _caddy_dns_provider_names }}"
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_provider_names | length > 0
     - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
   changed_when: true
@@ -120,7 +120,7 @@
       caddy add-package
       {{ caddy_dynamicdns_module }}
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_public_dns_enabled_estates | length > 0
     - "'dynamic_dns' not in _caddy_modules.stdout | default('')"
   changed_when: true
@@ -132,7 +132,7 @@
       caddy add-package
       {{ caddy_dnsrec_module }}
   when:
-    - not (caddy_docker | bool)
+    - caddy_native | bool
     - _caddy_dns_records_enabled | bool
     - "'dns_records' not in _caddy_modules.stdout | default('')"
   changed_when: true
