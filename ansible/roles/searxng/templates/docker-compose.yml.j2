@@ -1,0 +1,25 @@
+# docker-compose.yml for SearXNG ({{ instance }})
+# Managed by homelab-infra.
+services:
+  {{ instance }}-redis:
+    image: "{{ app_config.app.limiter.image }}"
+    container_name: "{{ instance }}-redis"
+    restart: unless-stopped
+    # No volume: the limiter counters are disposable.
+    command: ["redis-server", "--requirepass", "{{ _sx_redis_password }}"]
+
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    depends_on:
+      - {{ instance }}-redis
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - SEARXNG_BASE_URL=https://{{ searxng_fqdn }}/
+    volumes:
+      - "/opt/{{ instance }}/settings.yml:/etc/searxng/settings.yml:ro"
+    ports:
+      - "{{ app_config.app.port }}:8080"

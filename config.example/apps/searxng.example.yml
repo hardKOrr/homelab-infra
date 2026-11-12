@@ -13,6 +13,12 @@
 # NOTHING HERE IS BACKED UP, DELIBERATELY: SearXNG keeps no data. See the header comment
 # in ansible/vars/app-defaults/searxng.yml.
 
+# Optional: run on Docker on an LXC or a VM instead of the cluster. The stack's guest_type
+# (lxc or vm) is declared in infrastructure.yml under `stacks:`.
+# hosting:
+#   method: docker
+# stack: searxng
+
 app:
   image: "searxng/searxng:latest"
   instance_name: "SearXNG"
