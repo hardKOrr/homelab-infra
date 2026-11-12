@@ -117,7 +117,7 @@
           - require
           - "inovector/mixpost:{{ app_config.app.native_version }}"
           - "--working-dir={{ mixpost_native_root }}.stage"
-          - --no-dev
+          - --update-no-dev
           - --update-with-all-dependencies
           - --no-interaction
       environment: *mixpost_composer_env
