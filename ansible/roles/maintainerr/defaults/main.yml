@@ -1,0 +1,4 @@
+---
+maintainerr_project_dir: "/opt/{{ instance }}"
+maintainerr_http_retries: 30
+maintainerr_http_delay: 5

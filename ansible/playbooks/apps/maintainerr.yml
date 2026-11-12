@@ -1,6 +1,7 @@
 ---
-# Deploy Maintainerr — the media stack's request front end, the second application on the
-# Kubernetes hosting backend (slice 204's pilot was mixpost).
+# Deploy Maintainerr — the media stack's request front end — on the Kubernetes hosting
+# backend (default), or on Docker on a stack host (LXC or VM) with `hosting.method: docker`
+# and `stack: <name>`.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/maintainerr.yml -e instance=maintainerr
@@ -77,13 +78,51 @@
         maintainerr_fqdn: >-
           {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
 
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
 
     - name: Open the app's declared network access
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
 
     - name: Deploy Maintainerr onto the cluster
+      ansible.builtin.include_role:
+        name: maintainerr
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
+
+
+- name: "Maintainerr | Deploy on Docker"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load generated topology facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap the stack host
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+    - name: Deploy Maintainerr
       ansible.builtin.include_role:
         name: maintainerr
 
@@ -98,9 +137,13 @@
   gather_facts: false
 
   vars:
+    _mt_docker: "{{ hostvars['localhost'].app_config.hosting.method == 'docker' }}"
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
-    wiring_upstream_port: 80
+    wiring_upstream_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
+         if _mt_docker | bool else homelabinfra_infra.kubernetes.ingress_vip }}
+    wiring_upstream_port: >-
+      {{ hostvars['localhost'].app_config.app.port if _mt_docker | bool else 80 }}
     wiring_subdomain: "{{ hostvars['localhost'].maintainerr_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].maintainerr_fqdn }}"
     wiring_app_display: "Maintainerr ({{ instance }})"
@@ -144,13 +187,14 @@
 
     # Stamped on every node of the target cluster, not on the one that happens to be
     # running the pod — the assignment does not move when the scheduler reschedules.
-    - name: Record the app on every node of its cluster
+    - name: Record the app on every node of its cluster or its stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: >-
-          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
-             | map(attribute='name') | list }}
-        record_guest_kind: kubernetes
+          {{ groups['deploy_' ~ instance] if _mt_docker | bool
+             else (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+                  | map(attribute='name') | list }}
+        record_guest_kind: "{{ 'docker' if _mt_docker | bool else 'kubernetes' }}"
         record_guest_url: "https://{{ hostvars['localhost'].maintainerr_fqdn }}"
 
     - name: Notify
@@ -158,7 +202,7 @@
       vars:
         notify_title: "Maintainerr deployed"
         notify_message: >-
-          {{ instance }} is running on the Kubernetes backend at
+          {{ instance }} is running on {{ 'Docker' if _mt_docker | bool else 'the Kubernetes backend' }} at
           https://{{ hostvars['localhost'].maintainerr_fqdn }}. Sign in once to connect it
           to a Jellyfin or Plex server and to Sonarr/Radarr — that first-run step is not
           automated (see the role's header for why).

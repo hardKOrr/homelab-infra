@@ -1,0 +1,23 @@
+---
+# Restore one Maintainerr instance's data volume from a PBS recovery point, into the namespace of
+# a Maintainerr instance that is already deployed. Called by playbooks/maintenance/restore-app.yml,
+# whose header is the operator procedure; tasks/kubernetes/recovery-restore.yml is the
+# mechanism. Maintainerr keeps everything — settings, its own API key, its connections — in
+# the one volume, so there is no database or key to carry across.
+
+- name: Restore | Restore Maintainerr through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Maintainerr
+      archives:
+        - name: config
+          claim: "{{ restore_target }}-data"
+      stop:
+        - "{{ restore_target }}"
+      describe: "the {{ restore_target }}-data volume"
+      verify:
+        - >-
+          Now verify the application, not the artifact: open
+          https://{{ restore_target }}.<estate domain>/, sign in with the credentials
+          that worked on {{ instance }}, and check that rules, collections and the Plex/Jellyfin, Sonarr/Radarr and Overseerr/Jellyseerr connections are all present.

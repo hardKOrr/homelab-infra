@@ -40,7 +40,7 @@ CLIENT = {
 APPS = {
     "bookstack": {"role": "bookstack-kubernetes", "file": "main.yml", "restore": "restore.yml", "engine": "mariadb",
                   "archives": ["storage"]},
-    "maintainerr": {"file": "main.yml", "restore": "restore.yml", "engine": None,
+    "maintainerr": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": None,
                     "archives": ["config"]},
     "jellyseerr": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": None,
                    "archives": ["config"]},

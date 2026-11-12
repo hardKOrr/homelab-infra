@@ -1,0 +1,60 @@
+---
+# Deploy Maintainerr onto the Kubernetes hosting backend.
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance          — the app instance name
+#   app_config        — merged defaults + user config
+#   maintainerr_fqdn   — the hostname the Ingress answers on
+#
+# Idempotent: a converged manifest applies with no change, and this role generates no
+# credential of its own — Maintainerr has none to hand back to Vaultwarden.
+#
+# WHAT THIS ROLE DELIBERATELY DOES NOT DO
+#
+# It does not complete Maintainerr's own first-run wizard — connecting it to a Jellyfin or
+# Plex server and to Sonarr/Radarr. That step signs an admin user in against a real media
+# server and mints Maintainerr's own API key, and doing it unattended here would mean this
+# role guessing at an unverified API contract with no way to prove it against a live
+# instance before it ships. See https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's maintainerr row. The
+# deploy below brings up a persisted, backed-up, reverse-proxied, monitored, empty
+# Maintainerr; the operator finishes the connection once, in its own UI, the same as any
+# first-time Maintainerr install.
+
+- name: Maintainerr | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Maintainerr | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Maintainerr | Render the workload manifest
+  ansible.builtin.set_fact:
+    _js_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Maintainerr | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _js_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+#
+# Last, and after the workload is up: the CronJob mounts the data volume, which has to
+# exist before there is anything to schedule against. The contract — schedule, retention,
+# destination, encryption — is the `backup:` block of vars/app-defaults/maintainerr.yml. The
+# archive name `config` is part of existing recovery points.
+
+- name: Maintainerr | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          claim: "{{ instance }}-data"
+      describe: >-
+        a filesystem archive of the data volume (settings and Maintainerr's own SQLite
+        database — see the app-defaults comment on why this is not a quiesced dump)
