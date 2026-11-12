@@ -1,0 +1,17 @@
+# docker-compose.yml for Maintainerr ({{ instance }})
+# Managed by homelab-infra — edit config/apps/{{ instance }}.yml, not this file.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    init: true
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - UI_PORT={{ app_config.app.port }}
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"
+    volumes:
+      - "{{ app_config.app.data_path }}:/opt/data"
