@@ -87,5 +87,8 @@ assert kube["ansible.builtin.include_role"]["name"] == "caddy"
 assert "kubernetes" in kube["when"]
 guest_deploy = next(t for t in play[1]["tasks"] if t.get("name") == "Deploy Caddy")
 assert "'native', 'docker'" in guest_deploy["when"]
-assert "tasks/kubernetes/open-app-access.yml" in read("ansible/playbooks/apps/caddy.yml")
+access = next(t for t in tasks if "open-app-access.yml" in t.get("ansible.builtin.include_tasks", ""))
+assert access["vars"]["k8s_firewall_upstream_host"] == "{{ _caddy_bind_ip }}"
+assert [t["name"] for t in tasks].index(access["name"]) > next(
+    i for i, t in enumerate(tasks) if t["name"].startswith("Derive the admin endpoint"))
 print("Caddy's Kubernetes method renders and dispatches as expected.")

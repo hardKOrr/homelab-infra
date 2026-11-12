@@ -91,10 +91,6 @@
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method | default('native') == 'kubernetes'
-    - name: Open Caddy's declared Kubernetes network access
-      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
-      when: app_config.hosting.method | default('native') == 'kubernetes'
-
     - name: Deploy Caddy on Kubernetes
       ansible.builtin.include_role:
         name: caddy

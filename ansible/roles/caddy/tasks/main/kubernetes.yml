@@ -44,6 +44,13 @@
     _caddy_bind_ip: "{{ _caddy_lb.stdout }}"
     _caddy_admin_origin: "{{ _caddy_lb.stdout }}:{{ app_config.app.port | int }}"
 
+# After the address is known, so an inbound forward targets Caddy's Service rather than the
+# ingress VIP, and before the workload starts, so its egress is open from the first run.
+- name: Open Caddy's declared network access
+  ansible.builtin.include_tasks: ../../../../tasks/kubernetes/open-app-access.yml
+  vars:
+    k8s_firewall_upstream_host: "{{ _caddy_bind_ip }}"
+
 - name: Schedule the application backup
   ansible.builtin.include_tasks: ../../../../tasks/kubernetes/recovery-backup.yml
   vars:
