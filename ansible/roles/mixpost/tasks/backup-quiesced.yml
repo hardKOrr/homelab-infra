@@ -1,0 +1,21 @@
+---
+# Runs inside the shared PBS backup while Mixpost is stopped, before the upload.
+
+- name: Mixpost backup | Dump the named MariaDB database
+  ansible.builtin.include_tasks: ../../../tasks/database/dump.yml
+  vars:
+    database_client_runtime: docker
+    database_app_instance: "{{ instance }}"
+    database_app_config: "{{ app_config.app.database }}"
+    database_dump_file: "{{ _mp_backup_scratch.path }}/mixpost.sql"
+
+- name: Mixpost backup | Check the database dump
+  ansible.builtin.stat:
+    path: "{{ _mp_backup_scratch.path }}/mixpost.sql"
+  register: _mp_backup_dump
+  changed_when: false
+
+- name: Mixpost backup | Require a non-empty database dump
+  ansible.builtin.assert:
+    that: _mp_backup_dump.stat.size | default(0) | int > 0
+    fail_msg: Mixpost' database dump is empty; refusing to publish the recovery point.

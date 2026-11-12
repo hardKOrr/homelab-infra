@@ -1,152 +1,62 @@
 ---
-# Deploy Mixpost onto the Kubernetes hosting backend.
-#
-# Runs on localhost. Unlike every other role in this repo it does not execute on the guest
-# that runs the app, because there is no such guest: the adapter tasks delegate kubectl to
-# a cluster node resolved by tasks/kubernetes/resolve-cluster.yml.
-#
-# Inputs:
-#   instance        — the app instance name
-#   app_config      — merged defaults + user config, with app secrets overlaid
-#   mixpost_fqdn    — the hostname the Ingress answers on
-#
-# Idempotent: secrets are generated once and reused from Vaultwarden thereafter, and a
-# converged manifest applies with no change.
+# Mixpost on Docker on a stack host (hosting.method: docker, LXC or VM): the application
+# image plus a password-protected Redis, with the database on the named MariaDB backend
+# (playbooks/apps/mixpost.yml provisions it before this role). Kubernetes is
+# kubernetes.yml, run from the playbook's localhost play, with its own namespaced MySQL.
+- name: Mixpost | Create the project directory
+  ansible.builtin.file:
+    path: "{{ mixpost_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
 
-- name: Mixpost | Resolve the cluster and its API host
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+# Laravel storage/app: uploads and generated media. The image runs its processes as
+# root, so root ownership converges after container startup.
+- name: Mixpost | Create the storage directory
+  ansible.builtin.file:
+    path: "{{ mixpost_data_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
-- name: Mixpost | Ensure the instance namespace exists
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+- name: Mixpost | Resolve and store the application secrets
+  ansible.builtin.include_tasks: secrets.yml
 
-# Generated once, then read back from the canonical Vaultwarden item on every later run.
-# The same idiom as roles/ntfy: a lab that already has a recorded value keeps it, and only
-# a first deploy — or one whose vault entry was lost — mints a new one.
-#
-# Regenerating any of these on a converged run would be quietly destructive: a new APP_KEY
-# makes every value Laravel has encrypted with the old one unreadable, including the OAuth
-# tokens Mixpost holds for the accounts it posts to, and a new database password locks the
-# app out of its own data.
-- name: Mixpost | Resolve application secrets
-  ansible.builtin.set_fact:
-    _mp_app_key: >-
-      {{ app_config.app.app_key
-         | default('base64:' ~ (lookup('password', '/dev/null length=32 chars=ascii_letters,digits')
-                                | b64encode), true) }}
-    _mp_db_password: >-
-      {{ app_config.app.db_password
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-    _mp_db_root_password: >-
-      {{ app_config.app.db_root_password
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-    _mp_redis_password: >-
-      {{ app_config.app.redis_password
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+- name: Mixpost | Write the environment file
+  ansible.builtin.template:
+    src: mixpost.env.j2
+    dest: "{{ mixpost_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
   no_log: true
+  notify: Restart mixpost
 
-# Stored BEFORE the manifest is applied, so a generated credential is never put into use
-# without being recorded first. A run that failed between applying and storing would leave
-# a database whose password exists nowhere.
-- name: Mixpost | Store the canonical application secrets
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/apps/{{ instance }}"
-    vault_item_merge: true
-    vault_item_fields:
-      app_key: "{{ _mp_app_key }}"
-      db_password: "{{ _mp_db_password }}"
-      db_root_password: "{{ _mp_db_root_password }}"
-      redis_password: "{{ _mp_redis_password }}"
-    vault_item_secret_fields:
-      - app_key
-      - db_password
-      - db_root_password
-      - redis_password
+- name: Mixpost | Write the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mixpost_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart mixpost
 
-# Two Secrets rather than one, because they are consumed two different ways. The database
-# and cache pods take individual keys by name (`secretKeyRef`); Mixpost takes its whole
-# environment at once (`envFrom`), and an envFrom over the first Secret would inject
-# `db-password` into Mixpost's environment under a name Laravel does not read while
-# omitting the names it does.
-- name: Mixpost | Sync the component credentials into the namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-  vars:
-    k8s_secret_name: "{{ instance }}"
-    k8s_secret_data:
-      db-password: "{{ _mp_db_password }}"
-      db-root-password: "{{ _mp_db_root_password }}"
-      redis-password: "{{ _mp_redis_password }}"
+- name: Mixpost | Pull the images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ mixpost_project_dir }}"
+    policy: missing
+  changed_when: false
 
-- name: Mixpost | Sync the application environment into the namespace
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
-  vars:
-    k8s_secret_name: "{{ instance }}-env"
-    k8s_secret_data:
-      APP_NAME: "{{ app_config.app.name | default('Mixpost') }}"
-      APP_KEY: "{{ _mp_app_key }}"
-      APP_DEBUG: "false"
-      # The public URL, not the in-cluster Service name. Laravel builds absolute links and
-      # signed URLs from APP_URL, and a link built from an internal name is a link the
-      # operator's browser cannot follow.
-      APP_URL: "https://{{ mixpost_fqdn }}"
-      # Mixpost wants the bare hostname as well as the URL — it is documented as "your
-      # domain without the http/https prefix" and is used where a scheme would be wrong.
-      APP_DOMAIN: "{{ mixpost_fqdn }}"
-      # The platform Caddy terminates TLS and forwards plain HTTP, so Laravel sees an
-      # http:// request for an https:// site. Without this it builds mixed-content asset
-      # URLs and redirects that drop back to http.
-      TRUSTED_PROXIES: "*"
-      DB_HOST: "{{ instance }}-db"
-      DB_PORT: "3306"
-      DB_DATABASE: "{{ app_config.app.database.name }}"
-      DB_USERNAME: "{{ app_config.app.database.user }}"
-      DB_PASSWORD: "{{ _mp_db_password }}"
-      REDIS_HOST: "{{ instance }}-redis"
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD: "{{ _mp_redis_password }}"
+- name: Mixpost | Start the services
+  community.docker.docker_compose_v2:
+    project_src: "{{ mixpost_project_dir }}"
+    state: present
+    remove_orphans: true
 
-- name: Mixpost | Render the workload manifest
-  ansible.builtin.set_fact:
-    _mp_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+- name: Mixpost | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
 
-- name: Mixpost | Apply the workload manifest
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
-  vars:
-    k8s_manifest: "{{ _mp_manifest }}"
-    k8s_wait_for:
-      - "statefulset/{{ instance }}-db"
-      - "deployment/{{ instance }}-redis"
-      - "deployment/{{ instance }}"
-    # Longer than the adapter's default: the first deploy pulls three images and runs
-    # Laravel's migrations before the web container answers a probe.
-    k8s_wait_timeout: 600
-
-# ── Application-consistent backup ──────────────────────────────────────────────
-#
-# Last, and after the workload is up, on purpose. The CronJob mounts the storage volume
-# and dumps the database; both have to exist before there is anything to schedule against,
-# and a backup configured for a deploy that then failed would point at nothing.
-#
-# The contract — what is dumped, how it is quiesced, where it goes, how long it is kept,
-# and what encryption was decided — is the `backup:` block of vars/app-defaults/mixpost.yml.
-
-- name: Mixpost | Describe the database step of the backup
-  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
-  vars:
-    k8s_database_step_source: namespace-mysql
-    k8s_database_step_config: "{{ app_config }}"
-    k8s_database_step_instance: "{{ instance }}"
-    k8s_database_step_root_password: "{{ _mp_db_root_password }}"
-  when: app_config.backup.enabled | default(false) | bool
-
-- name: Mixpost | Schedule the application backup
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
-  vars:
-    k8s_recovery:
-      archives:
-        - name: storage
-          claim: "{{ instance }}-storage"
-      database: "{{ k8s_database_step | default({}) }}"
-      describe: >-
-        a single-transaction dump of {{ app_config.app.database.name }}, plus the
-        application's storage volume
+- name: Mixpost | Wait for the login page
+  ansible.builtin.include_tasks: verify.yml

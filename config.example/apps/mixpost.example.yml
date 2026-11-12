@@ -68,3 +68,15 @@ backup:
   # whole-VM image is crash-consistent only and cannot see inside a volume.
   enabled: true
   schedule: "0 3 * * *"
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# hosting:
+#   method: docker
+# stack: mixpost              # a stack with guest_type: vm (the default), or
+# # stack: mixpost-lxc        # one declared guest_type: lxc under
+# #                          # infrastructure.stacks in config/infrastructure.yml.
+# app:
+#   database:
+#     instance: mariadb-mixpost   # the named MariaDB backend; deploy it first
+# # On Docker the backup stops Mixpost and its Redis, dumps the database and archives
+# # the storage directory as one recovery point.

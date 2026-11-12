@@ -1,0 +1,29 @@
+---
+# restore-swap.yml rollback hook: the original storage and database are back, so once the
+# replaced hook gave the target the source keys, the target gets its own keys back in
+# Vaultwarden and in the environment.
+- name: Mixpost restore | Give the target its own keys back
+  when: _mp_restore_keys_replaced | default(false) | bool
+  block:
+    - name: Mixpost restore | Put the target's own keys back in Vaultwarden
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          app_key: "{{ _mp_restore_target_keys.app_key }}"
+        vault_item_secret_fields: [app_key]
+      no_log: true
+
+    - name: Mixpost restore | Put the target's own keys back in the environment
+      ansible.builtin.lineinfile:
+        path: "{{ mixpost_env_file }}"
+        regexp: "^{{ item.key }}="
+        line: >-
+          {{ item.key }}="{{ item.value | regex_replace('([\\"$])', '\\\1') | regex_replace('\n', '\\n') }}"
+        mode: "0600"
+      loop:
+        - {key: APP_KEY, value: "{{ _mp_restore_target_keys.app_key }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true

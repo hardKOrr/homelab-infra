@@ -1,0 +1,12 @@
+---
+# `/mixpost/login`, not `/`: `/` redirects to APP_URL, which is the https public name.
+# The first start runs the database migrations before the server answers.
+- name: Mixpost | Wait for the login page
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/mixpost/login"
+    status_code: 200
+  register: _mp_ready
+  until: _mp_ready.status | default(0) == 200
+  retries: 90
+  delay: 5
+  changed_when: false

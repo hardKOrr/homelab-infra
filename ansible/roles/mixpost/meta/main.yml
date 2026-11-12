@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: mixpost
+  description: "Deploys Mixpost on Docker on a stack host or on Kubernetes"
+  min_ansible_version: "2.15"
+dependencies: []

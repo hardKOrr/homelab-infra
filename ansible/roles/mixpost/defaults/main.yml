@@ -1,0 +1,5 @@
+---
+mixpost_project_dir: "/opt/{{ instance }}"
+mixpost_env_file: "{{ mixpost_project_dir }}/mixpost.env"
+mixpost_data_path: "{{ app_config.app.data_path | default('', true) or mixpost_project_dir ~ '/storage' }}"
+mixpost_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
