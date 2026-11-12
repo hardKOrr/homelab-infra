@@ -11,14 +11,14 @@
     group: root
     mode: "0750"
 
-# Laravel storage/app: uploads and generated media. The image runs its processes as
-# root, so root ownership converges after container startup.
+# The image's start.sh chowns /var/www/html to www-data (UID/GID 33). Match that
+# ownership on the mounted storage so later Deploy runs do not change it back.
 - name: Mixpost | Create the storage directory
   ansible.builtin.file:
     path: "{{ mixpost_data_path }}"
     state: directory
-    owner: root
-    group: root
+    owner: "33"
+    group: "33"
     mode: "0755"
 
 - name: Mixpost | Resolve and store the application secrets
