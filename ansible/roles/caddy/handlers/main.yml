@@ -7,3 +7,13 @@
     name: "{{ caddy_service_name }}"
     state: restarted
     daemon_reload: true
+  when: not (caddy_docker | bool)
+
+# Recreate, which restarts the process with --resume, so autosaved routes are replayed.
+- name: Restart caddy container
+  community.docker.docker_compose_v2:
+    project_src: "{{ caddy_project_dir }}"
+    state: present
+    recreate: always
+  listen: Restart caddy
+  when: caddy_docker | bool

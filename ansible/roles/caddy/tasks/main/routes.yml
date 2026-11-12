@@ -177,7 +177,7 @@
     fail_msg: >-
       Caddy never obtained a certificate for {{ item.item }} after five minutes.
       The DNS-01 challenge for that estate did not complete — check the estate's
-      dns_challenge provider and token, and `journalctl -u {{ caddy_service_name }}`
+      dns_challenge provider and token, and the Caddy logs (`journalctl -u {{ caddy_service_name }}` or `docker logs {{ instance }}`)
       on this host for the ACME error. No app can be served over HTTPS on this
       estate until the wildcard exists.
   loop: "{{ _caddy_wildcard_cert.results | default([]) }}"

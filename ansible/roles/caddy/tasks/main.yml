@@ -1,6 +1,7 @@
 ---
-# caddy role — native LXC deployment from the official Cloudsmith apt repository.
-# Called from Play 2 of playbooks/apps/caddy.yml. Target: dedicated LXC.
+# caddy role — native LXC deployment from the official Cloudsmith apt repository, or (with
+# hosting.method: docker) a host-network container on a stack host.
+# Called from Play 2 of playbooks/apps/caddy.yml. Target: dedicated LXC or stack host.
 #
 # CONFIGURATION MODEL — read this before changing anything here.
 #
@@ -38,11 +39,23 @@
 # Exports (read by Play 3 to write the reverse_proxy registry key):
 #   caddy_admin_host, caddy_admin_port
 
-- name: Preflight public DNS and install Caddy
-  ansible.builtin.import_tasks: main/install.yml
+- name: Preflight public DNS
+  ansible.builtin.import_tasks: main/preflight.yml
+
+- name: Install Caddy natively
+  when: not (caddy_docker | bool)
+  block:
+    - name: Install Caddy from its apt repository
+      ansible.builtin.import_tasks: main/install.yml
 
 - name: Resolve the DNS-challenge TLS policies
   ansible.builtin.import_tasks: main/tls.yml
+
+- name: Prepare the Docker project
+  when: caddy_docker | bool
+  block:
+    - name: Lay out the Compose project and image build
+      ansible.builtin.import_tasks: main/docker.yml
 
 - name: Write and apply the base configuration
   ansible.builtin.import_tasks: main/config.yml
@@ -59,32 +72,10 @@
     caddy_admin_host: "http://{{ _caddy_bind_ip }}"
     caddy_admin_port: "{{ app_config.app.port | int }}"
 
-# ── Lab maintenance scripts ───────────────────────────────────────────────────
-- name: Install lab maintenance scripts
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
-    mode: "0755"
-  loop:
-    - lab-update-check
-    - lab-restart-app
-    - lab-tail-applog
-
-# ── Record installed version ──────────────────────────────────────────────────
-- name: Read the installed Caddy version
-  ansible.builtin.command:
-    cmd: caddy version
-  register: _caddy_version
-  changed_when: false
-
-- name: Ensure facts.d directory exists
-  ansible.builtin.file:
-    path: /etc/ansible/facts.d
-    state: directory
-    mode: "0755"
-
-- name: Record installed version
-  ansible.builtin.copy:
-    content: '{"version": "{{ _caddy_version.stdout | regex_search(''[0-9]+\.[0-9]+\.[0-9]+'') }}"}'
-    dest: /etc/ansible/facts.d/caddy.fact
-    mode: "0644"
+# Native only: the update-check and restart helpers drive apt and systemd, and the version
+# record is read from the host binary. A container is updated by changing its pinned image.
+- name: Record the native install
+  when: not (caddy_docker | bool)
+  block:
+    - name: Install lab maintenance scripts and record the version
+      ansible.builtin.import_tasks: main/native-record.yml

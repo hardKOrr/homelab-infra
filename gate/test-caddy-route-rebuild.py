@@ -120,6 +120,8 @@ def inventory_fixture():
                 "lab_managed": {
                     "hosts": {
                         "radarr-host": guest(["_radarr-4k"], "192.0.2.25", 101),
+                        "old-stack": guest(["_radarr-4k", "_.stack+media"], "192.0.2.29", 105),
+                        "old-cluster": guest(["_radarr-4k", "_.cluster+k3s"], "192.0.2.30", 106),
                         "authentik-host": guest(["_authentik"], "192.0.2.26", 102),
                         "caddy-host": guest(["_edge-router"], "192.0.2.27", 103),
                         "rundeck-host": guest(["_rundeck"], "192.0.2.28", 104),
@@ -133,7 +135,7 @@ def inventory_fixture():
                     }
                 },
                 "lab_app_authentik": {"hosts": {"authentik-host": {}}},
-                "lab_app_radarr_4k": {"hosts": {"radarr-host": {}}},
+                "lab_app_radarr_4k": {"hosts": {"radarr-host": {}, "old-stack": {}, "old-cluster": {}}},
             },
         }
     }
@@ -168,6 +170,7 @@ def main():
         (config_apps / "radarr-4k.yml").write_text(
             yaml.safe_dump(
                 {
+                    "hosting": {"method": "native"},
                     "app": {"port": 17878},
                     "routing": {
                         "identity": "forward_auth",
@@ -266,6 +269,19 @@ def main():
         check("repeat Caddy deploy keeps each route single", len(server.routes), 3)
         check("repeat Caddy deploy posts or patches no routes",
               [call for call in server.calls if call.startswith(("POST ", "PATCH "))], [])
+
+        ambiguous = inventory_fixture()
+        children = ambiguous["all"]["children"]
+        children["lab_managed"]["hosts"]["second-native"] = {
+            **children["lab_managed"]["hosts"]["radarr-host"], "proxmox_vmid": 107,
+        }
+        children["lab_app_radarr_4k"]["hosts"]["second-native"] = {}
+        ambiguous_inventory = work / "ambiguous.yml"
+        ambiguous_inventory.write_text(yaml.safe_dump(ambiguous), encoding="utf-8")
+        result = run(playbook, ambiguous_inventory, environment, extra_vars_file,
+                     expect_failure=True)
+        check("two dedicated guests still fail closed",
+              "Multiple guests match" in result.stdout + result.stderr, True)
 
         broken_inventory_data = inventory_fixture()
         managed_hosts = broken_inventory_data["all"]["children"]["lab_managed"]["hosts"]

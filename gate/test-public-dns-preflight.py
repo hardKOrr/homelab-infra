@@ -428,7 +428,13 @@ def test_cloudflare_mark_waits_for_async_records_and_times_out_safely():
 
 
 def test_role_preflights_before_publication_and_marks_after():
-    tasks = task_parts.inline(repo / "ansible/roles/caddy/tasks/main.yml")
+    def walk(tasks):
+        for task in tasks:
+            yield task
+            for key in task_parts.NESTED:
+                yield from walk(task.get(key) or [])
+
+    tasks = list(walk(task_parts.inline(repo / "ansible/roles/caddy/tasks/main.yml")))
     names = [task.get("name") for task in tasks]
     preflight_index = names.index("Preflight public DNS addresses and existing provider records")
     install_index = names.index("Install Caddy")

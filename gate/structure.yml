@@ -24,7 +24,6 @@ shared: {}
 # Files over their line budget, with their ceiling (rule 2).
 size:
   ansible/playbooks/apps/authentik.yml: 350
-  ansible/playbooks/apps/caddy.yml: 358
   ansible/playbooks/apps/k3s-cluster.yml: 486
   ansible/playbooks/apps/migrate-servarr.yml: 395
   ansible/playbooks/apps/pbs.yml: 667

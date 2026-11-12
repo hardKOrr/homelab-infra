@@ -6,9 +6,15 @@
 caddy_defaults:
   hosting:
     method: native
-    supported: [native-lxc]
+    supported: [native-lxc, docker-lxc, docker-vm]
     impossible: {}
-  # Recovery disposition: PBS guest only. Caddy is a native, lab-wide LXC, so the
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm)
+  # runs Caddy as a host-network container on that stack host, dedicated to Caddy because
+  # it binds the host's 80, 443 and admin port. The native default is unchanged.
+  stack: ""
+
+  # Recovery disposition: PBS guest only. Caddy is a lab-wide guest (a native LXC, or its
+  # dedicated Docker stack host), so the
   # shared backup-guest/restore-guest jobs are the supported method for both new and
   # existing destinations. There is intentionally no application-native or
   # project-managed archive: Caddy has no documented export/import format, and an
@@ -47,6 +53,9 @@ caddy_defaults:
     # service registry — it is what tasks/wiring/caddy.yml talks to, and it is what
     # the uptime monitor checks. The public listeners are http_port/https_port.
     port: 2019
+    # Docker method only: the official image, with the DNS-challenge and public-DNS modules
+    # the configuration needs compiled in from `<image>-builder`. A deploy never re-pulls it.
+    image: "caddy:2.10.2"
     http_port: 80
     https_port: 443
     service_name: caddy         # systemd unit — playbooks/apps/remove.yml stops this

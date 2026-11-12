@@ -100,13 +100,17 @@
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_{{ caddy_rebuild_instance }}"
+    # A method switch may leave the instance tag on its previous stack or cluster.
+    # Native routing must use the dedicated guest, never that shared topology.
+    tag_group_exclude_tag_pattern: >-
+      {{ '^_[.](stack|cluster)[+]' if _caddy_rebuild_app_config.hosting_method == 'native' else '' }}
   when:
     - _caddy_rebuild_route_enabled | bool
     - _caddy_rebuild_app_config.hosting_method != 'kubernetes'
 
 - name: Rebuild Caddy route | Collect hosting group members
   ansible.builtin.set_fact:
-    _caddy_rebuild_app_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    _caddy_rebuild_app_hosts: "{{ tag_group_hosts }}"
   when:
     - _caddy_rebuild_route_enabled | bool
     - _caddy_rebuild_app_config.hosting_method != 'kubernetes'

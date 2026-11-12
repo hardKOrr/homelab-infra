@@ -13,7 +13,8 @@
 # TLS automation policy — the sanctioned per-estate separation. The stock apt
 # binary ships no DNS provider modules, so the matching caddy-dns package is
 # installed with `caddy add-package` (which swaps the binary in place; an apt
-# upgrade on a later deploy replaces it again, and this task re-adds the module).
+# upgrade on a later deploy replaces it again, and this task re-adds the module). On
+# Docker the same module list is compiled into the image instead (main/docker.yml).
 # Gathered on the Caddy guest, not the runner. Provisioning seeds resolv.conf from
 # the selected network's dns_servers; reused guests retain their current DNS path.
 - name: Collect DNS-challenge resolver defaults
@@ -98,13 +99,16 @@
     cmd: caddy list-modules
   register: _caddy_modules
   changed_when: false
-  when: _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
+  when:
+    - not (caddy_docker | bool)
+    - _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
 
 - name: Install missing DNS provider modules
   ansible.builtin.command:
     cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
   loop: "{{ _caddy_dns_provider_names }}"
   when:
+    - not (caddy_docker | bool)
     - _caddy_dns_provider_names | length > 0
     - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
   changed_when: true
@@ -114,8 +118,9 @@
   ansible.builtin.command:
     cmd: >-
       caddy add-package
-      github.com/mholt/caddy-dynamicdns@v0.0.0-20260805195708-67d107a42c02
+      {{ caddy_dynamicdns_module }}
   when:
+    - not (caddy_docker | bool)
     - _caddy_public_dns_enabled_estates | length > 0
     - "'dynamic_dns' not in _caddy_modules.stdout | default('')"
   changed_when: true
@@ -125,8 +130,9 @@
   ansible.builtin.command:
     cmd: >-
       caddy add-package
-      github.com/SvenDowideit/caddy-host-dns/dnsrec@v0.0.0-20261018020852-ed6a941fc8cc
+      {{ caddy_dnsrec_module }}
   when:
+    - not (caddy_docker | bool)
     - _caddy_dns_records_enabled | bool
     - "'dns_records' not in _caddy_modules.stdout | default('')"
   changed_when: true
