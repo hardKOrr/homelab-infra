@@ -3,3 +3,13 @@
   community.docker.docker_compose_v2:
     project_src: "{{ mixpost_project_dir }}"
     state: restarted
+  when: not (mixpost_native | bool)
+
+- name: Restart native mixpost
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: "{{ ['php' ~ mixpost_php_version ~ '-fpm'] + mixpost_native_app_services }}"
+  listen: Restart mixpost
+  when: mixpost_native | bool

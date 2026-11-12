@@ -1,59 +1,13 @@
 ---
-# Mixpost on Docker on a stack host (hosting.method: docker, LXC or VM): the application
-# image plus a password-protected Redis, with the database on the named MariaDB backend
-# (playbooks/apps/mixpost.yml provisions it before this role). Kubernetes is
-# kubernetes.yml, run from the playbook's localhost play, with its own namespaced MySQL.
-- name: Mixpost | Create the project directory
-  ansible.builtin.file:
-    path: "{{ mixpost_project_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
+# Mixpost on a guest: Docker on a stack host (docker.yml) or natively on its own LXC or VM
+# (native.yml). Kubernetes is kubernetes.yml, run from the playbook's localhost play.
+- name: Mixpost | Run on Docker
+  ansible.builtin.include_tasks: docker.yml
+  when: app_config.hosting.method | default('kubernetes') == 'docker'
 
-# The image's start.sh chowns /var/www/html to www-data (UID/GID 33). Match that
-# ownership on the mounted storage so later Deploy runs do not change it back.
-- name: Mixpost | Create the storage directory
-  ansible.builtin.file:
-    path: "{{ mixpost_data_path }}"
-    state: directory
-    owner: "33"
-    group: "33"
-    mode: "0755"
-
-- name: Mixpost | Resolve and store the application secrets
-  ansible.builtin.include_tasks: secrets.yml
-
-- name: Mixpost | Write the environment file
-  ansible.builtin.template:
-    src: mixpost.env.j2
-    dest: "{{ mixpost_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart mixpost
-
-- name: Mixpost | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ mixpost_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart mixpost
-
-- name: Mixpost | Pull the images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ mixpost_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Mixpost | Start the services
-  community.docker.docker_compose_v2:
-    project_src: "{{ mixpost_project_dir }}"
-    state: present
-    remove_orphans: true
+- name: Mixpost | Run natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('kubernetes') == 'native'
 
 - name: Mixpost | Apply pending restarts
   ansible.builtin.meta: flush_handlers

@@ -19,7 +19,7 @@ mixpost_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   # The Kubernetes CronJob and namespaced restore role are the application's native
@@ -36,8 +36,15 @@ mixpost_defaults:
 
   app:
     # Mixpost Lite. The Pro image is a paid product with a different registry path; a lab
-    # entitled to it overrides `image` here.
-    image: "inovector/mixpost:latest"
+    # entitled to it overrides `image` here. The tag is the Mixpost package release the
+    # native method installs too (native_version).
+    image: "inovector/mixpost:v2.6.0"
+
+    # Native method: Mixpost Lite's manual install, `composer create-project
+    # inovector/MixpostApp` (https://docs.mixpost.app/lite/installation/manual), pinned to
+    # an exact MixpostApp release and an exact inovector/mixpost package release.
+    native_app_version: "2.1.1"
+    native_version: "2.6.0"
     port: 80
 
     # The database and cache run as pods in this instance's own namespace, owned by it and
@@ -60,7 +67,7 @@ mixpost_defaults:
     # The application's own uploads and generated media.
     storage: 10           # GB
 
-    # Docker method only: the host directory mounted where the Kubernetes volume is.
+    # Docker and native methods: the guest directory mounted where the Kubernetes volume is.
     # Empty means /opt/<instance>/storage (roles/mixpost/defaults/main.yml); no Jinja
     # here, because the public-DNS status task renders this file without an instance.
     data_path: ""
@@ -70,7 +77,8 @@ mixpost_defaults:
     # service, not three — so splitting them here would mean running processes the image
     # already starts.
 
-  # Used by the Docker method: the size of the stack host's guest.
+  # Used by the Docker method (the stack host's guest) and by the native method, whose guest
+  # type comes from the instance's proxmox.guest_type. Composer builds on the guest.
   proxmox:
     ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
     cores: 2

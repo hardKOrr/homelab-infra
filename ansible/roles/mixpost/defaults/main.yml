@@ -2,4 +2,22 @@
 mixpost_project_dir: "/opt/{{ instance }}"
 mixpost_env_file: "{{ mixpost_project_dir }}/mixpost.env"
 mixpost_data_path: "{{ app_config.app.data_path | default('', true) or mixpost_project_dir ~ '/storage' }}"
-mixpost_stop_services: ["{{ instance }}", "{{ instance }}-redis"]
+
+# Native method (native.yml): the pinned Mixpost Lite release is built under
+# mixpost_native_root and replaced whole on a version change; its storage/app is a link to
+# mixpost_data_path, the only state besides the database. nginx, PHP-FPM, a local Redis
+# and two systemd units (Horizon queue worker, scheduler) replace the image's supervisord.
+mixpost_native: "{{ app_config.hosting.method | default('kubernetes') == 'native' }}"
+mixpost_native_root: "{{ mixpost_project_dir }}/src"
+mixpost_native_work_dir: "{{ mixpost_project_dir }}/native"
+mixpost_native_user: www-data
+mixpost_native_release: "{{ app_config.app.native_app_version | default('') }}+{{ app_config.app.native_version | default('') }}"
+# PHP's own packaging: 8.2 on Debian 12, 8.3 on Ubuntu 24.04.
+mixpost_php_version: "{{ '8.3' if (ansible_facts.distribution_release | default('')) == 'noble' else '8.2' }}"
+mixpost_native_app_services: ["{{ instance }}-horizon", "{{ instance }}-scheduler", nginx]
+# A restore also restarts PHP-FPM and Redis so a changed environment and cached state are
+# not carried over.
+mixpost_native_restore_services: "{{ mixpost_native_app_services + ['php' ~ mixpost_php_version ~ '-fpm', 'redis-server'] }}"
+mixpost_stop_services: >-
+  {{ mixpost_native_app_services if mixpost_native | bool else [instance, instance ~ '-redis'] }}
+mixpost_artisan: /usr/local/bin/mixpost-artisan

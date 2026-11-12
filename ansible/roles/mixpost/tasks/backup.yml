@@ -45,7 +45,7 @@
     - name: Mixpost backup | Run the shared PBS backup
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ 'native' if mixpost_native | bool else 'docker' }}"
         pbs_client_compose_project: "{{ mixpost_project_dir }}"
         pbs_client_stop_services: "{{ mixpost_stop_services }}"
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"

@@ -42,7 +42,7 @@ EXTRA_IMPLEMENTED = {
     "kometa": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "lidarr": {"docker-lxc"},
     "mautic": {"docker-lxc"},
-    "mixpost": {"docker-lxc", "docker-vm"},
+    "mixpost": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "n8n": {"docker-lxc"},
     "navidrome": {"docker-lxc"},
     "observability": {"docker-lxc"},

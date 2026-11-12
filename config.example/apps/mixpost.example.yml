@@ -19,7 +19,7 @@ cluster: k3s-cluster     # which cluster deployment to land on
 app:
   # Mixpost Lite. Mixpost Pro is a paid product on a different registry path; set it here
   # if your lab is entitled to it.
-  image: "inovector/mixpost:latest"
+  image: "inovector/mixpost:v2.6.0"
 
   database:
     image: "mysql:8.4"
@@ -80,3 +80,12 @@ backup:
 #     instance: mariadb-mixpost   # the named MariaDB backend; deploy it first
 # # On Docker the backup stops Mixpost and its Redis, dumps the database and archives
 # # the storage directory as one recovery point.
+
+# ── Native on its own LXC or VM ────────────────────────────────────────────────
+# Deploy installs the release pinned in app.native_app_version and app.native_version with
+# Composer and runs it under nginx and PHP-FPM, with Horizon and the scheduler as systemd
+# units. The database stays on the named MariaDB backend (database.instance above).
+# hosting:
+#   method: native
+# proxmox:
+#   guest_type: lxc            # or vm
