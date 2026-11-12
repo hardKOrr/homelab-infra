@@ -32,6 +32,14 @@ dns_facts = next(t for t in tls if "ansible.builtin.setup" in t)
 assert dns_facts["when"] == "caddy_kubernetes | bool"
 assert "dns" in dns_facts["ansible.builtin.setup"]["gather_subset"]
 assert tls.index(dns_facts) < next(i for i, t in enumerate(tls) if t.get("name") == "Collect DNS-challenge resolver defaults")
+certificates = yaml.safe_load(read(f"{ROLE}/tasks/certificate-files.yml"))
+pod_certificates = next(t for t in certificates if "ansible.builtin.command" in t)
+assert pod_certificates["when"] == "caddy_kubernetes | bool"
+assert pod_certificates["delegate_to"] == "{{ k8s_api_host }}"
+assert "/data/caddy/certificates" in pod_certificates["ansible.builtin.command"]["argv"]
+assert "stdout | length > 0" in pod_certificates["until"]
+routes = read(f"{ROLE}/tasks/main/routes.yml")
+assert routes.count("ansible.builtin.include_tasks: ../certificate-files.yml") == 2
 assert defaults["hosting"]["method"] == "native" and "kubernetes" in defaults["hosting"]["supported"]
 assert defaults["app"]["storage"] > 0 and defaults["backup"]["enabled"] is True
 
