@@ -1,0 +1,20 @@
+# SearXNG ({{ instance }}) — managed by homelab-infra; edit config/apps/{{ instance }}.yml instead.
+# Upstream commit {{ app_config.app.native_commit }} (release {{ app_config.app.native_version }}), served by granian.
+[Unit]
+Description=SearXNG ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ searxng_service }}
+Group={{ searxng_service }}
+WorkingDirectory={{ searxng_src }}
+Environment="SEARXNG_SETTINGS_PATH={{ searxng_settings_path }}"
+Environment="TZ={{ homelabinfra_config.timezone | default('UTC') }}"
+ExecStart={{ searxng_venv }}/bin/granian --interface wsgi --host 0.0.0.0 --port {{ app_config.app.port }} searx.webapp:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/searxng.yml and config/apps/<instance>.yml.
+searxng_service: searxng
+searxng_home: /usr/local/searxng
+searxng_src: /usr/local/searxng/searxng-src
+searxng_venv: /usr/local/searxng/searx-pyenv
+searxng_settings_path: /etc/searxng/settings.yml

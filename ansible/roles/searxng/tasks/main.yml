@@ -1,9 +1,14 @@
 ---
-# SearXNG: Docker on a stack host (docker.yml, run on the stack host) or the Kubernetes
-# default (kubernetes.yml, run on localhost). Both render the same settings.yml.
+# SearXNG: Docker on a stack host (docker.yml) or natively on its own LXC or VM (native.yml),
+# both run on the guest; the Kubernetes default (kubernetes.yml) runs on localhost. All
+# render the same settings.yml.
 - name: SearXNG | Run on Docker
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('kubernetes') == 'docker'
+
+- name: SearXNG | Run natively
+  ansible.builtin.include_tasks: native.yml
+  when: app_config.hosting.method | default('kubernetes') == 'native'
 
 - name: SearXNG | Run on Kubernetes
   ansible.builtin.include_tasks: kubernetes.yml

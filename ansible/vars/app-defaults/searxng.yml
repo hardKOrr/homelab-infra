@@ -33,18 +33,35 @@ searxng_defaults:
 
   hosting:
     method: kubernetes
-    supported: [kubernetes, docker-lxc, docker-vm]
+    supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]
     impossible: {}
 
   # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
   # vars/app-defaults/jellyseerr.yml. The resolver has no per-app selector to read it.
 
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 1024
+    disk_volume:
+      size: 8
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
   app:
-    image: "searxng/searxng:latest"
+    # Every method runs the same exact upstream release. SearXNG publishes no git tags, so
+    # the native install pins the release's commit (the image tag's suffix is its short form).
+    image: "searxng/searxng:2026.11.9-57ff753ad"
+    native_version: "2026.11.9"
+    native_commit: "57ff753ad416b7bf27e59d72ae8c7cac93b56be4"
     port: 8080
 
-    # Docker method only: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or
+    # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or
     # vm) publishes `port` on the stack host; `uid` owns the settings file (the image's user).
+    # Native method: granian listens on `port` of the guest's own address.
     uid: 977
 
     # SearXNG's own instance name, shown in its UI and its opensearch descriptor. Distinct
