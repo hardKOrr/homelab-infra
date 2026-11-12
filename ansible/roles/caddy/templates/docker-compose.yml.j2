@@ -1,0 +1,23 @@
+# docker-compose.yml for Caddy ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# Host networking: the admin API binds the host address the wiring tasks reach, and the
+# public listeners are the host's 80 and 443, so keep this stack dedicated to Caddy.
+services:
+  {{ instance }}:
+{% if _caddy_modules_wanted | length > 0 %}
+    image: "homelab-caddy:{{ _caddy_image_tag }}"
+    build:
+      context: "{{ caddy_project_dir }}/build"
+{% else %}
+    image: "{{ app_config.app.image }}"
+{% endif %}
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    network_mode: host
+    # --resume replays the autosaved running config (every admin-API route); the file is
+    # only the first-boot seed.
+    command: ["caddy", "run", "--config", "/etc/caddy/caddy.json", "--resume"]
+    volumes:
+      - "{{ caddy_config_file }}:/etc/caddy/caddy.json:ro"
+      - "{{ caddy_data_dir }}:/data"
+      - "{{ caddy_config_dir }}:/config"

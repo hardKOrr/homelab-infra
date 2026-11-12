@@ -1,34 +1,6 @@
 ---
-# Phase of main.yml: validate and preflight public DNS, then install Caddy from its apt
-# repository. Imported in place; inputs are listed in main.yml.
-
-- name: Validate public DNS config
-  ansible.builtin.include_tasks: ../public-dns-contract.yml
-
-- name: Preflight public DNS addresses and existing provider records
-  public_dns_preflight:
-    operation: preflight
-    public_dns: "{{ _caddy_public_dns_config }}"
-    estates: "{{ _caddy_public_dns_enabled_estates }}"
-  register: _caddy_public_dns_preflight
-  when: _caddy_public_dns_enabled_estates | length > 0
-  no_log: true
-
-- name: Refuse unsafe public DNS preflight results
-  ansible.builtin.assert:
-    that:
-      - _caddy_public_dns_preflight.safe_error | default('') | length == 0
-    fail_msg: "{{ _caddy_public_dns_preflight.safe_error | default('Public DNS preflight failed.') }}"
-  when: _caddy_public_dns_enabled_estates | length > 0
-
-- name: Warn that public DNS will publish a restricted address by explicit request
-  ansible.builtin.debug:
-    msg: >-
-      WARNING: public DNS is configured to publish a private, loopback, link-local,
-      or CGNAT address because public_dns.allow_private is true.
-  when:
-    - _caddy_public_dns_enabled_estates | length > 0
-    - _caddy_public_dns_preflight.private_override_used | default(false) | bool
+# Phase of main.yml (native only): install Caddy from its apt repository. Imported in
+# place; inputs are listed in main.yml.
 
 # ── Install ───────────────────────────────────────────────────────────────────
 - name: Install apt repository prerequisites

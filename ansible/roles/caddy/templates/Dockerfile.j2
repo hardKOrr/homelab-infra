@@ -1,0 +1,8 @@
+# Managed by homelab-infra. Compiles the DNS-challenge and public-DNS modules this
+# instance's configuration needs into the official Caddy image.
+FROM {{ app_config.app.image }}-builder AS builder
+RUN xcaddy build{% for module in _caddy_modules_wanted %} \
+    --with {{ module }}{% endfor %}
+
+FROM {{ app_config.app.image }}
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

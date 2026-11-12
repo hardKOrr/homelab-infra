@@ -2,14 +2,26 @@
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/caddy.yml and config/apps/<instance>.yml.
 caddy_service_name: caddy
-caddy_config_file: /etc/caddy/caddy.json
+# Docker method (hosting.method: docker): a host-network container on a stack host.
+caddy_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+caddy_project_dir: "/opt/{{ instance }}"
+# The Caddy image keeps its autosave under /config and certificates under /data; both are
+# bind mounts, so they survive a recreate and a restore swaps them as plain directories.
+caddy_config_dir: "{{ caddy_project_dir }}/config"
+caddy_data_dir: "{{ caddy_project_dir }}/data"
+caddy_config_file: "{{ caddy_project_dir ~ '/caddy.json' if caddy_docker | bool else '/etc/caddy/caddy.json' }}"
+caddy_config_group: "{{ 'root' if caddy_docker | bool else 'caddy' }}"
+# Modules that are not DNS providers, pinned; native `caddy add-package` and the image build
+# both use them.
+caddy_dynamicdns_module: "github.com/mholt/caddy-dynamicdns@v0.0.0-20260805195708-67d107a42c02"
+caddy_dnsrec_module: "github.com/SvenDowideit/caddy-host-dns/dnsrec@v0.0.0-20261018020852-ed6a941fc8cc"
 # Where `caddy run --resume` replays the running config from. Caddy derives it from the
 # service user's XDG config dir; the packaged unit runs as `caddy`, whose home is
 # /var/lib/caddy.
-caddy_autosave_file: /var/lib/caddy/.config/caddy/autosave.json
+caddy_autosave_file: "{{ (caddy_config_dir ~ '/caddy') if caddy_docker | bool else '/var/lib/caddy/.config/caddy' }}/autosave.json"
 # Where Caddy files managed certificates, one directory per issuer. The wildcard gate
 # searches this tree by certificate name rather than assembling an issuer path.
-caddy_cert_dir: /var/lib/caddy/.local/share/caddy/certificates
+caddy_cert_dir: "{{ (caddy_data_dir ~ '/caddy') if caddy_docker | bool else '/var/lib/caddy/.local/share/caddy' }}/certificates"
 caddy_apt_key_url: "https://dl.cloudsmith.io/public/caddy/stable/gpg.key"
 caddy_apt_repo_url: "https://dl.cloudsmith.io/public/caddy/stable/deb/debian"
 caddy_apt_keyring: /etc/apt/keyrings/caddy-stable.gpg

@@ -1,0 +1,58 @@
+---
+# Phase of main.yml (Docker only): lay out the project directory and render the image
+# build and Compose files. Caddy is started by main/config.yml once its base configuration
+# is on disk. Imported in place; inputs are listed in main.yml.
+
+- name: Create the project, data and config directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ caddy_project_dir }}", mode: "0750"}
+    - {path: "{{ caddy_project_dir }}/build", mode: "0750"}
+    - {path: "{{ caddy_data_dir }}", mode: "0750"}
+    - {path: "{{ caddy_config_dir }}", mode: "0750"}
+
+# The stock image ships no DNS provider modules; compile exactly the ones the config
+# needs. The tag hashes the module list and base image so a changed list rebuilds.
+- name: Resolve the modules to compile into the image
+  ansible.builtin.set_fact:
+    _caddy_modules_wanted: >-
+      {{ (_caddy_dns_provider_names | map('regex_replace', '^', 'github.com/caddy-dns/') | list)
+         + ([caddy_dynamicdns_module] if _caddy_public_dns_enabled_estates | length > 0 else [])
+         + ([caddy_dnsrec_module] if _caddy_dns_records_enabled | bool else []) }}
+
+- name: Derive the image tag
+  ansible.builtin.set_fact:
+    _caddy_image_tag: "{{ (app_config.app.image ~ _caddy_modules_wanted | sort | join(',')) | hash('sha1') | truncate(12, true, '') }}"
+
+- name: Write the image build file
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ caddy_project_dir }}/build/Dockerfile"
+    owner: root
+    group: root
+    mode: "0640"
+  when: _caddy_modules_wanted | length > 0
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ caddy_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart caddy
+
+# The image is built by `docker compose up` in config.yml when absent.
+# policy: missing — re-running the deploy never moves a pinned image.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ caddy_project_dir }}"
+    policy: missing
+  when: _caddy_modules_wanted | length == 0
+  changed_when: false
+

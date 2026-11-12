@@ -51,39 +51,43 @@
     content: "{{ _caddy_base_config | to_nice_json }}"
     dest: "{{ caddy_config_file }}"
     owner: root
-    group: caddy
+    group: "{{ caddy_config_group }}"
     mode: "0640"
   # The config embeds per-estate DNS tokens when any dns_challenge is declared —
-  # keep them out of logs/diffs (the 0640 root:caddy file itself is the narrow
-  # guest-held-credential exception, as with the authentik compose env).
+  # keep them out of logs/diffs (the 0640 file itself is the narrow guest-held-credential
+  # exception, as with the authentik compose env).
   no_log: "{{ _caddy_dns_domains | length > 0 }}"
 
-# The packaged unit runs a Caddyfile; remove it so nothing can silently apply an
-# empty server set over the JSON config.
-- name: Remove the packaged Caddyfile
-  ansible.builtin.file:
-    path: /etc/caddy/Caddyfile
-    state: absent
+# Native only: the packaged unit runs a Caddyfile; remove it so nothing can silently apply
+# an empty server set over the JSON config, and point the unit at the JSON config. The
+# container runs the JSON config directly (main/docker.yml renders its Compose file).
+- name: Point the native service at the JSON config
+  when: not (caddy_docker | bool)
+  block:
+    - name: Remove the packaged Caddyfile
+      ansible.builtin.file:
+        path: /etc/caddy/Caddyfile
+        state: absent
 
-- name: Create the systemd drop-in directory
-  ansible.builtin.file:
-    path: "/etc/systemd/system/{{ caddy_service_name }}.service.d"
-    state: directory
-    mode: "0755"
+    - name: Create the systemd drop-in directory
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ caddy_service_name }}.service.d"
+        state: directory
+        mode: "0755"
 
-- name: Point the service at the JSON config with autosave resume
-  ansible.builtin.copy:
-    dest: "/etc/systemd/system/{{ caddy_service_name }}.service.d/homelab-infra.conf"
-    mode: "0644"
-    content: |
-      # Managed by homelab-infra. Overrides the packaged Caddyfile invocation.
-      # --resume replays the autosaved running config so admin-API routes survive
-      # restarts; the --config file is only the first-boot seed.
-      [Service]
-      ExecStart=
-      ExecStart=/usr/bin/caddy run --config {{ caddy_config_file }} --resume
-      ExecReload=
-  notify: Restart caddy
+    - name: Point the service at the JSON config with autosave resume
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ caddy_service_name }}.service.d/homelab-infra.conf"
+        mode: "0644"
+        content: |
+          # Managed by homelab-infra. Overrides the packaged Caddyfile invocation.
+          # --resume replays the autosaved running config so admin-API routes survive
+          # restarts; the --config file is only the first-boot seed.
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/caddy run --config {{ caddy_config_file }} --resume
+          ExecReload=
+      notify: Restart caddy
 
 # ── Make sure the base configuration can actually be applied ──────────────────
 # `--resume` does not merely prefer the autosave, it makes Caddy IGNORE --config
@@ -126,6 +130,15 @@
     state: started
     enabled: true
     daemon_reload: true
+  when: not (caddy_docker | bool)
+
+# Builds the image first when it carries compiled-in modules and is not yet present.
+- name: Start the Caddy container
+  community.docker.docker_compose_v2:
+    project_src: "{{ caddy_project_dir }}"
+    state: present
+    remove_orphans: true
+  when: caddy_docker | bool
 
 - name: Apply pending restarts before touching the admin API
   ansible.builtin.meta: flush_handlers

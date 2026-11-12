@@ -1,0 +1,32 @@
+---
+# Phase of main.yml (native only). Imported in place; inputs are listed in main.yml.
+
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
+# ── Record installed version ──────────────────────────────────────────────────
+- name: Read the installed Caddy version
+  ansible.builtin.command:
+    cmd: caddy version
+  register: _caddy_version
+  changed_when: false
+
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _caddy_version.stdout | regex_search(''[0-9]+\.[0-9]+\.[0-9]+'') }}"}'
+    dest: /etc/ansible/facts.d/caddy.fact
+    mode: "0644"

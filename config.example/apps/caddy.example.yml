@@ -58,3 +58,10 @@
 #   # All three stay as they are. proxy: none keeps Caddy from routing itself,
 #   # identity: none keeps Authentik off the admin API that every app deploy writes to,
 #   # and access is unused while proxy is none.
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# Runs Caddy as a host-network container on a stack host of its own (it binds the host's
+# 80, 443 and admin port). The stack's guest_type, lxc or vm, sets the guest.
+# hosting:
+#   method: docker
+# stack: caddy               # a dedicated stack; set guest_type under infrastructure.stacks
