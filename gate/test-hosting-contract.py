@@ -106,6 +106,7 @@ def current_combination(slug, defaults):
         if any(path in source for path in (
             "tasks/proxmox/lxc-create.yml",
             "tasks/proxmox/vm-create.yml",
+            "tasks/database/resolve-backend-placement.yml",
         )) or ("name: _template-native" in source
                and defaults.get("hosting", {}).get("method") == "native"):
             method = "native"

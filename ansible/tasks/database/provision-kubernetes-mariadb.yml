@@ -1,0 +1,47 @@
+---
+# Create the application database, login and grants on a MariaDB backend that runs on
+# Kubernetes, by SQL run in the server pod (backend-sql.yml): there is no guest and no
+# socket on a host. Included by provision.yml with its variables; the login password is only
+# written when it was just generated or rotated, as the modules' on_create does.
+# The password goes into SQL text, so only characters that need no escaping are allowed.
+- name: Database | Require a password that is safe inside SQL text
+  ansible.builtin.assert:
+    that: _database_password is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      {{ database_provision_app_instance }}'s database password must use only letters,
+      digits, '.', '_' and '-' to be set on a MariaDB backend that runs on Kubernetes.
+  no_log: true
+
+- name: Database | Read what already exists on the Kubernetes backend
+  ansible.builtin.include_tasks: backend-sql.yml
+  vars:
+    database_backend_instance: "{{ database_provision_config.instance }}"
+    database_backend_sql: >-
+      SELECT
+      (SELECT COUNT(*) FROM information_schema.SCHEMATA
+       WHERE SCHEMA_NAME = '{{ database_provision_config.name }}'),
+      (SELECT COUNT(*) FROM mysql.user
+       WHERE User = '{{ database_provision_config.role }}'
+       AND Host IN ('{{ _database_backend.client_hosts | join("', '") }}'));
+
+- name: Database | Create or update the database and login
+  ansible.builtin.include_tasks: backend-sql.yml
+  vars:
+    _kdb_hosts: "{{ _database_backend.client_hosts | default([]) }}"
+    database_backend_instance: "{{ database_provision_config.instance }}"
+    database_backend_sql: |
+      CREATE DATABASE IF NOT EXISTS `{{ database_provision_config.name }}`;
+      {% for host in _kdb_hosts %}
+      CREATE USER IF NOT EXISTS '{{ database_provision_config.role }}'@'{{ host }}' IDENTIFIED BY '{{ _database_password }}';
+      {% if _database_existing_password | length == 0 or _database_credential_action == 'rotate' %}
+      ALTER USER '{{ database_provision_config.role }}'@'{{ host }}' IDENTIFIED BY '{{ _database_password }}';
+      {% endif %}
+      GRANT ALL PRIVILEGES ON `{{ database_provision_config.name }}`.* TO '{{ database_provision_config.role }}'@'{{ host }}';
+      {% endfor %}
+      FLUSH PRIVILEGES;
+  when: >-
+    (database_backend_stdout | trim).split()
+    != ['1', _database_backend.client_hosts | default([]) | length | string]
+    or _database_existing_password | length == 0
+    or _database_credential_action == 'rotate'
+  no_log: true

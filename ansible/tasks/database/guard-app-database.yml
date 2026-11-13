@@ -5,7 +5,8 @@
 # Refuses unless:
 #   - no other application's canonical item names the same database or login on this host;
 #   - the application's own item, when it records a database, names this exact one;
-#   - the backend address is exactly one homelab-infra-owned guest (`_<backend instance>`);
+#   - the backend address is exactly one homelab-infra-owned guest (`_<backend instance>`),
+#     or, for a backend on Kubernetes, the backend's own labelled namespace;
 #   - a PostgreSQL database that exists is owned by the application's role.
 - name: Database guard | Find other applications using this database or login
   vars:
@@ -16,10 +17,21 @@
          | selectattr('value.database_host', 'equalto', database_app_target.host)
          | list }}
   ansible.builtin.set_fact:
+    # Backends on the cluster share its ingress address and differ by port.
+    _other_ports: >-
+      {%- set kept = [] -%}
+      {%- for entry in _other_items -%}
+      {%-   if not (database_app_target.kubernetes | default(false) | bool)
+              or (entry.value.database_port | default(database_app_target.port) | string)
+                 == (database_app_target.port | string) -%}
+      {%-     set _ = kept.append(entry) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ kept | to_json }}
     _database_guard_other_consumers: >-
-      {{ (_other_items | selectattr('value.database_name', 'defined')
+      {{ (_other_ports | from_json | selectattr('value.database_name', 'defined')
           | selectattr('value.database_name', 'equalto', database_app_target.name) | list)
-         + (_other_items | selectattr('value.database_user', 'defined')
+         + (_other_ports | from_json | selectattr('value.database_user', 'defined')
           | selectattr('value.database_user', 'equalto', database_app_target.role) | list) }}
     _database_guard_own_item: >-
       {{ (homelabinfra_vault.apps | default({})).get(database_app_instance, {}) }}
@@ -38,34 +50,77 @@
       ({{ _database_guard_other_consumers | map(attribute='key') | unique | join(', ') | default('none', true) }}), or
       {{ database_app_instance }}'s own item names a different database.
 
-- name: Database guard | Refresh inventory before checking backend ownership
-  ansible.builtin.meta: refresh_inventory
+- name: Database guard | Check the backend guest's ownership
+  when: not (database_app_target.kubernetes | default(false) | bool)
+  block:
+    - name: Database guard | Refresh inventory before checking backend ownership
+      ansible.builtin.meta: refresh_inventory
 
-- name: Database guard | Resolve the backend guest's ownership group
-  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
-  vars:
-    tag_group_tag: "_{{ database_app_target.instance }}"
+    - name: Database guard | Resolve the backend guest's ownership group
+      ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ database_app_target.instance }}"
 
-- name: Database guard | Require one owned backend guest at the registered address
-  ansible.builtin.assert:
-    that:
-      - tag_group_name is match('^lab_app_')
-      - groups[tag_group_name] | default([]) | length == 1
-      - groups[tag_group_name][0] in groups['lab_managed'] | default([])
-      - hostvars[groups[tag_group_name][0]].ansible_host | default('') == database_app_target.host
-    fail_msg: >-
-      Refusing to change {{ database_app_instance }}'s database: backend
-      {{ database_app_target.instance }} does not resolve to one homelab-infra-owned guest at
-      its registered address.
+    - name: Database guard | Require one owned backend guest at the registered address
+      ansible.builtin.assert:
+        that:
+          - tag_group_name is match('^lab_app_')
+          - groups[tag_group_name] | default([]) | length == 1
+          - groups[tag_group_name][0] in groups['lab_managed'] | default([])
+          - hostvars[groups[tag_group_name][0]].ansible_host | default('') == database_app_target.host
+        fail_msg: >-
+          Refusing to change {{ database_app_instance }}'s database: backend
+          {{ database_app_target.instance }} does not resolve to one homelab-infra-owned guest at
+          its registered address.
 
-# refresh_inventory drops hosts added with add_host; add the backend back for delegation.
-- name: Database guard | Add the backend guest back as a delegation target
-  ansible.builtin.add_host:
-    name: database_app_target
-    ansible_host: "{{ database_app_target.host }}"
-    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
-    groups: database_app_targets
-  changed_when: false
+    # refresh_inventory drops hosts added with add_host; add the backend back for delegation.
+    - name: Database guard | Add the backend guest back as a delegation target
+      ansible.builtin.add_host:
+        name: database_app_target
+        ansible_host: "{{ database_app_target.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: database_app_targets
+      changed_when: false
+
+# A backend on Kubernetes has no guest: its namespace, labelled by Deploy, is the ownership
+# mark, and the registered address is the cluster's ingress address.
+- name: Database guard | Check the Kubernetes backend's ownership
+  when: database_app_target.kubernetes | default(false) | bool
+  block:
+    - name: Database guard | Resolve the cluster and the backend's namespace
+      ansible.builtin.include_tasks: "{{ item }}"
+      vars:
+        k8s_namespace_for: "{{ database_app_target.instance }}"
+      loop:
+        - ../kubernetes/resolve-cluster.yml
+        - ../kubernetes/derive-namespace.yml
+
+    - name: Database guard | Read the backend namespace's ownership label
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - namespace
+          - "{{ k8s_namespace }}"
+          - -o
+          - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _database_guard_k8s_owner
+      failed_when: false
+      changed_when: false
+
+    - name: Database guard | Require a homelab-infra-owned backend at the registered address
+      ansible.builtin.assert:
+        that:
+          - _database_guard_k8s_owner.rc == 0
+          - _database_guard_k8s_owner.stdout | trim == 'homelab-infra'
+          - database_app_target.host == homelabinfra_infra.kubernetes.ingress_vip | default('')
+        fail_msg: >-
+          Refusing to change {{ database_app_instance }}'s database: backend
+          {{ database_app_target.instance }} is not a homelab-infra-owned namespace at the
+          cluster's ingress address.
 
 - name: Database guard | Read the PostgreSQL database owner
   ansible.builtin.command:

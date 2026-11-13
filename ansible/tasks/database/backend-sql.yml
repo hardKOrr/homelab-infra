@@ -1,0 +1,50 @@
+---
+# Run SQL as root on a MariaDB backend that runs on Kubernetes, where there is no guest to
+# delegate to and no socket on a host. The cluster node that runs kubectl executes the
+# client inside the server's own pod over the pod's local socket, so root never connects
+# over the network. A backend on a guest does not use this file: provision.yml, drop.yml
+# and resolve-app-database.yml keep their socket path for it.
+#
+# Inputs:
+#   database_backend_instance  the backend instance (its namespace is app-<instance>)
+#   database_backend_sql       the statements, on stdin; may hold credentials
+#
+# Sets:
+#   database_backend_stdout    the client's tab-separated output without column names
+- name: Backend SQL | Resolve the cluster and the backend's namespace
+  ansible.builtin.include_tasks: "{{ item }}"
+  vars:
+    k8s_namespace_for: "{{ database_backend_instance }}"
+  loop:
+    - ../kubernetes/resolve-cluster.yml
+    - ../kubernetes/derive-namespace.yml
+
+# MARIADB_ROOT_PASSWORD is the container's own environment, so the password never travels
+# in the command line.
+- name: Backend SQL | Run the statements in the server pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - -i
+      - "deployment/{{ database_backend_instance }}"
+      - --
+      - sh
+      - -c
+      - >-
+        MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb --protocol=socket --user=root
+        --batch --skip-column-names
+    stdin: "{{ database_backend_sql }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  no_log: true
+  changed_when: false
+  register: _database_backend_sql_result
+
+- name: Backend SQL | Return the output
+  ansible.builtin.set_fact:
+    database_backend_stdout: "{{ _database_backend_sql_result.stdout }}"
+  no_log: true

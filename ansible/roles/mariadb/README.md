@@ -21,3 +21,21 @@ lets the image initialize a fresh directory and loads the point, rolling back on
 
 The socket directory is shared per host, so Deploy refuses a second Docker MariaDB backend
 on the same stack host; give each backend its own stack.
+
+## Kubernetes
+
+`hosting.method: kubernetes` runs the image as one Deployment, its data on a
+default-StorageClass volume and its tuning in a ConfigMap. The Service is a MetalLB
+LoadBalancer on the ingress address at `app.port` (shared with Traefik, not routed through
+ingress); Deploy refuses a port another Service already holds there. The registry entry
+carries `kubernetes`, so the shared database tasks create, version-check and drop an
+application's database by SQL run in the server pod (`tasks/database/backend-sql.yml`)
+instead of over a guest's socket. Deploy opens the port for each registered consumer
+through the firewall.
+
+Its recovery point is the whole server, as on the guests: PBS `database.pxar` holds every
+schema and the grants, taken under the global read lock, plus the tuning ConfigMap. The
+shared Job reaches root over the pod network (`kubernetes.root_host`), and a restore sets
+root's password back to the target's own after loading the point's grant tables. Restore
+does not stop the server; stop its consumers first. Remove with `delete_data=true` forgets
+the registry entry with the namespace.

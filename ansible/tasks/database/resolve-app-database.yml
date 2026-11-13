@@ -7,7 +7,10 @@
 #
 # Sets:
 #   database_app_target    {provider, instance, host, port, name, role, client_hosts,
-#                           password, server_version, client_image}
+#                           kubernetes, password, server_version, client_image}
+#                           kubernetes is true for a MariaDB backend that runs in the cluster:
+#                           it has no guest, so no delegation target is added; its SQL runs
+#                           through backend-sql.yml
 #   database_app_target    is also added as an inventory host, so the caller's next task
 #                          can delegate to the backend guest. It is reachable from the
 #                          controller even when the application guest is gone.
@@ -44,6 +47,11 @@
       {{ database_app_config.provider }} backend {{ database_app_config.instance }} is not
       registered with a host, port and (MariaDB/MySQL) client networks.
 
+- name: Database target | Record whether the backend runs on Kubernetes
+  ansible.builtin.set_fact:
+    _database_app_on_kubernetes: "{{ _database_app_backend.kubernetes | default({}) | length > 0 }}"
+
+# A backend on Kubernetes has no guest: its SQL runs in the server pod (backend-sql.yml).
 - name: Database target | Add the backend guest as a delegation target
   ansible.builtin.add_host:
     name: database_app_target
@@ -51,6 +59,7 @@
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
     groups: database_app_targets
   changed_when: false
+  when: not (_database_app_on_kubernetes | bool)
 
 - name: Database target | Read the PostgreSQL server version
   ansible.builtin.command:
@@ -81,14 +90,24 @@
   become: true
   changed_when: false
   register: _database_app_mysql_version
-  when: database_app_config.provider in ['mariadb', 'mysql']
+  when:
+    - database_app_config.provider in ['mariadb', 'mysql']
+    - not (_database_app_on_kubernetes | bool)
+
+- name: Database target | Read the server version of a MariaDB backend on Kubernetes
+  ansible.builtin.include_tasks: backend-sql.yml
+  vars:
+    database_backend_instance: "{{ database_app_config.instance }}"
+    database_backend_sql: SELECT VERSION();
+  when: _database_app_on_kubernetes | bool
 
 - name: Database target | Record the target and its matching client image
   vars:
     _server_version: >-
       {{ ((_database_app_pg_version.stdout | trim | int) // 10000) | string
          if database_app_config.provider == 'postgresql'
-         else _database_app_mysql_version.stdout | trim | regex_search('^[0-9]+[.][0-9]+') | default('', true) }}
+         else (database_backend_stdout if _database_app_on_kubernetes | default(false) | bool
+               else _database_app_mysql_version.stdout) | trim | regex_search('^[0-9]+[.][0-9]+') | default('', true) }}
   ansible.builtin.set_fact:
     database_app_target:
       provider: "{{ database_app_config.provider }}"
@@ -98,6 +117,7 @@
       name: "{{ database_app_config.name }}"
       role: "{{ database_app_config.role }}"
       client_hosts: "{{ _database_app_backend.client_hosts | default([]) }}"
+      kubernetes: "{{ _database_app_on_kubernetes | bool }}"
       password: >-
         {{ (homelabinfra_vault.apps | default({})).get(database_app_instance, {}).database_password
            | default('', true) }}

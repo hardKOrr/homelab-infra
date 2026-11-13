@@ -310,40 +310,10 @@
     - "'earthdistance' in (database_provision_config.extensions | default([]))"
     - _database_earthdistance_extension_exists.stdout | trim != '1'
 
-- name: Database | Assert MySQL-compatible client hosts are declared
-  ansible.builtin.assert:
-    that: _database_backend.client_hosts | default([]) | length > 0
-    fail_msg: >-
-      Database backend {{ database_provision_config.instance }} has no permitted client host patterns.
+- name: Database | Create the MariaDB/MySQL database and login
+  ansible.builtin.include_tasks: provision-mysql-compatible.yml
   when: database_provision_config.provider in ['mariadb', 'mysql']
 
-- name: Database | Create MySQL-compatible application database
-  community.mysql.mysql_db:
-    name: "{{ database_provision_config.name }}"
-    state: present
-    login_unix_socket: /run/mysqld/mysqld.sock
-  delegate_to: database_backend_target
-  become: true
-  no_log: true
-  when: database_provision_config.provider in ['mariadb', 'mysql']
-
-- name: Database | Create MySQL-compatible application role for allowed client networks
-  community.mysql.mysql_user:
-    name: "{{ database_provision_config.role }}"
-    host: "{{ item }}"
-    password: "{{ _database_password }}"
-    priv: "{{ database_provision_config.name }}.*:ALL"
-    state: present
-    update_password: >-
-      {{ 'always'
-         if (_database_existing_password | length == 0 or _database_credential_action == 'rotate')
-         else 'on_create' }}
-    login_unix_socket: /run/mysqld/mysqld.sock
-  loop: "{{ _database_backend.client_hosts | default([]) }}"
-  delegate_to: database_backend_target
-  become: true
-  no_log: true
-  when: database_provision_config.provider in ['mariadb', 'mysql']
 - name: Database | Return the Vaultwarden-backed connection to the consumer
   ansible.builtin.set_fact:
     database_provision_connection:

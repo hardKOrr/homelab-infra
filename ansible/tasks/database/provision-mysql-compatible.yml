@@ -1,0 +1,50 @@
+---
+# The MariaDB/MySQL half of provision.yml, included by it with its variables: the database,
+# the login for each permitted client network and its grants, on a backend guest over its
+# socket or on a Kubernetes backend by SQL in its pod.
+- name: Database | Assert MySQL-compatible client hosts are declared
+  ansible.builtin.assert:
+    that: _database_backend.client_hosts | default([]) | length > 0
+    fail_msg: >-
+      Database backend {{ database_provision_config.instance }} has no permitted client host patterns.
+  when: database_provision_config.provider in ['mariadb', 'mysql']
+
+- name: Database | Create MySQL-compatible application database
+  community.mysql.mysql_db:
+    name: "{{ database_provision_config.name }}"
+    state: present
+    login_unix_socket: /run/mysqld/mysqld.sock
+  delegate_to: database_backend_target
+  become: true
+  no_log: true
+  when:
+    - database_provision_config.provider in ['mariadb', 'mysql']
+    - _database_backend.kubernetes | default({}) | length == 0
+
+- name: Database | Create MySQL-compatible application role for allowed client networks
+  community.mysql.mysql_user:
+    name: "{{ database_provision_config.role }}"
+    host: "{{ item }}"
+    password: "{{ _database_password }}"
+    priv: "{{ database_provision_config.name }}.*:ALL"
+    state: present
+    update_password: >-
+      {{ 'always'
+         if (_database_existing_password | length == 0 or _database_credential_action == 'rotate')
+         else 'on_create' }}
+    login_unix_socket: /run/mysqld/mysqld.sock
+  loop: "{{ _database_backend.client_hosts | default([]) }}"
+  delegate_to: database_backend_target
+  become: true
+  no_log: true
+  when:
+    - database_provision_config.provider in ['mariadb', 'mysql']
+    - _database_backend.kubernetes | default({}) | length == 0
+
+# A backend on Kubernetes has no guest and no socket on a host.
+- name: Database | Create the application database and login on a Kubernetes backend
+  ansible.builtin.include_tasks: provision-kubernetes-mariadb.yml
+  when:
+    - database_provision_config.provider == 'mariadb'
+    - _database_backend.kubernetes | default({}) | length > 0
+  no_log: true

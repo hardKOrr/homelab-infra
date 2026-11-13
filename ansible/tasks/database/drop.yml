@@ -59,7 +59,9 @@
     login_unix_socket: /run/mysqld/mysqld.sock
   delegate_to: database_app_target
   become: true
-  when: database_app_target.provider in ['mariadb', 'mysql']
+  when:
+    - database_app_target.provider in ['mariadb', 'mysql']
+    - not (database_app_target.kubernetes | default(false) | bool)
 
 - name: Database drop | Drop the MariaDB/MySQL login on every permitted client network
   community.mysql.mysql_user:
@@ -70,4 +72,21 @@
   loop: "{{ database_app_target.client_hosts }}"
   delegate_to: database_app_target
   become: true
-  when: database_app_target.provider in ['mariadb', 'mysql']
+  when:
+    - database_app_target.provider in ['mariadb', 'mysql']
+    - not (database_app_target.kubernetes | default(false) | bool)
+
+# A backend on Kubernetes has no guest to delegate to: the same drops run as SQL in the
+# server pod (backend-sql.yml). IF EXISTS keeps a second run a no-op.
+- name: Database drop | Drop the database and login on a Kubernetes backend
+  ansible.builtin.include_tasks: backend-sql.yml
+  vars:
+    database_backend_instance: "{{ database_app_target.instance }}"
+    database_backend_sql: |
+      DROP DATABASE IF EXISTS `{{ database_app_target.name }}`;
+      {% for host in database_app_target.client_hosts %}
+      DROP USER IF EXISTS '{{ database_app_target.role }}'@'{{ host }}';
+      {% endfor %}
+  when:
+    - database_app_target.provider == 'mariadb'
+    - database_app_target.kubernetes | default(false) | bool
