@@ -18,3 +18,6 @@ shared database tasks and `server-recovery.py` reach the server exactly as they 
 native guest. Its root account has no password and is reachable only over that socket.
 Backup is the same export; restore stops the container, moves `/opt/<instance>/data` aside,
 lets the image initialize a fresh directory and loads the point, rolling back on failure.
+
+The socket directory is shared per host, so Deploy refuses a second Docker MariaDB backend
+on the same stack host; give each backend its own stack.

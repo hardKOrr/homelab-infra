@@ -3,6 +3,27 @@
 # shared with the host at /run/mysqld, where the host's MariaDB client and the shared
 # database tasks (provision, dump, drop, server recovery) reach it exactly as on a native
 # backend guest.
+# One socket directory per host: a second backend would share /run/mysqld, and the shared
+# operations could not tell the two apart.
+- name: MariaDB | Find other MariaDB backends on this host
+  ansible.builtin.find:
+    paths: /opt
+    patterns: docker-compose.yml
+    recurse: true
+    depth: 2
+    contains: '.*/run/mysqld:/run/mysqld.*'
+    use_regex: false
+  register: _mariadb_other_backends
+
+- name: MariaDB | Refuse a second backend on this stack host
+  ansible.builtin.assert:
+    that: >-
+      _mariadb_other_backends.files | map(attribute='path')
+      | reject('equalto', mariadb_project_dir ~ '/docker-compose.yml') | list | length == 0
+    fail_msg: >-
+      Another MariaDB backend already shares this host's /run/mysqld socket. Give each
+      MariaDB backend its own stack.
+
 - name: MariaDB | Resolve database memory settings
   ansible.builtin.set_fact:
     _mariadb_innodb_buffer_pool_size_mib: >-
@@ -35,7 +56,7 @@
     group: "999"
     mode: "0755"
 
-- name: MariaDB | Create the project, config and state directories
+- name: MariaDB | Create the project and config directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -45,7 +66,13 @@
   loop:
     - "{{ mariadb_project_dir }}"
     - "{{ mariadb_project_dir }}/conf.d"
-    - "{{ mariadb_data_dir }}"
+
+# The image gives this directory to its mysql user when it initializes, so Deploy creates
+# it but never sets its owner or mode, which would undo that on every run.
+- name: MariaDB | Create the state directory
+  ansible.builtin.file:
+    path: "{{ mariadb_data_dir }}"
+    state: directory
 
 - name: MariaDB | Write the server tuning
   ansible.builtin.template:

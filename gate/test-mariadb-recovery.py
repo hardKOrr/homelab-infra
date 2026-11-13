@@ -123,6 +123,8 @@ def check_contract():
     assert "MARIADB_ROOT_HOST=localhost" in compose, "Docker root must not be remote-reachable"
     docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
     assert "Host NOT IN ('localhost')" in docker_tasks
+    assert "Refuse a second backend on this stack host" in docker_tasks
+    assert "MariaDB | Create the state directory" in docker_tasks
     defaults = yaml.safe_load(
         (ROOT / "ansible/vars/app-defaults/mariadb.yml").read_text(encoding="utf-8")
     )["mariadb_defaults"]
