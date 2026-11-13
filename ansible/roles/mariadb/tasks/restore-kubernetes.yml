@@ -27,6 +27,9 @@
         - name: config
           config_map: "{{ restore_target }}-config"
       database: "{{ k8s_database_step }}"
+      # The server is the restore's target, so nothing is stopped; the shared Job's
+      # loops over `stop` then run zero times.
+      stop: []
       live_server: true
       describe: >-
         {{ k8s_database_step.describe }} and its tuning file

@@ -123,7 +123,7 @@ job = next(
     t for t in restore if str(t.get("ansible.builtin.include_tasks", "")).endswith("recovery-restore.yml")
 )
 spec = job["vars"]["k8s_recovery"]
-assert spec["live_server"] is True and "stop" not in spec
+assert spec["live_server"] is True and spec["stop"] == []
 assert spec["archives"] == [{"name": "config", "config_map": "{{ restore_target }}-config"}]
 assert "k8s_recovery.live_server" in read("ansible/tasks/kubernetes/recovery-restore.yml")
 
@@ -154,3 +154,9 @@ print("MariaDB keeps the guests as default and runs on Kubernetes through the sh
 guard = load("ansible/tasks/database/guard-app-database.yml")[0]
 assert "_other_ports" in guard["vars"]
 assert "_other_ports" not in guard["ansible.builtin.set_fact"]
+
+# Every use of `stop` in the shared restore either loops over it or measures it, so the
+# live server must pass an explicit empty list rather than omit it.
+restore_text = read("ansible/tasks/kubernetes/recovery-restore.yml")
+assert 'loop: "{{ k8s_recovery.stop }}"' in restore_text
+assert "k8s_recovery.stop | length" in restore_text
