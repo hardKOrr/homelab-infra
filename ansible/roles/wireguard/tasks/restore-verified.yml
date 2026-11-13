@@ -1,0 +1,10 @@
+---
+- name: WireGuard restore | Verify the restored interface is active
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ instance }}", wg, show, "{{ app_config.app.interface }}"]
+  register: _wg_restore_show
+  until: _wg_restore_show.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  no_log: true

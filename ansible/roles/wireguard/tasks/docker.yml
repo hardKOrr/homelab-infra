@@ -1,0 +1,26 @@
+---
+# Docker hosting: the host kernel's WireGuard driven by the image's wg-quick, from the
+# config rendered by main.yml. Forwarding is the container's own sysctl (compose file).
+# Key generation runs on the host with the userspace tools; the module is the host kernel's.
+- name: WireGuard | Install the key tools
+  ansible.builtin.apt:
+    name: wireguard-tools
+    state: present
+    update_cache: true
+
+- name: WireGuard | Create the config directory
+  ansible.builtin.file:
+    path: "{{ wireguard_conf_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: WireGuard | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ wireguard_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart WireGuard container

@@ -1,0 +1,14 @@
+---
+# Native hosting: upstream's package and wg-quick service on the app's own LXC.
+- name: WireGuard | Install upstream package
+  ansible.builtin.apt:
+    name: [wireguard-tools, iptables]
+    state: present
+    update_cache: true
+
+- name: WireGuard | Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: true

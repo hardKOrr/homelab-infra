@@ -17,3 +17,10 @@ app:
       vpn_address: 10.66.66.2/32
       # allowed_ips is installed in the client tunnel. Do not put a private key here.
       # allowed_ips: 0.0.0.0/0, ::/0
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# Runs the linuxserver/wireguard image on a stack host; the stack's guest_type, lxc or
+# vm, sets the guest. The host kernel supplies WireGuard; app.port is published as UDP.
+# hosting:
+#   method: docker
+# stack: wireguard         # set guest_type under infrastructure.stacks

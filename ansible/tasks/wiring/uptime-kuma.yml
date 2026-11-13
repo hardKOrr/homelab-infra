@@ -4,7 +4,8 @@
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:     app instance name — becomes the monitor's friendly name
-#   wiring_monitor_url:  URL to monitor (the public reverse-proxy route)
+#   wiring_monitor_url:  URL for http (default type), hostname/address for ping
+#   wiring_monitor_type: http | ping (optional; UDP services can monitor their host)
 #   wiring_interval:     check interval in seconds (default 60, minimum 20)
 #
 # Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
@@ -47,6 +48,7 @@
         that:
           - wiring_app_name is defined and wiring_app_name | length > 0
           - wiring_monitor_url is defined and wiring_monitor_url | length > 0
+          - wiring_monitor_type | default('http') in ['http', 'ping']
         fail_msg: >-
           wiring/uptime-kuma.yml needs wiring_app_name and wiring_monitor_url.
 
@@ -182,7 +184,7 @@
             # strings or the add is rejected outright.
             _kuma_fields: >-
               {{ {
-                   'type': 'http',
+                   'type': wiring_monitor_type | default('http'),
                    'name': wiring_app_name,
                    'url': wiring_monitor_url,
                    'method': 'GET',
@@ -202,7 +204,8 @@
                    'notificationIDList':
                      ({} if _kuma_notification_id | string | length == 0
                       else {_kuma_notification_id | string: true}),
-                 } }}
+                 } | combine({'hostname': wiring_monitor_url}
+                     if wiring_monitor_type | default('http') == 'ping' else {}) }}
           vars:
             # Uptime Kuma rejects anything below 20 seconds.
             _kuma_interval: "{{ [wiring_interval | default(60) | int, 20] | max }}"
@@ -286,7 +289,8 @@
           ansible.builtin.assert:
             that:
               - _kuma_verified_matches | length == 1
-              - _kuma_verified_matches[0].url == wiring_monitor_url
+              - _kuma_verified_matches[0].type == wiring_monitor_type | default('http')
+              - (_kuma_verified_matches[0].hostname if wiring_monitor_type | default('http') == 'ping' else _kuma_verified_matches[0].url) == wiring_monitor_url
             fail_msg: >-
               Uptime Kuma did not verify exactly one monitor named '{{ wiring_app_name }}'
               with the configured URL. Inspect that monitor in the Uptime Kuma dashboard,

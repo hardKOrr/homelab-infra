@@ -3,6 +3,9 @@
 
 from pathlib import Path
 
+from jinja2 import Environment, StrictUndefined
+from ansible.plugins.filter.core import combine
+
 import task_parts
 
 repo = Path(__file__).resolve().parents[1]
@@ -119,6 +122,28 @@ def main():
         "_kuma_verified_matches | length == 1",
         ["monitor named '{{ wiring_app_name }}'", "Uptime Kuma dashboard", "rerun"],
     )
+    # Exercise the shared payload seam: existing HTTP callers keep their fields;
+    # UDP callers use ping with a hostname and verify that same field on readback.
+    env = Environment(undefined=StrictUndefined)
+    env.filters["combine"] = combine
+    payload = task(sources["kuma"], "Wire Uptime Kuma | Select the existing monitor and build the payload")["ansible.builtin.set_fact"]["_kuma_fields"]
+    expression = env.compile_expression(payload.strip()[2:-2].strip())
+    common = dict(wiring_app_name="wireguard", wiring_monitor_url="192.0.2.10",
+                  _kuma_interval=60, _kuma_notification_id="")
+    http = expression(**common)
+    ping = expression(**common, wiring_monitor_type="ping")
+    assert http["type"] == "http" and http["url"] == "192.0.2.10"
+    assert "hostname" not in http
+    assert ping["type"] == "ping" and ping["hostname"] == "192.0.2.10"
+    guards = task(sources["kuma"], "Wire Uptime Kuma | Assert exactly one monitor is active")["ansible.builtin.assert"]["that"]
+    for fields in (http, ping):
+        context = dict(common, _kuma_verified_matches=[fields])
+        if fields["type"] == "ping":
+            context["wiring_monitor_type"] = "ping"
+        assert all(env.compile_expression(g)(**context) for g in guards)
+        fields = dict(fields, hostname="wrong", url="wrong")
+        context["_kuma_verified_matches"] = [fields]
+        assert not all(env.compile_expression(g)(**context) for g in guards)
     print("wiring uniqueness checks passed")
 
 
