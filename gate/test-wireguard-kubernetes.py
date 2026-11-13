@@ -9,6 +9,8 @@ through the shared Kubernetes operations.
 import hashlib
 from pathlib import Path
 
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
 from jinja2 import Environment, StrictUndefined
 import yaml
 
@@ -100,6 +102,19 @@ assert service["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == vip
 assert service["metadata"]["annotations"]["metallb.io/allow-shared-ip"] == vip
 
 deploy_tasks = tasks("kubernetes.yml")
+secret_task = next(
+    t for t in deploy_tasks
+    if str(t.get("ansible.builtin.include_tasks", "")).endswith("sync-secret.yml")
+)
+# Ansible templates mapping values, not keys. Build the filename inside an expression
+# so sync-secret receives wg0.conf rather than a literal Jinja expression.
+secret_expression = secret_task["vars"]["k8s_secret_data"].replace(
+    "lookup('ansible.builtin.template', 'wg.conf.j2')", "'fixture-config'"
+)
+secret_data = Templar(
+    loader=DataLoader(), variables={"app_config": {"app": {"interface": "wg0"}}}
+).template(secret_expression)
+assert secret_data == {"wg0.conf": "fixture-config"}
 backup = next(
     t for t in deploy_tasks
     if str(t.get("ansible.builtin.include_tasks", "")).endswith("recovery-backup.yml")

@@ -50,8 +50,9 @@
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
   vars:
     k8s_secret_name: "{{ instance }}-conf"
-    k8s_secret_data:
-      "{{ app_config.app.interface }}.conf": "{{ lookup('ansible.builtin.template', 'wg.conf.j2') }}"
+    k8s_secret_data: >-
+      {{ { (app_config.app.interface ~ '.conf'):
+           lookup('ansible.builtin.template', 'wg.conf.j2') } }}
   no_log: true
 
 # Two tasks: the manifest reads the checksum, and a fact set in a task is not visible to
