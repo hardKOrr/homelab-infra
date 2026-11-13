@@ -19,3 +19,13 @@ archived. Native recovery is not implemented by these Docker hooks.
 Use the [recovery drill](../../playbooks/maintenance/recovery-drill.md) and the generic
 Remove App playbook for Docker; it removes the instance's Compose project and preserves
 the stack host and other applications.
+
+## Kubernetes
+
+`hosting.method: kubernetes` runs the image as one Deployment with `NET_ADMIN`; Deploy
+loads the `wireguard` module on every cluster node. The rendered interface config is a
+runtime Secret copied into the default-StorageClass config volume at each pod start, so
+peers and keys still come from the instance config and Vaultwarden. The UDP Service shares
+the ingress VIP with Traefik (MetalLB `allow-shared-ip`, set by the cluster Deploy), and the
+inbound forward targets that VIP. Backup and restore use the shared Kubernetes jobs over the
+config volume; re-run Deploy k3s Cluster once so Traefik carries the sharing annotation.

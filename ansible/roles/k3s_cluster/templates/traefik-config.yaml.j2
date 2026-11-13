@@ -17,6 +17,8 @@ spec:
         # address happens to be free, so the address the platform Caddy points at is
         # stable across a full cluster rebuild.
         metallb.io/loadBalancerIPs: "{{ k8s_cluster_config.ingress.vip }}"
+        # Other Services (a UDP VPN endpoint) may share the VIP on their own ports.
+        metallb.io/allow-shared-ip: "{{ k8s_cluster_config.ingress.vip }}"
     # The cluster publishes nothing itself. Traefik terminates plain HTTP on a private
     # VIP; public TLS stays at the platform Caddy, which is the sole WAN edge.
     ports:

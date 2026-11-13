@@ -1,0 +1,104 @@
+---
+# WireGuard as one Deployment on the k3s cluster. The rendered wg-quick config (carrying
+# the server key) is a runtime Secret copied into the config volume on every pod start; the
+# volume holds the whole recovery unit (config tree, extra tunnels). Keys stay canonical in
+# the Vaultwarden item, as on the guest methods; the Secret is downstream of it.
+- name: WireGuard Kubernetes | Validate the inbound endpoint
+  ansible.builtin.include_tasks: validate.yml
+
+- name: WireGuard Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: WireGuard Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# The pod shares its node's kernel: the module must be loadable wherever it may land, and
+# the userspace tools generate keys on the API node (the runner has neither).
+- name: WireGuard Kubernetes | Install the key tools on the API node
+  ansible.builtin.apt:
+    name: wireguard-tools
+    state: present
+    update_cache: true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+
+- name: WireGuard Kubernetes | Load the WireGuard kernel module on every node
+  community.general.modprobe:
+    name: wireguard
+    state: present
+    persistent: present
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['k8s_delegates'] }}"
+
+- name: WireGuard Kubernetes | Look for an existing server configuration
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, secret, "{{ instance }}-conf", -o, name]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wg_secret
+  failed_when: false
+  changed_when: false
+
+- name: WireGuard Kubernetes | Resolve the server and peer credentials
+  ansible.builtin.include_tasks: credentials.yml
+  vars:
+    _wg_config_exists: "{{ _wg_secret.rc == 0 }}"
+    wireguard_key_host: "{{ k8s_api_host }}"
+
+- name: WireGuard Kubernetes | Sync the tunnel configuration into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-conf"
+    k8s_secret_data: >-
+      {{ { (app_config.app.interface ~ '.conf'):
+           lookup('ansible.builtin.template', 'wg.conf.j2') } }}
+  no_log: true
+
+# Two tasks: the manifest reads the checksum, and a fact set in a task is not visible to
+# that same task's templating.
+- name: WireGuard Kubernetes | Fingerprint the tunnel configuration
+  ansible.builtin.set_fact:
+    _wireguard_conf_checksum: "{{ lookup('ansible.builtin.template', 'wg.conf.j2') | hash('sha256') }}"
+  no_log: true
+
+- name: WireGuard Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _wireguard_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: WireGuard Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _wireguard_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+  no_log: true
+
+- name: WireGuard Kubernetes | Verify the managed interface is active
+  ansible.builtin.command:
+    argv: >-
+      {{ ['k3s', 'kubectl', '--namespace', k8s_namespace, 'exec', 'deployment/' ~ instance,
+          '--', 'wg', 'show', app_config.app.interface] }}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _wg_show
+  until: _wg_show.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: WireGuard Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the WireGuard config volume (managed interface and any extra wg_confs tunnels) in one
+        application-consistent recovery point

@@ -1,6 +1,7 @@
 ---
 # Role-internal defaults — user-facing knobs live in vars/app-defaults/wireguard.yml.
 wireguard_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+wireguard_kubernetes: "{{ app_config.hosting.method | default('native') == 'kubernetes' }}"
 # Docker: the Compose project lives in /opt/<instance>; the image reads wg_confs/*.conf.
 wireguard_project_dir: "/opt/{{ instance }}"
 wireguard_conf_path: >-
