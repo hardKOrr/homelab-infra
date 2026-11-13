@@ -2,7 +2,9 @@
 
 Deploy uses native wg-quick by default. Docker hosting uses the stack selected by
 `stack`, with its LXC or VM guest type; the host kernel must provide WireGuard.
-The endpoint is UDP, with no HTTP route or login page.
+The endpoint is UDP, with no HTTP route or login page. Shared wiring creates a DNS
+record pointing directly at the guest and a Kuma ping monitor for host reachability;
+the monitor does not verify a WireGuard handshake.
 
 For Docker, Backup App archives the container's complete config tree while its service
 is stopped. Restore App previews the PBS point, then uses the shared restore swap to

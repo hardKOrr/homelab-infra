@@ -76,3 +76,26 @@
       vars:
         record_guest_kind: "{{ 'docker' if hostvars[groups['deploy_' ~ instance][0]].app_config.hosting.method | default('native') == 'docker' else 'native' }}"
         record_guest_url: ''
+
+- name: WireGuard | Wire UDP endpoint
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _wg_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_domain: "{{ _wg_host.app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+    wiring_upstream_host: "{{ _wg_host.ansible_host }}"
+    wiring_ip: "{{ wiring_upstream_host }}"
+    wiring_monitor_type: ping
+    wiring_monitor_url: "{{ wiring_upstream_host }}"
+  tasks:
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+    - name: Wire DNS directly to the UDP host
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Monitor the UDP host
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
