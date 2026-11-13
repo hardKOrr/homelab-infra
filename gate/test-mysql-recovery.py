@@ -115,6 +115,8 @@ def check_contract():
     assert "Host NOT IN ('localhost')" in docker_tasks
     assert "Refuse a second backend on this stack host" in docker_tasks
     assert "MySQL | Create the state directory" in docker_tasks
+    assert 'mode: "0750"' in docker_tasks and "d /run/mysqld 0750 999 999" in docker_tasks
+    assert "Verify an unprivileged host user cannot authenticate as root" in docker_tasks
     # An empty data directory is initialized by the first start; no restart may precede
     # the final server being ready.
     order = [docker_tasks.index(t) for t in (

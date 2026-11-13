@@ -43,11 +43,13 @@
   ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
 
 # The image runs the server as uid 999. /run is a tmpfs, so tmpfiles recreates the shared
-# socket directory with that owner on every boot, before Docker starts.
+# socket directory with that owner on every boot, before Docker starts. Root has no password,
+# so mode 0750 is what keeps unprivileged host users off the socket; the shared operations
+# run as root, which ignores it. Native gets the same protection from auth_socket.
 - name: MySQL | Recreate the shared socket directory at boot
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/homelab-mysql.conf
-    content: "d /run/mysqld 0755 999 999 -\n"
+    content: "d /run/mysqld 0750 999 999 -\n"
     owner: root
     group: root
     mode: "0644"
@@ -58,7 +60,7 @@
     state: directory
     owner: "999"
     group: "999"
-    mode: "0755"
+    mode: "0750"
 
 - name: MySQL | Create the project and config directories
   ansible.builtin.file:
@@ -149,3 +151,11 @@
   ansible.builtin.assert:
     that: _mysql_remote_root.stdout | trim == '0'
     fail_msg: MySQL root must be reachable from localhost only; the published port would expose it.
+
+# Root has no password, so no unprivileged host user may be able to reach the socket.
+- name: MySQL | Verify an unprivileged host user cannot authenticate as root
+  ansible.builtin.command:
+    argv: [runuser, -u, nobody, --, mysql, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --execute, SELECT 1]
+  register: _mysql_unprivileged_root
+  failed_when: _mysql_unprivileged_root.rc == 0
+  changed_when: false

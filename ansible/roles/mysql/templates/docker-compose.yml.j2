@@ -10,7 +10,7 @@ services:
       - TZ={{ homelabinfra_config.timezone | default('UTC') }}
       # root@localhost has no password; with MYSQL_ROOT_HOST=localhost the image creates no
       # root@%, so root cannot log in through the published port. The host reaches root
-      # over the shared socket, as native Deploy does over the guest's socket.
+      # over the shared socket, whose directory only root and the image's mysql user can enter.
       - MYSQL_ALLOW_EMPTY_PASSWORD=1
       - MYSQL_ROOT_HOST=localhost
     volumes:
