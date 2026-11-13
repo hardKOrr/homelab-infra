@@ -54,10 +54,16 @@
       "{{ app_config.app.interface }}.conf": "{{ lookup('ansible.builtin.template', 'wg.conf.j2') }}"
   no_log: true
 
+# Two tasks: the manifest reads the checksum, and a fact set in a task is not visible to
+# that same task's templating.
+- name: WireGuard Kubernetes | Fingerprint the tunnel configuration
+  ansible.builtin.set_fact:
+    _wireguard_conf_checksum: "{{ lookup('ansible.builtin.template', 'wg.conf.j2') | hash('sha256') }}"
+  no_log: true
+
 - name: WireGuard Kubernetes | Render the workload
   ansible.builtin.set_fact:
     _wireguard_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-    _wireguard_conf_checksum: "{{ lookup('ansible.builtin.template', 'wg.conf.j2') | hash('sha256') }}"
   no_log: true
 
 - name: WireGuard Kubernetes | Apply the workload manifest

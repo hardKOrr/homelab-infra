@@ -110,6 +110,15 @@ assert recovery["stop"] == ["{{ instance }}"]
 assert "database" not in recovery
 assert any(t.get("community.general.modprobe", {}).get("name") == "wireguard" for t in deploy_tasks)
 
+names = [t["name"] for t in deploy_tasks]
+checksum_task = next(t for t in deploy_tasks if t["name"].endswith("Fingerprint the tunnel configuration"))
+render_task = next(t for t in deploy_tasks if t["name"].endswith("Render the workload"))
+# A fact set in a task is invisible to that task's own templating: the checksum the
+# manifest reads must come from an earlier task, and no task may set both.
+assert "_wireguard_conf_checksum" in checksum_task["ansible.builtin.set_fact"]
+assert "_wireguard_conf_checksum" not in render_task["ansible.builtin.set_fact"]
+assert names.index(checksum_task["name"]) < names.index(render_task["name"])
+
 dispatch = tasks("restore.yml")
 assert any(
     str(t.get("ansible.builtin.include_tasks", "")) == "restore-kubernetes.yml"
