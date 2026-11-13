@@ -16,7 +16,6 @@
          | selectattr('value.database_host', 'defined')
          | selectattr('value.database_host', 'equalto', database_app_target.host)
          | list }}
-  ansible.builtin.set_fact:
     # Backends on the cluster share its ingress address and differ by port.
     _other_ports: >-
       {%- set kept = [] -%}
@@ -28,6 +27,7 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ kept | to_json }}
+  ansible.builtin.set_fact:
     _database_guard_other_consumers: >-
       {{ (_other_ports | from_json | selectattr('value.database_name', 'defined')
           | selectattr('value.database_name', 'equalto', database_app_target.name) | list)

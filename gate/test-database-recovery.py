@@ -194,7 +194,10 @@ def guard_passes(variables):
     guard = tasks(DATABASE / "guard-app-database.yml")
     facts = task_named(guard, "Database guard | Find other applications using this database or login")
     variables = dict(variables)
-    variables["_other_items"] = render(facts["vars"]["_other_items"], variables)
+    # Task vars are templated lazily and may refer to earlier ones; set_fact values may
+    # only use them, never one another.
+    for name, expression in facts["vars"].items():
+        variables[name] = render(expression, variables)
     for name, expression in facts["ansible.builtin.set_fact"].items():
         variables[name] = render(expression, variables)
     checks = [

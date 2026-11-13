@@ -148,3 +148,9 @@ assert not (ROLE / "templates/kubernetes").exists()
 assert not any("kubectl" in p.read_text(encoding="utf-8") and "apply" in p.read_text(encoding="utf-8")
                for p in (ROLE / "tasks").glob("*.yml") if p.name not in ("kubernetes.yml",))
 print("MariaDB keeps the guests as default and runs on Kubernetes through the shared operations")
+
+# A set_fact cannot read a fact it defines itself: the ownership guard's intermediate
+# list is a task var, never a sibling key.
+guard = load("ansible/tasks/database/guard-app-database.yml")[0]
+assert "_other_ports" in guard["vars"]
+assert "_other_ports" not in guard["ansible.builtin.set_fact"]
