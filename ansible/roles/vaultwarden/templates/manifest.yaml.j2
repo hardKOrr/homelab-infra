@@ -34,6 +34,9 @@ spec:
         app.kubernetes.io/instance: {{ instance }}
         app.kubernetes.io/managed-by: homelab-infra
         app.kubernetes.io/component: web
+      annotations:
+        # secretKeyRef env is read at pod creation: a new admin token must roll the pod.
+        checksum/admin-token: {{ _admin_token_plain | hash('sha256') }}
     spec:
       automountServiceAccountToken: false
       containers:

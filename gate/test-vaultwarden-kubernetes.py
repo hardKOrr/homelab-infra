@@ -5,6 +5,7 @@ Checks: the native default is unchanged, the manifest uses the default StorageCl
 the admin-token Secret, backup and restore go through the shared Kubernetes operations.
 """
 
+import hashlib
 from pathlib import Path
 
 from jinja2 import Environment, StrictUndefined
@@ -72,10 +73,26 @@ context = {
     },
 }
 environment = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
-rendered = environment.from_string(
+environment.filters["hash"] = lambda value, algorithm: hashlib.new(
+    algorithm, str(value).encode()
+).hexdigest()
+template = environment.from_string(
     (ROLE / "templates/manifest.yaml.j2").read_text(encoding="utf-8")
-).render(**context)
-objects = {item["kind"]: item for item in yaml.safe_load_all(rendered) if item}
+)
+
+
+def render(**overrides):
+    rendered = template.render(**{**context, **overrides})
+    return {item["kind"]: item for item in yaml.safe_load_all(rendered) if item}
+
+
+def pod_annotations(objects):
+    return objects["Deployment"]["spec"]["template"]["metadata"]["annotations"]
+
+
+objects = render()
+assert pod_annotations(objects) == pod_annotations(render())
+assert pod_annotations(objects) != pod_annotations(render(_admin_token_plain="rotated"))
 assert {"PersistentVolumeClaim", "Deployment", "Service", "Ingress"} <= set(objects)
 pvc = objects["PersistentVolumeClaim"]["spec"]
 assert "storageClassName" not in pvc
