@@ -119,6 +119,10 @@ def bundle(directory, sql, version="10.11.6-MariaDB"):
 
 
 def check_contract():
+    compose = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
+    assert "MARIADB_ROOT_HOST=localhost" in compose, "Docker root must not be remote-reachable"
+    docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
+    assert "Host NOT IN ('localhost')" in docker_tasks
     defaults = yaml.safe_load(
         (ROOT / "ansible/vars/app-defaults/mariadb.yml").read_text(encoding="utf-8")
     )["mariadb_defaults"]

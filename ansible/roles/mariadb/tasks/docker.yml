@@ -87,3 +87,23 @@
   retries: 60
   delay: 5
   changed_when: false
+
+# The port is published, so no root account may match a non-local host.
+- name: MariaDB | Count root accounts reachable from other hosts
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --user=root
+      - --socket=/run/mysqld/mysqld.sock
+      - --batch
+      - --skip-column-names
+      - --execute
+      - SELECT COUNT(*) FROM mysql.user WHERE User = 'root' AND Host NOT IN ('localhost')
+  register: _mariadb_remote_root
+  changed_when: false
+
+- name: MariaDB | Refuse a remotely reachable root account
+  ansible.builtin.assert:
+    that: _mariadb_remote_root.stdout | trim == '0'
+    fail_msg: MariaDB root must be reachable from localhost only; the published port would expose it.

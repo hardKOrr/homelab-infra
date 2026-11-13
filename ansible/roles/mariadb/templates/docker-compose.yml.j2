@@ -8,9 +8,11 @@ services:
     restart: unless-stopped
     environment:
       - TZ={{ homelabinfra_config.timezone | default('UTC') }}
-      # root@localhost has no password and cannot be reached from the network; the host
-      # reaches it over the shared socket, as native Deploy does over the guest's socket.
+      # root@localhost has no password; the image's default root@% is disabled, so root
+      # cannot log in through the published port. The host reaches root over the shared
+      # socket, as native Deploy does over the guest's socket.
       - MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1
+      - MARIADB_ROOT_HOST=localhost
     volumes:
       - "{{ mariadb_data_dir }}:{{ app_config.app.data_path }}"
       - "{{ mariadb_project_dir }}/conf.d:/etc/mysql/conf.d:ro"
