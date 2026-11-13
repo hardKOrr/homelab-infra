@@ -3,6 +3,8 @@
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from restore_swap_inputs import run_hook, swap_inputs
 
 
@@ -19,6 +21,19 @@ def command_boundary(exit_code):
 
 
 def main():
+    # Restore App publishes its resolved target as app_config on the guest, without
+    # the controller-only restore_target_config fact. Exercise the actual guard.
+    role = Path(__file__).resolve().parents[1] / "ansible/roles/wireguard/tasks"
+    restore = yaml.safe_load((role / "restore.yml").read_text())
+    def contract_only(_tasks):
+        return [restore[0]]
+    variables = {"app_config": {"hosting": {"method": "docker"}, "backup": {
+        "enabled": True, "application_consistent": True}}, "homelabinfra_infra": {"backups": {}}}
+    result = run_hook("wireguard", "staged", variables, contract_only)
+    assert result.returncode == 0, result.stdout + result.stderr
+    variables["app_config"]["hosting"]["method"] = "native"
+    result = run_hook("wireguard", "staged", variables, contract_only)
+    assert result.returncode != 0, result.stdout
     swap = swap_inputs("wireguard")
     assert swap["recovery_swap_runtime"] == "docker"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
