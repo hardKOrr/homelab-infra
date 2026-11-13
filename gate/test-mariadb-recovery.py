@@ -163,7 +163,7 @@ def check_contract():
         {"name": "mariadb.pxar", "path": "{{ _mariadb_backup_tmp.path }}"}
     ]
 
-    restore = list(tasks(yaml.safe_load((ROLE / "tasks/restore.yml").read_text(encoding="utf-8"))))
+    restore = list(tasks(yaml.safe_load((ROLE / "tasks/restore-guest.yml").read_text(encoding="utf-8"))))
     preview = named(restore, "MariaDB restore | List or verify the recovery point without changing MariaDB")
     assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
     assert preview["vars"]["pbs_client_archives"] == [{"name": "mariadb.pxar"}]

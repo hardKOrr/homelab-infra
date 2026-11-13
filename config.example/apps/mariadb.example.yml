@@ -31,3 +31,16 @@
 # hosting:
 #   method: docker
 # stack: mariadb          # set guest_type under infrastructure.stacks
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# Runs the same image as one Deployment on the k3s cluster, its data on one
+# default-StorageClass volume (app.storage, in Gi). app.port is the LoadBalancer Service
+# port on the cluster's ingress address, so a second MariaDB on one cluster needs another
+# port. Applications reach it there, and Deploy opens the port on the firewall for each
+# registered consumer. root has a generated password (kept in this instance's Vaultwarden
+# item) and may connect only from the pod network, for the recovery Job.
+# hosting:
+#   method: kubernetes
+# app:
+#   port: 3306
+#   storage: 8

@@ -20,6 +20,15 @@
 #          MariaDB/MySQL: recreates the database with its previous character set and
 #          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
 # inspect  Read only: one line counting the tables and rows a restore would replace.
+#
+# Whole MariaDB server (a Kubernetes backend's own recovery point; DB_USER is root, which
+# connects from inside the cluster only, and DB_NAME is not used):
+#   server-dump FILE | server-verify FILE | server-load FILE | server-inspect
+#   server-dump    every schema and the grant tables at one point (global read lock).
+#   server-load    drops every application schema, loads FILE, then sets the root
+#                  password back to DB_PASSWORD: the point carries the SOURCE server's
+#                  root hash, and the target's own credential must keep working.
+#                  DB_ROOT_HOSTS lists the root account hosts (default: localhost).
 set -eu
 
 action=${1:-}
@@ -27,12 +36,14 @@ file=${2:-}
 case "$action" in
   dump | restore | inspect) required="DB_ENGINE DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD" ;;
   verify) required=DB_ENGINE ;;
+  server-dump | server-load | server-inspect) required="DB_ENGINE DB_HOST DB_PORT DB_USER DB_PASSWORD" ;;
+  server-verify) required=DB_ENGINE ;;
   *)
-    echo "usage: database-client.sh dump|verify|restore FILE | inspect" >&2
+    echo "usage: database-client.sh dump|verify|restore FILE | inspect | server-dump|server-verify|server-load FILE | server-inspect" >&2
     exit 64
     ;;
 esac
-[ -n "$file" ] || [ "$action" = inspect ] || { echo "database-client.sh: FILE is required" >&2; exit 64; }
+[ -n "$file" ] || [ "$action" = inspect ] || [ "$action" = server-inspect ] || { echo "database-client.sh: FILE is required" >&2; exit 64; }
 for name in $required; do
   eval "value=\${$name:-}"
   [ -n "$value" ] || { echo "database-client.sh: $name is required" >&2; exit 64; }
@@ -120,6 +131,74 @@ mysql_compatible() {
   sed -e '/^USE `[^`]*`;$/d' -e '/^CREATE DATABASE /d' "$file" > "$work/load.sql"
   "$client" --defaults-extra-file="$work/client.cnf" --database="$DB_NAME" < "$work/load.sql"
 }
+
+# One MariaDB server as a unit: all schemas, routines, events, triggers and grants.
+mariadb_server() {
+  [ "$DB_ENGINE" = mariadb ] || { echo "database-client.sh: $action needs DB_ENGINE=mariadb" >&2; exit 64; }
+  if [ "$action" = server-verify ]; then
+    grep -q '^CREATE TABLE ' "$file"
+    return
+  fi
+  umask 077
+  printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport=%s\n' \
+    "$DB_USER" "$DB_PASSWORD" "$DB_HOST" "$DB_PORT" > "$work/client.cnf"
+  system="'information_schema', 'performance_schema', 'mysql', 'sys'"
+  if [ "$action" = server-inspect ]; then
+    # Reloading grant tables can briefly withdraw the server's Service endpoints while
+    # its readiness probe catches up. Reconnect for this read only; never replay a load.
+    attempt=0
+    until mariadb --defaults-extra-file="$work/client.cnf" --connect-timeout=2 --batch --skip-column-names \
+      --execute="SELECT CONCAT(COUNT(DISTINCT TABLE_SCHEMA), ' schemas, ', COUNT(*),
+        ' tables') FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ($system)" \
+      2> "$work/inspect.err"; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        cat "$work/inspect.err" >&2
+        return 1
+      fi
+      sleep 2
+    done
+    return
+  fi
+  if [ "$action" = server-dump ]; then
+    mariadb-dump --defaults-extra-file="$work/client.cnf" --all-databases --lock-all-tables \
+      --routines --events --triggers --hex-blob --flush-privileges --skip-dump-date \
+      > "$work/dump"
+    grep -q '^CREATE TABLE ' "$work/dump"
+    mv "$work/dump" "$file"
+    return
+  fi
+  test -s "$file"
+  # Drop first, so tables the point lacks do not survive. Names come from the server.
+  mariadb --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
+    --execute="SELECT CONCAT('DROP DATABASE IF EXISTS \`', REPLACE(SCHEMA_NAME, '\`', '\`\`'), '\`;')
+      FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ($system)" > "$work/drop.sql"
+  mariadb --defaults-extra-file="$work/client.cnf" < "$work/drop.sql"
+  # The same session loads the point and then re-keys root, so the credential this run
+  # used keeps working after the point's own grant tables take effect.
+  case "$DB_PASSWORD" in
+    *[!A-Za-z0-9_.-]*) echo "database-client.sh: the root password must use letters, digits, '.', '_' and '-'" >&2; exit 64 ;;
+  esac
+  {
+    cat "$file"
+    echo 'FLUSH PRIVILEGES;'
+    for host in localhost ${DB_ROOT_HOSTS:-}; do
+      echo "ALTER USER IF EXISTS 'root'@'$host' IDENTIFIED BY '$DB_PASSWORD';"
+    done
+    echo 'FLUSH PRIVILEGES;'
+  } > "$work/load.sql"
+  mariadb --defaults-extra-file="$work/client.cnf" < "$work/load.sql"
+}
+
+case "$DB_ENGINE" in
+  postgresql | mariadb | mysql) ;;
+  *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
+esac
+case "$action" in
+  server-*) mariadb_server; [ "$action" = server-inspect ] && exit 0
+            echo "database-client.sh: $action mariadb server complete ($(wc -c < "$file") bytes)"
+            exit 0 ;;
+esac
 
 case "$DB_ENGINE" in
   postgresql) postgresql ;;

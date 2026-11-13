@@ -1,0 +1,135 @@
+---
+# MariaDB as one Deployment on the k3s cluster (hosting.method: kubernetes; main.yml is
+# the guest methods). Runs on localhost, like every Kubernetes app role: the shared
+# adapter tasks delegate kubectl to a cluster node.
+#
+# Applications reach it on the ingress address at app.port, and the shared database tasks
+# create their databases by SQL run in the server pod (tasks/database/backend-sql.yml).
+# Its recovery point is the whole server: every schema and the grants, taken and loaded by
+# the shared database step (kubernetes-recovery-step.yml, namespace-mariadb-server).
+#
+# Inputs: instance, app_config (merged, with the instance's Vaultwarden item on app).
+- name: MariaDB Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: MariaDB Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Two backends cannot answer on one address and port; MetalLB would leave the second
+# Service without an address while the pod runs.
+- name: MariaDB Kubernetes | Read every LoadBalancer Service in the cluster
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, services, --all-namespaces, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _mariadb_services
+  changed_when: false
+
+- name: MariaDB Kubernetes | Refuse an address and port another Service holds
+  ansible.builtin.assert:
+    that: _mariadb_port_holders | length == 0
+    fail_msg: >-
+      Service {{ _mariadb_port_holders | first | default('') }} already answers on the
+      cluster's ingress address at port {{ app_config.app.port }}. Give {{ instance }} its
+      own app.port.
+  vars:
+    _mariadb_port_holders: >-
+      {%- set held = [] -%}
+      {%- set services = (_mariadb_services.stdout | from_json)['items'] -%}
+      {%- for svc in services -%}
+      {%-   if svc.spec.type == 'LoadBalancer' and svc.metadata.namespace != k8s_namespace
+              and (app_config.app.port | string) in (svc.spec.ports | map(attribute='port') | map('string') | list)
+              and svc.metadata.get('annotations', {}).get('metallb.io/loadBalancerIPs', '')
+                  == homelabinfra_infra.kubernetes.ingress_vip -%}
+      {%-     set _ = held.append(svc.metadata.namespace ~ '/' ~ svc.metadata.name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ held | to_json | from_json }}
+
+# Stored before the manifest is applied, so a generated credential is never in use without
+# being recorded. The server keeps the password it first initialized with: changing it later
+# would lock Deploy out of its own data.
+- name: MariaDB Kubernetes | Resolve the root credential
+  ansible.builtin.set_fact:
+    _mariadb_root_password: >-
+      {{ app_config.app.root_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: MariaDB Kubernetes | Store the root credential
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      root_password: "{{ _mariadb_root_password }}"
+    vault_item_secret_fields: [root_password]
+  no_log: true
+
+- name: MariaDB Kubernetes | Sync the root credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      root-password: "{{ _mariadb_root_password }}"
+  no_log: true
+
+- name: MariaDB Kubernetes | Resolve database memory settings
+  ansible.builtin.set_fact:
+    _mariadb_innodb_buffer_pool_size_mib: >-
+      {{ app_config.app.get('memory', {}).get('innodb_buffer_pool_size', 512) | int }}
+
+- name: MariaDB Kubernetes | Fingerprint the server tuning
+  ansible.builtin.set_fact:
+    _mariadb_config_checksum: "{{ _mariadb_innodb_buffer_pool_size_mib | string | hash('sha256') }}"
+
+- name: MariaDB Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _mariadb_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: MariaDB Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _mariadb_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+# The readiness probe already proved the final server answers on its socket; this proves
+# the account the shared database tasks rely on is the one this credential names, and that
+# no root account matches a host outside the pod network (the Service publishes the port).
+- name: MariaDB Kubernetes | Count root accounts reachable from outside the pod network
+  ansible.builtin.include_tasks: ../../../tasks/database/backend-sql.yml
+  vars:
+    database_backend_instance: "{{ instance }}"
+    database_backend_sql: >-
+      SELECT COUNT(*) FROM mysql.user WHERE User = 'root'
+      AND Host NOT IN ('localhost', '{{ app_config.kubernetes.root_host }}');
+
+- name: MariaDB Kubernetes | Refuse a remotely reachable root account
+  ansible.builtin.assert:
+    that: database_backend_stdout | trim == '0'
+    fail_msg: >-
+      MariaDB root must be reachable only from localhost and {{ app_config.kubernetes.root_host }};
+      the published port would expose it.
+
+- name: MariaDB Kubernetes | Describe the server's recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-mariadb-server
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+    k8s_database_step_root_password: "{{ _mariadb_root_password }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: MariaDB Kubernetes | Schedule the server backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        every schema and the grants of this MariaDB server, taken at one point under the
+        global read lock, plus its tuning file

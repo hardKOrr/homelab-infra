@@ -27,6 +27,7 @@
 #     database     optional k8s_database_step for the TARGET database; archive (default
 #                  database) and archive_path (default empty) select a nested dump directory
 #     stop         Deployments scaled to 0 before the Job and back to 1 after it
+#     live_server  true when the app is the database server it loads into: `stop` is empty
 #     restart      Deployments restarted after the Job (disposable caches)
 #     after_restore_tasks  optional task file run after the Job, before the target starts
 #                  (for example re-keying the target's environment)
@@ -44,7 +45,7 @@
       - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - k8s_recovery is mapping
       - k8s_recovery.archives | default([]) | length > 0
-      - k8s_recovery.stop | default([]) | length > 0
+      - (k8s_recovery.stop | default([]) | length > 0) or (k8s_recovery.live_server | default(false) | bool)
     fail_msg: >-
       A restore needs a target instance and, to actually run, a snapshot to restore from.
       Run it once without `snapshot` to list what PBS holds for this application, then
@@ -432,13 +433,12 @@
     - name: k8s restore | Report a failed restore
       ansible.builtin.fail:
         msg: >-
-          The restore of {{ _kr.snapshot }} into {{ k8s_namespace }} did not complete, and
-          {{ k8s_recovery.stop | join(', ') }} {{ 'has' if k8s_recovery.stop | length == 1
-          else 'have' }} been LEFT SCALED TO 0 — the target may be partially replaced. The
-          output is above ({{ ansible_failed_result.msg | default('') | truncate(2000) }}).
-          Re-run this restore, or start the application as it stands with:
-          k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ k8s_recovery.stop | first }}
-          --replicas=1
+          The restore of {{ _kr.snapshot }} into {{ k8s_namespace }} did not complete; the target
+          may be partially replaced{{ ' (' ~ k8s_recovery.stop | join(', ') ~ ' LEFT SCALED TO 0)'
+          if k8s_recovery.stop | length > 0 }}. Output above ({{ ansible_failed_result.msg | default('') | truncate(2000) }}).
+          Re-run this restore{{ ', or start the application as it stands with: k3s kubectl -n '
+          ~ k8s_namespace ~ ' scale deployment/' ~ (k8s_recovery.stop | first) ~ ' --replicas=1'
+          if k8s_recovery.stop | length > 0 }}.
 
   # The Secret holds the PBS token and the target's database credential, wanted for
   # minutes. It is re-synced at the top of every run, so removing it costs a retry nothing.

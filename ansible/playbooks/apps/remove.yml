@@ -135,7 +135,7 @@
     - name: Stop and remove the app on its host
       ansible.builtin.import_tasks: ../../tasks/removal/stop-app.yml
 
-# ── Play 3: Forget a destroyed database backend after its guest is gone ────────
+# ── Play 3: Forget a destroyed database backend after its guest or namespace is gone ──
 - name: "Remove Database Backend | Unregister destroyed backend"
   hosts: localhost
   gather_facts: false
@@ -147,7 +147,8 @@
         unwire_registry_database_backend: true
       when:
         - delete_data | default(false) | bool
-        - destroy_guest | default(false) | bool
+        # A backend on Kubernetes has no guest: its namespace is gone with the app.
+        - (destroy_guest | default(false) | bool) or _rm_kind | default('') == 'kubernetes'
         - _rm_database_backend | default(false) | bool
 
 # ── Play 4: Drop the app's named database from its registered backend ──────────

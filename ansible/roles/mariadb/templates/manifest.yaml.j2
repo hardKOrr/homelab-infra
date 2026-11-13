@@ -1,0 +1,113 @@
+{# One MariaDB backend: a config map, one data volume, one Deployment, one LoadBalancer. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels | trim | indent(4, true) }}
+data:
+  z-homelab-infra.cnf: |
+    # Managed by homelab-infra.
+    [mariadbd]
+    bind-address = 0.0.0.0
+    innodb_buffer_pool_size = {{ _mariadb_innodb_buffer_pool_size_mib }}M
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: the old pod must release it first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+      annotations:
+        # A changed tuning file restarts the server, the one time MariaDB reads it.
+        homelab-infra.io/config-checksum: "{{ _mariadb_config_checksum }}"
+    spec:
+      containers:
+        - name: mariadb
+          image: "{{ app_config.app.image }}"
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: root-password }
+            # root is reachable only from the pod network (the recovery Job) and from the
+            # server's own socket; the Service exposes the port to the lab.
+            - name: MARIADB_ROOT_HOST
+              value: "{{ app_config.kubernetes.root_host }}"
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: config
+              mountPath: /etc/mysql/conf.d
+              readOnly: true
+          # The image's init server answers on the same socket with networking off. Ready
+          # means the final server, which has networking on.
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - >-
+                  MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --protocol=socket --user=root
+                  --batch --skip-column-names --execute='SELECT @@skip_networking' | grep -qx 0
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+        - name: config
+          configMap:
+            name: {{ instance }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+  annotations:
+    # The ingress address, shared with Traefik: a database port, not an HTTP route.
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+  ports:
+    - name: mysql
+      port: {{ app_config.app.port }}
+      targetPort: 3306
