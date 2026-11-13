@@ -56,7 +56,21 @@ assert any(
 # The registry marks a Kubernetes backend, and clears the mark when it stops being one.
 assert "homelabinfra_infra.kubernetes.ingress_vip" in text
 assert "generated_facts_data: \"{{ {instance: {'kubernetes': ''}} }}\"" in text
-assert 'namespace: "app-{{ instance }}"' in text
+# Ansible templates mapping values, not keys: evaluate the complete registry mapping.
+registry = next(
+    t["vars"]["generated_facts_data"] for p in playbook for t in p.get("tasks", [])
+    if t.get("vars", {}).get("generated_facts_service") == "databases"
+    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
+)
+registered = Environment(undefined=StrictUndefined).compile_expression(registry[3:-3])(
+    instance="mariadb-test",
+    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.10"}},
+    app_config={"app": {"port": 3307, "client_hosts": ["192.0.2.%"]}},
+)
+assert registered == {"mariadb-test": {
+    "provider": "mariadb", "host": "192.0.2.10", "port": 3307,
+    "client_hosts": ["192.0.2.%"], "kubernetes": {"namespace": "app-mariadb-test"},
+}}
 
 # ── Manifest ────────────────────────────────────────────────────────────────────────────
 context = {

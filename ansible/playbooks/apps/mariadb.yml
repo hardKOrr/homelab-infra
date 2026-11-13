@@ -139,14 +139,12 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: databases
-        generated_facts_data:
-          '{{ instance }}':
-            provider: mariadb
-            host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
-            port: "{{ app_config.app.port }}"
-            client_hosts: "{{ app_config.app.client_hosts }}"
-            kubernetes:
-              namespace: "app-{{ instance }}"
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'mariadb',
+                         'host': homelabinfra_infra.kubernetes.ingress_vip,
+                         'port': app_config.app.port,
+                         'client_hosts': app_config.app.client_hosts,
+                         'kubernetes': {'namespace': 'app-' ~ instance}}} }}
       when: app_config.hosting.method == 'kubernetes'
     - name: Record the app on the Kubernetes nodes
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
