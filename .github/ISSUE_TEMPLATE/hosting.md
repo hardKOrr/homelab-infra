@@ -98,12 +98,12 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 Sets run in order; a method's sets all finish before the next method's first set starts.
 
 - [ ] S1 (code, Kubernetes): When R1–R3, R10–R14 and R17 are met, the worker shall tick S1 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S2 (execution, Kubernetes): When R4, R15 and R16 are met, the worker shall tick S2 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
+- [ ] S2 (execution, Kubernetes): When R4, R15 and R16 are met, the worker shall tick S2 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
 - [ ] S3 (code, native): When R1–R3, R20–R22 and R27 are met, the worker shall tick S3 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S4 (execution, native LXC): When R4, R23 and R24 are met, the worker shall tick S4 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
-- [ ] S5 (execution, native VM): When R4, R25 and R26 are met, the worker shall tick S5 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
+- [ ] S4 (execution, native LXC): When R4, R23 and R24 are met, the worker shall tick S4 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
+- [ ] S5 (execution, native VM): When R4, R25 and R26 are met, the worker shall tick S5 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
 - [ ] S6 (code, Docker): When R1–R3, R30–R32 and R37 are met, the worker shall tick S6 and hand off. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S7 (execution, Docker LXC): When R4, R33 and R34 are met, the worker shall tick S7 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
-- [ ] S8 (execution, Docker VM): When R4, R35 and R36 are met, the worker shall tick S8 and post done. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/low -->
+- [ ] S7 (execution, Docker LXC): When R4, R33 and R34 are met, the worker shall tick S7 and hand off. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
+- [ ] S8 (execution, Docker VM): When R4, R35 and R36 are met, the worker shall tick S8 and post done. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
 
 **Result:** one issue comment per method: passed, failed, or impossible with the reason (R5); the tested SHA, the Ansible results, the recovery-point reference (placeholders for private parts) and the PR.
