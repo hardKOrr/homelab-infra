@@ -38,7 +38,11 @@
   tasks:
     - name: Run the command
       ansible.builtin.shell:
-        cmd: 'printf %s "$GUEST_EXEC_SCRIPT" | base64 -d | bash > /tmp/.guest-exec.out 2>&1; rc=$?; base64 -w0 /tmp/.guest-exec.out; rm -f /tmp/.guest-exec.out; exit $rc'
+        cmd: >-
+          out=$(mktemp /tmp/guest-exec.XXXXXX);
+          trap 'rm -f "$out"' EXIT;
+          printf %s "$GUEST_EXEC_SCRIPT" | base64 -d | bash > "$out" 2>&1;
+          rc=$?; base64 -w0 "$out"; exit $rc
         executable: /bin/bash
       environment:
         GUEST_EXEC_SCRIPT: "{{ command_b64 }}"
