@@ -1,0 +1,5 @@
+---
+# Role-internal defaults; user-facing knobs live in vars/app-defaults/mysql.yml.
+mysql_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+# Docker: the Compose project, config and data live together in /opt/<instance>.
+mysql_project_dir: "/opt/{{ instance }}"

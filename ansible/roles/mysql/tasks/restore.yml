@@ -39,7 +39,7 @@
 - name: MySQL restore | List or verify the recovery point without changing MySQL
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    pbs_client_runtime: native
+    pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
     pbs_client_backup_id: "{{ _mysql_restore_source_backup_id }}"
     pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
     pbs_client_archives: [{name: mysql.pxar}]
@@ -70,7 +70,7 @@
     - name: MySQL restore | Download the selected recovery archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _mysql_restore_source_backup_id }}"
         pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
         pbs_client_restore_args: [--allow-existing-dirs, "true"]
@@ -81,7 +81,7 @@
     - name: MySQL restore | Download the pre-restore safety archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _mysql_restore_target_backup_id }}"
         pbs_client_snapshot: "{{ _mysql_restore_prepoint }}"
         pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
