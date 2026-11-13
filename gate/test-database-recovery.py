@@ -55,6 +55,15 @@ case "$name" in
     printf 'CREATE DATABASE `source`;\\nUSE `source`;\\nCREATE TABLE `items` (id int);\\n' ;;
   mariadb | mysql)
     case "$*" in
+      *information_schema.TABLES*)
+        attempt=$(cat "$LOG.attempts" 2>/dev/null || echo 0)
+        attempt=$((attempt + 1))
+        echo "$attempt" > "$LOG.attempts"
+        if [ "$attempt" -le "${FAIL_SERVER_INSPECT_COUNT:-0}" ]; then
+          echo 'transient connection failure' >&2
+          exit 1
+        fi
+        echo '1 schemas, 1 tables' ;;
       *information_schema.SCHEMATA*) echo 'utf8mb4 COLLATE utf8mb4_unicode_ci' ;;
       *--database=*) cat > "$LOG.load" ;;
     esac ;;
@@ -68,7 +77,7 @@ ENV = {"DB_HOST": "192.0.2.10", "DB_PORT": "5432", "DB_NAME": "app",
 def run_client(engine, action, file, work, **extra):
     shims = work / "bin"
     shims.mkdir(exist_ok=True)
-    for name in ["pg_dump", "pg_restore", "psql", "mariadb", "mariadb-dump", "mysql", "mysqldump"]:
+    for name in ["pg_dump", "pg_restore", "psql", "mariadb", "mariadb-dump", "mysql", "mysqldump", "sleep"]:
         (shims / name).write_text(SHIM)
         (shims / name).chmod(0o755)
     log = work / "log"
@@ -158,6 +167,25 @@ def check_inspect_reads_only():
             assert len(calls) == 1 and calls[0].startswith(f"{client} "), calls
             assert "SELECT" in calls[0] and "DROP" not in calls[0], calls[0]
             assert ENV["DB_PASSWORD"] not in calls[0]
+
+
+def check_server_inspect_reconnects():
+    """A post-load read retries a transient Service outage, but fails after a bound."""
+    for failures, expected_rc, expected_calls in [(2, 0, 3), (99, 1, 30)]:
+        with tempfile.TemporaryDirectory() as tmp:
+            result, calls = run_client("mariadb", "server-inspect", "", Path(tmp),
+                                       DB_PORT="3306", FAIL_SERVER_INSPECT_COUNT=str(failures))
+            queries = [c for c in calls if c.startswith("mariadb ")]
+            assert result.returncode == expected_rc, result.stderr
+            assert len(queries) == expected_calls, queries
+            assert all("SELECT" in c and "DROP" not in c for c in queries)
+            assert all("--connect-timeout=2" in c for c in queries)
+            assert ENV["DB_PASSWORD"] not in "\n".join(calls)
+            assert len([c for c in calls if c == "sleep 2"]) == expected_calls - 1
+            if expected_rc == 0:
+                assert result.stdout == "1 schemas, 1 tables\n" and not result.stderr
+            else:
+                assert "transient connection failure" in result.stderr
 
 
 def check_client_refuses_unsafe_input():
@@ -368,6 +396,7 @@ def main():
     check_mysql_compatible("mysql", "mysqldump", "mysql")
     check_mysql_with_mariadb_dump_client()
     check_inspect_reads_only()
+    check_server_inspect_reconnects()
     check_client_refuses_unsafe_input()
     check_ownership_guard()
     check_destructive_files_use_the_guard()

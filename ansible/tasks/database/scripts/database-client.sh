@@ -144,9 +144,20 @@ mariadb_server() {
     "$DB_USER" "$DB_PASSWORD" "$DB_HOST" "$DB_PORT" > "$work/client.cnf"
   system="'information_schema', 'performance_schema', 'mysql', 'sys'"
   if [ "$action" = server-inspect ]; then
-    mariadb --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
+    # Reloading grant tables can briefly withdraw the server's Service endpoints while
+    # its readiness probe catches up. Reconnect for this read only; never replay a load.
+    attempt=0
+    until mariadb --defaults-extra-file="$work/client.cnf" --connect-timeout=2 --batch --skip-column-names \
       --execute="SELECT CONCAT(COUNT(DISTINCT TABLE_SCHEMA), ' schemas, ', COUNT(*),
-        ' tables') FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ($system)"
+        ' tables') FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ($system)" \
+      2> "$work/inspect.err"; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        cat "$work/inspect.err" >&2
+        return 1
+      fi
+      sleep 2
+    done
     return
   fi
   if [ "$action" = server-dump ]; then
