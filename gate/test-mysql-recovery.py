@@ -115,6 +115,12 @@ def check_contract():
     assert "Host NOT IN ('localhost')" in docker_tasks
     assert "Refuse a second backend on this stack host" in docker_tasks
     assert "MySQL | Create the state directory" in docker_tasks
+    # An empty data directory is initialized by the first start; no restart may precede
+    # the final server being ready.
+    order = [docker_tasks.index(t) for t in (
+        "MySQL | Start the service", "MySQL | Wait for the final server\n",
+        "MySQL | Apply pending restarts", "after a restart")]
+    assert order == sorted(order), "wait for the final server before flushing restarts"
 
     main = task_tree(ROLE / "tasks/native.yml") + task_tree(ROLE / "tasks/repository.yml")
     release_guard = task_named(main, "MySQL | Require a supported Debian release")

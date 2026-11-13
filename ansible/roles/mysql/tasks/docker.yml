@@ -106,15 +106,26 @@
     state: present
     remove_orphans: true
 
-- name: MySQL | Apply pending restarts before the health check
-  ansible.builtin.meta: flush_handlers
-
-# The image's init server runs with networking off; the final server has it on.
+# The image's init server runs with networking off; the final server has it on. Wait for
+# the final server before any restart, so a restart never interrupts first-run initialization
+# (a second entrypoint run would skip it and leave the system tables incomplete).
 - name: MySQL | Wait for the final server
   ansible.builtin.command:
     argv: [mysql, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --batch, --skip-column-names, --execute, SELECT @@skip_networking]
   register: _mysql_ready
   until: _mysql_ready.rc == 0 and _mysql_ready.stdout | trim == '0'
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: MySQL | Apply pending restarts once initialization is complete
+  ansible.builtin.meta: flush_handlers
+
+- name: MySQL | Wait for the final server after a restart
+  ansible.builtin.command:
+    argv: [mysql, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --batch, --skip-column-names, --execute, SELECT @@skip_networking]
+  register: _mysql_ready_again
+  until: _mysql_ready_again.rc == 0 and _mysql_ready_again.stdout | trim == '0'
   retries: 60
   delay: 5
   changed_when: false
