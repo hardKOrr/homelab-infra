@@ -102,6 +102,7 @@ assert service["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == vip
 assert service["metadata"]["annotations"]["metallb.io/allow-shared-ip"] == vip
 
 deploy_tasks = tasks("kubernetes.yml")
+assert defaults["backup"]["retention_days"] > 0
 secret_task = next(
     t for t in deploy_tasks
     if str(t.get("ansible.builtin.include_tasks", "")).endswith("sync-secret.yml")

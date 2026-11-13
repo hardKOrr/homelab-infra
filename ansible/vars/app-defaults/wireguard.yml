@@ -55,6 +55,7 @@ wireguard_defaults:
     backup_id: ""
     # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
     schedule: "0 3 * * *"
+    retention_days: 14
     timeout_seconds: 3600
     scratch_size: 2
     client:
