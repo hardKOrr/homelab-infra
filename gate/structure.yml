@@ -28,7 +28,6 @@ size:
   ansible/playbooks/apps/migrate-servarr.yml: 395
   ansible/playbooks/apps/pbs.yml: 667
   ansible/playbooks/apps/uptime-kuma.yml: 316
-  ansible/playbooks/apps/vaultwarden.yml: 343
   ansible/playbooks/maintenance/guest-maintenance.yml: 393
   ansible/playbooks/maintenance/reclaim-volume.yml: 441
   ansible/playbooks/maintenance/restore-pdm.yml: 360
@@ -40,7 +39,6 @@ size:
   ansible/roles/k3s_cluster/tasks/storage.yml: 365
   ansible/roles/plane/templates/manifest.yaml.j2: 703
   ansible/roles/uptime-kuma/tasks/configure.yml: 484
-  ansible/roles/vaultwarden/tasks/main.yml: 341
   ansible/scripts/config-doctor.sh: 848
   ansible/tasks/bitwarden/upsert-item.yml: 617
   ansible/tasks/bootstrap/configure-pbs-second-copy.yml: 480

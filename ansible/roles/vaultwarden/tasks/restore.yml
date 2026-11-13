@@ -7,6 +7,11 @@
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
 
+- name: Vaultwarden restore | Resolve the guest runtime
+  ansible.builtin.set_fact:
+    _vw_restore_runtime: >-
+      {{ restore_target_config.hosting.method | default(app_config.hosting.method | default('native')) }}
+
 - name: Vaultwarden restore | Assert the recovery contract
   ansible.builtin.assert:
     that:
@@ -37,15 +42,16 @@
 - name: Vaultwarden restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: native
+    recovery_swap_runtime: "{{ _vw_restore_runtime }}"
     recovery_swap_pre_restore_backup_id: "{{ _vw_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ app_config.app.data_path }}"
-        owner: "{{ vaultwarden_user }}"
-        group: "{{ vaultwarden_user }}"
+        owner: "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}"
+        group: "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}"
         mode: "0750"
     recovery_swap_stop_services: ["{{ app_config.app.service_name | default(vaultwarden_service_name) }}"]
+    recovery_swap_compose_project: "{{ vaultwarden_project_dir }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/alive"
     recovery_swap_health_retries: 30

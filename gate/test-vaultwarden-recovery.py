@@ -74,9 +74,10 @@ def check_contract_and_dispatch():
     assert "restore_target_backup_id" in dispatch["vars"]
 
     deploy = read_yaml(ROOT / "ansible/playbooks/apps/vaultwarden.yml")
-    deploy_tasks = list(tasks_recursive(deploy))
+    deploy_tasks = list(tasks_recursive(deploy)) + list(tasks_recursive(
+        read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/provision-native.yml")))
     retained = task_named(deploy_tasks, "Resolve this instance's guest, reusing one Remove kept")
-    assert retained["ansible.builtin.include_tasks"] == "../../tasks/proxmox/resolve-instance-guest.yml"
+    assert retained["ansible.builtin.include_tasks"] == "../../../tasks/proxmox/resolve-instance-guest.yml"
     assert retained["vars"]["resolve_guest_type"] == "lxc"
     provision = task_named(deploy_tasks, "Provision new LXC")
     assert provision["when"] == "_existing_hosts | length == 0"
@@ -374,7 +375,8 @@ def check_backup_role():
     tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/backup.yml")
     upload = task_named(tasks_recursive(tasks), "Vaultwarden backup | Quiesce and archive the application")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert "'docker' if vaultwarden_docker | bool else 'native'" in upload["vars"]["pbs_client_runtime"]
+    assert upload["vars"]["pbs_client_compose_project"] == "{{ vaultwarden_project_dir }}"
     assert upload["vars"]["pbs_client_stop_services"] == ["{{ _vw_backup_service_name }}"]
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "data.pxar", "path": "{{ _vw_backup_data_path }}"}
@@ -415,9 +417,9 @@ def check_restore_swap():
     """Vaultwarden supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
     swap = swap_inputs("vaultwarden")
     [path] = swap["recovery_swap_paths"]
-    assert path == {"path": "{{ app_config.app.data_path }}", "owner": "{{ vaultwarden_user }}",
-                    "group": "{{ vaultwarden_user }}", "mode": "0750"}
-    assert swap["recovery_swap_runtime"] == "native"
+    assert path == {"path": "{{ app_config.app.data_path }}", "owner": "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}",
+                    "group": "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}", "mode": "0750"}
+    assert swap["recovery_swap_runtime"] == "{{ _vw_restore_runtime }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _vw_restore_target_backup_id }}"
     assert swap["recovery_swap_stop_services"] == [

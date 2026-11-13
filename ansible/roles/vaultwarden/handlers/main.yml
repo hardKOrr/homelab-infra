@@ -4,3 +4,8 @@
     name: "{{ vaultwarden_service_name }}"
     state: restarted
     daemon_reload: true
+
+- name: Restart vaultwarden container
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_project_dir }}"
+    state: restarted

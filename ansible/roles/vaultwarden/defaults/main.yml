@@ -1,7 +1,12 @@
 ---
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/vaultwarden.yml and config/apps/<instance>.yml.
+vaultwarden_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
 vaultwarden_service_name: vaultwarden
 vaultwarden_user: vaultwarden
-vaultwarden_env_file: /etc/vaultwarden.env
+# Docker: the Compose project lives beside the data path, in /opt/<instance>.
+vaultwarden_project_dir: "/opt/{{ instance }}"
+vaultwarden_env_file: >-
+  {{ vaultwarden_project_dir ~ '/vaultwarden.env' if vaultwarden_docker | bool
+     else '/etc/vaultwarden.env' }}
 vaultwarden_web_vault_dir: /usr/share/vaultwarden/web-vault

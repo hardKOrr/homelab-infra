@@ -46,11 +46,13 @@
       Vaultwarden data path {{ _vw_backup_data_path }} is missing, linked or has no
       db.sqlite3; refusing to create an incomplete application recovery point.
 
-# The shared backup stops the service for the upload and restarts it when it was running.
+# The shared backup stops the service (systemd unit or Compose service) for the upload and
+# restarts it when it was running.
 - name: Vaultwarden backup | Quiesce and archive the application
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: native
+    pbs_client_runtime: "{{ 'docker' if vaultwarden_docker | bool else 'native' }}"
+    pbs_client_compose_project: "{{ vaultwarden_project_dir }}"
     pbs_client_backup_id: "{{ _vw_backup_id }}"
     pbs_client_stop_services: ["{{ _vw_backup_service_name }}"]
     pbs_client_archives:
