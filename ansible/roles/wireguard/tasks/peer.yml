@@ -12,6 +12,8 @@
 - name: WireGuard | Generate peer private key once
   ansible.builtin.command:
     argv: [wg, genkey]
+  delegate_to: "{{ wireguard_key_host | default(inventory_hostname) }}"
+  become: true
   register: _wg_peer_generated
   changed_when: true
   no_log: true
@@ -28,6 +30,8 @@
   ansible.builtin.command:
     argv: [wg, pubkey]
     stdin: "{{ _wg_peer_private_key }}"
+  delegate_to: "{{ wireguard_key_host | default(inventory_hostname) }}"
+  become: true
   register: _wg_peer_public
   changed_when: false
   no_log: true

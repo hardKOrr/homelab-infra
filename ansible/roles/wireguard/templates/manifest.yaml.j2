@@ -1,0 +1,126 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: vpn
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: vpn
+      annotations:
+        # The config is copied in at pod start: a changed peer set must roll the pod.
+        checksum/config: {{ _wireguard_conf_checksum }}
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        # Pod network sysctls need a writable /proc/sys, which only a privileged container
+        # has; the main container keeps NET_ADMIN alone. The module itself is the node's.
+        - name: prepare
+          image: {{ app_config.app.init_image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - -ec
+            - |
+              sysctl -w net.ipv4.ip_forward=1 net.ipv4.conf.all.src_valid_mark=1
+              mkdir -p /config/wg_confs
+              install -m 0600 -o 0 -g 0 /conf/{{ app_config.app.interface }}.conf /config/wg_confs/{{ app_config.app.interface }}.conf
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: conf
+              mountPath: /conf
+              readOnly: true
+      containers:
+        - name: wireguard
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          env:
+            # Match the root-only key files rendered and restored by this role.
+            - name: PUID
+              value: "0"
+            - name: PGID
+              value: "0"
+            - name: LOG_CONFS
+              value: "false"
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+          ports:
+            - name: wireguard
+              containerPort: {{ app_config.app.port }}
+              protocol: UDP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          readinessProbe:
+            exec:
+              command: [wg, show, {{ app_config.app.interface }}]
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+        - name: conf
+          secret:
+            secretName: {{ instance }}-conf
+            defaultMode: 0400
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+  annotations:
+    # The ingress VIP: shared with Traefik (TCP 80) so one address carries the HTTP apps
+    # and this UDP endpoint, and the inbound forward targets the VIP.
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: vpn
+  ports:
+    - name: wireguard
+      protocol: UDP
+      port: {{ app_config.app.port }}
+      targetPort: wireguard

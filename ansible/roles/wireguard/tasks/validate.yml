@@ -1,0 +1,11 @@
+---
+- name: WireGuard | Validate the inbound endpoint
+  ansible.builtin.assert:
+    that:
+      - app_config.inbound.public_endpoint | default('') | length > 0
+      - app_config.routing.proxy | default('none') == 'none'
+      - app_config.app.peers is iterable
+    fail_msg: >-
+      WireGuard requires inbound.public_endpoint, the address clients dial. It is a UDP
+      forward (firewall.inbound, opened by Deploy), never a proxy route.
+  no_log: true

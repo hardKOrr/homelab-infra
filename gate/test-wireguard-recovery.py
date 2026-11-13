@@ -24,7 +24,7 @@ def main():
     # Restore App publishes its resolved target as app_config on the guest, without
     # the controller-only restore_target_config fact. Exercise the actual guard.
     role = Path(__file__).resolve().parents[1] / "ansible/roles/wireguard/tasks"
-    restore = yaml.safe_load((role / "restore.yml").read_text())
+    restore = yaml.safe_load((role / "restore-guest.yml").read_text())
     def contract_only(_tasks):
         return [restore[0]]
     variables = {"app_config": {"hosting": {"method": "docker"}, "backup": {
@@ -34,7 +34,7 @@ def main():
     variables["app_config"]["hosting"]["method"] = "native"
     result = run_hook("wireguard", "staged", variables, contract_only)
     assert result.returncode != 0, result.stdout
-    swap = swap_inputs("wireguard")
+    swap = swap_inputs("wireguard", "restore-guest.yml")
     assert swap["recovery_swap_runtime"] == "docker"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert swap["recovery_swap_paths"] == [{

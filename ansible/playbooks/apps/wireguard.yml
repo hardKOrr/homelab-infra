@@ -23,6 +23,13 @@
       vars:
         hosting_app_slug: wireguard
   tasks:
+    # Kubernetes only: the guest methods resolve their estate as before.
+    - name: Resolve the estate this WireGuard belongs to
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
     - name: Provision a dedicated native LXC
       ansible.builtin.include_tasks: ../../roles/wireguard/tasks/provision-native.yml
       when: app_config.hosting.method | default('native') == 'native'
@@ -36,6 +43,21 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method | default('native') == 'docker'
 
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
+    # The UDP forward targets the ingress VIP, which the Service shares with Traefik.
+    - name: Open WireGuard's declared Kubernetes network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
+    - name: Deploy WireGuard on Kubernetes
+      ansible.builtin.include_role:
+        name: wireguard
+        tasks_from: kubernetes
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
 # Before Deploy: the forward of the listen port is what makes the server reachable.
 - name: WireGuard | Open network access
   hosts: localhost
@@ -47,6 +69,7 @@
     wiring_firewall: "{{ _wg_fw_host.app_config.firewall | default({}) }}"
   tasks:
     - name: Open the app's network access
+      when: hostvars['localhost'].app_config.hosting.method | default('native') in ['native', 'docker']
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
       vars:
         firewall_inbound_ports:
@@ -71,20 +94,33 @@
 - name: WireGuard | Record managed hosting unit
   hosts: localhost
   gather_facts: false
+  vars:
+    _wg_on_guest: "{{ app_config.hosting.method | default('native') in ['native', 'docker'] }}"
   tasks:
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_kind: "{{ 'docker' if hostvars[groups['deploy_' ~ instance][0]].app_config.hosting.method | default('native') == 'docker' else 'native' }}"
         record_guest_url: ''
+      when: _wg_on_guest | bool
+
+    - name: Record the app on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: ''
+      when: not (_wg_on_guest | bool)
 
 - name: WireGuard | Wire UDP endpoint
   hosts: localhost
   gather_facts: false
   vars:
-    _wg_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    _wg_on_guest: "{{ app_config.hosting.method | default('native') in ['native', 'docker'] }}"
     wiring_app_name: "{{ instance }}"
-    wiring_domain: "{{ _wg_host.app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
-    wiring_upstream_host: "{{ _wg_host.ansible_host }}"
+    wiring_domain: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+    wiring_upstream_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
+         if _wg_on_guest | bool else homelabinfra_infra.kubernetes.ingress_vip }}
     wiring_ip: "{{ wiring_upstream_host }}"
     wiring_monitor_type: ping
     wiring_monitor_url: "{{ wiring_upstream_host }}"

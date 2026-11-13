@@ -4,11 +4,13 @@
 wireguard_defaults:
   hosting:
     method: native
-    supported: [native-lxc, docker-lxc, docker-vm]
+    supported: [native-lxc, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
   # image below on that stack host. The native default is unchanged.
   stack: ""
+  # Kubernetes method: `hosting.method: kubernetes` runs the same image as a Deployment on the
+  # k3s cluster, with a UDP LoadBalancer Service on the ingress VIP (the WAN forward targets it).
 
   proxmox:
     type: lxc
@@ -21,7 +23,11 @@ wireguard_defaults:
   app:
     interface: wg0
     port: 51820
-    image: "linuxserver/wireguard:1.0.20260223" # Docker method only
+    image: "linuxserver/wireguard:1.0.20260223" # Docker and Kubernetes methods
+    # Kubernetes method only: config volume size (default StorageClass) and the init image
+    # that sets the pod's network sysctls and installs the rendered config.
+    storage: 1                  # Gi
+    init_image: "busybox:1.37.0"
     vpn_cidr: 10.66.66.0/24
     vpn_address: 10.66.66.1/24
     client_allowed_ips: 0.0.0.0/0, ::/0
@@ -47,6 +53,16 @@ wireguard_defaults:
     application_consistent: true
     datastore: ""
     backup_id: ""
+    # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
+    schedule: "0 3 * * *"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
   recovery:
     methods: [native]
     native:

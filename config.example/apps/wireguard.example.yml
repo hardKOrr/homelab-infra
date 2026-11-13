@@ -24,3 +24,13 @@ app:
 # hosting:
 #   method: docker
 # stack: wireguard         # set guest_type under infrastructure.stacks
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# Runs the same image as a Deployment on the k3s cluster, its config on one
+# default-StorageClass volume (app.storage, in Gi). The UDP port is a LoadBalancer
+# Service on the ingress VIP, and the inbound forward targets that VIP. Every node
+# loads the wireguard kernel module.
+# hosting:
+#   method: kubernetes
+# app:
+#   storage: 1
