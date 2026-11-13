@@ -1,0 +1,17 @@
+---
+- name: WireGuard restore | Require the staged interface configuration
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/data/wg_confs/{{ app_config.app.interface }}.conf"
+  register: _wg_restore_config
+
+- name: WireGuard restore | Reject an incomplete recovery point
+  ansible.builtin.assert:
+    that:
+      - _wg_restore_config.stat.isreg | default(false)
+      - _wg_restore_config.stat.size | default(0) | int > 0
+
+- name: WireGuard restore | Validate wg-quick syntax before stopping the target
+  ansible.builtin.command:
+    argv: [wg-quick, strip, "{{ recovery_swap_stage }}/data/wg_confs/{{ app_config.app.interface }}.conf"]
+  changed_when: false
+  no_log: true

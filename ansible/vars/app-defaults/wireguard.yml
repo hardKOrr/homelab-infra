@@ -21,7 +21,7 @@ wireguard_defaults:
   app:
     interface: wg0
     port: 51820
-    image: "linuxserver/wireguard:1.0.20260223"   # Docker method only
+    image: "linuxserver/wireguard:1.0.20260223" # Docker method only
     vpn_cidr: 10.66.66.0/24
     vpn_address: 10.66.66.1/24
     client_allowed_ips: 0.0.0.0/0, ::/0
@@ -42,3 +42,14 @@ wireguard_defaults:
   routing:
     proxy: none
     identity: none
+  backup:
+    enabled: true
+    application_consistent: true
+    datastore: ""
+    backup_id: ""
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+      restore_role_task: restore

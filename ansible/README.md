@@ -162,7 +162,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
   [ollama](roles/ollama/README.md), [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md),
   [plex](roles/plex/README.md), [postgresql](roles/postgresql/README.md),
   [qbittorrent](roles/qbittorrent/README.md), [sabnzbd](roles/sabnzbd/README.md), [slskd](roles/slskd/README.md),
-  [servarr](roles/servarr/README.md).
+  [servarr](roles/servarr/README.md), [wireguard](roles/wireguard/README.md).
 - `vars/` contains Git-managed defaults (`vars/app-defaults/<app>.yml`) and the
   authoritative configuration [contract](vars/CONTRACT.md), split by config file under
   `vars/contract/`.
