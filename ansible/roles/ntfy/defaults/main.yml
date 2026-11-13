@@ -1,8 +1,19 @@
 ---
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/ntfy.yml and config/apps/<instance>.yml.
+ntfy_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
 ntfy_service_name: ntfy
-ntfy_config_file: /etc/ntfy/server.yml
-ntfy_auth_file: "{{ app_config.app.data_path }}/user.db"
-ntfy_cache_file: "{{ app_config.app.cache_path }}/cache.db"
+# Docker: the Compose project, server config and state live together in /opt/<instance>;
+# the stack host may carry other instances, so the native /var paths are not used.
+ntfy_project_dir: "/opt/{{ instance }}"
+ntfy_config_file: >-
+  {{ ntfy_project_dir ~ '/server.yml' if ntfy_docker | bool else '/etc/ntfy/server.yml' }}
+ntfy_data_dir: >-
+  {{ ntfy_project_dir ~ '/data' if ntfy_docker | bool else app_config.app.data_path }}
+ntfy_cache_dir: >-
+  {{ ntfy_project_dir ~ '/cache' if ntfy_docker | bool else app_config.app.cache_path }}
+ntfy_auth_file: "{{ ntfy_data_dir }}/user.db"
+ntfy_cache_file: "{{ ntfy_cache_dir }}/cache.db"
 ntfy_token_label: homelab-infra
+# The ntfy CLI on the app host: the binary natively, `docker exec` into the container.
+ntfy_cli_local: "{{ ['docker', 'exec', instance, 'ntfy'] if ntfy_docker | bool else ['ntfy'] }}"

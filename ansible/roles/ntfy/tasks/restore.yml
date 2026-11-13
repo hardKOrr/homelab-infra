@@ -5,17 +5,17 @@
     restore_target_config.hosting.method
     | default(app_config.hosting.method | default('native')) == 'kubernetes'
 
-- name: Ntfy restore | Use the native restore swap
-  ansible.builtin.include_tasks: restore-native.yml
+- name: Ntfy restore | Use the restore swap on a native or Docker guest
+  ansible.builtin.include_tasks: restore-guest.yml
   when: >-
     restore_target_config.hosting.method
-    | default(app_config.hosting.method | default('native')) == 'native'
+    | default(app_config.hosting.method | default('native')) in ['native', 'docker']
 
 - name: Ntfy restore | Reject an unsupported hosting method
   ansible.builtin.assert:
     that: >-
       restore_target_config.hosting.method
-      | default(app_config.hosting.method | default('native')) in ['native', 'kubernetes']
+      | default(app_config.hosting.method | default('native')) in ['native', 'docker', 'kubernetes']
     fail_msg: >-
-      Ntfy restore supports hosting.method native or kubernetes; refusing to mutate a
+      Ntfy restore supports hosting.method native, docker or kubernetes; refusing to mutate a
       target hosted by an unsupported method.

@@ -1,0 +1,17 @@
+# docker-compose.yml for Ntfy ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  {{ app_config.app.service_name | default(ntfy_service_name) }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    command: serve
+    restart: unless-stopped
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ ntfy_config_file }}:/etc/ntfy/server.yml:ro"
+      - "{{ ntfy_data_dir }}:{{ ntfy_data_dir }}"
+      - "{{ ntfy_cache_dir }}:{{ ntfy_cache_dir }}"
+    ports:
+      - "{{ app_config.app.port }}:80"

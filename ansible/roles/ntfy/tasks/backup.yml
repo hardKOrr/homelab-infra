@@ -4,8 +4,8 @@
 # archived here.
 - name: Ntfy backup | Resolve state paths and recovery identity
   ansible.builtin.set_fact:
-    _ntfy_backup_data_path: "{{ app_config.app.data_path | default('') }}"
-    _ntfy_backup_cache_path: "{{ app_config.app.cache_path | default('') }}"
+    _ntfy_backup_data_path: "{{ ntfy_data_dir }}"
+    _ntfy_backup_cache_path: "{{ ntfy_cache_dir }}"
     _ntfy_backup_auth_file: "{{ ntfy_auth_file }}"
     _ntfy_backup_cache_file: "{{ ntfy_cache_file }}"
     _ntfy_backup_service_name: "{{ app_config.app.service_name | default(ntfy_service_name) }}"
@@ -76,7 +76,8 @@
 - name: Ntfy backup | Quiesce Ntfy and archive auth and cache state to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: native
+    pbs_client_runtime: "{{ 'docker' if ntfy_docker | bool else 'native' }}"
+    pbs_client_compose_project: "{{ ntfy_project_dir }}"
     pbs_client_backup_id: "{{ _ntfy_backup_id }}"
     pbs_client_stop_services: ["{{ _ntfy_backup_service_name }}"]
     pbs_client_archives:

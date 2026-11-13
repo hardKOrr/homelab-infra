@@ -4,14 +4,14 @@
 # or config/apps/{{ instance }}.yml instead.
 
 base-url: "https://{{ app_config.routing.subdomain | default(instance, true) }}.{{ _ntfy_domain }}"
-listen-http: ":{{ app_config.app.port }}"
+listen-http: ":{{ 80 if ntfy_docker | bool else app_config.app.port }}"
 
 # Behind the platform reverse proxy — trust its X-Forwarded-For for rate limiting.
 behind-proxy: true
 
 cache-file: "{{ ntfy_cache_file }}"
 cache-duration: "{{ app_config.app.message_retention | default('12h') }}"
-attachment-cache-dir: "{{ app_config.app.cache_path }}/attachments"
+attachment-cache-dir: "{{ ntfy_cache_dir }}/attachments"
 attachment-total-size-limit: "{{ app_config.app.attachment_total_size_limit | default('2G') }}"
 
 # Auth: closed by default so this server is never an open spam relay.
