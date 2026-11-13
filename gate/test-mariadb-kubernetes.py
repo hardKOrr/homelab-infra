@@ -160,3 +160,23 @@ assert "_other_ports" not in guard["ansible.builtin.set_fact"]
 restore_text = read("ansible/tasks/kubernetes/recovery-restore.yml")
 assert 'loop: "{{ k8s_recovery.stop }}"' in restore_text
 assert "k8s_recovery.stop | length" in restore_text
+
+# A consumer's backup applies into its own namespace after the registered-backend step
+# resolved the MariaDB version through the backend's pod: the adapters must hand the
+# backend's namespace back in a variable of their own and keep the caller's k8s_namespace.
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
+
+namespace_tasks = load("ansible/tasks/database/resolve-backend-namespace.yml")
+final = namespace_tasks[-1]["ansible.builtin.set_fact"]
+variables = {
+    "k8s_namespace": "app-mariadb",  # as derive-namespace.yml left it for the backend
+    "_database_caller_namespace": "app-wordpress",
+}
+rendered = {key: Templar(loader=DataLoader(), variables=variables).template(value)
+            for key, value in final.items()}
+assert rendered == {"database_backend_namespace": "app-mariadb", "k8s_namespace": "app-wordpress"}
+for adapter in ("backend-sql.yml", "guard-app-database.yml"):
+    adapter_text = read(f"ansible/tasks/database/{adapter}")
+    assert "resolve-backend-namespace.yml" in adapter_text, adapter
+    assert '"{{ k8s_namespace }}"' not in adapter_text, adapter

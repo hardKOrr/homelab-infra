@@ -1,0 +1,25 @@
+---
+# Resolve the cluster and the namespace of a database backend that runs on Kubernetes,
+# from inside a consumer's own task flow. derive-namespace.yml writes `k8s_namespace`,
+# which the consumer's later Kubernetes tasks (backup Secret and CronJob, restore Job)
+# apply into, so this file hands the backend's namespace back in its own variable and
+# puts the caller's `k8s_namespace` back.
+#
+# Input:  database_backend_instance  the backend instance
+# Sets:   database_backend_namespace the backend's namespace; k8s_api_host is the cluster's
+- name: Backend namespace | Remember the caller's namespace
+  ansible.builtin.set_fact:
+    _database_caller_namespace: "{{ k8s_namespace | default('') }}"
+
+- name: Backend namespace | Resolve the cluster and derive the backend's namespace
+  ansible.builtin.include_tasks: "{{ item }}"
+  vars:
+    k8s_namespace_for: "{{ database_backend_instance }}"
+  loop:
+    - ../kubernetes/resolve-cluster.yml
+    - ../kubernetes/derive-namespace.yml
+
+- name: Backend namespace | Return the backend's namespace and the caller's own
+  ansible.builtin.set_fact:
+    database_backend_namespace: "{{ k8s_namespace }}"
+    k8s_namespace: "{{ _database_caller_namespace if _database_caller_namespace | length > 0 else k8s_namespace }}"

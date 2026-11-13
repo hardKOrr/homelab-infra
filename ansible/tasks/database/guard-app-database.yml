@@ -88,12 +88,9 @@
   when: database_app_target.kubernetes | default(false) | bool
   block:
     - name: Database guard | Resolve the cluster and the backend's namespace
-      ansible.builtin.include_tasks: "{{ item }}"
+      ansible.builtin.include_tasks: resolve-backend-namespace.yml
       vars:
-        k8s_namespace_for: "{{ database_app_target.instance }}"
-      loop:
-        - ../kubernetes/resolve-cluster.yml
-        - ../kubernetes/derive-namespace.yml
+        database_backend_instance: "{{ database_app_target.instance }}"
 
     - name: Database guard | Read the backend namespace's ownership label
       ansible.builtin.command:
@@ -102,7 +99,7 @@
           - kubectl
           - get
           - namespace
-          - "{{ k8s_namespace }}"
+          - "{{ database_backend_namespace }}"
           - -o
           - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
       delegate_to: "{{ k8s_api_host }}"
