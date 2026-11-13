@@ -10,22 +10,12 @@
       forward (firewall.inbound, opened by Deploy), never a proxy route.
   no_log: true
 
-- name: WireGuard | Install upstream package
-  ansible.builtin.apt:
-    name: [wireguard-tools, iptables]
-    state: present
-    update_cache: true
-
-- name: WireGuard | Enable IPv4 forwarding
-  ansible.posix.sysctl:
-    name: net.ipv4.ip_forward
-    value: '1'
-    state: present
-    reload: true
+- name: WireGuard | Prepare the host
+  ansible.builtin.include_tasks: "{{ 'docker' if wireguard_docker | bool else 'native' }}.yml"
 
 - name: WireGuard | Inspect existing interface configuration
   ansible.builtin.stat:
-    path: "/etc/wireguard/{{ app_config.app.interface }}.conf"
+    path: "{{ wireguard_conf_path }}"
   register: _wg_config
   no_log: true
 
@@ -124,21 +114,38 @@
 - name: WireGuard | Write wg-quick configuration
   ansible.builtin.template:
     src: wg.conf.j2
-    dest: "/etc/wireguard/{{ app_config.app.interface }}.conf"
+    dest: "{{ wireguard_conf_path }}"
     owner: root
     group: root
     mode: '0600'
   no_log: true
-  notify: Restart WireGuard
+  notify: "{{ 'Restart WireGuard container' if wireguard_docker | bool else 'Restart WireGuard' }}"
 
 - name: WireGuard | Enable and start wg-quick
   ansible.builtin.systemd_service:
     name: "wg-quick@{{ app_config.app.interface }}"
     state: started
     enabled: true
+  when: not (wireguard_docker | bool)
+
+- name: WireGuard | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "{{ wireguard_project_dir }}"
+    state: present
+    remove_orphans: true
+  when: wireguard_docker | bool
+
+- name: WireGuard | Apply pending restarts before verifying
+  ansible.builtin.meta: flush_handlers
 
 - name: WireGuard | Verify the managed interface is active
   ansible.builtin.command:
-    argv: [wg, show, "{{ app_config.app.interface }}"]
+    argv: >-
+      {{ ['docker', 'exec', instance, 'wg', 'show', app_config.app.interface]
+         if wireguard_docker | bool else ['wg', 'show', app_config.app.interface] }}
+  register: _wg_show
+  until: _wg_show.rc == 0
+  retries: 12
+  delay: 5
   changed_when: false
   no_log: true

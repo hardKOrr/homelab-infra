@@ -4,8 +4,12 @@
 wireguard_defaults:
   hosting:
     method: native
-    supported: [native-lxc]
+    supported: [native-lxc, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
+  # image below on that stack host. The native default is unchanged.
+  stack: ""
+
   proxmox:
     type: lxc
     boot_order: 30
@@ -17,6 +21,7 @@ wireguard_defaults:
   app:
     interface: wg0
     port: 51820
+    image: "linuxserver/wireguard:1.0.20260223"   # Docker method only
     vpn_cidr: 10.66.66.0/24
     vpn_address: 10.66.66.1/24
     client_allowed_ips: 0.0.0.0/0, ::/0

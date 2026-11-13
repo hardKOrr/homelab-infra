@@ -1,0 +1,51 @@
+---
+- name: Resolve wireguard's native default and opt-in Docker stacks
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance: wireguard
+    hosting_app_slug: wireguard
+    hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/wireguard.yml"
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    _wireguard_defaults: >-
+      {{ (lookup('ansible.builtin.file', hosting_app_defaults_file) | from_yaml).wireguard_defaults }}
+    homelabinfra_config:
+      infrastructure:
+        stacks:
+          wireguard-lxc:
+            guest_type: lxc
+  tasks:
+    - name: Validate the default configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: "{{ _wireguard_defaults }}"
+
+    - name: Require the unchanged native default
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-lxc'
+
+    - name: Validate the VM drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _wireguard_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'wireguard'}, recursive=True) }}
+
+    - name: Require the VM combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-vm'
+          - _hosting_stack_name == 'wireguard'
+
+    - name: Validate the LXC drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _wireguard_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'wireguard-lxc'}, recursive=True) }}
+
+    - name: Require the LXC combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-lxc'
+          - _hosting_stack_name == 'wireguard-lxc'
