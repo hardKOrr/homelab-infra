@@ -1,6 +1,8 @@
 ---
 # Admin token resolution shared by both hosting methods. It reads the environment file
-# of whichever method is active (vaultwarden_env_file) so the token hash survives re-runs.
+# of whichever guest method is active (vaultwarden_env_file) so the token hash survives
+# re-runs. On Kubernetes the controller-side sink is the only continuity: the Deployment
+# receives the plaintext token from a Secret (Vaultwarden accepts one), so nothing is hashed.
 # ── Admin token ───────────────────────────────────────────────────────────────
 - name: Read current environment file (token continuity across re-runs)
   ansible.builtin.slurp:
@@ -8,6 +10,7 @@
   register: _vw_env_current
   failed_when: false
   no_log: true
+  when: not (vaultwarden_kubernetes | bool)
 
 - name: Extract existing admin token hash
   ansible.builtin.set_fact:
@@ -117,12 +120,15 @@
   register: _argon2
   changed_when: false
   no_log: true
-  when: _admin_token_plain | length > 0
+  when:
+    - _admin_token_plain | length > 0
+    - not (vaultwarden_kubernetes | bool)
 
 - name: Select admin token hash for the environment file
   ansible.builtin.set_fact:
     _admin_token_hash: >-
       {{ (_argon2.stdout | trim)
-         if _admin_token_plain | length > 0 else _existing_admin_hash }}
+         if _admin_token_plain | length > 0 and not (vaultwarden_kubernetes | bool)
+         else _existing_admin_hash }}
   no_log: true
 

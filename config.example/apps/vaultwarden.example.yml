@@ -37,3 +37,11 @@
 # hosting:
 #   method: docker
 # stack: vaultwarden       # set guest_type under infrastructure.stacks
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# Runs the official image as a Deployment on the k3s cluster, with its data on one
+# default-StorageClass volume (app.storage, in Gi). The admin token is handled as above.
+# hosting:
+#   method: kubernetes
+# app:
+#   storage: 5

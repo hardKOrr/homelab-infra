@@ -415,7 +415,7 @@ def run_hook(hook, stage, port):
 
 def check_restore_swap():
     """Vaultwarden supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("vaultwarden")
+    swap = swap_inputs("vaultwarden", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.data_path }}", "owner": "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}",
                     "group": "{{ vaultwarden_user if _vw_restore_runtime == 'native' else 0 }}", "mode": "0750"}
@@ -425,7 +425,7 @@ def check_restore_swap():
     assert swap["recovery_swap_stop_services"] == [
         "{{ app_config.app.service_name | default(vaultwarden_service_name) }}"]
     assert swap["recovery_swap_health_url"].endswith("/alive")
-    tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/restore.yml")
+    tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/restore-guest.yml")
     assert "Vaultwarden restore | Validate the independent pre-restore group" in [t.get("name") for t in tasks]
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), VaultwardenWeb)

@@ -1,0 +1,21 @@
+---
+# The shared restore Job replaces the whole data volume: SQLite database, RSA keys,
+# attachments, sends and the admin panel's config.json, as the guest recovery points hold.
+- name: Vaultwarden Kubernetes restore | Restore the data volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Vaultwarden
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-data"
+          owner: "0:0"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ restore_target }}-data volume with Vaultwarden's SQLite database, keys,
+        attachments, sends and admin configuration
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in with the Vaultwarden
+          drill owner, and verify the expected vault items.

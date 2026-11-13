@@ -2,6 +2,7 @@
 # Deploy Vaultwarden — the enforced first baseline app (platform secrets store).
 # Native LXC by default: dedicated container, static binary install (see role header).
 # hosting.method: docker runs the official image on the stack host (LXC or VM per the stack).
+# hosting.method: kubernetes runs it as a Deployment on the k3s cluster (role tasks/kubernetes.yml).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/vaultwarden.yml -e instance=vaultwarden
@@ -62,6 +63,19 @@
       vars:
         hosting_app_slug: vaultwarden
   tasks:
+    # Kubernetes only: the guest methods resolve their estate in Play 2 as before.
+    - name: Resolve the estate this Vaultwarden belongs to
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        vaultwarden_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        vaultwarden_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain | default('') }}
+
     - name: Provision a dedicated native LXC
       ansible.builtin.include_tasks: ../../roles/vaultwarden/tasks/provision-native.yml
       when: app_config.hosting.method | default('native') == 'native'
@@ -74,6 +88,20 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method | default('native') == 'docker'
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
+    - name: Open Vaultwarden's declared Kubernetes network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method | default('native') == 'kubernetes'
+
+    - name: Deploy Vaultwarden on Kubernetes
+      ansible.builtin.include_role:
+        name: vaultwarden
+        tasks_from: kubernetes
+      when: app_config.hosting.method | default('native') == 'kubernetes'
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -125,6 +153,7 @@
     - name: Deploy Vaultwarden
       ansible.builtin.include_role:
         name: vaultwarden
+      when: hostvars['localhost'].app_config.hosting.method | default('native') in ['native', 'docker']
 
 
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
@@ -154,18 +183,18 @@
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: vaultwarden
         generated_facts_data:
-          host: "http://{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
-          port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port | int }}"
+          host: >-
+            {{ ('http://' ~ hostvars[groups['deploy_' ~ instance][0]].ansible_host)
+               if _vw_on_guest | bool else 'https://' ~ hostvars['localhost'].vaultwarden_fqdn }}
+          port: >-
+            {{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port | int
+               if _vw_on_guest | bool else 443 }}
       # The canonical `vaultwarden` fact is the platform credential server. Additional
       # instances wire from their own deploy group but must never replace that root entry.
       when: instance == 'vaultwarden'
 
-    # Belt-and-braces only. The key just written is already in the live
-    # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there
-    # with set_fact — and this include_vars CANNOT override that, because set_fact
-    # outranks include_vars in Ansible's precedence order. It stays for a play that
-    # never loaded the registry at all; it is not what makes the wiring below see
-    # this deploy's own key.
+    # Belt-and-braces only: set_fact (the write above) outranks include_vars, so this
+    # reload cannot override the live key; it covers a play that never loaded the registry.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -177,11 +206,11 @@
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: >-
-          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
-             | default('') }}
+        resolve_estate_name: "{{ hostvars['localhost'].app_config.routing.estate | default('') }}"
 
   vars:
+    _vw_on_guest: >-
+      {{ hostvars['localhost'].app_config.hosting.method | default('native') in ['native', 'docker'] }}
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
@@ -190,21 +219,19 @@
     # deploy_<instance> group (both branches call add_host). Its ansible_host is the
     # app LXC's own IP, so this one read is correct for both provisioning paths.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
-    wiring_upstream_port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port }}"
-    wiring_subdomain: >-
-      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.subdomain
-         | default(instance, true) }}
+    wiring_upstream_host: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].ansible_host
+         if _vw_on_guest | bool else homelabinfra_infra.kubernetes.ingress_vip }}
+    wiring_upstream_port: "{{ hostvars['localhost'].app_config.app.port if _vw_on_guest | bool else 80 }}"
+    wiring_subdomain: "{{ hostvars['localhost'].vaultwarden_subdomain }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Vaultwarden ({{ instance }})"
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: >-
-      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.identity
-         | default('catalog') }}
+      {{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}
     wiring_access: >-
-      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.access
-         | default('internal') }}
+      {{ hostvars['localhost'].app_config.routing.access | default('internal') }}
 
   tasks:
     - name: Wire reverse proxy
@@ -241,6 +268,15 @@
     # shows what each host actually runs. Defaults cover every input - see the task file.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      when: _vw_on_guest | bool
+
+    - name: Record the app on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ wiring_domain }}"
+      when: not (_vw_on_guest | bool)
 
     # No-op on the very first bootstrap pass — Ntfy does not exist until step 2.
     - name: Notify deployment complete

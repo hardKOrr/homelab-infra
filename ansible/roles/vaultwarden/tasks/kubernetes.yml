@@ -1,0 +1,46 @@
+---
+# Vaultwarden as one Deployment on the k3s cluster. The single data volume holds the
+# whole recovery unit (db.sqlite3, keys, attachments, sends, config.json). The admin token
+# is not a Vaultwarden item (see token.yml); the Secret below is a runtime copy of it.
+- name: Vaultwarden Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Vaultwarden Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Vaultwarden Kubernetes | Resolve the admin token
+  ansible.builtin.include_tasks: token.yml
+
+- name: Vaultwarden Kubernetes | Sync the admin token into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      admin-token: "{{ _admin_token_plain }}"
+  when: _admin_token_plain | length > 0
+  no_log: true
+
+- name: Vaultwarden Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _vaultwarden_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Vaultwarden Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _vaultwarden_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Vaultwarden Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-data"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        the Vaultwarden data volume (SQLite database, keys, attachments, sends and admin
+        configuration) in one application-consistent recovery point

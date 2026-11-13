@@ -6,7 +6,7 @@
 vaultwarden_defaults:
   hosting:
     method: native
-    supported: [native-lxc, docker-lxc, docker-vm]
+    supported: [native-lxc, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   recovery:
     methods: [native]
@@ -17,6 +17,8 @@ vaultwarden_defaults:
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
   # official image on that stack host. The native default is unchanged.
   stack: ""
+  # Kubernetes method: `hosting.method: kubernetes` runs the same image as a Deployment on the
+  # k3s cluster, its data on one default-StorageClass volume (`app.storage`).
 
   proxmox:
     type: lxc                   # native LXC — single binary, no Docker needed
@@ -46,7 +48,10 @@ vaultwarden_defaults:
     data_path: "/opt/{{ instance }}/data"
     signups_allowed: false      # open registration off by default — invite via /admin
     service_name: vaultwarden   # systemd unit (Compose service on Docker) — playbooks/apps/remove.yml stops this
-    image: "vaultwarden/server:1.37.1"   # Docker method only; a deploy never re-pulls it
+    image: "vaultwarden/server:1.37.1"   # Docker and Kubernetes methods; a deploy never re-pulls it
+    # Kubernetes method only. Omitting storageClassName selects the cluster's default
+    # StorageClass.
+    storage: 5                  # Gi
 
   update:
     github_repo: dani-garcia/vaultwarden
@@ -67,3 +72,13 @@ vaultwarden_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
+    schedule: "0 3 * * *"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
