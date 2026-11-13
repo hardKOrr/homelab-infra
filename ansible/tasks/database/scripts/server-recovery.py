@@ -8,7 +8,7 @@ mariadb and mysql roles' backup.yml and restore.yml run it.
 
 usage: server-recovery.py ENGINE backup DIR
        server-recovery.py ENGINE verify DIR
-       server-recovery.py ENGINE restore [--data-dir D] [--service S] SOURCE [SAFETY]
+       server-recovery.py ENGINE restore [--data-dir D] [--service S] [--runtime R] SOURCE [SAFETY]
 
 backup   Writes ENGINE.sql and ENGINE-manifest.json (version, size, sha256) into an
          empty DIR.
@@ -16,6 +16,9 @@ verify   Checks a downloaded point's manifest and that its major.minor matches t
 restore  Replaces the server's contents with SOURCE, by engine:
          mariadb  stops the service, moves the data directory aside, initializes a new
                   one, loads SOURCE; on any failure puts the original directory back.
+                  --runtime docker makes S a container: the image initializes the empty
+                  data directory itself when it starts, and the server is reached over
+                  the host-mounted socket like the native one.
          mysql    drops every non-system schema and loads SOURCE; on failure loads SAFETY
                   (the pre-restore point) instead.
          A MySQL point taken before this file existed carries mysql-version.txt in place
@@ -31,6 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 
@@ -235,8 +239,41 @@ def safe_service(server, service):
     return service
 
 
-def service_action(server, action, service):
+def service_action(server, action, service, runtime="native"):
+    if runtime == "docker":
+        run_checked(["docker", action, safe_service(server, service)], f"the {server.label} container {action}")
+        if action == "start":
+            wait_ready(server)
+        return
     run_checked(["systemctl", action, safe_service(server, service)], f"the {server.label} service {action}")
+
+
+def wait_ready(server, seconds=300):
+    """Wait for the container's final server; its init server runs with networking off."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            answer = server.client(query="SELECT @@skip_networking").decode("utf-8", errors="strict").strip()
+            if answer == "0":
+                return
+        except RecoveryError:
+            pass
+        if time.monotonic() > deadline:
+            raise RecoveryError(f"{server.label} did not become ready")
+        time.sleep(2)
+
+
+def is_active(service, runtime):
+    if runtime == "docker":
+        argv = ["docker", "inspect", "--format", "{{.State.Running}}", service]
+        result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        return result.returncode == 0 and result.stdout.strip() == b"true"
+    return subprocess.run(
+        ["systemctl", "is-active", "--quiet", service],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    ).returncode == 0
 
 
 def ensure_data_directory(server, path):
@@ -254,36 +291,33 @@ def ensure_data_directory(server, path):
     return directory
 
 
-def rebuild(server, source_dump, source_version, data_directory, service):
+def rebuild(server, source_dump, source_version, data_directory, service, runtime="native"):
     """Load into a freshly initialized data directory; put the original back on failure."""
     safe_service(server, service)
     data_dir = ensure_data_directory(server, data_directory)
-    active = subprocess.run(
-        ["systemctl", "is-active", "--quiet", service],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if active.returncode:
+    if not is_active(service, runtime):
         raise RecoveryError(f"{server.label} must be running before its data can be replaced")
 
     rollback_dir = data_dir.parent / f".{data_dir.name}.homelab-restore-{uuid.uuid4().hex}"
     moved_original = False
     try:
-        service_action(server, "stop", service)
+        service_action(server, "stop", service, runtime)
         os.replace(data_dir, rollback_dir)
         moved_original = True
-        run_checked(
-            [
-                "mariadb-install-db",
-                "--user=mysql",
-                f"--datadir={data_dir}",
-                "--auth-root-authentication-method=socket",
-                "--skip-test-db",
-            ],
-            f"{server.label} system database initialization",
-        )
-        service_action(server, "start", service)
+        if runtime == "docker":
+            data_dir.mkdir(mode=rollback_dir.stat().st_mode & 0o7777)
+        else:
+            run_checked(
+                [
+                    "mariadb-install-db",
+                    "--user=mysql",
+                    f"--datadir={data_dir}",
+                    "--auth-root-authentication-method=socket",
+                    "--skip-test-db",
+                ],
+                f"{server.label} system database initialization",
+            )
+        service_action(server, "start", service, runtime)
         server.load(source_dump)
         if server.family(server.version()) != server.family(source_version):
             raise RecoveryError(f"restored {server.label} server version did not verify")
@@ -291,17 +325,17 @@ def rebuild(server, source_dump, source_version, data_directory, service):
         rollback_error = None
         try:
             if moved_original:
-                service_action(server, "stop", service)
+                service_action(server, "stop", service, runtime)
                 if data_dir.is_symlink():
                     data_dir.unlink()
                 elif data_dir.exists():
                     shutil.rmtree(data_dir)
                 os.replace(rollback_dir, data_dir)
-                service_action(server, "start", service)
+                service_action(server, "start", service, runtime)
                 server.version()
                 server.check_health()
             else:
-                service_action(server, "start", service)
+                service_action(server, "start", service, runtime)
         except (OSError, RecoveryError) as rollback_failure:
             rollback_error = rollback_failure
         if rollback_error:
@@ -354,7 +388,7 @@ def reload(server, source_dump, safety_dump):
         ) from None
 
 
-def restore(server, source_directory, safety_directory, data_directory, service):
+def restore(server, source_directory, safety_directory, data_directory, service, runtime="native"):
     source_dump, source_version = read_bundle(server, source_directory)
     safety_dump = safety_version = None
     if safety_directory:
@@ -373,7 +407,7 @@ def restore(server, source_directory, safety_directory, data_directory, service)
         )
 
     if server.spec["restore"] == "rebuild":
-        rebuild(server, source_dump, source_version, data_directory, service)
+        rebuild(server, source_dump, source_version, data_directory, service, runtime)
     else:
         reload(server, source_dump, safety_dump)
     print(f"Restored {server.label} recovery point from server version {source_version}.")
@@ -388,6 +422,7 @@ def parse(argv):
     restore_parser = actions.add_parser("restore")
     restore_parser.add_argument("--data-dir", default="/var/lib/mysql")
     restore_parser.add_argument("--service")
+    restore_parser.add_argument("--runtime", choices=["native", "docker"], default="native")
     restore_parser.add_argument("source")
     restore_parser.add_argument("safety", nargs="?")
     return parser.parse_args(argv)
@@ -402,7 +437,7 @@ def main(argv):
         read_bundle(server, args.directory)
         server.family(server.version())
     else:
-        restore(server, args.source, args.safety, args.data_dir, args.service or args.engine)
+        restore(server, args.source, args.safety, args.data_dir, args.service or args.engine, args.runtime)
     return 0
 
 

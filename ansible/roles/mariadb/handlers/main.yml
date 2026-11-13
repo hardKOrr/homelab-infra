@@ -3,3 +3,10 @@
   ansible.builtin.systemd:
     name: "{{ app_config.app.service_name }}"
     state: restarted
+  when: not (mariadb_docker | bool)
+
+- name: Restart MariaDB container
+  community.docker.docker_compose_v2:
+    project_src: "{{ mariadb_project_dir }}"
+    state: restarted
+  when: mariadb_docker | bool

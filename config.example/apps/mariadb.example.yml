@@ -23,3 +23,11 @@
 #   # the lower end of MariaDB's 50–75% InnoDB buffer-pool guidance.
 #   memory:
 #     innodb_buffer_pool_size: 1024
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# Runs the official image on a stack host; the stack's guest_type, lxc or vm, sets the
+# guest. app.port is then the host port published for the container, and the buffer pool
+# defaults to 512 MiB unless app.memory.innodb_buffer_pool_size is set.
+# hosting:
+#   method: docker
+# stack: mariadb          # set guest_type under infrastructure.stacks

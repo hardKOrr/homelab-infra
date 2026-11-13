@@ -119,6 +119,12 @@ def bundle(directory, sql, version="10.11.6-MariaDB"):
 
 
 def check_contract():
+    compose = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
+    assert "MARIADB_ROOT_HOST=localhost" in compose, "Docker root must not be remote-reachable"
+    docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
+    assert "Host NOT IN ('localhost')" in docker_tasks
+    assert "Refuse a second backend on this stack host" in docker_tasks
+    assert "MariaDB | Create the state directory" in docker_tasks
     defaults = yaml.safe_load(
         (ROOT / "ansible/vars/app-defaults/mariadb.yml").read_text(encoding="utf-8")
     )["mariadb_defaults"]
@@ -129,7 +135,7 @@ def check_contract():
     assert defaults["backup"]["application_consistent"] is True
     assert defaults["routing"]["proxy"] == defaults["routing"]["identity"] == "none"
 
-    main = list(tasks(yaml.safe_load((ROLE / "tasks/main.yml").read_text(encoding="utf-8"))))
+    main = list(tasks(yaml.safe_load((ROLE / "tasks/native.yml").read_text(encoding="utf-8"))))
     packages = named(main, "MariaDB | Install server and Python client")
     assert packages["ansible.builtin.apt"]["name"] == [
         "mariadb-server", "mariadb-client", "python3-pymysql"
@@ -152,7 +158,7 @@ def check_contract():
     assert staging["ansible.builtin.tempfile"]["path"] == "/var/tmp"
     upload = named(backup, "MariaDB backup | Upload the logical archive to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert "docker" in upload["vars"]["pbs_client_runtime"] and "native" in upload["vars"]["pbs_client_runtime"]
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "mariadb.pxar", "path": "{{ _mariadb_backup_tmp.path }}"}
     ]
@@ -176,7 +182,7 @@ def check_contract():
         "MariaDB restore | Import the point and retain rollback state until verified",
     )
     command = apply_restore["ansible.builtin.command"]["argv"]
-    assert "app_config.app.data_path" in command
+    assert "mariadb_data_dir" in command
     assert "app_config.app.service_name" in command
     assert "_mariadb_restore_tmp.path ~ '/safety'" in command
 

@@ -1,0 +1,136 @@
+---
+# Docker hosting: the official image under Compose on the stack host. The server socket is
+# shared with the host at /run/mysqld, where the host's MariaDB client and the shared
+# database tasks (provision, dump, drop, server recovery) reach it exactly as on a native
+# backend guest.
+# One socket directory per host: a second backend would share /run/mysqld, and the shared
+# operations could not tell the two apart.
+- name: MariaDB | Find other MariaDB backends on this host
+  ansible.builtin.find:
+    paths: /opt
+    patterns: docker-compose.yml
+    recurse: true
+    depth: 2
+    contains: '.*/run/mysqld:/run/mysqld.*'
+    use_regex: false
+  register: _mariadb_other_backends
+
+- name: MariaDB | Refuse a second backend on this stack host
+  ansible.builtin.assert:
+    that: >-
+      _mariadb_other_backends.files | map(attribute='path')
+      | reject('equalto', mariadb_project_dir ~ '/docker-compose.yml') | list | length == 0
+    fail_msg: >-
+      Another MariaDB backend already shares this host's /run/mysqld socket. Give each
+      MariaDB backend its own stack.
+
+- name: MariaDB | Resolve database memory settings
+  ansible.builtin.set_fact:
+    _mariadb_innodb_buffer_pool_size_mib: >-
+      {{ app_config.app.get('memory', {}).get('innodb_buffer_pool_size', 512) | int }}
+
+- name: MariaDB | Install the host client and Python client
+  ansible.builtin.apt:
+    name: [mariadb-client, python3-pymysql]
+    state: present
+    update_cache: true
+
+- name: MariaDB | Install the shared server recovery script
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
+
+# The image runs the server as uid 999. /run is a tmpfs, so tmpfiles recreates the shared
+# socket directory with that owner on every boot, before Docker starts.
+- name: MariaDB | Recreate the shared socket directory at boot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/homelab-mariadb.conf
+    content: "d /run/mysqld 0755 999 999 -\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: MariaDB | Create the shared socket directory
+  ansible.builtin.file:
+    path: /run/mysqld
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "0755"
+
+- name: MariaDB | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ mariadb_project_dir }}"
+    - "{{ mariadb_project_dir }}/conf.d"
+
+# The image gives this directory to its mysql user when it initializes, so Deploy creates
+# it but never sets its owner or mode, which would undo that on every run.
+- name: MariaDB | Create the state directory
+  ansible.builtin.file:
+    path: "{{ mariadb_data_dir }}"
+    state: directory
+
+- name: MariaDB | Write the server tuning
+  ansible.builtin.template:
+    src: homelab-infra.cnf.j2
+    dest: "{{ mariadb_project_dir }}/conf.d/z-homelab-infra.cnf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart MariaDB container
+
+- name: MariaDB | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mariadb_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart MariaDB container
+
+- name: MariaDB | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ mariadb_project_dir }}"
+
+- name: MariaDB | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ mariadb_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: MariaDB | Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+# The image's init server runs with networking off; the final server has it on.
+- name: MariaDB | Wait for the final server
+  ansible.builtin.command:
+    argv: [mariadb, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --batch, --skip-column-names, --execute, SELECT @@skip_networking]
+  register: _mariadb_ready
+  until: _mariadb_ready.rc == 0 and _mariadb_ready.stdout | trim == '0'
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# The port is published, so no root account may match a non-local host.
+- name: MariaDB | Count root accounts reachable from other hosts
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --user=root
+      - --socket=/run/mysqld/mysqld.sock
+      - --batch
+      - --skip-column-names
+      - --execute
+      - SELECT COUNT(*) FROM mysql.user WHERE User = 'root' AND Host NOT IN ('localhost')
+  register: _mariadb_remote_root
+  changed_when: false
+
+- name: MariaDB | Refuse a remotely reachable root account
+  ansible.builtin.assert:
+    that: _mariadb_remote_root.stdout | trim == '0'
+    fail_msg: MariaDB root must be reachable from localhost only; the published port would expose it.
