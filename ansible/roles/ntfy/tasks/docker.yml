@@ -1,0 +1,56 @@
+---
+# Docker hosting: the official image under Compose on the stack host. State and config are
+# bind-mounted at the same paths the server config names; the container runs as root, so
+# the directories are root-owned.
+- name: Ntfy | Create the project and state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ ntfy_project_dir }}"
+    - "{{ ntfy_data_dir }}"
+    - "{{ ntfy_cache_dir }}"
+
+- name: Ntfy | Write server config
+  ansible.builtin.template:
+    src: server.yml.j2
+    dest: "{{ ntfy_config_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart ntfy container
+
+- name: Ntfy | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ ntfy_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart ntfy container
+
+- name: Ntfy | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ ntfy_project_dir }}"
+
+- name: Ntfy | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ ntfy_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Ntfy | Apply pending restarts before provisioning credentials
+  ansible.builtin.meta: flush_handlers
+
+- name: Ntfy | Wait for the container to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/v1/health"
+    status_code: 200
+  register: _ntfy_health
+  until: _ntfy_health.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false

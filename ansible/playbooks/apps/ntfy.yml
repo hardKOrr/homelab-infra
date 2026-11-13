@@ -1,6 +1,7 @@
 ---
 # Deploy Ntfy — the platform notification hub (bootstrap step 2).
-# Defaults to a native LXC with the official .deb; config may select a VM or Kubernetes.
+# Defaults to a native LXC with the official .deb; config may select Docker on a stack host
+# (LXC or VM per the stack's guest_type) or Kubernetes.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/ntfy.yml -e instance=ntfy
@@ -69,6 +70,15 @@
         native_guest_network_app: ntfy
       when: app_config.hosting.method == 'native'
 
+    # Docker: the stack host (LXC or VM per the stack's guest_type), found or created.
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'kubernetes'
@@ -107,6 +117,11 @@
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Ntfy
@@ -168,7 +183,7 @@
   vars:
     _ntfy_deploy_host: >-
       {{ hostvars[groups['deploy_' ~ instance][0]]
-         if hostvars['localhost'].app_config.hosting.method == 'native'
+         if hostvars['localhost'].app_config.hosting.method in ['native', 'docker']
             and groups.get('deploy_' ~ instance, []) | length > 0
          else hostvars['localhost'] }}
 
@@ -228,7 +243,9 @@
     # shows what each host actually runs. Defaults cover every input - see the task file.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
-      when: _ntfy_deploy_host.app_config.hosting.method == 'native'
+      vars:
+        record_guest_kind: "{{ 'docker' if _ntfy_deploy_host.app_config.hosting.method == 'docker' else 'native' }}"
+      when: _ntfy_deploy_host.app_config.hosting.method in ['native', 'docker']
 
     - name: Record the app on its Kubernetes cluster
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

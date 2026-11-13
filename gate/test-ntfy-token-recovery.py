@@ -94,7 +94,25 @@ def run_case(name, recorded_token, guest_token, expected_token, should_create):
         assert result.returncode == 0, f"{name}: token selection failed\n{output}"
 
 
+def check_docker_password_forwarding():
+    # `user add` and `user change-pass` read NTFY_PASSWORD, so the Docker prefix must pass it
+    # into the container; the other CLI calls keep the plain exec prefix.
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar
+    docker = next(t for t in NATIVE if "ntfy_cli_password_prefix" in t.get("ansible.builtin.set_fact", {}))
+    values = Templar(loader=DataLoader(), variables={"ntfy_docker": True, "instance": "ntfy"}).template(
+        docker["ansible.builtin.set_fact"]["ntfy_cli_password_prefix"])
+    assert values == ["docker", "exec", "-e", "NTFY_PASSWORD", "ntfy", "ntfy"], values
+    for name in ("Create publish account", "Reset publish account password after creating its vault value"):
+        task = next(t for t in PROVISION if t.get("name") == name)
+        assert "ntfy_cli_password_prefix" in task["ansible.builtin.command"]["argv"], name
+        assert task["environment"]["NTFY_PASSWORD"] == "{{ _ntfy_password }}"
+    others = [t for t in PROVISION if "ntfy_cli_password_prefix" in str(t)]
+    assert len(others) == 2, [t["name"] for t in others]
+
+
 def main():
+    check_docker_password_forwarding()
     run_case(
         "fresh guest with stale saved token",
         recorded_token="tk_fixtureOld",

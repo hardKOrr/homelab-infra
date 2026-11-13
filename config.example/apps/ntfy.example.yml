@@ -35,3 +35,10 @@
 #                    # is what gets phone notifications off-LAN without a VPN.
 #   # auth stays false — Ntfy has its own token auth; Authentik in front would
 #   # break every tool that publishes with a bearer token.
+
+# ── Docker on an LXC or a VM ───────────────────────────────────────────────────
+# Runs the official image on a stack host; the stack's guest_type, lxc or vm, sets the
+# guest. app.port is then the host port published for the container.
+# hosting:
+#   method: docker
+# stack: ntfy              # set guest_type under infrastructure.stacks

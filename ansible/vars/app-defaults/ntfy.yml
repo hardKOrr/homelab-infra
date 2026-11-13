@@ -1,14 +1,18 @@
 ---
 # Default Proxmox and app configuration for Ntfy — the platform notification hub.
-# It remains a native LXC by default; a VM or Kubernetes is selected per instance.
+# It remains a native LXC by default; Docker on an LXC or a VM, or Kubernetes, is selected
+# per instance.
 # Users override specific values in config/apps/ntfy.yml.
 # This file is git-managed — git pull may update these defaults.
 
 ntfy_defaults:
   hosting:
     method: native
-    supported: [native-lxc, native-vm, kubernetes]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
+  # official image on that stack host. The native default is unchanged.
+  stack: ""
   recovery:
     methods: [native]
     native:
@@ -40,11 +44,11 @@ ntfy_defaults:
 
   app:
     port: 80                    # HTTP listener (publish + subscribe + web UI)
-    image: binwiederhier/ntfy:latest
+    image: binwiederhier/ntfy:latest   # Docker and Kubernetes
     storage: 4                   # GB — auth database, message cache and attachments
-    data_path: /var/lib/ntfy    # auth database lives here
+    data_path: /var/lib/ntfy    # auth database lives here (native; Docker uses /opt/<instance>/data)
     service_name: ntfy          # systemd unit — playbooks/apps/remove.yml stops this
-    cache_path: /var/cache/ntfy # message cache + attachments
+    cache_path: /var/cache/ntfy # message cache + attachments (native; Docker uses /opt/<instance>/cache)
     topic: homelab              # the topic every homelab-infra tool publishes to
     user: homelab               # the account homelab-infra publishes as
     attachment_total_size_limit: 2G

@@ -4,3 +4,10 @@
     name: "{{ ntfy_service_name }}"
     state: restarted
     daemon_reload: true
+  when: not (ntfy_docker | bool)
+
+- name: Restart ntfy container
+  community.docker.docker_compose_v2:
+    project_src: "{{ ntfy_project_dir }}"
+    state: restarted
+  when: ntfy_docker | bool

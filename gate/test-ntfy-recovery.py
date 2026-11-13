@@ -49,7 +49,7 @@ def check_contract():
     backup_tasks = list(tasks_recursive(BACKUP))
     upload = task_named(backup_tasks, "Ntfy backup | Quiesce Ntfy and archive auth and cache state to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ 'docker' if ntfy_docker | bool else 'native' }}"
     assert upload["vars"]["pbs_client_stop_services"] == ["{{ _ntfy_backup_service_name }}"]
     assert [a["name"] for a in upload["vars"]["pbs_client_archives"]] == ["data.pxar", "cache.pxar"]
 
@@ -60,24 +60,25 @@ def check_contract():
 
 
 def check_restore():
-    swap = swap_inputs("ntfy", "restore-native.yml")
-    assert swap["recovery_swap_runtime"] == "native"
+    swap = swap_inputs("ntfy", "restore-guest.yml")
+    assert swap["recovery_swap_runtime"] == "{{ _ntfy_restore_runtime }}"
+    assert swap["recovery_swap_compose_project"] == "{{ ntfy_project_dir }}"
     assert swap["recovery_swap_archives"] == ["data.pxar", "cache.pxar"]
     data, cache = swap["recovery_swap_paths"]
-    assert (data["path"], data["source"]) == ("{{ app_config.app.data_path }}", "data")
-    assert (cache["path"], cache["source"]) == ("{{ app_config.app.cache_path }}", "cache")
+    assert (data["path"], data["source"]) == ("{{ ntfy_data_dir }}", "data")
+    assert (cache["path"], cache["source"]) == ("{{ ntfy_cache_dir }}", "cache")
     for path in (data, cache):
-        assert (path["owner"], path["group"], path["mode"]) == ("ntfy", "ntfy", "0750")
+        assert (path["owner"], path["group"], path["mode"]) == ("{{ 'ntfy' if _ntfy_restore_runtime == 'native' else 0 }}",) * 2 + ("0750",)
     # An empty message cache is a valid point; a point without the auth database is not.
     assert cache["allow_empty"] is True and not data.get("allow_empty", False)
     staged = (ROOT / "ansible/roles/ntfy/tasks/restore-staged.yml").read_text()
     assert "{{ recovery_swap_stage }}/data/{{ _ntfy_restore_auth_relative }}" in staged
-    restore_native = yaml.safe_load((ROOT / "ansible/roles/ntfy/tasks/restore-native.yml").read_text())
-    reconcile = next(task for task in restore_native
+    restore_guest = yaml.safe_load((ROOT / "ansible/roles/ntfy/tasks/restore-guest.yml").read_text())
+    reconcile = next(task for task in restore_guest
                      if task.get("ansible.builtin.include_tasks") == "credentials-native.yml")
-    swap_task = next(task for task in restore_native
+    swap_task = next(task for task in restore_guest
                      if task.get("ansible.builtin.include_tasks", "").endswith("tasks/recovery/restore-swap.yml"))
-    assert restore_native.index(reconcile) > restore_native.index(swap_task)
+    assert restore_guest.index(reconcile) > restore_guest.index(swap_task)
     assert reconcile["when"] == "restore_overwrite | bool"
     native_deploy = (ROOT / "ansible/roles/ntfy/tasks/main.yml").read_text()
     assert "ansible.builtin.include_tasks: credentials-native.yml" in native_deploy
@@ -85,7 +86,7 @@ def check_restore():
     assert any(task.get("ansible.builtin.import_tasks", "").endswith(
         "tasks/bootstrap/configure-unattended-upgrades.yml") for task in native_credentials)
     verified = (ROOT / "ansible/roles/ntfy/tasks/restore-verified.yml").read_text()
-    assert "argv: [ntfy, user, list]" in verified
+    assert "ntfy_cli_local" in verified
     assert swap["recovery_swap_health_url"].endswith("/v1/health")
 
 

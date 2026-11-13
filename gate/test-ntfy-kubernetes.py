@@ -26,7 +26,9 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/ntfy.yml"))["ntfy_defaults"]
 assert defaults["hosting"] == {
-    "method": "native", "supported": ["native-lxc", "native-vm", "kubernetes"], "impossible": {}
+    "method": "native",
+    "supported": ["native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes"],
+    "impossible": {},
 }
 assert defaults["recovery"]["methods"] == ["native"]
 assert defaults["backup"]["schedule"]
@@ -90,7 +92,7 @@ assert set(restore_facts["vars"]["generated_facts_data"]) == {
 dispatch = yaml.safe_load(read("ansible/roles/ntfy/tasks/restore.yml"))
 assert any(task.get("ansible.builtin.include_tasks") == "restore-kubernetes.yml"
            for task in dispatch)
-assert any(task.get("ansible.builtin.include_tasks") == "restore-native.yml"
+assert any(task.get("ansible.builtin.include_tasks") == "restore-guest.yml"
            for task in dispatch)
 
 context = {
@@ -98,6 +100,8 @@ context = {
     "instance": "ntfy",
     "ntfy_fqdn": "ntfy.example.test",
     "_ntfy_domain": "example.test",
+    "ntfy_docker": False,
+    "ntfy_cache_dir": "/var/cache/ntfy",
     "ansible_managed": "managed by gate",
     "ntfy_auth_file": "/var/lib/ntfy/user.db",
     "ntfy_cache_file": "/var/cache/ntfy/cache.db",
