@@ -1,15 +1,8 @@
 # mysql
 
-Standalone Oracle MySQL 8.4 backend that applications reach through the shared database
-tasks. It runs natively on its own LXC or VM by default.
+Oracle MySQL 8.4 backend for the shared database tasks. Native on its own guest by default.
 
-## Docker
-
-`hosting.method: docker` runs the official image under Compose on the stack host. The
-container's `/var/run/mysqld` is the host's `/run/mysqld`, so the host's MySQL client and the
-shared database tasks and `server-recovery.py` reach the server exactly as they reach a
-native guest. Its root account has no password and is reachable only over that socket.
-Backup and restore are the same logical export and reload, with the PBS client in Docker.
-
-The socket directory is shared per host, so Deploy refuses a second Docker database backend
-on the same stack host; give each backend its own stack.
+With `hosting.method: docker` the official image runs under Compose on a stack host, and the
+host's `/run/mysqld` is the container's `/var/run/mysqld`. Root has no password and answers
+only on that socket. Backup and restore are the usual logical export and reload; the PBS
+client runs in Docker. One Docker database backend per stack host, since the socket is shared.
