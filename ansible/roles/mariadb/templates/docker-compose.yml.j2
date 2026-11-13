@@ -1,0 +1,19 @@
+# docker-compose.yml for MariaDB ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  {{ app_config.app.service_name }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      # root@localhost has no password and cannot be reached from the network; the host
+      # reaches it over the shared socket, as native Deploy does over the guest's socket.
+      - MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1
+    volumes:
+      - "{{ mariadb_data_dir }}:{{ app_config.app.data_path }}"
+      - "{{ mariadb_project_dir }}/conf.d:/etc/mysql/conf.d:ro"
+      - /run/mysqld:/run/mysqld
+    ports:
+      - "{{ app_config.app.port }}:3306"

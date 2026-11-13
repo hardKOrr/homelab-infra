@@ -39,7 +39,7 @@
 - name: MariaDB restore | List or verify the recovery point without changing MariaDB
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
   vars:
-    pbs_client_runtime: native
+    pbs_client_runtime: "{{ 'docker' if mariadb_docker | bool else 'native' }}"
     pbs_client_backup_id: "{{ _mariadb_restore_source_backup_id }}"
     pbs_client_pre_restore_backup_id: "{{ _mariadb_restore_target_backup_id }}"
     pbs_client_archives: [{name: mariadb.pxar}]
@@ -70,7 +70,7 @@
     - name: MariaDB restore | Download the selected recovery archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if mariadb_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _mariadb_restore_source_backup_id }}"
         pbs_client_pre_restore_backup_id: "{{ _mariadb_restore_target_backup_id }}"
         pbs_client_restore_args: [--allow-existing-dirs, "true"]
@@ -81,7 +81,7 @@
     - name: MariaDB restore | Download the pre-restore safety archive
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if mariadb_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _mariadb_restore_target_backup_id }}"
         pbs_client_snapshot: "{{ _mariadb_restore_prepoint }}"
         pbs_client_pre_restore_backup_id: "{{ _mariadb_restore_target_backup_id }}"
@@ -97,8 +97,9 @@
       ansible.builtin.command:
         argv: >-
           {{ ['python3', database_server_recovery_script, 'mariadb', 'restore',
-              '--data-dir', app_config.app.data_path | default('/var/lib/mysql'),
-              '--service', app_config.app.service_name | default('mariadb'),
+              '--data-dir', mariadb_data_dir,
+              '--service', instance if mariadb_docker | bool else app_config.app.service_name | default('mariadb'),
+              '--runtime', 'docker' if mariadb_docker | bool else 'native',
               _mariadb_restore_tmp.path ~ '/source']
              + ([_mariadb_restore_tmp.path ~ '/safety']
                 if restore_destination | default('existing') == 'existing'

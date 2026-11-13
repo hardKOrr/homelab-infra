@@ -4,9 +4,12 @@
 mariadb_defaults:
   hosting:
     method: native
-    # The role uses the same apt/systemd service path on either guest type.
-    supported: [native-lxc, native-vm]
+    # Native uses the same apt/systemd service path on either guest type. Docker runs the
+    # official image on a stack host, whose stack guest_type picks the LXC or VM.
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
+  stack: ""
   recovery:
     methods: [native]
     native:
@@ -23,7 +26,8 @@ mariadb_defaults:
     tags: [_+lab, _-debian]
   app:
     port: 3306
-    data_path: /var/lib/mysql
+    image: mariadb:11.8       # Docker only
+    data_path: /var/lib/mysql  # native; Docker keeps data in /opt/<instance>/data
     service_name: mariadb
     # MariaDB account-host patterns allowed to connect to this backend. Keep
     # these within lab networks; `%` would permit any source address.

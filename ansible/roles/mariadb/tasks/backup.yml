@@ -43,7 +43,7 @@
     - name: MariaDB backup | Upload the logical archive to PBS
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if mariadb_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _mariadb_backup_id }}"
         pbs_client_archives:
           - name: mariadb.pxar

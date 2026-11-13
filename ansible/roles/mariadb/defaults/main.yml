@@ -1,0 +1,6 @@
+---
+# Role-internal defaults; user-facing knobs live in vars/app-defaults/mariadb.yml.
+mariadb_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+# Docker: the Compose project, config and data live together in /opt/<instance>.
+mariadb_project_dir: "/opt/{{ instance }}"
+mariadb_data_dir: "{{ mariadb_project_dir ~ '/data' if mariadb_docker | bool else app_config.app.data_path }}"

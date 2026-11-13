@@ -22,12 +22,16 @@
         hosting_app_slug: mariadb
   tasks:
     - ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'native'
     - name: Resolve this instance's guest, reusing one Remove kept
       ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars: {resolve_guest_instance: "{{ instance }}"}
+      when: app_config.hosting.method == 'native'
     - ansible.builtin.set_fact:
         _existing_hosts: "{{ resolve_guest_hosts }}"
+      when: app_config.hosting.method == 'native'
     - ansible.builtin.include_tasks: ../../tasks/database/resolve-backend-placement.yml
+      when: app_config.hosting.method == 'native'
     - ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
         groups: "deploy_{{ instance }}"
@@ -36,14 +40,24 @@
         app_config: "{{ app_config }}"
         _database_backend_guest_type: "{{ _database_backend_guest_type }}"
       changed_when: false
-      when: _existing_hosts | length > 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length > 0
     - ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
       vars: {ensure_guest_host: "{{ _existing_hosts[0] }}"}
-      when: _existing_hosts | length > 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length > 0
     - name: Provision a new MariaDB backend guest
       ansible.builtin.include_tasks: ../../tasks/database/provision-backend-guest.yml
       vars:
         database_backend_network_app: mariadb
+      when: app_config.hosting.method == 'native'
+
+    # Docker: the stack host (LXC or VM per the stack's guest_type), found or created.
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
 - name: MariaDB | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -55,6 +69,10 @@
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
   tasks:
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - ansible.builtin.include_role: {name: mariadb}
 
 - name: MariaDB | Register backend
@@ -72,3 +90,5 @@
              'port': _mariadb_host.app_config.app.port,
              'client_hosts': _mariadb_host.app_config.app.client_hosts}} }}
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: "{{ 'docker' if _mariadb_host.app_config.hosting.method == 'docker' else 'native' }}"
