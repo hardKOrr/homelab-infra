@@ -176,7 +176,7 @@ def check_contract():
     # The server's own port names its socket file, so it must follow app.port, not 5432.
     assert "port={{ app_config.app.port }}" in compose
     assert '"{{ app_config.app.port }}:{{ app_config.app.port }}"' in compose and ":5432" not in compose
-    assert "unix_socket_directories=/run/pgsock" in compose and "/var/run/postgresql:/run/pgsock" in compose
+    assert "unix_socket_directories=/var/run/postgresql,/run/pgsock" in compose and "/var/run/postgresql:/run/pgsock" in compose
     assert "Verify an unrelated host user cannot connect" in docker_tasks
     assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
     order = [docker_tasks.index(t) for t in (

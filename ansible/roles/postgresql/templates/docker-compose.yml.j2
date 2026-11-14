@@ -21,7 +21,7 @@ services:
       - -c
       - port={{ app_config.app.port }}
       - -c
-      - unix_socket_directories=/run/pgsock
+      - unix_socket_directories=/var/run/postgresql,/run/pgsock
       - -c
       - shared_buffers={{ _postgresql_shared_buffers_mib }}MB
       - -c
@@ -32,7 +32,8 @@ services:
       - "{{ postgresql_project_dir }}/data:/var/lib/postgresql/data"
       - "{{ postgresql_project_dir }}/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro"
       # The image chmods its own /var/run/postgresql to 3775 on every start, so the shared
-      # socket directory is mounted elsewhere and the server is pointed at it.
+      # socket directory is mounted elsewhere. The server also keeps the image-private default
+      # socket, which the image's own initialization client connects to on an empty data directory.
       - /var/run/postgresql:/run/pgsock
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.port }}"
