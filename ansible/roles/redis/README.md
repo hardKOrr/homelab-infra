@@ -1,6 +1,6 @@
 # redis
 
-Standalone Redis backend for the shared database tasks. Native on its own guest by default.
+Redis cache backend, run natively on its own guest unless the config selects Docker.
 
 ## Docker
 
