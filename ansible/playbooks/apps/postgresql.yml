@@ -107,7 +107,8 @@
           {{ {instance: {'provider': 'postgresql',
              'version': _postgresql_host.app_config.app.version,
              'host': _postgresql_host.ansible_host,
-             'port': _postgresql_host.app_config.app.port}} }}
+             'port': _postgresql_host.app_config.app.port,
+             'runtime': (_postgresql_host.app_config.hosting | default({})).get('method', 'native')}} }}
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:

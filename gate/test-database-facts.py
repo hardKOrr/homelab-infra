@@ -56,6 +56,7 @@ def database_producers_resolve_instance_keys():
                 "version": "16",
                 "host": "192.0.2.41",
                 "port": 5432,
+                "runtime": "native",
             },
             {"app_config": {"app": {"version": "16", "port": 5432}}, "ansible_host": "192.0.2.41"},
         ),

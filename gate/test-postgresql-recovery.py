@@ -178,6 +178,14 @@ def check_contract():
     assert '"{{ app_config.app.port }}:{{ app_config.app.port }}"' in compose and ":5432" not in compose
     assert "unix_socket_directories=/var/run/postgresql,/run/pgsock" in compose and "/var/run/postgresql:/run/pgsock" in compose
     assert "Verify an unrelated host user cannot connect" in docker_tasks
+    # Consumers' extensions (pgvector) are baked into the server image, and the shared
+    # provisioning skips the host package for a Docker backend.
+    assert "pgvector" in (ROLE / "templates/Dockerfile.j2").read_text(encoding="utf-8")
+    assert "build:" in compose
+    provision = (ROOT / "ansible/tasks/database/provision.yml").read_text(encoding="utf-8")
+    assert "_database_backend.runtime | default('native') != 'docker'" in provision
+    playbook = (ROOT / "ansible/playbooks/apps/postgresql.yml").read_text(encoding="utf-8")
+    assert "'runtime': (_postgresql_host.app_config.hosting | default({})).get('method', 'native')" in playbook
     assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
     order = [docker_tasks.index(t) for t in (
         "PostgreSQL | Start the service", "PostgreSQL | Wait for the final server\n",

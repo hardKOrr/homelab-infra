@@ -39,6 +39,16 @@
     _postgresql_effective_cache_size_mib: "{{ app_config.app.get('memory', {}).get('effective_cache_size', 768) | int }}"
     _postgresql_work_mem_mib: "{{ app_config.app.get('memory', {}).get('work_mem', 4) | int }}"
 
+# The extensions consumers request (pgvector) must live where the server runs, so the image
+# is built from the official one; its tag follows the build file, so a change rebuilds.
+- name: PostgreSQL | Resolve the image build file and tag
+  ansible.builtin.set_fact:
+    _postgresql_dockerfile: "{{ lookup('ansible.builtin.template', 'Dockerfile.j2') }}"
+
+- name: PostgreSQL | Resolve the image tag
+  ansible.builtin.set_fact:
+    _postgresql_image_tag: "{{ app_config.app.version }}-{{ _postgresql_dockerfile | hash('sha256') | truncate(12, true, '') }}"
+
 - name: PostgreSQL | Configure the package repository for the host client
   ansible.builtin.include_tasks: ../../../tasks/database/postgresql-repository.yml
 
@@ -85,13 +95,16 @@
     group: postgres
     mode: "0750"
 
-- name: PostgreSQL | Create the project directory
+- name: PostgreSQL | Create the project and build directories
   ansible.builtin.file:
-    path: "{{ postgresql_project_dir }}"
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - "{{ postgresql_project_dir }}"
+    - "{{ postgresql_project_dir }}/build"
 
 # The image gives this directory to its postgres user when it initializes, so Deploy
 # creates it but never sets its owner or mode, which would undo that on every run.
@@ -118,10 +131,15 @@
     mode: "0640"
   notify: Restart PostgreSQL container
 
-- name: PostgreSQL | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ postgresql_project_dir }}"
+- name: PostgreSQL | Write the image build file
+  ansible.builtin.copy:
+    content: "{{ _postgresql_dockerfile }}"
+    dest: "{{ postgresql_project_dir }}/build/Dockerfile"
+    owner: root
+    group: root
+    mode: "0640"
 
+# The image is built by `docker compose up` below when absent.
 - name: PostgreSQL | Start the service
   community.docker.docker_compose_v2:
     project_src: "{{ postgresql_project_dir }}"

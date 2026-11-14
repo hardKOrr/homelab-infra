@@ -3,7 +3,9 @@
 # To make permanent changes, update the role template or your instance config.
 services:
   {{ postgresql_compose_service }}:
-    image: "{{ app_config.app.image }}"
+    image: "homelab-postgresql:{{ _postgresql_image_tag }}"
+    build:
+      context: "{{ postgresql_project_dir }}/build"
     container_name: "{{ instance }}"
     restart: unless-stopped
     environment:
