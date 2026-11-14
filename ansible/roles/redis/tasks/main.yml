@@ -95,11 +95,18 @@
     group: "{{ redis_owner }}"
     mode: "0600"
 
+- name: Redis | Check for existing managed configuration
+  ansible.builtin.stat:
+    path: "{{ redis_conf_path }}"
+    get_checksum: false
+    get_mime: false
+  register: _redis_config_file
+
 - name: Redis | Read existing managed configuration
   ansible.builtin.slurp: {src: "{{ redis_conf_path }}"}
   register: _redis_config
   changed_when: false
-  failed_when: false
+  when: _redis_config_file.stat.exists
 - name: Redis | Refuse to replace an unavailable existing password
   ansible.builtin.assert:
     that: _redis_credentials_known | bool

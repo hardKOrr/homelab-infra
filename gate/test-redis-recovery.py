@@ -481,11 +481,46 @@ def check_runtime_guards():
                     operation, is_docker, output, result.stdout, result.stderr)
 
 
+def check_config_read_guard():
+    """Only an absent config may bypass reading the existing password guard."""
+    tasks = read_yaml("ansible/roles/redis/tasks/main.yml")
+    start = next(i for i, task in enumerate(tasks)
+                 if task.get("name") == "Redis | Check for existing managed configuration")
+    executable = Path(sys.executable).with_name("ansible-playbook")
+    with tempfile.TemporaryDirectory(prefix="redis-config-") as directory:
+        root = Path(directory)
+        managed = root / "managed.conf"
+        managed.write_text("# Managed by homelab-infra\n")
+        unreadable = root / "not-a-file"
+        unreadable.mkdir()
+        for docker in (False, True):
+            for path, known, passes in (
+                (root / "missing.conf", False, True),
+                (managed, False, False),
+                (managed, True, True),
+                (unreadable, True, False),
+            ):
+                playbook = root / "config-read.yml"
+                playbook.write_text(yaml.safe_dump([{
+                    "hosts": "localhost", "gather_facts": False,
+                    "vars": {"redis_conf_path": str(path), "instance": "redis",
+                             "redis_docker": docker, "_redis_credentials_known": known},
+                    "tasks": tasks[start:start + 3],
+                }]))
+                result = subprocess.run(
+                    [executable, "-i", "localhost,", "-c", "local", str(playbook)],
+                    capture_output=True, text=True, check=False,
+                )
+                assert (result.returncode == 0) == passes, (
+                    docker, str(path), known, result.stdout, result.stderr)
+
+
 def main():
     check_defaults_and_deploy()
     check_default_acl_reconciliation()
     check_backup()
     check_runtime_guards()
+    check_config_read_guard()
     check_restore()
     check_remove_scope()
     print("Redis: native LXC deploy, ACL and RDB PBS recovery, restore swap inputs and hooks, and scoped removal passed")
