@@ -94,7 +94,10 @@ def check_defaults_and_deploy():
     assert "requirepass" not in template
 
 
-def run_default_acl_reconciliation(acl_path, playbook_path, password):
+LAST_HANDLERS = []
+
+
+def run_default_acl_reconciliation(acl_path, playbook_path, password, docker=False):
     task_path = ROOT / "ansible/roles/redis/tasks/reconcile-default-user.yml"
     playbook = [
         {
@@ -105,6 +108,7 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
             "vars": {
                 "_redis_acl_path": str(acl_path),
                 "_redis_password": password,
+                "redis_docker": docker,
             },
             "tasks": [
                 {"name": "Run the role task", "ansible.builtin.import_tasks": str(task_path)}
@@ -113,7 +117,11 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
                 {
                     "name": "Restart Redis",
                     "ansible.builtin.debug": {"msg": "Redis restart requested"},
-                }
+                },
+                {
+                    "name": "Restart Redis container",
+                    "ansible.builtin.debug": {"msg": "Redis container restart requested"},
+                },
             ],
         }
     ]
@@ -126,6 +134,7 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
         check=False,
         text=True,
     )
+    LAST_HANDLERS[:] = re.findall(r"RUNNING HANDLER \[(.+?)\]", result.stdout)
     assert result.returncode == 0, f"Redis ACL reconciliation failed:\n{result.stdout}\n{result.stderr}"
     recap = next(line for line in result.stdout.splitlines() if line.startswith("localhost") and "changed=" in line)
     changed = re.search(r"changed=(\d+)", recap)
@@ -156,7 +165,7 @@ def check_default_acl_reconciliation():
     assert lineinfile["regexp"] == r"^user default(?: |$)"
     assert lineinfile["line"] == "{{ _redis_default_acl_line }}"
     assert "when" not in task
-    assert task["notify"] == "Restart Redis"
+    assert "Restart Redis container" in task["notify"] and "'Restart Redis'" in task["notify"]
     assert task.get("no_log") is True
 
     with tempfile.TemporaryDirectory(prefix="redis-acl-reconcile-") as directory:
@@ -199,6 +208,13 @@ def check_default_acl_reconciliation():
 
         rotation_repeat = run_default_acl_reconciliation(acl_path, playbook_path, rotated_password)
         assert rotation_repeat == 0
+        assert LAST_HANDLERS == []
+
+        # An ACL-only change on Docker restarts the container, never the native service.
+        docker_acl = Path(directory) / "docker-users.acl"
+        docker_acl.write_text(f"{canary_user}\n")
+        assert run_default_acl_reconciliation(docker_acl, playbook_path, first_password, docker=True) == 1
+        assert LAST_HANDLERS == ["Restart Redis container"]
 
         empty_acl_path = Path(directory) / "empty-users.acl"
         empty_acl_path.write_text(f"{canary_user}\n")
