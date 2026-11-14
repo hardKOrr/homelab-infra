@@ -220,6 +220,20 @@ with tempfile.TemporaryDirectory(prefix="redis-client-") as tmp:
     for command in ("REPLICAOF NO ONE", "SETUSER", "DELUSER", "SAVE"):
         result = run("server-load", command, str(point))
         assert result.returncode != 0 and "complete" not in result.stdout, (command, result)
+    # A full sync that never finishes must leave the target promoted again, not replicating.
+    (bin_dir / "calls").write_text("")
+    cli_text = (bin_dir / "redis-cli").read_text()
+    (bin_dir / "redis-cli").write_text(cli_text.replace(
+        "case \" $* \" in *\" $FAIL_ON \"*)",
+        "echo \"$*\" >> " + str(bin_dir / "calls") + "\ncase \" $* \" in *\" INFO \"*) [ -n \"$STALL\" ] && echo master_link_status:down && exit 0 ;; esac\n"
+        "case \" $* \" in *\" $FAIL_ON \"*)", 1))
+    stalled = subprocess.run(["sh", script, "server-load", str(point)],
+                             env={**env, "FAIL_ON": "NONE", "STALL": "1", "SYNC_WAIT": "2"},
+                             capture_output=True, text=True, timeout=300)
+    assert stalled.returncode != 0
+    calls = (bin_dir / "calls").read_text().splitlines()
+    assert any("REPLICAOF 10.42.0.9 6390" in c for c in calls)
+    assert calls[-1].endswith("REPLICAOF NO ONE"), calls[-3:]
     assert run("server-dump", "ACL LIST", str(bin_dir / "out.rdb")).returncode != 0
     assert run("server-inspect", "NONE").stdout.strip() == "3 keys, 1 ACL users"
     # A bad DBSIZE reply must not be reported as a count.

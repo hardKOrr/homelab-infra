@@ -248,21 +248,32 @@ redis_server() {
   redis-server --port 6390 --bind 0.0.0.0 --protected-mode no --dir "$work" \
     --dbfilename point.rdb --save "" --appendonly no > "$work/master.log" 2>&1 &
   master=$!
-  trap 'kill "$master" 2> /dev/null || true; rm -rf "$work"' EXIT
+  # Whatever ends the load, a target still replicating from the throwaway master is
+  # promoted again first: it would otherwise stay read-only, chasing a dead master.
+  replicating=0
+  redis_cleanup() {
+    if [ "$replicating" = 1 ]; then cli REPLICAOF NO ONE > /dev/null 2>&1 || true; fi
+    kill "$master" 2> /dev/null || true
+    rm -rf "$work"
+  }
+  trap redis_cleanup EXIT
+  trap 'exit 143' INT TERM
   attempt=0
   until [ "$(redis-cli -p 6390 ping 2> /dev/null)" = PONG ]; do
     attempt=$((attempt + 1))
     [ "$attempt" -lt 60 ] || { cat "$work/master.log" >&2; echo "database-client.sh: the throwaway Redis did not start" >&2; exit 1; }
     sleep 1
   done
+  replicating=1
   cli REPLICAOF "$(hostname -i | cut -d' ' -f1)" 6390 > /dev/null
   attempt=0
   until cli INFO replication > "$work/info" && grep -q '^master_link_status:up' "$work/info"; do
     attempt=$((attempt + 1))
-    [ "$attempt" -lt 120 ] || { echo "database-client.sh: the full sync did not finish" >&2; exit 1; }
+    [ "$attempt" -lt "${SYNC_WAIT:-120}" ] || { echo "database-client.sh: the full sync did not finish" >&2; exit 1; }
     sleep 1
   done
   cli REPLICAOF NO ONE > /dev/null
+  replicating=0
   # Users: the point's, but never its `default` (this server's login stays as deployed).
   # Each list lands in a file first, so a failed command stops the script (a pipe would not).
   cli ACL LIST > "$work/current.acl"
