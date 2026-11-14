@@ -178,5 +178,15 @@ for task in load("ansible/tasks/database/open-one-consumer-access.yml"):
     for value in values:
         assert "_mariadb_consumer" not in str(value)
         templar.template(value, fail_on_undefined=True)
+# A fresh namespace-server invocation has no `_kds`: the fact it sets must not read itself.
+step_tasks = load("ansible/tasks/database/kubernetes-recovery-step.yml")
+server_block = next(t for t in step_tasks if t.get("when") == "k8s_database_step_source == 'namespace-server'")
+read_task = next(t for t in server_block["block"] if t["name"].endswith("Read the server"))
+for image, label in (("mysql:8.4", "the whole MySQL server"), ("mariadb:11.8", "the whole MariaDB server")):
+    variables = {"k8s_database_step_config": {"app": {"image": image, "port": 3306}},
+                 "k8s_database_step_instance": "db", "k8s_database_step_root_password": "x"}
+    fact = Templar(loader=DataLoader(), variables=variables).template(
+        read_task["ansible.builtin.set_fact"], fail_on_undefined=True)["_kds"]
+    assert " ".join(fact["describe"].split()).startswith(label), fact["describe"]
 print("MySQL keeps the guests as default and runs on Kubernetes through the shared operations")
 

@@ -133,7 +133,9 @@
           user: root
           password: "{{ k8s_database_step_root_password }}"
           root_hosts: "{{ k8s_database_step_config.kubernetes.root_host | default('10.42.%') }}"
-          describe: "the whole {{ 'MariaDB' if _kds.engine == 'mariadb' else 'MySQL' }} server {{ k8s_database_step_instance }} (every schema and grant)"
+          describe: >-
+            the whole {{ 'MariaDB' if 'mariadb' in (k8s_database_step_config.app.image | lower) else 'MySQL' }}
+            server {{ k8s_database_step_instance }} (every schema and grant)
       no_log: true
 
 - name: Database recovery step | Require the database login
