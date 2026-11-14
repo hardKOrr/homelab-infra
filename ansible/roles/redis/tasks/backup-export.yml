@@ -45,8 +45,8 @@
       ansible.builtin.file:
         path: "{{ _redis_backup_acl_path }}"
         state: file
-        owner: redis
-        group: redis
+        owner: "{{ redis_owner }}"
+        group: "{{ redis_owner }}"
         mode: "0600"
 
     - name: Redis backup | Export a consistent RDB through Redis replication
@@ -94,11 +94,9 @@
       when: _redis_backup_writes_paused | bool
 
 - name: Redis backup | Validate the exported RDB
-  ansible.builtin.command:
-    argv: [redis-check-rdb, "{{ _redis_backup_stage.path }}/dump.rdb"]
-  register: _redis_backup_rdb_check
-  changed_when: false
-  no_log: true
+  ansible.builtin.include_tasks: validate-rdb.yml
+  vars:
+    redis_validate_rdb_path: "{{ _redis_backup_stage.path }}/dump.rdb"
 
 - name: Redis backup | Verify both staged files
   ansible.builtin.stat:
@@ -126,7 +124,7 @@
 - name: Redis backup | Upload the native export to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: native
+    pbs_client_runtime: "{{ 'docker' if redis_docker | bool else 'native' }}"
     pbs_client_backup_id: "{{ _redis_backup_id }}"
     pbs_client_archives:
       - name: data.pxar

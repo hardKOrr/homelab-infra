@@ -3,3 +3,10 @@
   ansible.builtin.systemd:
     name: "{{ app_config.app.service_name }}"
     state: restarted
+  when: not (redis_docker | bool)
+
+- name: Restart Redis container
+  community.docker.docker_compose_v2:
+    project_src: "{{ redis_project_dir }}"
+    state: restarted
+  when: redis_docker | bool

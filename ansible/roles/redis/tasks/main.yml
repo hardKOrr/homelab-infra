@@ -1,6 +1,7 @@
 ---
 - name: Redis | Resolve configured guest memory
   ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+  when: not (redis_docker | bool)
 
 - name: Redis | Resolve database memory settings
   ansible.builtin.import_tasks: resolve-memory.yml
@@ -9,6 +10,7 @@
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
     - app_config.backup.enabled | default(false) | bool
+    - not (redis_docker | bool)
     - >-
       ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
        | length) > 0
@@ -25,6 +27,25 @@
     name: redis-server
     state: present
     update_cache: false
+  when: not (redis_docker | bool)
+
+# Docker: the server runs in the image; the host needs only its client tools (redis-cli,
+# redis-check-rdb), which the shared recovery tasks run against the published port.
+- name: Redis | Install the host client tools for Docker
+  ansible.builtin.apt:
+    name: redis-tools
+    state: present
+    update_cache: false
+  when: redis_docker | bool
+
+- name: Redis | Create the Docker project directory
+  ansible.builtin.file:
+    path: "{{ redis_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: redis_docker | bool
 
 - name: Redis | Resolve backend password
   ansible.builtin.set_fact:
@@ -34,14 +55,14 @@
 
 - name: Redis | Resolve the ACL file path
   ansible.builtin.set_fact:
-    _redis_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
+    _redis_acl_path: "{{ redis_acl_path }}"
 
 - name: Redis | Ensure the data directory exists
   ansible.builtin.file:
-    path: "{{ app_config.app.data_path }}"
+    path: "{{ redis_data_path }}"
     state: directory
-    owner: redis
-    group: redis
+    owner: "{{ redis_owner }}"
+    group: "{{ redis_owner }}"
     mode: "0750"
 
 - name: Redis | Inspect the ACL file before managing it
@@ -61,8 +82,8 @@
     dest: "{{ _redis_acl_path }}"
     content: ""
     force: false
-    owner: redis
-    group: redis
+    owner: "{{ redis_owner }}"
+    group: "{{ redis_owner }}"
     mode: "0600"
   when: not _redis_acl_file.stat.exists
 
@@ -70,19 +91,27 @@
   ansible.builtin.file:
     path: "{{ _redis_acl_path }}"
     state: file
-    owner: redis
-    group: redis
+    owner: "{{ redis_owner }}"
+    group: "{{ redis_owner }}"
     mode: "0600"
 
+- name: Redis | Check for existing managed configuration
+  ansible.builtin.stat:
+    path: "{{ redis_conf_path }}"
+    get_checksum: false
+    get_mime: false
+  register: _redis_config_file
+
 - name: Redis | Read existing managed configuration
-  ansible.builtin.slurp: {src: /etc/redis/redis.conf}
+  ansible.builtin.slurp: {src: "{{ redis_conf_path }}"}
   register: _redis_config
   changed_when: false
+  when: _redis_config_file.stat.exists
 - name: Redis | Refuse to replace an unavailable existing password
   ansible.builtin.assert:
     that: _redis_credentials_known | bool
     fail_msg: "Redis instance {{ instance }} has a managed password but its Vaultwarden credential is unavailable."
-  when: "'Managed by homelab-infra' in (_redis_config.content | b64decode) and not (_redis_credentials_known | bool)"
+  when: "'Managed by homelab-infra' in (_redis_config.content | default('') | b64decode) and not (_redis_credentials_known | bool)"
   no_log: true
 - name: Redis | Store initial backend password before configuration
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
@@ -102,10 +131,39 @@
   ansible.builtin.import_tasks: reconcile-default-user.yml
 
 - name: Redis | Configure protected application listener
-  ansible.builtin.template: {src: redis.conf.j2, dest: /etc/redis/redis.conf, mode: "0640", owner: redis, group: redis}
-  notify: Restart Redis
+  ansible.builtin.template:
+    src: "{{ 'redis-docker.conf.j2' if redis_docker | bool else 'redis.conf.j2' }}"
+    dest: "{{ redis_conf_path }}"
+    mode: "{{ '0644' if redis_docker | bool else '0640' }}"
+    owner: "{{ 'root' if redis_docker | bool else 'redis' }}"
+    group: "{{ 'root' if redis_docker | bool else 'redis' }}"
+  notify: "{{ 'Restart Redis container' if redis_docker | bool else 'Restart Redis' }}"
 - name: Redis | Enable and start service
   ansible.builtin.systemd: {name: "{{ app_config.app.service_name }}", state: started, enabled: true}
+  when: not (redis_docker | bool)
+
+- name: Redis | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ redis_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Redis container
+  when: redis_docker | bool
+
+- name: Redis | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ redis_project_dir }}"
+    policy: missing
+  when: redis_docker | bool
+
+- name: Redis | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "{{ redis_project_dir }}"
+    state: present
+    remove_orphans: true
+  when: redis_docker | bool
 - ansible.builtin.meta: flush_handlers
 - name: Redis | Verify authenticated local server readiness
   ansible.builtin.command:
@@ -119,5 +177,9 @@
       - ping
   environment:
     REDISCLI_AUTH: "{{ _redis_password }}"
+  register: _redis_ready
+  until: _redis_ready.rc == 0
+  retries: 30
+  delay: 2
   changed_when: false
   no_log: true

@@ -1,0 +1,13 @@
+---
+# Role-internal defaults; user-facing knobs live in vars/app-defaults/redis.yml.
+redis_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+# Docker: the Compose project, config and data live together in /opt/<instance>.
+redis_project_dir: "/opt/{{ instance }}"
+redis_compose_service: redis
+# The official image runs the server as uid/gid 999; the host has no such account.
+redis_owner: "{{ '999' if redis_docker | bool else 'redis' }}"
+redis_data_path: "{{ redis_project_dir ~ '/data' if redis_docker | bool else app_config.app.data_path | default('') }}"
+redis_acl_path: >-
+  {{ redis_data_path ~ '/users.acl' if redis_docker | bool
+     else app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}
+redis_conf_path: "{{ redis_project_dir ~ '/redis.conf' if redis_docker | bool else '/etc/redis/redis.conf' }}"

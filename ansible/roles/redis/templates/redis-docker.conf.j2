@@ -1,0 +1,8 @@
+# Managed by homelab-infra. Application clients must authenticate.
+bind 0.0.0.0
+protected-mode yes
+port {{ app_config.app.port }}
+dir /data
+aclfile /data/users.acl
+maxmemory {{ _redis_maxmemory_mib }}mb
+maxmemory-policy {{ _redis_maxmemory_policy }}

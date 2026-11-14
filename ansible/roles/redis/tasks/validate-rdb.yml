@@ -1,0 +1,24 @@
+---
+# Host redis-tools can lag the container's RDB format. Validate with the running image,
+# mounting only the staged dump read-only; native deployments retain their host checker.
+- name: Redis recovery | Resolve the running Docker image
+  ansible.builtin.command:
+    argv: [docker, inspect, "{{ instance }}"]
+  register: _redis_rdb_container
+  changed_when: false
+  no_log: true
+  when: redis_docker | default(false) | bool
+
+- name: Redis recovery | Validate the staged RDB with its runtime
+  ansible.builtin.command:
+    argv: >-
+      {{ ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
+          '--read-only', '--user', '0:0', '--volume',
+          redis_validate_rdb_path ~ ':/recovery/dump.rdb:ro',
+          '--entrypoint', 'redis-check-rdb',
+          (_redis_rdb_container.stdout | from_json | first).Image,
+          '/recovery/dump.rdb']
+         if redis_docker | default(false) | bool
+         else ['redis-check-rdb', redis_validate_rdb_path] }}
+  changed_when: false
+  no_log: true

@@ -1,10 +1,13 @@
 ---
-# Redis maxmemory excludes allocator and persistence overhead; reserve half the guest.
+# Redis maxmemory excludes allocator and persistence overhead; reserve half the guest. A
+# Docker backend shares its stack host, so it gets a fixed 256 MiB unless memory.maxmemory says otherwise.
 - name: Redis | Derive memory settings from the configured guest size
   ansible.builtin.set_fact:
     _redis_maxmemory_mib: >-
       {{ app_config.app.get('memory', {}).get(
-           'maxmemory', [1, (_database_backend_memory_mib | int) // 2] | max)
+           'maxmemory',
+           256 if app_config.get('hosting', {}).get('method', 'native') == 'docker'
+           else [1, (_database_backend_memory_mib | int) // 2] | max)
          | int }}
     _redis_maxmemory_policy: >-
       {{ app_config.app.get('memory', {}).get('maxmemory_policy', 'noeviction')
