@@ -132,7 +132,7 @@ def check_contract():
     assert install["ansible.builtin.copy"]["mode"] == "0750"
     # Backup and Restore install the helper from their own checkout, never trusting the
     # copy an older Deploy left on the guest.
-    for task_file in ("backup.yml", "restore.yml"):
+    for task_file in ("backup.yml", "restore-guest.yml"):
         assert "include_tasks: install-recovery-helper.yml" in (ROLE / "tasks" / task_file).read_text(), task_file
     socket_access = task_named(main, "PostgreSQL | Permit native recovery through the local superuser socket")
     assert socket_access["ansible.builtin.lineinfile"]["line"] == "local replication postgres peer"
@@ -153,11 +153,11 @@ def check_contract():
     staging = task_named(backup, "PostgreSQL backup | Create private staging space")
     assert staging["ansible.builtin.tempfile"]["path"] == "/var/tmp"
 
-    restore = task_tree(ROLE / "tasks/restore.yml")
+    restore = task_tree(ROLE / "tasks/restore-guest.yml")
     assert task_named(restore, "PostgreSQL restore | Require the source point to belong to its backup group")
     assert task_named(restore, "PostgreSQL restore | Require the independent existing-target point")
     assert task_named(restore, "PostgreSQL restore | Validate the target cluster identity")
-    swap = swap_inputs("postgresql")
+    swap = swap_inputs("postgresql", "restore-guest.yml")
     assert "docker" in swap["recovery_swap_runtime"] and "native" in swap["recovery_swap_runtime"]
     assert swap["recovery_swap_archives"] == ["postgresql.pxar"]
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _postgresql_restore_target_backup_id }}"
@@ -190,7 +190,7 @@ def check_contract():
     # provisioning skips the host package for a Docker backend.
     assert "pgvector" in (ROLE / "templates/Dockerfile.j2").read_text(encoding="utf-8")
     assert "build:" in compose
-    provision = (ROOT / "ansible/tasks/database/provision.yml").read_text(encoding="utf-8")
+    provision = (ROOT / "ansible/tasks/database/provision-postgresql.yml").read_text(encoding="utf-8")
     assert "_database_backend.runtime | default('native') != 'docker'" in provision
     playbook = (ROOT / "ansible/playbooks/apps/postgresql.yml").read_text(encoding="utf-8")
     assert "'runtime': (_postgresql_host.app_config.hosting | default({})).get('method', 'native')" in playbook

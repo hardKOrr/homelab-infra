@@ -1,0 +1,126 @@
+{# One PostgreSQL backend: an access list, one data volume, one Deployment, one LoadBalancer. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels | trim | indent(4, true) }}
+data:
+  pg_hba.conf: |
+    # Managed by homelab-infra. Local access is the pod's own socket (kubectl exec).
+    local   all             all                                     trust
+    # The superuser connects from the pod network only (the recovery Job).
+    host    all             postgres        {{ app_config.kubernetes.superuser_cidr }}          scram-sha-256
+    host    all             postgres        0.0.0.0/0               reject
+{% for cidr in app_config.app.client_cidrs %}
+    host    all             all             {{ cidr }}               scram-sha-256
+{% endfor %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: the old pod must release it first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+        app.kubernetes.io/component: server
+      annotations:
+        # A changed access list or tuning restarts the server, which reads them at start.
+        homelab-infra.io/config-checksum: "{{ _postgresql_config_checksum }}"
+    spec:
+      containers:
+        - name: postgresql
+          image: "{{ app_config.kubernetes.image }}"
+          args:
+            - -c
+            - hba_file=/etc/homelab-infra/pg_hba.conf
+            - -c
+            - listen_addresses=*
+            - -c
+            - shared_buffers={{ _postgresql_shared_buffers_mib }}MB
+            - -c
+            - effective_cache_size={{ _postgresql_effective_cache_size_mib }}MB
+            - -c
+            - work_mem={{ _postgresql_work_mem_mib }}MB
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+            # Read once, when the data directory is first initialized; the declared
+            # pg_hba.conf keeps the superuser reachable from the pod network only.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: superuser-password }
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              # A volume's own lost+found would make the first initialization refuse the directory.
+              subPath: data
+            - name: config
+              mountPath: /etc/homelab-infra
+              readOnly: true
+          # The image's init server listens on its socket only; ready means the final
+          # server, which also answers on TCP.
+          readinessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -p, "5432", -U, postgres]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+        - name: config
+          configMap:
+            name: {{ instance }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+  annotations:
+    # The ingress address, shared with Traefik: a database port, not an HTTP route.
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    # Recovery Jobs share the instance label but do not serve database connections.
+    app.kubernetes.io/component: server
+  ports:
+    - name: postgresql
+      port: {{ app_config.app.port }}
+      targetPort: 5432

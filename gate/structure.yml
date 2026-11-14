@@ -43,7 +43,6 @@ size:
   ansible/tasks/bitwarden/upsert-item.yml: 617
   ansible/tasks/bootstrap/configure-pbs-second-copy.yml: 480
   ansible/tasks/bootstrap/configure-pbs.yml: 670
-  ansible/tasks/database/provision.yml: 356
   ansible/tasks/firewall/opnsense-apply-base.yml: 354
   ansible/tasks/firewall/opnsense-base.yml: 357
   ansible/tasks/kubernetes/recovery-restore.yml: 458

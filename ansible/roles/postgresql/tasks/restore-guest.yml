@@ -1,0 +1,104 @@
+---
+- name: PostgreSQL restore | Resolve recovery identities and selected points
+  ansible.builtin.set_fact:
+    _postgresql_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_source_instance | default(instance, true), true) }}
+    _postgresql_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _postgresql_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _postgresql_restore_prepoint: "{{ restore_pre_restore_point | default('') }}"
+    _application_restore_complete: false
+
+- name: PostgreSQL restore | Assert the native recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _postgresql_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _postgresql_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_postgresql_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      PostgreSQL restore needs its application-consistent recovery contract, safe backup
+      ids, PBS and a selected recovery point for overwrite=true.
+
+- name: PostgreSQL restore | Require the source point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - _postgresql_restore_snapshot.startswith('host/' ~ _postgresql_restore_source_backup_id ~ '/')
+      - _postgresql_restore_snapshot | length > ('host/' ~ _postgresql_restore_source_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected PostgreSQL recovery point must belong to
+      host/{{ _postgresql_restore_source_backup_id }}/.
+  when: _postgresql_restore_snapshot | length > 0
+
+- name: PostgreSQL restore | Require the independent existing-target point
+  ansible.builtin.assert:
+    that:
+      - _postgresql_restore_prepoint.startswith('host/' ~ _postgresql_restore_target_backup_id ~ '/')
+      - _postgresql_restore_prepoint | length > ('host/' ~ _postgresql_restore_target_backup_id ~ '/') | length
+    fail_msg: >-
+      The independent PostgreSQL pre-restore point must belong to
+      host/{{ _postgresql_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: PostgreSQL restore | Install the recovery helper from this checkout
+  ansible.builtin.include_tasks: install-recovery-helper.yml
+
+# Read-only, so the preview checks the target cluster too.
+- name: PostgreSQL restore | Discover the target cluster before mutation
+  ansible.builtin.command:
+    argv: [pg_lsclusters, --no-header]
+  register: _postgresql_restore_clusters
+  changed_when: false
+  when: not (postgresql_docker | bool)
+
+- name: PostgreSQL restore | Resolve the target data directory
+  ansible.builtin.set_fact:
+    _postgresql_restore_cluster_lines: >-
+      {{ _postgresql_restore_clusters.stdout_lines | default([])
+         | select('match', '^[0-9]+[ ]+') | list }}
+    _postgresql_restore_main_lines: >-
+      {{ _postgresql_restore_clusters.stdout_lines | default([])
+         | select('match', '^' ~ (app_config.app.version | string) ~ '[ ]+main[ ]+') | list }}
+  when: not (postgresql_docker | bool)
+
+- name: PostgreSQL restore | Validate the target cluster identity
+  ansible.builtin.assert:
+    that:
+      - _postgresql_restore_cluster_lines | length == 1
+      - _postgresql_restore_main_lines | length == 1
+      - (_postgresql_restore_main_lines[0].split()[2] | int) == (app_config.app.port | int)
+    fail_msg: >-
+      PostgreSQL restore requires exactly the configured main cluster and port;
+      the current instance has not been changed.
+  when: not (postgresql_docker | bool)
+
+# The helper verifies the staged base backup (manifest, major version) before the stop and
+# reads the restored cluster as the local superuser after the start.
+- name: PostgreSQL restore | Preview or replace the cluster data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: "{{ 'docker' if postgresql_docker | bool else 'native' }}"
+    recovery_swap_backup_id: "{{ _postgresql_restore_source_backup_id }}"
+    recovery_swap_pre_restore_backup_id: "{{ _postgresql_restore_target_backup_id }}"
+    recovery_swap_archives: [postgresql.pxar]
+    recovery_swap_paths:
+      - path: >-
+          {{ postgresql_project_dir ~ '/data' if postgresql_docker | bool
+             else _postgresql_restore_main_lines[0].split()[5] }}
+        source: postgresql/cluster
+        owner: "{{ postgresql_container_id if postgresql_docker | bool else 'postgres' }}"
+        group: "{{ postgresql_container_id if postgresql_docker | bool else 'postgres' }}"
+        mode: "0700"
+    recovery_swap_stop_services: >-
+      {{ [postgresql_compose_service] if postgresql_docker | bool
+         else ['postgresql@' ~ app_config.app.version ~ '-main'] }}
+    recovery_swap_compose_project: "{{ postgresql_project_dir if postgresql_docker | bool else '' }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

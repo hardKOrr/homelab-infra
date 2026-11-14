@@ -1,0 +1,49 @@
+---
+# Run SQL as the superuser on a PostgreSQL backend that runs on Kubernetes, where there is
+# no guest to delegate to and no `postgres` user on a host. The cluster node that runs
+# kubectl executes psql inside the server's own pod over its local socket (trust, in the
+# pod only), so the superuser never connects over the network. A backend on a guest does
+# not use this file: provision.yml, drop.yml, guard-app-database.yml and
+# resolve-app-database.yml keep their delegated psql for it.
+#
+# Inputs:
+#   database_backend_instance  the backend instance (its namespace is app-<instance>)
+#   database_backend_sql       the statements, on stdin; may hold credentials and psql
+#                              meta-commands (\gexec, \connect)
+#
+# Leaves the caller's `k8s_namespace` as it was (resolve-backend-namespace.yml).
+#
+# Sets:
+#   database_backend_stdout    psql's unaligned output without headers or footers
+- name: Backend psql | Resolve the cluster and the backend's namespace
+  ansible.builtin.include_tasks: resolve-backend-namespace.yml
+
+- name: Backend psql | Run the statements in the server pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ database_backend_namespace }}"
+      - exec
+      - -i
+      - "deployment/{{ database_backend_instance }}"
+      - --
+      - psql
+      - --no-psqlrc
+      - --set=ON_ERROR_STOP=1
+      - --username=postgres
+      - --dbname=postgres
+      - --tuples-only
+      - --no-align
+    stdin: "{{ database_backend_sql }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  no_log: true
+  changed_when: false
+  register: _database_backend_psql_result
+
+- name: Backend psql | Return the output
+  ansible.builtin.set_fact:
+    database_backend_stdout: "{{ _database_backend_psql_result.stdout }}"
+  no_log: true

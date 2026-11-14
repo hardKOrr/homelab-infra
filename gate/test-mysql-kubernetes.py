@@ -185,7 +185,7 @@ read_task = next(t for t in server_block["block"] if t["name"].endswith("Read th
 for image, label in (("mysql:8.4", "the whole MySQL server"), ("mariadb:11.8", "the whole MariaDB server")):
     variables = {"k8s_database_step_config": {"app": {"image": image, "port": 3306}},
                  "k8s_database_step_instance": "db", "k8s_database_step_root_password": "x"}
-    fact = Templar(loader=DataLoader(), variables=variables).template(
+    fact = Templar(loader=DataLoader(), variables={**variables, **read_task["vars"]}).template(
         read_task["ansible.builtin.set_fact"], fail_on_undefined=True)["_kds"]
     assert " ".join(fact["describe"].split()).startswith(label), fact["describe"]
 print("MySQL keeps the guests as default and runs on Kubernetes through the shared operations")

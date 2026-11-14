@@ -21,3 +21,21 @@ with `hba_file`, so `client_cidrs` govern the published port. The recovery point
 base backup; restore swaps `/opt/<instance>/data`. Host packages include the server tools
 because `pg_verifybackup` requires `pg_waldump`; automatic native cluster creation is
 disabled. A stack host takes one such backend.
+
+## Kubernetes
+
+`hosting.method: kubernetes` deploys the official image plus pgvector (`kubernetes.image`)
+as a Deployment in the instance's namespace, with its access list in a ConfigMap, its
+data on a volume of the cluster's default StorageClass, and a MetalLB Service of type
+LoadBalancer answering on the ingress address at `app.port`. Deploy refuses a port already taken on that address by another Service, and
+opens the port for every registered consumer. The `postgres` superuser has a generated
+password in the instance's Vaultwarden item and may connect only from the pod network
+(`kubernetes.superuser_cidr`); `client_cidrs` govern everyone else. Shared database tasks
+reach the server by running `psql` in its pod over the local socket
+(`tasks/database/backend-psql.yml`).
+
+The recovery point is logical, not a base backup: `database.pxar` holds `postgresql.sql`
+(one `pg_dumpall` script: every database, role and grant) beside the access list. Each
+database is consistent; the cluster as a whole is not one snapshot. Restore drops every
+database and role the point lacks, loads it into the running server and keeps the target's
+own superuser password.

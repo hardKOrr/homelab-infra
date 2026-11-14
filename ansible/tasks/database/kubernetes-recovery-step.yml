@@ -14,10 +14,12 @@
 #   k8s_database_step_source     registered — the app's database on its registered backend
 #                                             (app.database: provider, instance, name, role)
 #                                namespace-mysql — a database pod in the app's own namespace
-#                                namespace-server — the whole MariaDB or MySQL server that
-#                                             runs in the instance's own namespace (the
-#                                             MariaDB/MySQL role's own recovery point: every
-#                                             schema and the grants, `<engine>.sql`)
+#                                namespace-server — the whole MariaDB, MySQL or PostgreSQL
+#                                             server that runs in the instance's own
+#                                             namespace (the role's own recovery point:
+#                                             every schema or database and the grants or
+#                                             roles, `<engine>.sql`; PostgreSQL is
+#                                             `postgresql.sql`, one pg_dumpall script)
 #   k8s_database_step_config     the merged config of the instance whose database this is
 #   k8s_database_step_instance   that instance's name (namespace-mysql: its pod is
 #                                `<instance>-db`)
@@ -106,7 +108,7 @@
             {{ k8s_database_step_instance }}-db
       no_log: true
 
-- name: Database recovery step | Resolve the MariaDB/MySQL server in this namespace
+- name: Database recovery step | Resolve the server in this namespace
   when: k8s_database_step_source == 'namespace-server'
   block:
     - name: Database recovery step | Require the server's root credential and image
@@ -119,23 +121,29 @@
           Deploy the instance first; its deploy generates and stores that credential.
       no_log: true
 
-    # The Service answers inside the namespace on app.port; root's host pattern admits
-    # only the pod network, so this is the one path that reaches it over TCP.
+    # The Service answers inside the namespace on app.port; the superuser's host pattern
+    # admits only the pod network, so this is the one path that reaches it over TCP.
     - name: Database recovery step | Read the server
+      vars:
+        _kds_image: "{{ k8s_database_step_config.app.image | lower }}"
+        _kds_engine: >-
+          {{ 'mariadb' if 'mariadb' in _kds_image
+             else 'postgresql' if _kds_image is match('^(docker.io/library/)?postgres:')
+             else 'mysql' }}
       ansible.builtin.set_fact:
         _kds:
-          engine: >-
-            {{ 'mariadb' if 'mariadb' in (k8s_database_step_config.app.image | lower) else 'mysql' }}
+          engine: "{{ _kds_engine }}"
           image: "{{ k8s_database_step_config.app.image }}"
           host: "{{ k8s_database_step_instance }}"
           port: "{{ k8s_database_step_config.app.port | default(3306) | string }}"
           name: ""
-          user: root
+          user: "{{ 'postgres' if _kds_engine == 'postgresql' else 'root' }}"
           password: "{{ k8s_database_step_root_password }}"
           root_hosts: "{{ k8s_database_step_config.kubernetes.root_host | default('10.42.%') }}"
           describe: >-
-            the whole {{ 'MariaDB' if 'mariadb' in (k8s_database_step_config.app.image | lower) else 'MySQL' }}
-            server {{ k8s_database_step_instance }} (every schema and grant)
+            the whole {{ {'mariadb': 'MariaDB', 'mysql': 'MySQL', 'postgresql': 'PostgreSQL'}[_kds_engine] }}
+            server {{ k8s_database_step_instance }}
+            ({{ 'every database and role' if _kds_engine == 'postgresql' else 'every schema and grant' }})
       no_log: true
 
 - name: Database recovery step | Require the database login
@@ -153,12 +161,11 @@
   ansible.builtin.set_fact:
     k8s_database_step:
       image: "{{ _kds.image }}"
-      env:
-        DB_ENGINE: "{{ _kds.engine }}"
-        DB_HOST: "{{ _kds.host }}"
-        DB_PORT: "{{ _kds.port }}"
-        DB_USER: root
-        DB_ROOT_HOSTS: "{{ _kds.root_hosts }}"
+      # DB_ROOT_HOSTS is MariaDB/MySQL's root account host list; PostgreSQL's access list is
+      # its pg_hba.conf.
+      env: >-
+        {{ {'DB_ENGINE': _kds.engine, 'DB_HOST': _kds.host, 'DB_PORT': _kds.port, 'DB_USER': _kds.user}
+           | combine({} if _kds.engine == 'postgresql' else {'DB_ROOT_HOSTS': _kds.root_hosts}) }}
       secret_env:
         DB_PASSWORD: db-password
       secret_files:

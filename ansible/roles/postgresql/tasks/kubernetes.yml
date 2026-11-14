@@ -1,0 +1,148 @@
+---
+# PostgreSQL as one Deployment on the k3s cluster (hosting.method: kubernetes; main.yml is
+# the guest methods). Runs on localhost, like every Kubernetes app role: the shared
+# adapter tasks delegate kubectl to a cluster node.
+#
+# Applications reach it on the ingress address at app.port, and the shared database tasks
+# create their roles and databases by SQL run in the server pod (tasks/database/backend-psql.yml).
+# Its recovery point is the whole server: every database, role and grant, taken and loaded
+# by the shared database step (kubernetes-recovery-step.yml, namespace-server).
+#
+# Inputs: instance, app_config (merged, with the instance's Vaultwarden item on app).
+- name: PostgreSQL Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: PostgreSQL Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Two backends cannot answer on one address and port; MetalLB would leave the second
+# Service without an address while the pod runs.
+- name: PostgreSQL Kubernetes | Read every LoadBalancer Service in the cluster
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, services, --all-namespaces, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _postgresql_services
+  changed_when: false
+
+- name: PostgreSQL Kubernetes | Refuse an address and port another Service holds
+  ansible.builtin.assert:
+    that: _postgresql_port_holders | length == 0
+    fail_msg: >-
+      Service {{ _postgresql_port_holders | first | default('') }} already answers on the
+      cluster's ingress address at port {{ app_config.app.port }}. Give {{ instance }} its
+      own app.port.
+  vars:
+    _postgresql_port_holders: >-
+      {%- set held = [] -%}
+      {%- set services = (_postgresql_services.stdout | from_json)['items'] -%}
+      {%- for svc in services -%}
+      {%-   if svc.spec.type == 'LoadBalancer' and svc.metadata.namespace != k8s_namespace
+              and (app_config.app.port | string) in (svc.spec.ports | map(attribute='port') | map('string') | list)
+              and svc.metadata.get('annotations', {}).get('metallb.io/loadBalancerIPs', '')
+                  == homelabinfra_infra.kubernetes.ingress_vip -%}
+      {%-     set _ = held.append(svc.metadata.namespace ~ '/' ~ svc.metadata.name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ held | to_json | from_json }}
+
+# Stored before the manifest is applied, so a generated credential is never in use without
+# being recorded. The server keeps the password it first initialized with: changing it later
+# would lock Deploy out of its own data.
+- name: PostgreSQL Kubernetes | Resolve the superuser credential
+  ansible.builtin.set_fact:
+    _postgresql_superuser_password: >-
+      {{ app_config.app.superuser_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: PostgreSQL Kubernetes | Store the superuser credential
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      superuser_password: "{{ _postgresql_superuser_password }}"
+    vault_item_secret_fields: [superuser_password]
+  no_log: true
+
+- name: PostgreSQL Kubernetes | Sync the superuser credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      superuser-password: "{{ _postgresql_superuser_password }}"
+  no_log: true
+
+- name: PostgreSQL Kubernetes | Assert the supported major version
+  ansible.builtin.assert:
+    that:
+      - app_config.app.version | default('') == '16'
+      - app_config.app.image | default('') is match('^postgres:' ~ (app_config.app.version | string) ~ '([.-]|$)')
+      - app_config.kubernetes.image | default('') is search(':pg' ~ (app_config.app.version | string) ~ '([.-]|$)')
+    fail_msg: >-
+      This PostgreSQL role supports major version 16 only: app.image is the official
+      postgres:16 client image and kubernetes.image the server image of the same major.
+
+- name: PostgreSQL Kubernetes | Resolve database memory settings
+  ansible.builtin.set_fact:
+    _postgresql_shared_buffers_mib: "{{ app_config.app.get('memory', {}).get('shared_buffers', 256) | int }}"
+    _postgresql_effective_cache_size_mib: "{{ app_config.app.get('memory', {}).get('effective_cache_size', 768) | int }}"
+    _postgresql_work_mem_mib: "{{ app_config.app.get('memory', {}).get('work_mem', 4) | int }}"
+
+# The server reads the access list and the tuning once, at start: a change to either must
+# restart it.
+- name: PostgreSQL Kubernetes | Fingerprint the access list and tuning
+  ansible.builtin.set_fact:
+    _postgresql_config_checksum: >-
+      {{ [app_config.app.client_cidrs, app_config.kubernetes.superuser_cidr, app_config.kubernetes.image,
+          _postgresql_shared_buffers_mib, _postgresql_effective_cache_size_mib,
+          _postgresql_work_mem_mib] | to_json | hash('sha256') }}
+
+- name: PostgreSQL Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _postgresql_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: PostgreSQL Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _postgresql_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+# The readiness probe already proved the final server answers; this proves the declared
+# access list is the one in force, since the published port answers whatever it says.
+- name: PostgreSQL Kubernetes | Read the access list in force
+  ansible.builtin.include_tasks: ../../../tasks/database/backend-psql.yml
+  vars:
+    database_backend_instance: "{{ instance }}"
+    database_backend_sql: SHOW hba_file;
+
+- name: PostgreSQL Kubernetes | Refuse an undeclared access list
+  ansible.builtin.assert:
+    that: database_backend_stdout | trim == '/etc/homelab-infra/pg_hba.conf'
+    fail_msg: >-
+      PostgreSQL is not using the declared pg_hba.conf; the published port would not honor
+      client_cidrs and would expose the superuser.
+
+- name: PostgreSQL Kubernetes | Describe the server's recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+    k8s_database_step_root_password: "{{ _postgresql_superuser_password }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: PostgreSQL Kubernetes | Schedule the server backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        every database, role and grant of this PostgreSQL server, as one pg_dumpall script,
+        plus its access list

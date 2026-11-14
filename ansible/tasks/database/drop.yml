@@ -14,8 +14,10 @@
 - name: Database drop | Check ownership before deleting
   ansible.builtin.include_tasks: guard-app-database.yml
 
-- name: Database drop | Drop the PostgreSQL database and role
-  when: database_app_target.provider == 'postgresql'
+- name: Database drop | Drop the PostgreSQL database and role on a guest backend
+  when:
+    - database_app_target.provider == 'postgresql'
+    - not (database_app_target.kubernetes | default(false) | bool)
   block:
     - name: Database drop | Drop the PostgreSQL database
       ansible.builtin.command:
@@ -89,4 +91,17 @@
       {% endfor %}
   when:
     - database_app_target.provider in ['mariadb', 'mysql']
+    - database_app_target.kubernetes | default(false) | bool
+
+# The same drops as SQL in the PostgreSQL server pod (backend-psql.yml); IF EXISTS keeps a
+# second run a no-op.
+- name: Database drop | Drop the database and role on a Kubernetes PostgreSQL backend
+  ansible.builtin.include_tasks: backend-psql.yml
+  vars:
+    database_backend_instance: "{{ database_app_target.instance }}"
+    database_backend_sql: |
+      DROP DATABASE IF EXISTS {{ database_app_target.name }} WITH (FORCE);
+      DROP ROLE IF EXISTS {{ database_app_target.role }};
+  when:
+    - database_app_target.provider == 'postgresql'
     - database_app_target.kubernetes | default(false) | bool
