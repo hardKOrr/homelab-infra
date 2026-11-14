@@ -94,11 +94,9 @@
       when: _redis_backup_writes_paused | bool
 
 - name: Redis backup | Validate the exported RDB
-  ansible.builtin.command:
-    argv: [redis-check-rdb, "{{ _redis_backup_stage.path }}/dump.rdb"]
-  register: _redis_backup_rdb_check
-  changed_when: false
-  no_log: true
+  ansible.builtin.include_tasks: validate-rdb.yml
+  vars:
+    redis_validate_rdb_path: "{{ _redis_backup_stage.path }}/dump.rdb"
 
 - name: Redis backup | Verify both staged files
   ansible.builtin.stat:

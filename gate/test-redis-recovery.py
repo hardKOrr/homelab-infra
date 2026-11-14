@@ -306,6 +306,8 @@ elif args == ['ACL', 'SAVE']:
 def run_hook(hook, root, variables=None):
     tasks = read_yaml(f"ansible/roles/redis/tasks/restore-{hook}.yml")
     for task in tasks:
+        if task.get("ansible.builtin.include_tasks") == "validate-rdb.yml":
+            task["ansible.builtin.include_tasks"] = str(ROOT / "ansible/roles/redis/tasks/validate-rdb.yml")
         task.pop("no_log", None)
         if "until" in task:
             task["retries"] = 1
@@ -374,6 +376,30 @@ def check_restore():
         (root / "stage/data/users.acl").write_text("user default on\n")
         result = run_hook("staged", root)
         assert result.returncode == 0, result.stdout + result.stderr
+
+        # Docker's RDB version can be newer than the host checker. The validator must
+        # use the actual running image, without pulling or writing to the staged dump.
+        docker = root / "bin/docker"
+        docker.write_text("""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+if args == ['inspect', 'redis']:
+    print(json.dumps([{'Image': 'sha256:running-image'}]))
+else:
+    assert args[:11] == ['run', '--rm', '--pull', 'never', '--network', 'none',
+                         '--read-only', '--user', '0:0', '--volume', args[10]]
+    assert args[11:] == ['--entrypoint', 'redis-check-rdb', 'sha256:running-image', '/recovery/dump.rdb']
+    assert args[10].endswith(':/recovery/dump.rdb:ro')
+    dump = pathlib.Path(args[10].removesuffix(':/recovery/dump.rdb:ro'))
+    sys.exit(0 if dump.read_text().startswith('REDIS') else 1)
+""")
+        docker.chmod(0o755)
+        docker_vars = {"redis_docker": True, "instance": "redis"}
+        result = run_hook("staged", root, docker_vars)
+        assert result.returncode == 0, result.stdout + result.stderr
+        (root / "stage/data/dump.rdb").write_text("corrupt")
+        assert run_hook("staged", root, docker_vars).returncode != 0, "Docker must reject a corrupt staged RDB"
+        (root / "stage/data/dump.rdb").write_text("REDIS0012")
 
         (root / "stage/data").rename(root / "data")
         result = run_hook("replaced", root)
