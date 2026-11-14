@@ -52,11 +52,26 @@
 - name: PostgreSQL | Configure the package repository for the host client
   ansible.builtin.include_tasks: ../../../tasks/database/postgresql-repository.yml
 
+# pg_verifybackup also needs pg_waldump, which Debian ships in the server package.
+# Install its tools without creating a second, native server on the Docker host.
+- name: PostgreSQL | Install cluster management configuration
+  ansible.builtin.apt:
+    name: postgresql-common
+    state: present
+    update_cache: false
+
+- name: PostgreSQL | Disable automatic native cluster creation
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql-common/createcluster.conf
+    regexp: '^#?\s*create_main_cluster\s*='
+    line: 'create_main_cluster = false'
+
 # The shared tasks run psql, pg_basebackup and pg_verifybackup on the host, as `postgres`.
 - name: PostgreSQL | Install the host client and Python client
   ansible.builtin.apt:
     name:
       - "postgresql-client-{{ app_config.app.version }}"
+      - "postgresql-{{ app_config.app.version }}"
       - python3-psycopg2
     state: present
     update_cache: false

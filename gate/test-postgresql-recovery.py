@@ -171,6 +171,14 @@ def check_contract():
     compose = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
     assert "hba_file=/etc/postgresql/pg_hba.conf" in compose
     docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
+    # Debian's verifier needs pg_waldump from the server package, but installing
+    # those tools must not create a native cluster competing with Docker.
+    docker_tree = task_tree(ROLE / "tasks/docker.yml")
+    packages = task_named(docker_tree, "PostgreSQL | Install the host client and Python client")
+    assert "postgresql-{{ app_config.app.version }}" in packages["ansible.builtin.apt"]["name"]
+    disable_cluster = task_named(docker_tree, "PostgreSQL | Disable automatic native cluster creation")
+    assert disable_cluster["ansible.builtin.lineinfile"]["line"] == "create_main_cluster = false"
+    assert docker_tasks.index(disable_cluster["name"]) < docker_tasks.index(packages["name"])
     assert "Refuse a second backend on this stack host" in docker_tasks
     assert "Refuse an undeclared pg_hba.conf" in docker_tasks
     # The server's own port names its socket file, so it must follow app.port, not 5432.

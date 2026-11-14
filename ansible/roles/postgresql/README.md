@@ -12,9 +12,12 @@ requires the standard `pg_default` and `pg_global` tablespaces.
 
 ## Docker
 
-`hosting.method: docker` runs the official `postgres:16` image under Compose on a stack
-host. Host and container share `/var/run/postgresql`: access there is trust, limited by the
+`hosting.method: docker` builds on the official `postgres:16` image with pgvector under
+Compose on a stack host. The host's `/var/run/postgresql` is mounted at `/run/pgsock`
+in the container: access there is trust, limited by the
 directory's mode, so the shared database tasks and the host's PostgreSQL client reach the
 server as the host `postgres` user. `pg_hba.conf` sits in `/opt/<instance>` and is passed
 with `hba_file`, so `client_cidrs` govern the published port. The recovery point is the same
-base backup; restore swaps `/opt/<instance>/data`. A stack host takes one such backend.
+base backup; restore swaps `/opt/<instance>/data`. Host packages include the server tools
+because `pg_verifybackup` requires `pg_waldump`; automatic native cluster creation is
+disabled. A stack host takes one such backend.
