@@ -7,7 +7,7 @@
 #
 # usage: database-client.sh dump|verify|restore FILE
 #        database-client.sh inspect
-# env:   DB_ENGINE (postgresql|mariadb|mysql) DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
+# env:   DB_ENGINE (postgresql|mariadb|mysql|redis) DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 #        (verify needs only DB_ENGINE)
 #
 # dump     PostgreSQL: custom format without owners or grants.
@@ -32,6 +32,13 @@
 #                  DB_ROOT_HOSTS lists the root account hosts (default: localhost).
 #   PostgreSQL: one pg_dumpall script; server-load drops every database and role but the
 #                  superuser, loads FILE and keeps this server's own postgres password.
+#
+# Whole Redis server (DB_ENGINE=redis, DB_USER the ACL login, FILE named *.rdb): the point is
+# the RDB beside its ACL users, `<name>.acl`, taken and loaded over the network.
+#   server-dump    redis-cli --rdb (a consistent snapshot through replication) and ACL LIST.
+#   server-load    makes the running server a replica of a throwaway Redis that holds FILE,
+#                  waits for the full sync, promotes it again and saves. The point's `default`
+#                  user is skipped: this server keeps its own login. DB_HOST is the server.
 set -eu
 
 action=${1:-}
@@ -199,6 +206,75 @@ sql_server() {
   "$client" --defaults-extra-file="$work/client.cnf" < "$work/load.sql"
 }
 
+# One Redis server as a unit: the data set as an RDB, its ACL users beside it.
+redis_server() {
+  acl="${file%.rdb}.acl"
+  if [ "$action" = server-verify ]; then
+    redis-check-rdb "$file" > /dev/null
+    [ -s "$acl" ]
+    return
+  fi
+  export REDISCLI_AUTH="$DB_PASSWORD"
+  cli() { redis-cli --no-auth-warning --user "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$@"; }
+  umask 077
+  if [ "$action" = server-inspect ]; then
+    attempt=0
+    until out=$(cli DBSIZE 2> "$work/inspect.err") && users=$(cli ACL USERS 2>> "$work/inspect.err" | wc -l); do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        cat "$work/inspect.err" >&2
+        return 1
+      fi
+      sleep 2
+    done
+    echo "$out keys, $users ACL users"
+    return
+  fi
+  if [ "$action" = server-dump ]; then
+    cli --rdb "$work/dump.rdb" > /dev/null
+    redis-check-rdb "$work/dump.rdb" > /dev/null
+    cli ACL LIST > "$work/dump.acl"
+    test -s "$work/dump.acl"
+    mv "$work/dump.acl" "$acl"
+    mv "$work/dump.rdb" "$file"
+    return
+  fi
+  test -s "$file"
+  # A throwaway master holds the point; the target replicates it, which replaces its whole
+  # data set. The Job pod's address is reachable from the target over the pod network.
+  cp "$file" "$work/point.rdb"
+  redis-server --port 6390 --bind 0.0.0.0 --protected-mode no --dir "$work" \
+    --dbfilename point.rdb --save "" --appendonly no > "$work/master.log" 2>&1 &
+  master=$!
+  trap 'kill "$master" 2> /dev/null || true; rm -rf "$work"' EXIT
+  attempt=0
+  until [ "$(redis-cli -p 6390 ping 2> /dev/null)" = PONG ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 60 ] || { cat "$work/master.log" >&2; echo "database-client.sh: the throwaway Redis did not start" >&2; exit 1; }
+    sleep 1
+  done
+  cli REPLICAOF "$(hostname -i | cut -d' ' -f1)" 6390 > /dev/null
+  attempt=0
+  until cli INFO replication | grep -q '^master_link_status:up'; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 120 ] || { echo "database-client.sh: the full sync did not finish" >&2; exit 1; }
+    sleep 1
+  done
+  cli REPLICAOF NO ONE > /dev/null
+  # Users: the point's, but never its `default` (this server's login stays as deployed).
+  cli ACL LIST | grep '^user ' | grep -v '^user default ' | while read -r _ name _; do
+    cli ACL DELUSER "$name" > /dev/null
+  done
+  set -f
+  grep '^user ' "$acl" | grep -v '^user default ' | while read -r _ name rules; do
+    # shellcheck disable=SC2086 # the rules are separate ACL SETUSER arguments
+    cli ACL SETUSER "$name" $rules > /dev/null
+  done
+  set +f
+  cli ACL SAVE > /dev/null
+  cli SAVE > /dev/null
+}
+
 # One PostgreSQL server as a unit: every database, role and grant, as one pg_dumpall script.
 # DB_USER is the bootstrap superuser, which connects from the pod network only.
 postgresql_server() {
@@ -252,17 +328,18 @@ postgresql_server() {
 }
 
 case "$DB_ENGINE" in
-  postgresql | mariadb | mysql) ;;
+  postgresql | mariadb | mysql | redis) ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
 esac
 case "$action" in
-  server-*) if [ "$DB_ENGINE" = postgresql ]; then postgresql_server; else sql_server; fi
+  server-*) case "$DB_ENGINE" in postgresql) postgresql_server ;; redis) redis_server ;; *) sql_server ;; esac
             [ "$action" = server-inspect ] && exit 0
             echo "database-client.sh: $action $DB_ENGINE server complete ($(wc -c < "$file") bytes)"
             exit 0 ;;
 esac
 
 case "$DB_ENGINE" in
+  redis) echo "database-client.sh: $action needs a server action for redis" >&2; exit 64 ;;
   postgresql) postgresql ;;
   mariadb | mysql) mysql_compatible ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;

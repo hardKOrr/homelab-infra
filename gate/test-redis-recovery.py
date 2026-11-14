@@ -332,7 +332,7 @@ def run_hook(hook, root, variables=None):
 
 def check_restore():
     """Redis supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("redis")
+    swap = swap_inputs("redis", "restore-guest.yml")
     assert swap["recovery_swap_paths"] == [{"path": "{{ _redis_restore_data_path }}",
                                            "owner": "{{ redis_owner }}", "group": "{{ redis_owner }}",
                                            "mode": "0750"}]
@@ -341,7 +341,7 @@ def check_restore():
     assert swap["recovery_swap_archives"] == ["data.pxar"]
     assert "_redis_restore_service_name" in swap["recovery_swap_stop_services"]
     assert "redis_compose_service" in swap["recovery_swap_stop_services"]
-    restore = read_yaml("ansible/roles/redis/tasks/restore.yml")
+    restore = read_yaml("ansible/roles/redis/tasks/restore-guest.yml")
     names = [task.get("name") for task in restore]
     assert names.index("Redis restore | Refuse an inactive target") < names.index(
         "Redis restore | Preview or replace the data directory")
@@ -479,7 +479,7 @@ def check_runtime_guards():
         systemctl.write_text("#!/bin/sh\nprintf '%s' \"$TEST_INSPECT\"\nexit \"$TEST_RC\"\n")
         systemctl.chmod(0o755)
         for operation in ("backup", "restore"):
-            tasks = read_yaml(f"ansible/roles/redis/tasks/{operation}.yml")
+            tasks = read_yaml(f"ansible/roles/redis/tasks/{operation}{"-guest" if operation == "restore" else ""}.yml")
             start = next(i for i, task in enumerate(tasks)
                          if task.get("register") == f"_redis_{operation}_service_state")
             for is_docker, output, rc, passes in (

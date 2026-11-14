@@ -1,6 +1,7 @@
 ---
 # Role-internal defaults; user-facing knobs live in vars/app-defaults/redis.yml.
 redis_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+redis_kubernetes: "{{ app_config.hosting.method | default('native') == 'kubernetes' }}"
 # Docker: the Compose project, config and data live together in /opt/<instance>.
 redis_project_dir: "/opt/{{ instance }}"
 redis_compose_service: redis

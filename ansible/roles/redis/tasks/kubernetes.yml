@@ -1,0 +1,114 @@
+---
+# Redis as one Deployment on the k3s cluster (hosting.method: kubernetes; main.yml is the
+# guest methods). Runs on localhost, like every Kubernetes app role: the shared adapter
+# tasks delegate kubectl to a cluster node.
+#
+# Applications reach it on the ingress address at app.port. Its recovery point is the data
+# set as one RDB plus the ACL users, taken and loaded by the shared database step
+# (tasks/database/kubernetes-recovery-step.yml, namespace-server) over the network.
+#
+# Inputs: instance, app_config (merged, with the instance's Vaultwarden item on app).
+- name: Redis Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Redis Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Two backends cannot answer on one address and port; MetalLB would leave the second
+# Service without an address while the pod runs.
+- name: Redis Kubernetes | Read every LoadBalancer Service in the cluster
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, services, --all-namespaces, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _redis_services
+  changed_when: false
+
+- name: Redis Kubernetes | Refuse an address and port another Service holds
+  ansible.builtin.assert:
+    that: _redis_port_holders | length == 0
+    fail_msg: >-
+      Service {{ _redis_port_holders | first | default('') }} already answers on the
+      cluster's ingress address at port {{ app_config.app.port }}. Give {{ instance }} its
+      own app.port.
+  vars:
+    _redis_port_holders: >-
+      {%- set held = [] -%}
+      {%- set services = (_redis_services.stdout | from_json)['items'] -%}
+      {%- for svc in services -%}
+      {%-   if svc.spec.type == 'LoadBalancer' and svc.metadata.namespace != k8s_namespace
+              and (app_config.app.port | string) in (svc.spec.ports | map(attribute='port') | map('string') | list)
+              and svc.metadata.get('annotations', {}).get('metallb.io/loadBalancerIPs', '')
+                  == homelabinfra_infra.kubernetes.ingress_vip -%}
+      {%-     set _ = held.append(svc.metadata.namespace ~ '/' ~ svc.metadata.name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ held | to_json | from_json }}
+
+- name: Redis Kubernetes | Resolve memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
+# Stored before the manifest is applied, so a generated credential is never in use without
+# being recorded.
+- name: Redis Kubernetes | Resolve the backend password
+  ansible.builtin.set_fact:
+    _redis_password: "{{ app_config.app.password | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}"
+  no_log: true
+
+- name: Redis Kubernetes | Store the backend password
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields: {password: "{{ _redis_password }}"}
+    vault_item_secret_fields: [password]
+  no_log: true
+
+- name: Redis Kubernetes | Sync the credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      password: "{{ _redis_password }}"
+      password-sha256: "{{ _redis_password | hash('sha256') }}"
+  no_log: true
+
+- name: Redis Kubernetes | Fingerprint the configuration and login
+  ansible.builtin.set_fact:
+    _redis_config_checksum: >-
+      {{ [app_config.app.image, _redis_maxmemory_mib, _redis_maxmemory_policy,
+          _redis_password | hash('sha256')] | to_json | hash('sha256') }}
+  no_log: true
+
+- name: Redis Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _redis_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: Redis Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _redis_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+- name: Redis Kubernetes | Describe the server's recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+    k8s_database_step_root_password: "{{ _redis_password }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Redis Kubernetes | Schedule the server backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: >-
+        the whole Redis data set as one RDB, plus its ACL users and configuration

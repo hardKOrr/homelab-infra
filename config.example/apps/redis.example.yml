@@ -14,3 +14,14 @@
 #   memory:
 #     maxmemory: 512
 #     maxmemory_policy: noeviction
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# One Deployment on the k3s cluster, its data on a default-StorageClass volume of
+# app.storage Gi. app.port is the LoadBalancer port on the cluster's ingress address, so a
+# second Redis on one cluster needs a different port. Deploy opens that port on the
+# firewall for each registered consumer.
+# hosting:
+#   method: kubernetes
+# app:
+#   port: 6379
+#   storage: 2

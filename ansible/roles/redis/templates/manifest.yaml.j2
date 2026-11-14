@@ -1,0 +1,130 @@
+{# One Redis backend: its configuration, one data volume, one Deployment, one LoadBalancer. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels | trim | indent(4, true) }}
+data:
+  redis.conf: |
+    # Managed by homelab-infra. Application clients must authenticate (the ACL file).
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    dir /data
+    aclfile /data/users.acl
+    maxmemory {{ _redis_maxmemory_mib }}mb
+    maxmemory-policy {{ _redis_maxmemory_policy }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: the old pod must release it first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+        app.kubernetes.io/component: server
+      annotations:
+        # The server reads its configuration and the default login once, at start.
+        homelab-infra.io/config-checksum: "{{ _redis_config_checksum }}"
+    spec:
+      initContainers:
+        # Keeps the users a restore or an operator added, and sets the default login to
+        # the Vaultwarden credential, as the guest methods do. The image's entrypoint hands
+        # the file to the redis user when the server starts.
+        - name: acl
+          image: "{{ app_config.app.image }}"
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              touch /data/users.acl
+              grep -v '^user default ' /data/users.acl > /tmp/users.acl || true
+              echo "user default on #${PASSWORD_SHA256} ~* &* +@all" >> /tmp/users.acl
+              cat /tmp/users.acl > /data/users.acl
+              chmod 0600 /data/users.acl
+          env:
+            - name: PASSWORD_SHA256
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: password-sha256 }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: redis
+          image: "{{ app_config.app.image }}"
+          args: [/etc/homelab-infra/redis.conf]
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/homelab-infra
+              readOnly: true
+          readinessProbe:
+            exec:
+              # An unauthenticated PING gets NOAUTH and exit 0: any reply proves the server is up.
+              command: [redis-cli, -h, 127.0.0.1, -p, "6379", ping]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+        - name: config
+          configMap:
+            name: {{ instance }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+  annotations:
+    # The ingress address, shared with Traefik: a database port, not an HTTP route.
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    # Recovery Jobs share the instance label but do not serve connections.
+    app.kubernetes.io/component: server
+  ports:
+    - name: redis
+      port: {{ app_config.app.port }}
+      targetPort: 6379
