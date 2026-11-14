@@ -101,7 +101,7 @@
       - path: "{{ influxdb_data_path }}"
         owner: "{{ influxdb_owner }}"
         group: "{{ influxdb_owner }}"
-        mode: "0750"
+        mode: "{{ '0700' if influxdb_docker | bool else '0750' }}"
     recovery_swap_stop_services: >-
       {{ [influxdb_compose_service] if influxdb_docker | bool else [_influxdb_restore_service_name] }}
     recovery_swap_compose_project: "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"

@@ -1,0 +1,104 @@
+---
+- name: Canary | Validate drill inputs and lab ownership
+  ansible.builtin.assert:
+    that:
+      - canary_action in ['seed', 'present', 'absent']
+      - canary_bucket is match('^p2-canary-influxdb-[A-Za-z0-9-]+$')
+      - _rat_host in groups['lab_managed']
+      - canary_epoch | int > 0
+
+- name: Canary | Resolve API inputs
+  ansible.builtin.set_fact:
+    _canary_url: "http://{{ hostvars[_rat_host].ansible_host }}:{{ app_config.app.port }}"
+    _canary_credentials: "{{ homelabinfra_vault.apps[instance] }}"
+  no_log: true
+
+- name: Canary | Read organization
+  ansible.builtin.uri:
+    url: "{{ _canary_url }}/api/v2/orgs?org={{ _canary_credentials.organization | urlencode }}"
+    headers: {Authorization: "Token {{ _canary_credentials.operator_token }}"}
+  register: _canary_org
+  no_log: true
+
+- name: Canary | Read bucket
+  ansible.builtin.uri:
+    url: "{{ _canary_url }}/api/v2/buckets?name={{ canary_bucket | urlencode }}"
+    headers: {Authorization: "Token {{ _canary_credentials.operator_token }}"}
+  register: _canary_before
+  no_log: true
+
+- name: Canary | Verify fresh instance has no canary
+  ansible.builtin.assert:
+    that: _canary_before.json.buckets | length == 0
+  when: canary_action == 'absent'
+
+- name: Canary | Create seven-day bucket
+  ansible.builtin.uri:
+    url: "{{ _canary_url }}/api/v2/buckets"
+    method: POST
+    headers: {Authorization: "Token {{ _canary_credentials.operator_token }}"}
+    body_format: json
+    body:
+      name: "{{ canary_bucket }}"
+      orgID: "{{ _canary_org.json.orgs[0].id }}"
+      retentionRules: [{type: expire, everySeconds: 604800}]
+    status_code: 201
+  when: canary_action == 'seed' and _canary_before.json.buckets | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Canary | Write deterministic points
+  ansible.builtin.uri:
+    url: >-
+      {{ _canary_url }}/api/v2/write?org={{ _canary_credentials.organization | urlencode
+      }}&bucket={{ canary_bucket | urlencode }}&precision=s
+    method: POST
+    headers: {Authorization: "Token {{ _canary_credentials.operator_token }}"}
+    body: |
+      recovery,point=one value=101i {{ canary_epoch | int }}
+      recovery,point=two value=202i {{ canary_epoch | int + 1 }}
+      recovery,point=three value=303i {{ canary_epoch | int + 2 }}
+    status_code: 204
+  when: canary_action == 'seed'
+  changed_when: true
+  no_log: true
+
+- name: Canary | Verify restored data and configuration
+  when: canary_action != 'absent'
+  block:
+    - name: Canary | Read retention
+      ansible.builtin.uri:
+        url: "{{ _canary_url }}/api/v2/buckets?name={{ canary_bucket | urlencode }}"
+        headers: {Authorization: "Token {{ _canary_credentials.operator_token }}"}
+      register: _canary_after
+      no_log: true
+
+    - name: Canary | Query points
+      ansible.builtin.uri:
+        url: "{{ _canary_url }}/api/v2/query?org={{ _canary_credentials.organization | urlencode }}"
+        method: POST
+        headers:
+          Authorization: "Token {{ _canary_credentials.operator_token }}"
+          Accept: application/csv
+        body_format: json
+        body:
+          query: >-
+            from(bucket: "{{ canary_bucket }}") |> range(start: 0)
+            |> filter(fn: (r) => r._measurement == "recovery" and r._field == "value")
+            |> map(fn: (r) => ({signature: r.point + ":" + string(v: r._value) + ":" + string(v: uint(v: r._time))}))
+            |> group() |> sort(columns: ["signature"])
+        return_content: true
+      register: _canary_points
+      no_log: true
+
+    - name: Canary | Require exact points and retention
+      ansible.builtin.assert:
+        that:
+          - _canary_after.json.buckets | length == 1
+          - _canary_after.json.buckets[0].retentionRules[0].everySeconds == 604800
+          - >-
+            _canary_points.content | regex_findall(',0,([^\r\n]+)') | sort ==
+            ['one:101:' ~ ((canary_epoch | int) * 1000000000) | string,
+             'three:303:' ~ ((canary_epoch | int + 2) * 1000000000) | string,
+             'two:202:' ~ ((canary_epoch | int + 1) * 1000000000) | string]
+        fail_msg: "Unexpected canary result: {{ _canary_points.content }}"

@@ -188,7 +188,7 @@ def check_restore_swap(server):
     swap = swap_inputs("influxdb")
     assert swap["recovery_swap_paths"] == [{"path": "{{ influxdb_data_path }}",
                                            "owner": "{{ influxdb_owner }}", "group": "{{ influxdb_owner }}",
-                                           "mode": "0750"}]
+                                           "mode": "{{ '0700' if influxdb_docker | bool else '0750' }}"}]
     assert swap["recovery_swap_runtime"] == "{{ 'docker' if influxdb_docker | bool else 'native' }}"
     assert swap["recovery_swap_compose_project"] == "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]

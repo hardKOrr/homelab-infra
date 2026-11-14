@@ -127,7 +127,8 @@
     mode: "{{ item.mode }}"
   loop:
     - {path: "{{ influxdb_project_dir }}", owner: root, mode: "0755"}
-    - {path: "{{ influxdb_data_path }}", owner: "{{ influxdb_owner }}", mode: "0750"}
+    # The image entrypoint enforces 0700 on the directory holding influxd.bolt.
+    - {path: "{{ influxdb_data_path }}", owner: "{{ influxdb_owner }}", mode: "0700"}
   when: influxdb_docker | bool
 
 - name: InfluxDB | Write docker-compose.yml

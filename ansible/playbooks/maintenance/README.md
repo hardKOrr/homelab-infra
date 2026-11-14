@@ -19,6 +19,8 @@ that interface.
   media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
   The live [recovery drill and application data port](recovery-drill.md) prove one
   instance's deploy, backup and restore end to end.
+  `influxdb-canary.yml` runs the InfluxDB role's authenticated recovery checks; its
+  [role README](../../roles/influxdb/README.md#recovery-checks) describes the inputs.
 - Status and ascent verification read state without enforcing drift.
 
 Offline or unknown Proxmox nodes leave guest enumeration incomplete. Status reports that diagnostic
