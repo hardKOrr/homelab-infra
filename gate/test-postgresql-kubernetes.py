@@ -126,6 +126,12 @@ assert hba[2] == ["host", "all", "postgres", "0.0.0.0/0", "reject"]
 assert [row[3] for row in hba[3:]] == ["10.0.0.0/8", "192.0.2.0/24"]
 assert all(row[-1] != "trust" for row in hba if row[0] == "host")
 service = objects["Service"]
+selector = service["spec"]["selector"]
+pod_labels = deployment["template"]["metadata"]["labels"]
+assert all(pod_labels.get(key) == value for key, value in selector.items())
+for component in ("backup", "restore"):
+    recovery_labels = dict(pod_labels, **{"app.kubernetes.io/component": component})
+    assert not all(recovery_labels.get(key) == value for key, value in selector.items())
 vip = context["homelabinfra_infra"]["kubernetes"]["ingress_vip"]
 assert service["spec"]["type"] == "LoadBalancer"
 assert service["spec"]["ports"][0]["port"] == 5433 and service["spec"]["ports"][0]["targetPort"] == 5432

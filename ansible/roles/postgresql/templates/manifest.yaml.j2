@@ -2,6 +2,7 @@
 {% set labels %}
 app.kubernetes.io/instance: {{ instance }}
 app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: server
 {% endset %}
 ---
 apiVersion: v1
@@ -117,6 +118,8 @@ spec:
   type: LoadBalancer
   selector:
     app.kubernetes.io/instance: {{ instance }}
+    # Recovery Jobs share the instance label but do not serve database connections.
+    app.kubernetes.io/component: server
   ports:
     - name: postgresql
       port: {{ app_config.app.port }}
