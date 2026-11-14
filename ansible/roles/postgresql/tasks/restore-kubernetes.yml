@@ -32,6 +32,10 @@
       # loops over `stop` then run zero times.
       stop: []
       live_server: true
+      # The point's access list replaces the target's ConfigMap after the load, and the
+      # server reads pg_hba.conf at start: restart it, and the shared Job waits for
+      # readiness, so the restored list is the one in force.
+      restart: ["{{ restore_target }}"]
       describe: >-
         {{ k8s_database_step.describe }} and its access list
       verify:

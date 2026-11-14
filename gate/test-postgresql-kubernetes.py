@@ -164,6 +164,8 @@ job = next(
 )
 spec = job["vars"]["k8s_recovery"]
 assert spec["live_server"] is True and spec["stop"] == []
+# The restored access list only takes effect when the server restarts.
+assert spec["restart"] == ["{{ restore_target }}"]
 assert spec["archives"] == [{"name": "config", "config_map": "{{ restore_target }}-config"}]
 
 # ── Shared database tasks reach a Kubernetes backend through its pod ───────────────────
