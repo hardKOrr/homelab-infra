@@ -1,0 +1,47 @@
+---
+# Create the application role, database and extensions on a PostgreSQL backend that runs on
+# Kubernetes, by SQL run in the server pod (backend-psql.yml): there is no guest and no
+# local `postgres` user on a host. Included by provision.yml with its variables. Every
+# statement is idempotent, so a second run changes nothing. The password goes into SQL
+# text, so only characters that need no escaping are allowed. The vector extension ships
+# in the backend's image; earthdistance and cube are part of PostgreSQL.
+- name: Database | Require a password that is safe inside SQL text
+  ansible.builtin.assert:
+    that: _database_password is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      {{ database_provision_app_instance }}'s database password must use only letters,
+      digits, '.', '_' and '-' to be set on a PostgreSQL backend that runs on Kubernetes.
+  no_log: true
+
+- name: Database | Create or update the role and the database
+  ansible.builtin.include_tasks: backend-psql.yml
+  vars:
+    _kpg_role: "{{ database_provision_config.role }}"
+    _kpg_name: "{{ database_provision_config.name }}"
+    _kpg_super: "{{ 'SUPERUSER' if (database_provision_config.postgresql_superuser | default(false) | bool) else 'NOSUPERUSER' }}"
+    database_backend_instance: "{{ database_provision_config.instance }}"
+    database_backend_sql: |
+      SELECT 'CREATE ROLE {{ _kpg_role }} LOGIN {{ _kpg_super }} NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD ''{{ _database_password }}'''
+        WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ _kpg_role }}') \gexec
+      ALTER ROLE {{ _kpg_role }} {{ _kpg_super }};
+      {% if _database_existing_password | length == 0 or _database_credential_action == 'rotate' %}
+      ALTER ROLE {{ _kpg_role }} PASSWORD '{{ _database_password }}';
+      {% endif %}
+      SELECT 'CREATE DATABASE {{ _kpg_name }} OWNER {{ _kpg_role }}'
+        WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '{{ _kpg_name }}') \gexec
+  no_log: true
+
+- name: Database | Create the requested extensions in the application database
+  ansible.builtin.include_tasks: backend-psql.yml
+  vars:
+    database_backend_instance: "{{ database_provision_config.instance }}"
+    database_backend_sql: |
+      \connect {{ database_provision_config.name }}
+      {% if 'vector' in (database_provision_config.extensions | default([])) %}
+      CREATE EXTENSION IF NOT EXISTS vector;
+      {% endif %}
+      {% if 'earthdistance' in (database_provision_config.extensions | default([])) %}
+      CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE;
+      {% endif %}
+  when: database_provision_config.extensions | default([]) | length > 0
+  no_log: true

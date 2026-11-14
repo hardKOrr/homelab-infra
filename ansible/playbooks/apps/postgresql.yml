@@ -27,6 +27,14 @@
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: postgresql
+    # Kubernetes only: the superuser credential lives in the instance's canonical item.
+    - name: Merge the instance's Vaultwarden item for the Kubernetes method
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': (homelabinfra_vault.apps | default({})).get(instance, {})},
+                                  recursive=True) }}
+      no_log: true
+      when: app_config.hosting.method == 'kubernetes'
   tasks:
     - name: Refresh inventory
       ansible.builtin.meta: refresh_inventory
@@ -71,6 +79,24 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    # Kubernetes: no guest. The consumers' firewall access, then the workload on the cluster.
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open the backend's declared network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open the port for the registered consumers
+      ansible.builtin.include_tasks: ../../tasks/database/open-consumer-access.yml
+      vars:
+        database_consumer_provider: postgresql
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Deploy PostgreSQL on Kubernetes
+      ansible.builtin.include_role:
+        name: postgresql
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
+
 - name: PostgreSQL | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -109,7 +135,43 @@
              'host': _postgresql_host.ansible_host,
              'port': _postgresql_host.app_config.app.port,
              'runtime': (_postgresql_host.app_config.hosting | default({})).get('method', 'native')}} }}
+      when: app_config.hosting.method != 'kubernetes'
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_kind: "{{ 'docker' if _postgresql_host.app_config.hosting.method == 'docker' else 'native' }}"
+      when: app_config.hosting.method != 'kubernetes'
+
+    # `kubernetes` marks a backend that runs in the cluster, for the shared database tasks.
+    # Facts merge recursively, so a guest backend writes an empty string over a marker an
+    # earlier Kubernetes Deploy left instead of keeping it.
+    - name: Clear the Kubernetes marker of a guest backend
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data: "{{ {instance: {'kubernetes': ''}} }}"
+      when: app_config.hosting.method != 'kubernetes'
+
+    # A backend on Kubernetes is reached at the ingress address, on app.port, and its SQL
+    # runs in its pod.
+    - name: Record the Kubernetes PostgreSQL backend facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'postgresql',
+                         'version': app_config.app.version,
+                         'host': homelabinfra_infra.kubernetes.ingress_vip,
+                         'port': app_config.app.port,
+                         'runtime': 'kubernetes',
+                         'kubernetes': {'namespace': 'app-' ~ instance}}} }}
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Record the app on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: ''
+      when: app_config.hosting.method == 'kubernetes'

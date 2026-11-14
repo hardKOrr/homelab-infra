@@ -21,14 +21,17 @@
 #          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
 # inspect  Read only: one line counting the tables and rows a restore would replace.
 #
-# Whole MariaDB or MySQL server (a Kubernetes backend's own recovery point; DB_USER is root, which
-# connects from inside the cluster only, and DB_NAME is not used):
+# Whole MariaDB, MySQL or PostgreSQL server (a Kubernetes backend's own recovery point;
+# DB_USER is root or postgres, which connects from inside the cluster only, and DB_NAME is
+# not used):
 #   server-dump FILE | server-verify FILE | server-load FILE | server-inspect
 #   server-dump    every schema and the grant tables at one point (global read lock).
 #   server-load    drops every application schema, loads FILE, then sets the root
 #                  password back to DB_PASSWORD: the point carries the SOURCE server's
 #                  root hash, and the target's own credential must keep working.
 #                  DB_ROOT_HOSTS lists the root account hosts (default: localhost).
+#   PostgreSQL: one pg_dumpall script; server-load drops every database and role but the
+#                  superuser, loads FILE and keeps this server's own postgres password.
 set -eu
 
 action=${1:-}
@@ -196,12 +199,65 @@ sql_server() {
   "$client" --defaults-extra-file="$work/client.cnf" < "$work/load.sql"
 }
 
+# One PostgreSQL server as a unit: every database, role and grant, as one pg_dumpall script.
+# DB_USER is the bootstrap superuser, which connects from the pod network only.
+postgresql_server() {
+  if [ "$action" = server-verify ]; then
+    # pg_dumpall ends a complete script with this line; a cut-off dump lacks it.
+    tail -n 5 "$file" | grep -q 'PostgreSQL database cluster dump complete'
+    return
+  fi
+  export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGDATABASE=postgres PGPASSWORD="$DB_PASSWORD"
+  umask 077
+  if [ "$action" = server-inspect ]; then
+    # A load drops the connections of the server's readiness probe and its consumers.
+    # Reconnect for this read only; never replay a load.
+    attempt=0
+    until PGCONNECT_TIMEOUT=2 psql --no-psqlrc --tuples-only --no-align \
+      --command="SELECT (SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres')
+        || ' application databases, ' || (SELECT count(*) FROM pg_roles WHERE rolname !~ '^pg_' AND rolname <> 'postgres')
+        || ' roles'" 2> "$work/inspect.err"; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        cat "$work/inspect.err" >&2
+        return 1
+      fi
+      sleep 2
+    done
+    return
+  fi
+  if [ "$action" = server-dump ]; then
+    pg_dumpall --no-sync > "$work/dump"
+    tail -n 5 "$work/dump" | grep -q 'PostgreSQL database cluster dump complete'
+    mv "$work/dump" "$file"
+    return
+  fi
+  test -s "$file"
+  # Start from an empty cluster, so what the point lacks does not survive: every database
+  # but the templates is dropped (with its sessions) and `postgres` is created again, then
+  # every role but the bootstrap superuser. Names come from the server.
+  {
+    echo '\set ON_ERROR_STOP on'
+    echo '\connect template1'
+    psql --no-psqlrc --tuples-only --no-align --command="SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE);', datname)
+      FROM pg_database WHERE NOT datistemplate"
+    echo 'CREATE DATABASE postgres;'
+    psql --no-psqlrc --tuples-only --no-align --command="SELECT format('DROP ROLE IF EXISTS %I;', rolname)
+      FROM pg_roles WHERE rolname !~ '^pg_' AND rolname <> 'postgres'"
+    # The point carries the SOURCE server's postgres role and password hash: keep this
+    # server's own, which the next connection of this script authenticates with.
+    sed -e '/^CREATE ROLE postgres;$/d' -e "/^ALTER ROLE postgres WITH /s/ PASSWORD '[^']*'//" "$file"
+  } > "$work/load.sql"
+  psql --no-psqlrc --quiet --dbname=template1 --file="$work/load.sql"
+}
+
 case "$DB_ENGINE" in
   postgresql | mariadb | mysql) ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
 esac
 case "$action" in
-  server-*) sql_server; [ "$action" = server-inspect ] && exit 0
+  server-*) if [ "$DB_ENGINE" = postgresql ]; then postgresql_server; else sql_server; fi
+            [ "$action" = server-inspect ] && exit 0
             echo "database-client.sh: $action $DB_ENGINE server complete ($(wc -c < "$file") bytes)"
             exit 0 ;;
 esac

@@ -41,6 +41,10 @@ def database_fact_task(path):
     raise AssertionError(f"database fact writer not found in {path}")
 
 
+def pg_tasks_file():
+    return yaml.safe_load(read("ansible/tasks/database/provision-postgresql.yml"))
+
+
 def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
 
@@ -117,6 +121,7 @@ def database_producers_resolve_instance_keys():
 
 def database_vault_upsert_skips_check_mode():
     tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    pg_tasks = pg_tasks_file()
     upsert = task_named(tasks, "Database | Store application connection fields in Vaultwarden")
     assert upsert.get("when") == "not ansible_check_mode"
 
@@ -296,11 +301,12 @@ def database_writer_removes_unresolved_keys_and_preserves_other_estates():
 
 def database_role_password_sql_uses_psql_stdin():
     tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    pg_tasks = pg_tasks_file()
     for name in (
         "Database | Create PostgreSQL application role",
         "Database | Rotate PostgreSQL application role password",
     ):
-        task = task_named(tasks, name)
+        task = task_named(pg_tasks, name)
         command = task["ansible.builtin.command"]
         assert "--set=database_password={{ _database_password }}" in command["argv"]
         assert "stdin" in command
@@ -315,21 +321,21 @@ def postgres_superuser_is_an_explicit_database_request():
     assert defaults["app"]["database"]["postgresql_superuser"] is True
 
     tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    pg_tasks = pg_tasks_file()
     request = task_named(tasks, "Database | Assert provisioning request")
     conditions = request["ansible.builtin.assert"]["that"]
     assert any("postgresql_superuser" in condition and "is boolean" in condition for condition in conditions)
     assert any("provider == 'postgresql'" in condition for condition in conditions)
 
-    status = task_named(tasks, "Database | Read the PostgreSQL role superuser status")
+    status = task_named(pg_tasks, "Database | Read the PostgreSQL role superuser status")
     assert "rolsuper::text" in " ".join(status["ansible.builtin.command"]["argv"])
 
-    create = task_named(tasks, "Database | Create PostgreSQL application role")
+    create = task_named(pg_tasks, "Database | Create PostgreSQL application role")
     assert "SUPERUSER" in create["ansible.builtin.command"]["stdin"]
     assert "NOSUPERUSER" in create["ansible.builtin.command"]["stdin"]
     assert "_database_role_status.stdout | trim == 'missing'" in create["when"]
 
-    reconcile = task_named(
-        tasks, "Database | Reconcile PostgreSQL application role superuser status"
+    reconcile = task_named(pg_tasks, "Database | Reconcile PostgreSQL application role superuser status"
     )
     alter = " ".join(reconcile["ansible.builtin.command"]["argv"])
     assert "ALTER ROLE" in alter and "SUPERUSER" in alter and "NOSUPERUSER" in alter
@@ -345,6 +351,7 @@ def immich_database_extensions_are_prepared_by_the_backend():
     assert extensions == ["vector", "earthdistance"], extensions
 
     tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    pg_tasks = pg_tasks_file()
     request = task_named(tasks, "Database | Assert provisioning request")
     allowed = next(
         condition
@@ -353,11 +360,10 @@ def immich_database_extensions_are_prepared_by_the_backend():
     )
     assert "vector" in allowed and "earthdistance" in allowed, allowed
 
-    check = task_named(
-        tasks, "Database | Check whether the PostgreSQL earthdistance extension exists"
+    check = task_named(pg_tasks, "Database | Check whether the PostgreSQL earthdistance extension exists"
     )
     assert "earthdistance" in " ".join(check["ansible.builtin.command"]["argv"])
-    enable = task_named(tasks, "Database | Enable the PostgreSQL earthdistance extension")
+    enable = task_named(pg_tasks, "Database | Enable the PostgreSQL earthdistance extension")
     command = enable["ansible.builtin.command"]["argv"]
     assert any("CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE" in arg for arg in command)
     assert enable["delegate_to"] == "database_backend_target"

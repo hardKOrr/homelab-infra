@@ -6,10 +6,19 @@ postgresql_defaults:
   hosting:
     method: native
     # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
-    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
   stack: ""
+  # Kubernetes method: `hosting.method: kubernetes` runs one Deployment on the k3s cluster,
+  # its data on a default-StorageClass volume, behind a LoadBalancer Service on the
+  # cluster's ingress address (`app.port`; two backends on one cluster need different
+  # ports). The image is the official one plus pgvector, which a pod cannot install later.
+  # The superuser's password is generated into the instance's Vaultwarden item and reaches
+  # the server only from the pod network (`superuser_cidr`), for the recovery Job.
+  kubernetes:
+    image: pgvector/pgvector:pg16  # must match app.version
+    superuser_cidr: "10.42.0.0/16"
   recovery:
     methods: [native]
     native:
@@ -28,10 +37,11 @@ postgresql_defaults:
     # backend. Keep the major version explicit so a distro upgrade cannot silently
     # change the application compatibility pairing.
     version: "16"
-    image: postgres:16  # Docker only; must match version
+    image: postgres:16  # Docker server image, Kubernetes client image; must match version
     port: 5432
     # Native; Docker keeps data in /opt/<instance>/data.
     data_path: /var/lib/postgresql
+    storage: 8  # Kubernetes only: data volume size, in Gi
     # CIDRs allowed to connect to this backend. Keep this a lab-local range.
     client_cidrs: ["10.0.0.0/8"]
   routing:
@@ -45,3 +55,13 @@ postgresql_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
+    schedule: "0 3 * * *"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

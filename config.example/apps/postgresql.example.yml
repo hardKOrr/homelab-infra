@@ -31,3 +31,16 @@
 #     shared_buffers: 1024
 #     effective_cache_size: 3072
 #     work_mem: 4
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# One Deployment on the k3s cluster: the official image plus pgvector, its data on a
+# default-StorageClass volume of app.storage Gi. app.port is the LoadBalancer port on the
+# cluster's ingress address, so a second PostgreSQL on one cluster needs a different port.
+# Deploy opens that port on the firewall for each registered consumer. The postgres
+# superuser gets a generated password, kept in this instance's Vaultwarden item, and may
+# connect only from the pod network (kubernetes.superuser_cidr).
+# hosting:
+#   method: kubernetes
+# app:
+#   port: 5432
+#   storage: 8

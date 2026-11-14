@@ -8,9 +8,9 @@
 # Sets:
 #   database_app_target    {provider, instance, host, port, name, role, client_hosts,
 #                           kubernetes, password, server_version, client_image}
-#                           kubernetes is true for a MariaDB/MySQL backend that runs in the cluster:
+#                           kubernetes is true for a backend that runs in the cluster:
 #                           it has no guest, so no delegation target is added; its SQL runs
-#                           through backend-sql.yml
+#                           through backend-sql.yml (MariaDB/MySQL) or backend-psql.yml (PostgreSQL)
 #   database_app_target    is also added as an inventory host, so the caller's next task
 #                          can delegate to the backend guest. It is reachable from the
 #                          controller even when the application guest is gone.
@@ -76,7 +76,25 @@
   become_user: postgres
   changed_when: false
   register: _database_app_pg_version
-  when: database_app_config.provider == 'postgresql'
+  when:
+    - database_app_config.provider == 'postgresql'
+    - not (_database_app_on_kubernetes | bool)
+
+- name: Database target | Read the server version of a PostgreSQL backend on Kubernetes
+  ansible.builtin.include_tasks: backend-psql.yml
+  vars:
+    database_backend_instance: "{{ database_app_config.instance }}"
+    database_backend_sql: SHOW server_version_num;
+  when:
+    - database_app_config.provider == 'postgresql'
+    - _database_app_on_kubernetes | bool
+
+- name: Database target | Keep the PostgreSQL version where the next task reads it
+  ansible.builtin.set_fact:
+    _database_app_pg_version: {stdout: "{{ database_backend_stdout }}"}
+  when:
+    - database_app_config.provider == 'postgresql'
+    - _database_app_on_kubernetes | bool
 
 - name: Database target | Read the MariaDB/MySQL server version
   ansible.builtin.command:
@@ -99,7 +117,9 @@
   vars:
     database_backend_instance: "{{ database_app_config.instance }}"
     database_backend_sql: SELECT VERSION();
-  when: _database_app_on_kubernetes | bool
+  when:
+    - database_app_config.provider in ['mariadb', 'mysql']
+    - _database_app_on_kubernetes | bool
 
 - name: Database target | Record the target and its matching client image
   vars:

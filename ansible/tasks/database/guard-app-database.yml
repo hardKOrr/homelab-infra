@@ -120,23 +120,43 @@
           cluster's ingress address.
 
 - name: Database guard | Read the PostgreSQL database owner
-  ansible.builtin.command:
-    argv:
-      - psql
-      - --tuples-only
-      - --no-align
-      - --username=postgres
-      - --dbname=postgres
-      - "--port={{ database_app_target.port }}"
-      - >-
-        --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database
-        WHERE datname = '{{ database_app_target.name }}'), 'missing')
-  delegate_to: database_app_target
-  become: true
-  become_user: postgres
-  changed_when: false
-  register: _database_guard_owner
+  vars:
+    _guard_owner_sql: >-
+      SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database
+      WHERE datname = '{{ database_app_target.name }}'), 'missing')
   when: database_app_target.provider == 'postgresql'
+  block:
+    - name: Database guard | Read the owner on a guest backend
+      ansible.builtin.command:
+        argv:
+          - psql
+          - --tuples-only
+          - --no-align
+          - --username=postgres
+          - --dbname=postgres
+          - "--port={{ database_app_target.port }}"
+          - "--command={{ _guard_owner_sql }}"
+      delegate_to: database_app_target
+      become: true
+      become_user: postgres
+      changed_when: false
+      register: _database_guard_owner_guest
+      when: not (database_app_target.kubernetes | default(false) | bool)
+
+    - name: Database guard | Read the owner on a Kubernetes backend
+      ansible.builtin.include_tasks: backend-psql.yml
+      vars:
+        database_backend_instance: "{{ database_app_target.instance }}"
+        database_backend_sql: "{{ _guard_owner_sql }};"
+      when: database_app_target.kubernetes | default(false) | bool
+
+    - name: Database guard | Keep the owner where the check reads it
+      ansible.builtin.set_fact:
+        _database_guard_owner:
+          stdout: >-
+            {{ database_backend_stdout
+               if database_app_target.kubernetes | default(false) | bool
+               else _database_guard_owner_guest.stdout }}
 
 - name: Database guard | Refuse a PostgreSQL database owned by another role
   ansible.builtin.assert:
