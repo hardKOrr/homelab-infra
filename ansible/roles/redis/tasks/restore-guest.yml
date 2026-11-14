@@ -1,0 +1,97 @@
+---
+# Redis exports the data set as an RDB and the ACL file as one application recovery point.
+# The shared swap keeps the previous data directory beside the live path until the restored
+# service accepts the target's Vaultwarden password and its ACL file has been saved again.
+- name: Redis restore | Resolve paths, credentials and recovery identities
+  ansible.builtin.set_fact:
+    _redis_restore_data_path: "{{ redis_data_path }}"
+    _redis_restore_acl_path: "{{ redis_acl_path }}"
+    _redis_restore_service_name: "{{ app_config.app.service_name | default('redis-server') }}"
+    _redis_restore_source_instance: "{{ restore_source_instance | default(instance, true) }}"
+    _redis_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _redis_restore_source_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           restore_source_instance | default(instance, true), {}).get('password', '') }}
+    _redis_restore_target_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           restore_target | default(instance, true), {}).get('password', '') }}
+  no_log: true
+
+- name: Redis restore | Assert the recovery contract and safe paths
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _redis_restore_data_path is match('^/[^/].*')
+      - _redis_restore_acl_path | dirname == _redis_restore_data_path
+      - _redis_restore_source_instance is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Redis restore needs its application-consistent contract, safe source and target
+      identities, PBS, and a selected recovery point for overwrite=true.
+
+- name: Redis restore | Require source and target login credentials for overwrite
+  ansible.builtin.assert:
+    that:
+      - _redis_restore_source_password | length > 0
+      - _redis_restore_target_password | length > 0
+    fail_msg: >-
+      Redis restore needs the backend passwords in Vaultwarden for both the source and
+      target instance.
+  when: restore_overwrite | bool
+  no_log: true
+
+- name: Redis restore | Require an independent existing-target point
+  ansible.builtin.assert:
+    that:
+      - restore_pre_restore_point is defined
+      - restore_pre_restore_point.startswith('host/' ~ _redis_restore_target_backup_id ~ '/')
+      - restore_pre_restore_point | length > ('host/' ~ _redis_restore_target_backup_id ~ '/') | length
+      - restore_pre_restore_point != restore_snapshot
+    fail_msg: >-
+      Existing-target Redis restore needs a distinct pre_restore_point from
+      host/{{ _redis_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: Redis restore | Require the service to be active
+  ansible.builtin.command:
+    argv: "{{ ['docker', 'inspect', instance]
+              if redis_docker | bool else ['systemctl', 'is-active', _redis_restore_service_name] }}"
+  register: _redis_restore_service_state
+  failed_when: false
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Redis restore | Refuse an inactive target
+  ansible.builtin.assert:
+    that:
+      - _redis_restore_service_state.rc == 0
+      - >-
+        (((_redis_restore_service_state.stdout | from_json | first).State.Status == 'running')
+         if redis_docker | bool else _redis_restore_service_state.stdout | trim == 'active')
+    fail_msg: Start Redis before replacing its application data.
+  when: restore_overwrite | bool
+
+- name: Redis restore | Preview or replace the data directory
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: "{{ 'docker' if redis_docker | bool else 'native' }}"
+    recovery_swap_pre_restore_backup_id: "{{ _redis_restore_target_backup_id }}"
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ _redis_restore_data_path }}"
+        owner: "{{ redis_owner }}"
+        group: "{{ redis_owner }}"
+        mode: "0750"
+    recovery_swap_stop_services: >-
+      {{ [redis_compose_service] if redis_docker | bool else [_redis_restore_service_name] }}
+    recovery_swap_compose_project: "{{ redis_project_dir if redis_docker | bool else '' }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

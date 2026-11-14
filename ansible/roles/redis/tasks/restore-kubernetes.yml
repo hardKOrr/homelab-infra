@@ -1,0 +1,40 @@
+---
+# Restore the whole Redis data set and its ACL users from one PBS recovery point into the
+# namespace of a Redis instance that is already deployed. The server keeps running: the
+# shared Job replicates the point's RDB into it over the pod network, keeps the target's own
+# default login, and saves. Stop the server's consumers first. Called by restore.yml;
+# recovery-restore.yml is the mechanism.
+- name: Redis restore | Read the target's credential
+  ansible.builtin.set_fact:
+    _redis_target_password: >-
+      {{ ((homelabinfra_vault.apps | default({})).get(restore_target, {})).password | default('', true) }}
+  no_log: true
+
+- name: Redis restore | Describe the target's server step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+    k8s_database_step_root_password: "{{ _redis_target_password }}"
+
+- name: Redis restore | Restore the server through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Redis
+      archives:
+        - name: config
+          config_map: "{{ restore_target }}-config"
+      database: "{{ k8s_database_step }}"
+      # The server is the restore's target, so nothing is stopped.
+      stop: []
+      live_server: true
+      # The point's configuration replaces the target's ConfigMap after the load; the
+      # restart applies it, and proves the data came back from the volume.
+      restart: ["{{ restore_target }}"]
+      describe: >-
+        {{ k8s_database_step.describe }} and its configuration
+      verify:
+        - >-
+          Connect one registered consumer to the restored server and read its data.

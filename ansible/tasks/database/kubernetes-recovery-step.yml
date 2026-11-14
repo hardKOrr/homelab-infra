@@ -19,7 +19,8 @@
 #                                             namespace (the role's own recovery point:
 #                                             every schema or database and the grants or
 #                                             roles, `<engine>.sql`; PostgreSQL is
-#                                             `postgresql.sql`, one pg_dumpall script)
+#                                             `postgresql.sql`, one pg_dumpall script; Redis is
+#                                             `redis.rdb` beside `redis.acl`, its ACL users)
 #   k8s_database_step_config     the merged config of the instance whose database this is
 #   k8s_database_step_instance   that instance's name (namespace-mysql: its pod is
 #                                `<instance>-db`)
@@ -129,6 +130,7 @@
         _kds_engine: >-
           {{ 'mariadb' if 'mariadb' in _kds_image
              else 'postgresql' if _kds_image is match('^(docker.io/library/)?postgres:')
+             else 'redis' if _kds_image is match('^(docker.io/library/)?redis:')
              else 'mysql' }}
       ansible.builtin.set_fact:
         _kds:
@@ -137,13 +139,13 @@
           host: "{{ k8s_database_step_instance }}"
           port: "{{ k8s_database_step_config.app.port | default(3306) | string }}"
           name: ""
-          user: "{{ 'postgres' if _kds_engine == 'postgresql' else 'root' }}"
+          user: "{{ {'postgresql': 'postgres', 'redis': 'default'}.get(_kds_engine, 'root') }}"
           password: "{{ k8s_database_step_root_password }}"
           root_hosts: "{{ k8s_database_step_config.kubernetes.root_host | default('10.42.%') }}"
           describe: >-
-            the whole {{ {'mariadb': 'MariaDB', 'mysql': 'MySQL', 'postgresql': 'PostgreSQL'}[_kds_engine] }}
+            the whole {{ {'mariadb': 'MariaDB', 'mysql': 'MySQL', 'postgresql': 'PostgreSQL', 'redis': 'Redis'}[_kds_engine] }}
             server {{ k8s_database_step_instance }}
-            ({{ 'every database and role' if _kds_engine == 'postgresql' else 'every schema and grant' }})
+            ({{ {'postgresql': 'every database and role', 'redis': 'every key and ACL user'}.get(_kds_engine, 'every schema and grant') }})
       no_log: true
 
 - name: Database recovery step | Require the database login
@@ -162,10 +164,10 @@
     k8s_database_step:
       image: "{{ _kds.image }}"
       # DB_ROOT_HOSTS is MariaDB/MySQL's root account host list; PostgreSQL's access list is
-      # its pg_hba.conf.
+      # its pg_hba.conf and Redis has no account hosts.
       env: >-
         {{ {'DB_ENGINE': _kds.engine, 'DB_HOST': _kds.host, 'DB_PORT': _kds.port, 'DB_USER': _kds.user}
-           | combine({} if _kds.engine == 'postgresql' else {'DB_ROOT_HOSTS': _kds.root_hosts}) }}
+           | combine({} if _kds.engine in ['postgresql', 'redis'] else {'DB_ROOT_HOSTS': _kds.root_hosts}) }}
       secret_env:
         DB_PASSWORD: db-password
       secret_files:
@@ -175,9 +177,9 @@
         db-password: "{{ _kds.password }}"
         database-client.sh: "{{ lookup('ansible.builtin.file', 'scripts/database-client.sh') }}"
       describe: "{{ _kds.describe }}"
-      dump: sh /etc/recovery-credentials/database-client.sh server-dump "${DUMP_DIR}/{{ _kds.engine }}.sql"
+      dump: sh /etc/recovery-credentials/database-client.sh server-dump "${DUMP_DIR}/{{ _kds.engine }}.{{ 'rdb' if _kds.engine == 'redis' else 'sql' }}"
       load: |
-        set -- "${DUMP_DIR}"/{{ _kds.engine }}.sql
+        set -- "${DUMP_DIR}"/{{ _kds.engine }}.{{ 'rdb' if _kds.engine == 'redis' else 'sql' }}
         if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
           echo "expected one {{ _kds.engine }} server dump in the recovery point, found: $*"
           exit 1

@@ -56,6 +56,21 @@
         deploy_group: "deploy_{{ instance }}"
       when: app_config.hosting.method == 'docker'
 
+    # Kubernetes: no guest. The consumers' firewall access, then the workload on the cluster.
+    - ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open the backend's declared network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Open the port for the registered consumers
+      ansible.builtin.include_tasks: ../../tasks/database/open-consumer-access.yml
+      vars:
+        database_consumer_provider: redis
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Deploy Redis on Kubernetes
+      ansible.builtin.include_role: {name: redis, tasks_from: kubernetes}
+      when: app_config.hosting.method == 'kubernetes'
+
 - name: Redis | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
@@ -73,7 +88,7 @@
 - name: Redis | Register backend
   hosts: localhost
   gather_facts: false
-  vars: {_redis_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"}
+  vars: {_redis_host: "{{ hostvars[groups['deploy_' ~ instance][0]] if app_config.hosting.method != 'kubernetes' else {} }}"}
   tasks:
     - ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
@@ -82,6 +97,39 @@
         generated_facts_data: >-
           {{ {instance: {'provider': 'redis', 'host': _redis_host.ansible_host,
              'port': _redis_host.app_config.app.port}} }}
+      when: app_config.hosting.method != 'kubernetes'
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_kind: "{{ 'docker' if _redis_host.app_config.hosting.method == 'docker' else 'native' }}"
+      when: app_config.hosting.method != 'kubernetes'
+
+    # Facts merge recursively, so a guest backend writes an empty string over a marker an
+    # earlier Kubernetes Deploy left instead of keeping it.
+    - name: Clear the Kubernetes marker of a guest backend
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data: "{{ {instance: {'kubernetes': ''}} }}"
+      when: app_config.hosting.method != 'kubernetes'
+
+    # A backend on Kubernetes is reached at the ingress address, on app.port.
+    - name: Record the Kubernetes Redis backend facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'redis',
+                         'host': homelabinfra_infra.kubernetes.ingress_vip,
+                         'port': app_config.app.port,
+                         'runtime': 'kubernetes',
+                         'kubernetes': {'namespace': 'app-' ~ instance}}} }}
+      when: app_config.hosting.method == 'kubernetes'
+    - name: Record the app on the Kubernetes nodes
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+        record_guest_url: ''
+      when: app_config.hosting.method == 'kubernetes'
