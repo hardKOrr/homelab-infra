@@ -59,7 +59,7 @@
 
 - name: Redis backup | Require the Redis service to be active
   ansible.builtin.command:
-    argv: "{{ ['docker', 'inspect', '--format', '{% raw %}{{.State.Status}}{% endraw %}', instance]
+    argv: "{{ ['docker', 'inspect', instance]
               if redis_docker | bool else ['systemctl', 'is-active', _redis_backup_service_name] }}"
   register: _redis_backup_service_state
   failed_when: false
@@ -67,7 +67,11 @@
 
 - name: Redis backup | Refuse to snapshot an inactive service
   ansible.builtin.assert:
-    that: _redis_backup_service_state.stdout | trim in ['active', 'running']
+    that:
+      - _redis_backup_service_state.rc == 0
+      - >-
+        (((_redis_backup_service_state.stdout | from_json | first).State.Status == 'running')
+         if redis_docker | bool else _redis_backup_service_state.stdout | trim == 'active')
     fail_msg: Start and verify Redis before creating an application recovery point.
 
 - name: Redis backup | Export and upload the recovery point

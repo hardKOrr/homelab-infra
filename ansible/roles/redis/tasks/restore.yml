@@ -61,7 +61,7 @@
 
 - name: Redis restore | Require the service to be active
   ansible.builtin.command:
-    argv: "{{ ['docker', 'inspect', '--format', '{% raw %}{{.State.Status}}{% endraw %}', instance]
+    argv: "{{ ['docker', 'inspect', instance]
               if redis_docker | bool else ['systemctl', 'is-active', _redis_restore_service_name] }}"
   register: _redis_restore_service_state
   failed_when: false
@@ -70,7 +70,11 @@
 
 - name: Redis restore | Refuse an inactive target
   ansible.builtin.assert:
-    that: _redis_restore_service_state.stdout | trim in ['active', 'running']
+    that:
+      - _redis_restore_service_state.rc == 0
+      - >-
+        (((_redis_restore_service_state.stdout | from_json | first).State.Status == 'running')
+         if redis_docker | bool else _redis_restore_service_state.stdout | trim == 'active')
     fail_msg: Start Redis before replacing its application data.
   when: restore_overwrite | bool
 

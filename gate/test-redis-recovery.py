@@ -8,6 +8,8 @@ reconciliation, and scoped guest removal.
 """
 
 import hashlib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -439,10 +441,51 @@ def check_remove_scope():
     assert destroy_tasks.index(shutdown) < destroy_tasks.index(confirm_stopped) < destroy_tasks.index(destroy_guest) < destroy_tasks.index(verify_absent)
 
 
+def check_runtime_guards():
+    """Render and execute real runtime checks; Docker sees no Jinja raw tags."""
+    executable = Path(sys.executable).with_name("ansible-playbook")
+    with tempfile.TemporaryDirectory(prefix="redis-runtime-") as directory:
+        root = Path(directory)
+        docker = root / "docker"
+        docker.write_text("#!/bin/sh\n[ \"$1\" = inspect ] && [ \"$2\" = redis ] && [ \"$#\" = 2 ] || exit 9\nprintf '%s' \"$TEST_INSPECT\"\nexit \"$TEST_RC\"\n")
+        docker.chmod(0o755)
+        systemctl = root / "systemctl"
+        systemctl.write_text("#!/bin/sh\nprintf '%s' \"$TEST_INSPECT\"\nexit \"$TEST_RC\"\n")
+        systemctl.chmod(0o755)
+        for operation in ("backup", "restore"):
+            tasks = read_yaml(f"ansible/roles/redis/tasks/{operation}.yml")
+            start = next(i for i, task in enumerate(tasks)
+                         if task.get("register") == f"_redis_{operation}_service_state")
+            for is_docker, output, rc, passes in (
+                (True, json.dumps([{"State": {"Status": "running"}}]), 0, True),
+                (True, json.dumps([{"State": {"Status": "exited"}}]), 0, False),
+                (True, "", 1, False),
+                (False, "active", 0, True),
+                (False, "inactive", 3, False),
+            ):
+                playbook = root / "runtime.yml"
+                playbook.write_text(yaml.safe_dump([{
+                    "hosts": "localhost", "gather_facts": False,
+                    "environment": {"PATH": str(root) + ":" + os.environ["PATH"],
+                                    "TEST_INSPECT": output, "TEST_RC": str(rc)},
+                    "vars": {"instance": "redis", "redis_docker": is_docker,
+                             "restore_overwrite": True,
+                             f"_redis_{operation}_service_name": "redis-server"},
+                    "tasks": tasks[start:start + 2],
+                }]))
+                result = subprocess.run(
+                    [executable, "-i", "localhost,", "-c", "local", str(playbook)],
+                    capture_output=True, text=True, check=False,
+                )
+                assert (result.returncode == 0) == passes, (
+                    operation, is_docker, output, result.stdout, result.stderr)
+
+
 def main():
     check_defaults_and_deploy()
     check_default_acl_reconciliation()
     check_backup()
+    check_runtime_guards()
     check_restore()
     check_remove_scope()
     print("Redis: native LXC deploy, ACL and RDB PBS recovery, restore swap inputs and hooks, and scoped removal passed")
