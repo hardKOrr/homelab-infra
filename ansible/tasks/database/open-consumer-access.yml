@@ -1,28 +1,29 @@
 ---
-# Open a Kubernetes-hosted MariaDB backend's port on the firewall for every registered
+# Open a Kubernetes-hosted MariaDB or MySQL backend's port on the firewall for every registered
 # consumer: each application whose canonical item names this backend's address and port.
 # A consumer on a guest is allowed by its own address; one on the cluster by the
 # cluster-node alias (ansible/tasks/kubernetes/README.md → Firewall access). Rules are
 # egress rules from the consumer to the ingress address, described
-# "homelab-infra: <instance> for <consumer> egress mariadb", so Remove withdraws them with
+# "homelab-infra: <instance> for <consumer> egress <provider>", so Remove withdraws them with
 # the backend's own rules. A consumer deployed after this backend runs Deploy again (or
 # its own Deploy opens nothing): re-run the backend's Deploy to cover it.
 #
-# Inputs (localhost): instance, app_config (the backend's merged config), homelabinfra_infra
+# Inputs (localhost): database_consumer_provider (mariadb or mysql), instance, app_config
+# (the backend's merged config), homelabinfra_infra
 # with the cluster registered, an inventory refreshed this run. Does nothing without an
 # OPNsense firewall.
-- name: MariaDB consumers | Open the port for registered consumers
+- name: SQL consumers | Open the port for registered consumers
   when:
     - not (recovery_isolated | default(false) | bool)
     - homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
   block:
-    - name: MariaDB consumers | Find the registered consumers
+    - name: SQL consumers | Find the registered consumers
       ansible.builtin.set_fact:
-        _mariadb_consumers: >-
+        _sql_consumers: >-
           {{ (homelabinfra_vault.apps | default({}) | dict2items)
              | rejectattr('key', 'equalto', instance)
              | selectattr('value.database_provider', 'defined')
-             | selectattr('value.database_provider', 'equalto', 'mariadb')
+             | selectattr('value.database_provider', 'equalto', database_consumer_provider)
              | selectattr('value.database_host', 'defined')
              | selectattr('value.database_host', 'equalto', homelabinfra_infra.kubernetes.ingress_vip)
              | selectattr('value.database_port', 'defined')
@@ -30,8 +31,8 @@
              | map(attribute='key') | list }}
       no_log: true
 
-    - name: MariaDB consumers | Open each consumer's access
+    - name: SQL consumers | Open each consumer's access
       ansible.builtin.include_tasks: open-one-consumer-access.yml
-      loop: "{{ _mariadb_consumers }}"
+      loop: "{{ _sql_consumers }}"
       loop_control:
-        loop_var: _mariadb_consumer
+        loop_var: _sql_consumer

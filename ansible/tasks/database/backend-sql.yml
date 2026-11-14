@@ -1,5 +1,5 @@
 ---
-# Run SQL as root on a MariaDB backend that runs on Kubernetes, where there is no guest to
+# Run SQL as root on a MariaDB or MySQL backend that runs on Kubernetes, where there is no guest to
 # delegate to and no socket on a host. The cluster node that runs kubectl executes the
 # client inside the server's own pod over the pod's local socket, so root never connects
 # over the network. A backend on a guest does not use this file: provision.yml, drop.yml
@@ -16,8 +16,8 @@
 - name: Backend SQL | Resolve the cluster and the backend's namespace
   ansible.builtin.include_tasks: resolve-backend-namespace.yml
 
-# MARIADB_ROOT_PASSWORD is the container's own environment, so the password never travels
-# in the command line.
+# The root password is the container's own environment (MARIADB_ROOT_PASSWORD or
+# MYSQL_ROOT_PASSWORD), so it never travels in the command line.
 - name: Backend SQL | Run the statements in the server pod
   ansible.builtin.command:
     argv:
@@ -31,9 +31,11 @@
       - --
       - sh
       - -c
-      - >-
-        MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb --protocol=socket --user=root
-        --batch --skip-column-names
+      - |-
+        if [ -n "${MARIADB_ROOT_PASSWORD:-}" ]; then
+          MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb --protocol=socket --user=root --batch --skip-column-names
+        fi
+        MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --protocol=socket --user=root --batch --skip-column-names
     stdin: "{{ database_backend_sql }}"
   delegate_to: "{{ k8s_api_host }}"
   become: true

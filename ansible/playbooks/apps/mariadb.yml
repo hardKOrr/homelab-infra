@@ -78,6 +78,8 @@
 
     - name: Open the port for the registered consumers
       ansible.builtin.include_tasks: ../../tasks/database/open-consumer-access.yml
+      vars:
+        database_consumer_provider: mariadb
       when: app_config.hosting.method == 'kubernetes'
 
     - name: Deploy MariaDB on Kubernetes

@@ -126,7 +126,7 @@ step = next(
     t for t in deploy
     if str(t.get("ansible.builtin.include_tasks", "")).endswith("kubernetes-recovery-step.yml")
 )
-assert step["vars"]["k8s_database_step_source"] == "namespace-mariadb-server"
+assert step["vars"]["k8s_database_step_source"] == "namespace-server"
 
 # ── Restore dispatches to the shared Job, which loads into the running server ──────────
 dispatch = load("ansible/roles/mariadb/tasks/restore.yml")
@@ -145,17 +145,17 @@ assert "k8s_recovery.live_server" in read("ansible/tasks/kubernetes/recovery-res
 sql = read("ansible/tasks/database/backend-sql.yml")
 assert "exec" in sql and "deployment/{{ database_backend_instance }}" in sql
 assert "--protocol=socket" in sql and "MARIADB_ROOT_PASSWORD" in sql
-for shared in ("provision-kubernetes-mariadb.yml", "drop.yml", "resolve-app-database.yml"):
+for shared in ("provision-kubernetes-sql.yml", "drop.yml", "resolve-app-database.yml"):
     assert "backend-sql.yml" in read(f"ansible/tasks/database/{shared}"), shared
 mysql = read("ansible/tasks/database/provision-mysql-compatible.yml")
 assert mysql.count("_database_backend.kubernetes | default({}) | length == 0") == 2
-assert "provision-kubernetes-mariadb.yml" in mysql
+assert "provision-kubernetes-sql.yml" in mysql
 assert "database_app_target.kubernetes | default(false) | bool" in read("ansible/tasks/database/guard-app-database.yml")
 client = read("ansible/tasks/database/scripts/database-client.sh")
 for action in ("server-dump", "server-verify", "server-load", "server-inspect"):
     assert action in client, action
 step_file = read("ansible/tasks/database/kubernetes-recovery-step.yml")
-assert "namespace-mariadb-server" in step_file and "server-load" in step_file
+assert "namespace-server" in step_file and "server-load" in step_file
 
 # ── No role-local copy of a shared operation ───────────────────────────────────────────
 assert not (ROLE / "templates/kubernetes").exists()

@@ -3,3 +3,4 @@
 mysql_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
 # Docker: the Compose project, config and data live together in /opt/<instance>.
 mysql_project_dir: "/opt/{{ instance }}"
+mysql_kubernetes: "{{ app_config.hosting.method | default('native') == 'kubernetes' }}"

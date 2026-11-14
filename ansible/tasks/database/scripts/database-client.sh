@@ -21,7 +21,7 @@
 #          collation, then loads FILE without any `USE` or `CREATE DATABASE` it carries.
 # inspect  Read only: one line counting the tables and rows a restore would replace.
 #
-# Whole MariaDB server (a Kubernetes backend's own recovery point; DB_USER is root, which
+# Whole MariaDB or MySQL server (a Kubernetes backend's own recovery point; DB_USER is root, which
 # connects from inside the cluster only, and DB_NAME is not used):
 #   server-dump FILE | server-verify FILE | server-load FILE | server-inspect
 #   server-dump    every schema and the grant tables at one point (global read lock).
@@ -132,12 +132,17 @@ mysql_compatible() {
   "$client" --defaults-extra-file="$work/client.cnf" --database="$DB_NAME" < "$work/load.sql"
 }
 
-# One MariaDB server as a unit: all schemas, routines, events, triggers and grants.
-mariadb_server() {
-  [ "$DB_ENGINE" = mariadb ] || { echo "database-client.sh: $action needs DB_ENGINE=mariadb" >&2; exit 64; }
+# One MariaDB or MySQL server as a unit: all schemas, routines, events, triggers and grants.
+sql_server() {
+  [ "$DB_ENGINE" != postgresql ] || { echo "database-client.sh: $action needs DB_ENGINE=mariadb or mysql" >&2; exit 64; }
   if [ "$action" = server-verify ]; then
     grep -q '^CREATE TABLE ' "$file"
     return
+  fi
+  if [ "$DB_ENGINE" = mariadb ]; then
+    client=mariadb dump=mariadb-dump extra=
+  else
+    client=mysql dump=mysqldump extra=--set-gtid-purged=OFF
   fi
   umask 077
   printf '[client]\nuser="%s"\npassword="%s"\nhost="%s"\nport=%s\n' \
@@ -147,7 +152,7 @@ mariadb_server() {
     # Reloading grant tables can briefly withdraw the server's Service endpoints while
     # its readiness probe catches up. Reconnect for this read only; never replay a load.
     attempt=0
-    until mariadb --defaults-extra-file="$work/client.cnf" --connect-timeout=2 --batch --skip-column-names \
+    until "$client" --defaults-extra-file="$work/client.cnf" --connect-timeout=2 --batch --skip-column-names \
       --execute="SELECT CONCAT(COUNT(DISTINCT TABLE_SCHEMA), ' schemas, ', COUNT(*),
         ' tables') FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ($system)" \
       2> "$work/inspect.err"; do
@@ -161,8 +166,9 @@ mariadb_server() {
     return
   fi
   if [ "$action" = server-dump ]; then
-    mariadb-dump --defaults-extra-file="$work/client.cnf" --all-databases --lock-all-tables \
-      --routines --events --triggers --hex-blob --flush-privileges --skip-dump-date \
+    # shellcheck disable=SC2086 # $extra holds engine-specific flags
+    "$dump" --defaults-extra-file="$work/client.cnf" --all-databases --lock-all-tables \
+      --routines --events --triggers --hex-blob --flush-privileges --skip-dump-date $extra \
       > "$work/dump"
     grep -q '^CREATE TABLE ' "$work/dump"
     mv "$work/dump" "$file"
@@ -170,10 +176,10 @@ mariadb_server() {
   fi
   test -s "$file"
   # Drop first, so tables the point lacks do not survive. Names come from the server.
-  mariadb --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
+  "$client" --defaults-extra-file="$work/client.cnf" --batch --skip-column-names \
     --execute="SELECT CONCAT('DROP DATABASE IF EXISTS \`', REPLACE(SCHEMA_NAME, '\`', '\`\`'), '\`;')
       FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ($system)" > "$work/drop.sql"
-  mariadb --defaults-extra-file="$work/client.cnf" < "$work/drop.sql"
+  "$client" --defaults-extra-file="$work/client.cnf" < "$work/drop.sql"
   # The same session loads the point and then re-keys root, so the credential this run
   # used keeps working after the point's own grant tables take effect.
   case "$DB_PASSWORD" in
@@ -187,7 +193,7 @@ mariadb_server() {
     done
     echo 'FLUSH PRIVILEGES;'
   } > "$work/load.sql"
-  mariadb --defaults-extra-file="$work/client.cnf" < "$work/load.sql"
+  "$client" --defaults-extra-file="$work/client.cnf" < "$work/load.sql"
 }
 
 case "$DB_ENGINE" in
@@ -195,8 +201,8 @@ case "$DB_ENGINE" in
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
 esac
 case "$action" in
-  server-*) mariadb_server; [ "$action" = server-inspect ] && exit 0
-            echo "database-client.sh: $action mariadb server complete ($(wc -c < "$file") bytes)"
+  server-*) sql_server; [ "$action" = server-inspect ] && exit 0
+            echo "database-client.sh: $action $DB_ENGINE server complete ($(wc -c < "$file") bytes)"
             exit 0 ;;
 esac
 
