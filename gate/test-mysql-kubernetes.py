@@ -165,5 +165,18 @@ assert "namespace-server" in step_file and "server-load" in step_file
 assert not (ROLE / "templates/kubernetes").exists()
 assert not any("kubectl" in p.read_text(encoding="utf-8") and "apply" in p.read_text(encoding="utf-8")
                for p in (ROLE / "tasks").glob("*.yml") if p.name not in ("kubernetes.yml",))
+# The consumer loop's variable must be the one the included file reads: resolve every
+# variable of its tasks for one consumer, with only that loop variable and the inputs given.
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
+
+loop_var = load("ansible/tasks/database/open-consumer-access.yml")[0]["block"][1]["loop_control"]["loop_var"]
+templar = Templar(loader=DataLoader(), variables={loop_var: "bookstack", "instance": "mysql-test"})
+for task in load("ansible/tasks/database/open-one-consumer-access.yml"):
+    values = [task["name"], *task.get("vars", {}).values()]
+    values = [v for v in values if "_consumer_guest" not in str(v) and "database_consumer_provider" not in str(v)]
+    for value in values:
+        assert "_mariadb_consumer" not in str(value)
+        templar.template(value, fail_on_undefined=True)
 print("MySQL keeps the guests as default and runs on Kubernetes through the shared operations")
 
