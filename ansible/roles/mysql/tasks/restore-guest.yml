@@ -1,0 +1,115 @@
+---
+- name: MySQL restore | Resolve recovery identities and selected points
+  ansible.builtin.set_fact:
+    _mysql_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _mysql_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _mysql_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _mysql_restore_prepoint: "{{ restore_pre_restore_point | default('') }}"
+    _application_restore_complete: false
+
+- name: MySQL restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _mysql_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _mysql_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_mysql_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      MySQL restore needs its application-consistent recovery contract, safe backup ids,
+      PBS, and a selected recovery point for overwrite=true.
+
+- name: MySQL restore | Require the existing-target point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - _mysql_restore_prepoint.startswith('host/' ~ _mysql_restore_target_backup_id ~ '/')
+      - _mysql_restore_prepoint | length > ('host/' ~ _mysql_restore_target_backup_id ~ '/') | length
+    fail_msg: >-
+      The independent MySQL pre-restore point must belong to
+      host/{{ _mysql_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: MySQL restore | List or verify the recovery point without changing MySQL
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+  vars:
+    pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
+    pbs_client_backup_id: "{{ _mysql_restore_source_backup_id }}"
+    pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
+    pbs_client_archives: [{name: mysql.pxar}]
+  when: not (restore_overwrite | bool)
+
+# /var/tmp, because the PBS client's private tmpfs covers /tmp while it extracts.
+- name: MySQL restore | Create private restore staging space
+  ansible.builtin.tempfile:
+    state: directory
+    path: /var/tmp
+    prefix: "{{ instance }}-mysql-restore-"
+  register: _mysql_restore_tmp
+  when: restore_overwrite | bool
+
+- name: MySQL restore | Apply the selected point with rollback protection
+  when: restore_overwrite | bool
+  block:
+    - name: MySQL restore | Install the shared server recovery script
+      ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
+
+    - name: MySQL restore | Create private archive directories
+      ansible.builtin.file:
+        path: "{{ _mysql_restore_tmp.path }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: [source, safety]
+
+    - name: MySQL restore | Download the selected recovery archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
+        pbs_client_backup_id: "{{ _mysql_restore_source_backup_id }}"
+        pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
+        pbs_client_restore_args: [--allow-existing-dirs, "true"]
+        pbs_client_archives:
+          - name: mysql.pxar
+            path: "{{ _mysql_restore_tmp.path }}/source"
+
+    - name: MySQL restore | Download the pre-restore safety archive
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      vars:
+        pbs_client_runtime: "{{ 'docker' if mysql_docker | bool else 'native' }}"
+        pbs_client_backup_id: "{{ _mysql_restore_target_backup_id }}"
+        pbs_client_snapshot: "{{ _mysql_restore_prepoint }}"
+        pbs_client_pre_restore_backup_id: "{{ _mysql_restore_target_backup_id }}"
+        pbs_client_restore_args: [--allow-existing-dirs, "true"]
+        pbs_client_archives:
+          - name: mysql.pxar
+            path: "{{ _mysql_restore_tmp.path }}/safety"
+      when:
+        - restore_destination | default('existing') == 'existing'
+        - _mysql_restore_prepoint | length > 0
+
+    - name: MySQL restore | Import the point and retain rollback state until verified
+      ansible.builtin.command:
+        argv: >-
+          {{ ['python3', database_server_recovery_script, 'mysql', 'restore',
+              _mysql_restore_tmp.path ~ '/source']
+             + ([_mysql_restore_tmp.path ~ '/safety']
+                if restore_destination | default('existing') == 'existing'
+                   and _mysql_restore_prepoint | length > 0 else []) }}
+      register: _mysql_restore_import
+      changed_when: true
+
+    - name: MySQL restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  always:
+    - name: MySQL restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _mysql_restore_tmp.path }}"
+        state: absent
+      when: _mysql_restore_tmp.path is defined

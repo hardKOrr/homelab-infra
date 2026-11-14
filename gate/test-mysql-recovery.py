@@ -161,7 +161,7 @@ def check_contract():
     ]
     assert task_named(backup, "MySQL backup | Remove private staging data")
 
-    restore = task_tree(ROLE / "tasks/restore.yml")
+    restore = task_tree(ROLE / "tasks/restore-guest.yml")
     preview = task_named(restore, "MySQL restore | List or verify the recovery point without changing MySQL")
     assert preview["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-restore.yml")
     assert preview["vars"]["pbs_client_archives"] == [{"name": "mysql.pxar"}]

@@ -1,0 +1,38 @@
+---
+# Restore the whole MySQL server (every schema and the grants) from one PBS recovery
+# point into the namespace of a MySQL instance that is already deployed. The server
+# keeps running: the shared Job loads the point over the pod network as root and then sets
+# root's password back to the target's own (database-client.sh server-load). Stop the
+# server's consumers first. Called by restore.yml; recovery-restore.yml is the mechanism.
+- name: MySQL restore | Read the target's root credential
+  ansible.builtin.set_fact:
+    _mysql_target_root_password: >-
+      {{ ((homelabinfra_vault.apps | default({})).get(restore_target, {})).root_password | default('', true) }}
+  no_log: true
+
+- name: MySQL restore | Describe the target's server step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+    k8s_database_step_root_password: "{{ _mysql_target_root_password }}"
+
+- name: MySQL restore | Restore the server through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: MySQL
+      archives:
+        - name: config
+          config_map: "{{ restore_target }}-config"
+      database: "{{ k8s_database_step }}"
+      # The server is the restore's target, so nothing is stopped; the shared Job's
+      # loops over `stop` then run zero times.
+      stop: []
+      live_server: true
+      describe: >-
+        {{ k8s_database_step.describe }} and its tuning file
+      verify:
+        - >-
+          Connect one registered consumer to the restored server and read its data.

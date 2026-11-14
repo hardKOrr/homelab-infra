@@ -1,12 +1,12 @@
 ---
 # One consumer of open-consumer-access.yml: a guest is allowed by its address, anything
 # else by the cluster-node alias.
-- name: MariaDB consumer {{ _mariadb_consumer }} | Resolve its guest, if it has one
+- name: SQL consumer {{ _mariadb_consumer }} | Resolve its guest, if it has one
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_{{ _mariadb_consumer }}"
 
-- name: MariaDB consumer {{ _mariadb_consumer }} | Open the backend's port
+- name: SQL consumer {{ _mariadb_consumer }} | Open the backend's port
   ansible.builtin.include_tasks: ../firewall/open-app-access.yml
   vars:
     _consumer_guest: "{{ groups[tag_group_name] | default([]) | first | default('') }}"
@@ -18,7 +18,7 @@
       {{ '' if _consumer_guest | length > 0 else homelabinfra_infra.kubernetes.firewall_alias }}
     wiring_firewall:
       egress:
-        - name: mariadb
+        - name: "{{ database_consumer_provider }}"
           protocol: TCP
           port: "{{ app_config.app.port }}"
           destination: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"

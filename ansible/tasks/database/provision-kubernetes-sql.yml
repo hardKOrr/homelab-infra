@@ -1,5 +1,5 @@
 ---
-# Create the application database, login and grants on a MariaDB backend that runs on
+# Create the application database, login and grants on a MariaDB or MySQL backend that runs on
 # Kubernetes, by SQL run in the server pod (backend-sql.yml): there is no guest and no
 # socket on a host. Included by provision.yml with its variables; the login password is only
 # written when it was just generated or rotated, as the modules' on_create does.
@@ -9,7 +9,7 @@
     that: _database_password is match('^[A-Za-z0-9_.-]+$')
     fail_msg: >-
       {{ database_provision_app_instance }}'s database password must use only letters,
-      digits, '.', '_' and '-' to be set on a MariaDB backend that runs on Kubernetes.
+      digits, '.', '_' and '-' to be set on a MariaDB or MySQL backend that runs on Kubernetes.
   no_log: true
 
 - name: Database | Read what already exists on the Kubernetes backend

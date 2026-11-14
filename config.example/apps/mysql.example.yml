@@ -31,3 +31,15 @@
 # hosting:
 #   method: docker
 # stack: mysql          # set guest_type under infrastructure.stacks
+
+# ── Kubernetes ─────────────────────────────────────────────────────────────────
+# One Deployment of the same image on the k3s cluster; app.storage (Gi) sizes its
+# default-StorageClass volume. app.port is the LoadBalancer port on the cluster's ingress
+# address, so a second MySQL on one cluster needs a different port. Deploy opens that port
+# on the firewall for each registered consumer. root gets a generated password, kept in
+# this instance's Vaultwarden item, and may connect only from the pod network.
+# hosting:
+#   method: kubernetes
+# app:
+#   port: 3306
+#   storage: 8

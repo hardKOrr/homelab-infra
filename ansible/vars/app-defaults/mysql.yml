@@ -5,10 +5,17 @@ mysql_defaults:
   hosting:
     method: native
     # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
-    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
   stack: ""
+  # Kubernetes method: `hosting.method: kubernetes` runs the same image as one Deployment on
+  # the k3s cluster, its data on a default-StorageClass volume, behind a LoadBalancer
+  # Service on the cluster's ingress address (`app.port`; two backends on one cluster need
+  # different ports). root's password is generated into the instance's Vaultwarden item and
+  # reaches the server only from the pod network (`root_host`), for the recovery Job.
+  kubernetes:
+    root_host: "10.42.%"
   recovery:
     methods: [native]
     native:
@@ -30,6 +37,7 @@ mysql_defaults:
     # keeps data in /opt/<instance>/data.
     data_path: /var/lib/mysql
     service_name: mysql
+    storage: 8  # Kubernetes only: data volume size, in Gi
     # MySQL account-host patterns allowed to connect to this backend. Keep
     # these within lab networks; `%` would permit any source address.
     client_hosts: ["10.%"]
@@ -45,3 +53,13 @@ mysql_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
+    schedule: "0 3 * * *"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

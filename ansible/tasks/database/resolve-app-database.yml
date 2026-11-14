@@ -8,7 +8,7 @@
 # Sets:
 #   database_app_target    {provider, instance, host, port, name, role, client_hosts,
 #                           kubernetes, password, server_version, client_image}
-#                           kubernetes is true for a MariaDB backend that runs in the cluster:
+#                           kubernetes is true for a MariaDB/MySQL backend that runs in the cluster:
 #                           it has no guest, so no delegation target is added; its SQL runs
 #                           through backend-sql.yml
 #   database_app_target    is also added as an inventory host, so the caller's next task
@@ -94,7 +94,7 @@
     - database_app_config.provider in ['mariadb', 'mysql']
     - not (_database_app_on_kubernetes | bool)
 
-- name: Database target | Read the server version of a MariaDB backend on Kubernetes
+- name: Database target | Read the server version of a MariaDB/MySQL backend on Kubernetes
   ansible.builtin.include_tasks: backend-sql.yml
   vars:
     database_backend_instance: "{{ database_app_config.instance }}"

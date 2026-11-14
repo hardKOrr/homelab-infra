@@ -88,5 +88,5 @@
       DROP USER IF EXISTS '{{ database_app_target.role }}'@'{{ host }}';
       {% endfor %}
   when:
-    - database_app_target.provider == 'mariadb'
+    - database_app_target.provider in ['mariadb', 'mysql']
     - database_app_target.kubernetes | default(false) | bool

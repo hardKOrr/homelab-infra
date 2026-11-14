@@ -14,15 +14,15 @@
 #   k8s_database_step_source     registered — the app's database on its registered backend
 #                                             (app.database: provider, instance, name, role)
 #                                namespace-mysql — a database pod in the app's own namespace
-#                                namespace-mariadb-server — the whole MariaDB server that
+#                                namespace-server — the whole MariaDB or MySQL server that
 #                                             runs in the instance's own namespace (the
-#                                             MariaDB role's own recovery point: every
-#                                             schema and the grants, `mariadb.sql`)
+#                                             MariaDB/MySQL role's own recovery point: every
+#                                             schema and the grants, `<engine>.sql`)
 #   k8s_database_step_config     the merged config of the instance whose database this is
 #   k8s_database_step_instance   that instance's name (namespace-mysql: its pod is
 #                                `<instance>-db`)
-#   k8s_database_step_root_password  namespace-mysql and namespace-mariadb-server: that
-#                                server's root password (the MariaDB server step reads the
+#   k8s_database_step_root_password  namespace-mysql and namespace-server: that
+#                                server's root password (the server step reads the
 #                                image, Service port and root hosts from the config's `app`)
 #
 # Sets k8s_database_step:
@@ -39,7 +39,7 @@
 - name: Database recovery step | Assert inputs
   ansible.builtin.assert:
     that:
-      - k8s_database_step_source | default('') in ['registered', 'namespace-mysql', 'namespace-mariadb-server']
+      - k8s_database_step_source | default('') in ['registered', 'namespace-mysql', 'namespace-server']
       - k8s_database_step_config is mapping
       - k8s_database_step_instance | default('') | length > 0
     fail_msg: >-
@@ -106,8 +106,8 @@
             {{ k8s_database_step_instance }}-db
       no_log: true
 
-- name: Database recovery step | Resolve the MariaDB server in this namespace
-  when: k8s_database_step_source == 'namespace-mariadb-server'
+- name: Database recovery step | Resolve the MariaDB/MySQL server in this namespace
+  when: k8s_database_step_source == 'namespace-server'
   block:
     - name: Database recovery step | Require the server's root credential and image
       ansible.builtin.assert:
@@ -124,7 +124,8 @@
     - name: Database recovery step | Read the server
       ansible.builtin.set_fact:
         _kds:
-          engine: mariadb
+          engine: >-
+            {{ 'mariadb' if 'mariadb' in (k8s_database_step_config.app.image | lower) else 'mysql' }}
           image: "{{ k8s_database_step_config.app.image }}"
           host: "{{ k8s_database_step_instance }}"
           port: "{{ k8s_database_step_config.app.port | default(3306) | string }}"
@@ -132,7 +133,7 @@
           user: root
           password: "{{ k8s_database_step_root_password }}"
           root_hosts: "{{ k8s_database_step_config.kubernetes.root_host | default('10.42.%') }}"
-          describe: "the whole MariaDB server {{ k8s_database_step_instance }} (every schema and grant)"
+          describe: "the whole {{ 'MariaDB' if _kds.engine == 'mariadb' else 'MySQL' }} server {{ k8s_database_step_instance }} (every schema and grant)"
       no_log: true
 
 - name: Database recovery step | Require the database login
@@ -146,12 +147,12 @@
 # The script travels in the Job's credential Secret: the templates already mount it
 # read-only, and it stays the one copy guest roles install from.
 - name: Database recovery step | Describe the server step
-  when: k8s_database_step_source == 'namespace-mariadb-server'
+  when: k8s_database_step_source == 'namespace-server'
   ansible.builtin.set_fact:
     k8s_database_step:
       image: "{{ _kds.image }}"
       env:
-        DB_ENGINE: mariadb
+        DB_ENGINE: "{{ _kds.engine }}"
         DB_HOST: "{{ _kds.host }}"
         DB_PORT: "{{ _kds.port }}"
         DB_USER: root
@@ -165,11 +166,11 @@
         db-password: "{{ _kds.password }}"
         database-client.sh: "{{ lookup('ansible.builtin.file', 'scripts/database-client.sh') }}"
       describe: "{{ _kds.describe }}"
-      dump: sh /etc/recovery-credentials/database-client.sh server-dump "${DUMP_DIR}/mariadb.sql"
+      dump: sh /etc/recovery-credentials/database-client.sh server-dump "${DUMP_DIR}/{{ _kds.engine }}.sql"
       load: |
-        set -- "${DUMP_DIR}"/mariadb.sql
+        set -- "${DUMP_DIR}"/{{ _kds.engine }}.sql
         if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
-          echo "expected one MariaDB server dump in the recovery point, found: $*"
+          echo "expected one {{ _kds.engine }} server dump in the recovery point, found: $*"
           exit 1
         fi
         sh /etc/recovery-credentials/database-client.sh server-verify "$1"
@@ -182,7 +183,7 @@
   no_log: true
 
 - name: Database recovery step | Describe the step
-  when: k8s_database_step_source != 'namespace-mariadb-server'
+  when: k8s_database_step_source != 'namespace-server'
   vars:
     _kds_glob: "{{ '*.dump' if _kds.engine == 'postgresql' else 'database.sql' }}"
   ansible.builtin.set_fact:
