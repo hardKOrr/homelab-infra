@@ -1,0 +1,175 @@
+---
+# Docker hosting: the official image under Compose on the stack host. The server socket is
+# shared with the host at /var/run/postgresql, where the host's PostgreSQL client and the
+# shared database tasks (provision, dump, drop, base backup) reach it as the `postgres`
+# user exactly as on a native backend guest.
+# One socket directory per host: a second backend would share it, and the shared
+# operations could not tell the two apart.
+- name: PostgreSQL | Find other database backends on this host
+  ansible.builtin.find:
+    paths: /opt
+    patterns: docker-compose.yml
+    recurse: true
+    depth: 2
+    contains: '.*/var/run/postgresql:.*'
+    use_regex: false
+  register: _postgresql_other_backends
+
+- name: PostgreSQL | Refuse a second backend on this stack host
+  ansible.builtin.assert:
+    that: >-
+      _postgresql_other_backends.files | map(attribute='path')
+      | reject('equalto', postgresql_project_dir ~ '/docker-compose.yml') | list | length == 0
+    fail_msg: >-
+      Another database backend already shares this host's /var/run/postgresql socket.
+      Give each PostgreSQL backend its own stack.
+
+- name: PostgreSQL | Assert the supported major version and image
+  ansible.builtin.assert:
+    that:
+      - app_config.app.version | default('') == '16'
+      - app_config.app.image | default('') is match('^postgres:' ~ (app_config.app.version | string) ~ '([.-]|$)')
+    fail_msg: >-
+      This PostgreSQL role supports major version 16 only, and app.image must be the
+      official postgres:16 image.
+
+- name: PostgreSQL | Resolve database memory settings
+  ansible.builtin.set_fact:
+    _postgresql_shared_buffers_mib: "{{ app_config.app.get('memory', {}).get('shared_buffers', 256) | int }}"
+    _postgresql_effective_cache_size_mib: "{{ app_config.app.get('memory', {}).get('effective_cache_size', 768) | int }}"
+    _postgresql_work_mem_mib: "{{ app_config.app.get('memory', {}).get('work_mem', 4) | int }}"
+
+- name: PostgreSQL | Configure the package repository for the host client
+  ansible.builtin.include_tasks: ../../../tasks/database/postgresql-repository.yml
+
+# The shared tasks run psql, pg_basebackup and pg_verifybackup on the host, as `postgres`.
+- name: PostgreSQL | Install the host client and Python client
+  ansible.builtin.apt:
+    name:
+      - "postgresql-client-{{ app_config.app.version }}"
+      - python3-psycopg2
+    state: present
+    update_cache: false
+
+- name: PostgreSQL | Install the native recovery helper when backups are enabled
+  ansible.builtin.include_tasks: install-recovery-helper.yml
+  when: app_config.backup.enabled | default(false) | bool
+
+# The host user only reaches the socket through the directory's group; its own id may be
+# anything, so it never has to match the image's.
+- name: PostgreSQL | Create the host postgres user
+  ansible.builtin.user:
+    name: postgres
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/postgresql
+    create_home: false
+
+# The image runs the server as uid 999. /run is a tmpfs, so tmpfiles recreates the shared
+# socket directory on every boot, before Docker starts. Local access is trust, so mode
+# 0750 is what keeps other host users off the socket; the shared operations run as root or
+# as the postgres group member.
+- name: PostgreSQL | Recreate the shared socket directory at boot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/homelab-postgresql.conf
+    content: "d /var/run/postgresql 0750 {{ postgresql_container_id }} postgres -\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: PostgreSQL | Create the shared socket directory
+  ansible.builtin.file:
+    path: /var/run/postgresql
+    state: directory
+    owner: "{{ postgresql_container_id }}"
+    group: postgres
+    mode: "0750"
+
+- name: PostgreSQL | Create the project directory
+  ansible.builtin.file:
+    path: "{{ postgresql_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The image gives this directory to its postgres user when it initializes, so Deploy
+# creates it but never sets its owner or mode, which would undo that on every run.
+- name: PostgreSQL | Create the state directory
+  ansible.builtin.file:
+    path: "{{ postgresql_project_dir }}/data"
+    state: directory
+
+- name: PostgreSQL | Permit only declared application networks
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_project_dir }}/pg_hba.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart PostgreSQL container
+
+- name: PostgreSQL | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ postgresql_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart PostgreSQL container
+
+- name: PostgreSQL | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ postgresql_project_dir }}"
+
+- name: PostgreSQL | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ postgresql_project_dir }}"
+    state: present
+    remove_orphans: true
+
+# The image's init server listens on the socket only; the final server also answers on TCP.
+# Wait for the final server before any restart, so a restart never interrupts first-run
+# initialization.
+- name: PostgreSQL | Wait for the final server
+  ansible.builtin.command:
+    argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
+  register: _postgresql_ready
+  until: _postgresql_ready.rc == 0
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: PostgreSQL | Apply pending restarts once initialization is complete
+  ansible.builtin.meta: flush_handlers
+
+- name: PostgreSQL | Wait for the final server after a restart
+  ansible.builtin.command:
+    argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
+  register: _postgresql_ready_again
+  until: _postgresql_ready_again.rc == 0
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# The published port answers whatever pg_hba.conf says, so the declared file must be the
+# one in force, not the data directory's own.
+- name: PostgreSQL | Read the pg_hba.conf in force
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --no-psqlrc
+      - --host=/var/run/postgresql
+      - "--port={{ app_config.app.port }}"
+      - --username=postgres
+      - --dbname=postgres
+      - --tuples-only
+      - --no-align
+      - --command=SHOW hba_file
+  register: _postgresql_hba_in_force
+  changed_when: false
+
+- name: PostgreSQL | Refuse an undeclared pg_hba.conf
+  ansible.builtin.assert:
+    that: _postgresql_hba_in_force.stdout | trim == '/etc/postgresql/pg_hba.conf'
+    fail_msg: PostgreSQL is not using the declared pg_hba.conf; the published port would not honor client_cidrs.

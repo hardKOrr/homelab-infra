@@ -1,0 +1,8 @@
+---
+# Role-internal defaults; user-facing knobs live in vars/app-defaults/postgresql.yml.
+postgresql_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+# Docker: the Compose project, config and data live together in /opt/<instance>.
+postgresql_project_dir: "/opt/{{ instance }}"
+postgresql_compose_service: postgresql
+# The official Debian image runs the server as uid/gid 999.
+postgresql_container_id: "999"

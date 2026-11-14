@@ -240,7 +240,7 @@ def check_config_wiring():
         )
 
     postgresql_tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/postgresql/tasks/main.yml").read_text(encoding="utf-8")
+        (ROOT / "ansible/roles/postgresql/tasks/native.yml").read_text(encoding="utf-8")
     )
     postgres_lines = [
         task["ansible.builtin.lineinfile"]["line"]

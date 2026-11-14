@@ -1,0 +1,32 @@
+# docker-compose.yml for PostgreSQL ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  {{ postgresql_compose_service }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      # The image refuses to initialize without a superuser password or this setting. It only
+      # shapes the data directory's own pg_hba.conf, which the hba_file below replaces, so the
+      # server never answers trust over the network.
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - listen_addresses=*
+      - -c
+      - shared_buffers={{ _postgresql_shared_buffers_mib }}MB
+      - -c
+      - effective_cache_size={{ _postgresql_effective_cache_size_mib }}MB
+      - -c
+      - work_mem={{ _postgresql_work_mem_mib }}MB
+    volumes:
+      - "{{ postgresql_project_dir }}/data:/var/lib/postgresql/data"
+      - "{{ postgresql_project_dir }}/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro"
+      - /var/run/postgresql:/var/run/postgresql
+    ports:
+      - "{{ app_config.app.port }}:5432"

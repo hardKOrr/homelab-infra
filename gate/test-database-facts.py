@@ -405,7 +405,7 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     assert condition_result(withdraw["when"][-1], postgresql_removal) is False
     assert condition_result(withdraw["when"][-1], ordinary_removal) is True
 
-    postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/main.yml"))
+    postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/native.yml"))
     discover = task_named(postgres_tasks, "PostgreSQL | Discover registered clusters after package installation")
     create = task_named(postgres_tasks, "PostgreSQL | Create main when no cluster is registered")
     stale_guard = task_named(postgres_tasks, "PostgreSQL | Refuse registered clusters with missing data")

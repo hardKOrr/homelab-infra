@@ -122,7 +122,7 @@ def check_contract():
     provision = task_named(deploy, "Provision a new PostgreSQL backend guest")
     assert provision["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
-    main = task_tree(ROLE / "tasks/main.yml")
+    main = task_tree(ROLE / "tasks/native.yml")
     pbs_client = task_named(main, "PostgreSQL | Install the pinned PBS client when backups are enabled")
     assert pbs_client["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-install.yml")
     helper = task_named(main, "PostgreSQL | Install the native recovery helper when backups are enabled")
@@ -158,14 +158,26 @@ def check_contract():
     assert task_named(restore, "PostgreSQL restore | Require the independent existing-target point")
     assert task_named(restore, "PostgreSQL restore | Validate the target cluster identity")
     swap = swap_inputs("postgresql")
-    assert swap["recovery_swap_runtime"] == "native"
+    assert "docker" in swap["recovery_swap_runtime"] and "native" in swap["recovery_swap_runtime"]
     assert swap["recovery_swap_archives"] == ["postgresql.pxar"]
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _postgresql_restore_target_backup_id }}"
     [path] = swap["recovery_swap_paths"]
     assert path["source"] == "postgresql/cluster"
     # PostgreSQL refuses a data directory any wider than 0700.
-    assert (path["owner"], path["group"], path["mode"]) == ("postgres", "postgres", "0700")
-    assert swap["recovery_swap_stop_services"] == ["postgresql@{{ app_config.app.version }}-main"]
+    assert path["mode"] == "0700" and "postgres" in path["owner"] and "postgres" in path["group"]
+    assert "postgresql@" in swap["recovery_swap_stop_services"]
+    assert "postgresql_compose_service" in swap["recovery_swap_stop_services"]
+    assert swap["recovery_swap_compose_project"]
+    compose = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
+    assert "hba_file=/etc/postgresql/pg_hba.conf" in compose
+    docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
+    assert "Refuse a second backend on this stack host" in docker_tasks
+    assert "Refuse an undeclared pg_hba.conf" in docker_tasks
+    assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
+    order = [docker_tasks.index(t) for t in (
+        "PostgreSQL | Start the service", "PostgreSQL | Wait for the final server\n",
+        "PostgreSQL | Apply pending restarts", "after a restart")]
+    assert order == sorted(order), "wait for the final server before flushing restarts"
     staged = (ROLE / "tasks/restore-staged.yml").read_text(encoding="utf-8")
     assert "- verify\n" in staged and '"{{ recovery_swap_stage }}/postgresql"' in staged
     verified = (ROLE / "tasks/restore-verified.yml").read_text(encoding="utf-8")

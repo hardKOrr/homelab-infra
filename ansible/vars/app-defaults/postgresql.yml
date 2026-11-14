@@ -5,8 +5,11 @@
 postgresql_defaults:
   hosting:
     method: native
-    supported: [native-lxc, native-vm]
+    # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
+  stack: ""
   recovery:
     methods: [native]
     native:
@@ -25,7 +28,9 @@ postgresql_defaults:
     # backend. Keep the major version explicit so a distro upgrade cannot silently
     # change the application compatibility pairing.
     version: "16"
+    image: postgres:16  # Docker only; must match version
     port: 5432
+    # Native; Docker keeps data in /opt/<instance>/data.
     data_path: /var/lib/postgresql
     # CIDRs allowed to connect to this backend. Keep this a lab-local range.
     client_cidrs: ["10.0.0.0/8"]
