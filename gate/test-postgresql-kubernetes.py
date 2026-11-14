@@ -102,6 +102,12 @@ objects = {
     item["kind"]: item for item in yaml.safe_load_all(template.render(**context)) if item
 }
 assert {"ConfigMap", "PersistentVolumeClaim", "Deployment", "Service"} == set(objects)
+# Shared restore recreates the ConfigMap with these ownership labels; Deploy must
+# accept that shape without a corrective apply after recovery.
+assert objects["ConfigMap"]["metadata"]["labels"] == {
+    "app.kubernetes.io/instance": "postgresql-test",
+    "app.kubernetes.io/managed-by": "homelab-infra",
+}
 pvc = objects["PersistentVolumeClaim"]["spec"]
 assert "storageClassName" not in pvc and pvc["resources"]["requests"]["storage"] == "8Gi"
 deployment = objects["Deployment"]["spec"]

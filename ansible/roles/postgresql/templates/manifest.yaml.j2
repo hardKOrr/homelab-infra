@@ -2,7 +2,6 @@
 {% set labels %}
 app.kubernetes.io/instance: {{ instance }}
 app.kubernetes.io/managed-by: homelab-infra
-app.kubernetes.io/component: server
 {% endset %}
 ---
 apiVersion: v1
@@ -52,6 +51,7 @@ spec:
     metadata:
       labels:
 {{ labels | trim | indent(8, true) }}
+        app.kubernetes.io/component: server
       annotations:
         # A changed access list or tuning restarts the server, which reads them at start.
         homelab-infra.io/config-checksum: "{{ _postgresql_config_checksum }}"
