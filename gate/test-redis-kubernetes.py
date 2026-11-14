@@ -188,6 +188,43 @@ assert "redis_server()" in client and "--rdb" in client and "REPLICAOF" in clien
 assert "grep -v '^user default '" in client
 subprocess.run(["sh", "-n", str(ROOT / "ansible/tasks/database/scripts/database-client.sh")], check=True)
 
+
+# ── Error replies fail the script: redis-cli exits 0 on them unless -e is passed ───────
+import os, tempfile
+with tempfile.TemporaryDirectory(prefix="redis-client-") as tmp:
+    bin_dir = Path(tmp)
+    # A fake server: answers ok, except the command named in FAIL_ON, which gets an error
+    # reply. Like the real client it exits non-zero on that reply only when given -e.
+    (bin_dir / "redis-cli").write_text(
+        '#!/bin/sh\nflag=0; for a in "$@"; do [ "$a" = -e ] && flag=1; done\n'
+        'case " $* " in *" $FAIL_ON "*) echo "(error) ERR injected"; [ "$flag" = 1 ] && exit 1; exit 0 ;; esac\n'
+        'case " $* " in *" DBSIZE "*) echo 3 ;; *" ping "*) echo PONG ;; *" ACL LIST "*) echo "user default on nopass"; echo "user old on nopass" ;; '
+        '*" ACL USERS "*) echo default ;; *" INFO "*) echo master_link_status:up ;; esac\nexit 0\n')
+    (bin_dir / "redis-server").write_text("#!/bin/sh\nexec sleep 30\n")
+    (bin_dir / "redis-check-rdb").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "hostname").write_text("#!/bin/sh\necho 10.42.0.9\n")
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    point = bin_dir / "redis.rdb"
+    point.write_text("rdb")
+    (bin_dir / "redis.acl").write_text("user default on nopass\nuser app on nopass ~* +@all\n")
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DB_ENGINE": "redis",
+           "DB_HOST": "cache", "DB_PORT": "6379", "DB_USER": "default", "DB_PASSWORD": "x"}
+    script = str(ROOT / "ansible/tasks/database/scripts/database-client.sh")
+
+    def run(action, fail_on, *args):
+        return subprocess.run(["sh", script, action, *args], env={**env, "FAIL_ON": fail_on},
+                              capture_output=True, text=True, timeout=120)
+
+    assert run("server-load", "NONE", str(point)).returncode == 0
+    for command in ("REPLICAOF NO ONE", "SETUSER", "DELUSER", "SAVE"):
+        result = run("server-load", command, str(point))
+        assert result.returncode != 0 and "complete" not in result.stdout, (command, result)
+    assert run("server-dump", "ACL LIST", str(bin_dir / "out.rdb")).returncode != 0
+    assert run("server-inspect", "NONE").stdout.strip() == "3 keys, 1 ACL users"
+    # A bad DBSIZE reply must not be reported as a count.
+    assert run("server-inspect", "DBSIZE").returncode != 0
+
 # ── Firewall: consumers name Redis by redis_host and redis_port ────────────────────────
 access = read("ansible/tasks/database/open-consumer-access.yml")
 assert "'redis' if database_consumer_provider == 'redis'" in access and "_sql_prefix ~ '_host'" in access

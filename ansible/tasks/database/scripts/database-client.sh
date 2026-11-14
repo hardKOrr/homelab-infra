@@ -215,11 +215,12 @@ redis_server() {
     return
   fi
   export REDISCLI_AUTH="$DB_PASSWORD"
-  cli() { redis-cli --no-auth-warning --user "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$@"; }
+  # -e: exit non-zero on an error reply, which redis-cli otherwise prints and ignores.
+  cli() { redis-cli -e --no-auth-warning --user "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$@"; }
   umask 077
   if [ "$action" = server-inspect ]; then
     attempt=0
-    until out=$(cli DBSIZE 2> "$work/inspect.err") && users=$(cli ACL USERS 2>> "$work/inspect.err" | wc -l); do
+    until out=$(cli DBSIZE 2> "$work/inspect.err") && cli ACL USERS > "$work/users" 2>> "$work/inspect.err"; do
       attempt=$((attempt + 1))
       if [ "$attempt" -ge 30 ]; then
         cat "$work/inspect.err" >&2
@@ -227,7 +228,8 @@ redis_server() {
       fi
       sleep 2
     done
-    echo "$out keys, $users ACL users"
+    case "$out" in '' | *[!0-9]*) echo "database-client.sh: unexpected DBSIZE reply: $out" >&2; return 1 ;; esac
+    echo "$out keys, $(wc -l < "$work/users") ACL users"
     return
   fi
   if [ "$action" = server-dump ]; then
@@ -255,21 +257,25 @@ redis_server() {
   done
   cli REPLICAOF "$(hostname -i | cut -d' ' -f1)" 6390 > /dev/null
   attempt=0
-  until cli INFO replication | grep -q '^master_link_status:up'; do
+  until cli INFO replication > "$work/info" && grep -q '^master_link_status:up' "$work/info"; do
     attempt=$((attempt + 1))
     [ "$attempt" -lt 120 ] || { echo "database-client.sh: the full sync did not finish" >&2; exit 1; }
     sleep 1
   done
   cli REPLICAOF NO ONE > /dev/null
   # Users: the point's, but never its `default` (this server's login stays as deployed).
-  cli ACL LIST | grep '^user ' | grep -v '^user default ' | while read -r _ name _; do
+  # Each list lands in a file first, so a failed command stops the script (a pipe would not).
+  cli ACL LIST > "$work/current.acl"
+  grep '^user ' "$work/current.acl" | grep -v '^user default ' > "$work/current.users" || true
+  while read -r _ name _; do
     cli ACL DELUSER "$name" > /dev/null
-  done
+  done < "$work/current.users"
+  grep '^user ' "$acl" | grep -v '^user default ' > "$work/point.users" || true
   set -f
-  grep '^user ' "$acl" | grep -v '^user default ' | while read -r _ name rules; do
+  while read -r _ name rules; do
     # shellcheck disable=SC2086 # the rules are separate ACL SETUSER arguments
     cli ACL SETUSER "$name" $rules > /dev/null
-  done
+  done < "$work/point.users"
   set +f
   cli ACL SAVE > /dev/null
   cli SAVE > /dev/null
