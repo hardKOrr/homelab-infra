@@ -109,7 +109,22 @@ def check_contract():
     assert defaults["routing"]["proxy"] == "none"
     assert defaults["routing"]["identity"] == "none"
 
-    main = task_tree(ROLE / "tasks/main.yml")
+    compose = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
+    assert "MYSQL_ROOT_HOST=localhost" in compose, "Docker root must not be remote-reachable"
+    docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
+    assert "Host NOT IN ('localhost')" in docker_tasks
+    assert "Refuse a second backend on this stack host" in docker_tasks
+    assert "MySQL | Create the state directory" in docker_tasks
+    assert 'mode: "0750"' in docker_tasks and "d /run/mysqld 0750 999 999" in docker_tasks
+    assert "Verify an unprivileged host user cannot authenticate as root" in docker_tasks
+    # An empty data directory is initialized by the first start; no restart may precede
+    # the final server being ready.
+    order = [docker_tasks.index(t) for t in (
+        "MySQL | Start the service", "MySQL | Wait for the final server\n",
+        "MySQL | Apply pending restarts", "after a restart")]
+    assert order == sorted(order), "wait for the final server before flushing restarts"
+
+    main = task_tree(ROLE / "tasks/native.yml") + task_tree(ROLE / "tasks/repository.yml")
     release_guard = task_named(main, "MySQL | Require a supported Debian release")
     assert "ansible_distribution == 'Debian'" in str(release_guard["ansible.builtin.assert"]["that"])
     assert "['bookworm', 'trixie']" in str(release_guard["ansible.builtin.assert"]["that"])
@@ -140,7 +155,7 @@ def check_contract():
         "ansible.builtin.tempfile"]["path"] == "/var/tmp"
     upload = task_named(backup, "MySQL backup | Upload the logical archive to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert "docker" in upload["vars"]["pbs_client_runtime"] and "native" in upload["vars"]["pbs_client_runtime"]
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "mysql.pxar", "path": "{{ _mysql_backup_tmp.path }}"}
     ]

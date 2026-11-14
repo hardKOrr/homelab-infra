@@ -1,0 +1,83 @@
+---
+# Native hosting: the Oracle package under systemd on the backend's own guest.
+- name: MySQL | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: MySQL | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
+- name: MySQL | Configure the Oracle APT repository
+  ansible.builtin.include_tasks: repository.yml
+
+# MySQL is a standalone backend, deliberately independent of application
+# Compose files so its data, recovery path, and credentials remain explicit.
+- name: MySQL | Install server and Python client
+  ansible.builtin.apt:
+    name: [mysql-server, python3-pymysql]
+    state: present
+    update_cache: true
+
+- name: MySQL | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: MySQL | Install the shared server recovery script
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/database/install-server-recovery.yml"
+
+- name: MySQL | Permit application-network listeners
+  ansible.builtin.template:
+    src: homelab-infra.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/z-homelab-infra.cnf
+    mode: "0644"
+  notify: Restart MySQL
+
+# Remove with delete_data=true deletes data_path and keeps the guest. The package only
+# initializes its data directory on first install, so Deploy does it here when no system
+# schema exists, then gives root the auth_socket login the package configures. A
+# directory holding data is never touched.
+- name: MySQL | Check for the system schema
+  ansible.builtin.stat:
+    path: "{{ app_config.app.data_path }}/mysql"
+  register: _mysql_system_schema
+
+- name: MySQL | Initialize an empty data directory
+  ansible.builtin.command:
+    argv:
+      - mysqld
+      - --initialize-insecure
+      - --user=mysql
+      - "--datadir={{ app_config.app.data_path }}"
+  changed_when: true
+  when: not _mysql_system_schema.stat.exists
+
+- name: MySQL | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: MySQL | Apply listener changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: MySQL | Verify local server readiness
+  ansible.builtin.command:
+    argv: [mysqladmin, "--socket=/var/run/mysqld/mysqld.sock", ping]
+  changed_when: false
+
+# --initialize-insecure leaves root with an empty password; replace it at once.
+- name: MySQL | Give a newly initialized root the socket login
+  ansible.builtin.command:
+    argv:
+      - mysql
+      - --protocol=socket
+      - --user=root
+      - --execute
+      - >-
+        INSTALL PLUGIN auth_socket SONAME 'auth_socket.so';
+        ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket
+  changed_when: true
+  when: not _mysql_system_schema.stat.exists
