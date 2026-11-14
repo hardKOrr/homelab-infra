@@ -1,0 +1,6 @@
+# Managed by homelab-infra. The official image plus the extensions consumers request through
+# the shared provisioning (pgvector); earthdistance and cube are already in the image.
+FROM {{ app_config.app.image }}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-{{ app_config.app.version }}-pgvector \
+ && rm -rf /var/lib/apt/lists/*

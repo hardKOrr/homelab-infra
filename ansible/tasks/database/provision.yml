@@ -217,7 +217,8 @@
 
 # Immich requires pgvector for its face/CLIP embeddings. The extension is a backend
 # capability, not an application-side package: install it on the named PostgreSQL host
-# and create it in the named application database before the app starts.
+# and create it in the named application database before the app starts. A Docker backend
+# ships it in its image, so the host package would not reach the server.
 - name: Database | Install the PostgreSQL vector extension package
   ansible.builtin.apt:
     name: "postgresql-{{ database_provision_config.version | default(_database_backend.version | default('16'), true) }}-pgvector"
@@ -228,6 +229,7 @@
   when:
     - database_provision_config.provider == 'postgresql'
     - "'vector' in (database_provision_config.extensions | default([]))"
+    - _database_backend.runtime | default('native') != 'docker'
 
 - name: Database | Check whether the PostgreSQL vector extension exists
   ansible.builtin.command:

@@ -1,0 +1,216 @@
+---
+# Package-managed PostgreSQL on a native guest; main.yml dispatches here.
+- name: PostgreSQL | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: PostgreSQL | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
+- name: PostgreSQL | Derive the service unit from the selected major
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'app': {
+        'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
+      }}, recursive=True) }}
+
+- name: PostgreSQL | Assert the supported major version and derived service unit
+  ansible.builtin.assert:
+    that:
+      - app_config.app.version | default('') == '16'
+      - app_config.app.service_name | default('') == 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
+    fail_msg: >-
+      This PostgreSQL role supports major version 16 only and must use
+      postgresql@16-main. Add a separate versioned role before selecting another major.
+
+- name: PostgreSQL | Inspect existing clusters before changing the guest
+  ansible.builtin.stat:
+    path: /etc/postgresql
+  register: _postgresql_config_root
+  changed_when: false
+
+- name: PostgreSQL | Find existing clusters before changing the guest
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    patterns: postgresql.conf
+    recurse: true
+    file_type: file
+  register: _postgresql_existing_conf_files
+  changed_when: false
+  when: _postgresql_config_root.stat.exists | default(false)
+
+- name: PostgreSQL | Normalize existing cluster paths
+  ansible.builtin.set_fact:
+    _postgresql_existing_conf_paths: >-
+      {{ _postgresql_existing_conf_files.files | default([])
+         | map(attribute='path') | list }}
+
+- name: PostgreSQL | Reject an existing different-major cluster before installation
+  ansible.builtin.assert:
+    that: >-
+      _postgresql_existing_conf_paths | select('search', '/16/') | list | length
+      == _postgresql_existing_conf_paths | length
+    fail_msg: >-
+      PostgreSQL installation was not changed: an existing cluster uses a different major
+      version ({{ _postgresql_existing_conf_paths | join(', ') }}).
+      Migrate or retire that cluster before selecting PostgreSQL 16.
+
+- name: PostgreSQL | Configure the package repository
+  ansible.builtin.include_tasks: ../../../tasks/database/postgresql-repository.yml
+
+- name: PostgreSQL | Install the pinned PBS client when backups are enabled
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: PostgreSQL | Install server and client dependencies
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ app_config.app.version }}"
+      - "postgresql-client-{{ app_config.app.version }}"
+      - python3-psycopg2
+    state: present
+    update_cache: false
+
+- name: PostgreSQL | Install the native recovery helper when backups are enabled
+  ansible.builtin.include_tasks: install-recovery-helper.yml
+  when: app_config.backup.enabled | default(false) | bool
+
+# The Debian package creates `main` only when postgresql-NN is first installed.
+# Remove App keeps the packages installed; after a destructive database removal the
+# cluster is absent and apt therefore will not run that package setup again. Create the
+# cluster explicitly in that repeat-deploy path.
+- name: PostgreSQL | Discover registered clusters after package installation
+  ansible.builtin.command:
+    argv: [pg_lsclusters, --no-header]
+  register: _postgresql_registered_clusters
+  changed_when: false
+
+- name: PostgreSQL | Resolve registered main clusters
+  ansible.builtin.set_fact:
+    _postgresql_cluster_lines: >-
+      {{ _postgresql_registered_clusters.stdout_lines | default([])
+         | select('match', '^[0-9]+[ ]+') | list }}
+    _postgresql_main_clusters: >-
+      {{ _postgresql_registered_clusters.stdout_lines | default([])
+         | select('match', '^' ~ (app_config.app.version | string) ~ '[ ]+main[ ]+')
+         | list }}
+
+- name: PostgreSQL | Refuse unexpected or duplicate cluster registrations
+  ansible.builtin.assert:
+    that:
+      - _postgresql_main_clusters | length <= 1
+      - _postgresql_cluster_lines | difference(_postgresql_main_clusters) | length == 0
+    fail_msg: >-
+      PostgreSQL expects only its configured main cluster. Refusing to create or alter
+      an unexpected or ambiguous cluster layout.
+
+- name: PostgreSQL | Resolve the existing main cluster data directory
+  ansible.builtin.set_fact:
+    _postgresql_main_data_directory: "{{ (_postgresql_main_clusters | first).split()[5] }}"
+  when: _postgresql_main_clusters | length == 1
+
+- name: PostgreSQL | Check the existing main cluster identity file
+  ansible.builtin.stat:
+    path: "{{ _postgresql_main_data_directory }}/PG_VERSION"
+  register: _postgresql_main_version_file
+  changed_when: false
+  when: _postgresql_main_clusters | length == 1
+
+- name: PostgreSQL | Refuse registered clusters with missing data
+  ansible.builtin.assert:
+    that: _postgresql_main_version_file.stat.isreg | default(false)
+    fail_msg: >-
+      PostgreSQL main is still registered but its data directory has no PG_VERSION file.
+      Refusing to initialize over stale cluster metadata. Restore or mount the registered
+      data directory, or, only if the database is intentionally being discarded, run
+      Remove App with delete_data=true before deploying a fresh cluster.
+  when: _postgresql_main_clusters | length == 1
+
+- name: PostgreSQL | Create main when no cluster is registered
+  ansible.builtin.command:
+    argv: [pg_createcluster, "{{ app_config.app.version }}", main]
+  when: _postgresql_main_clusters | length == 0
+  changed_when: true
+
+- name: PostgreSQL | Find the package-created configuration directory
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    patterns: postgresql.conf
+    recurse: true
+    file_type: file
+  register: _postgresql_conf_files
+  changed_when: false
+
+- name: PostgreSQL | Assert one server configuration was found
+  ansible.builtin.assert:
+    that:
+      - _postgresql_conf_files.files | length == 1
+      - _postgresql_conf_files.files[0].path is search('/' ~ app_config.app.version ~ '/')
+    fail_msg: >-
+      Expected exactly one package-managed PostgreSQL configuration beneath
+      /etc/postgresql for major version {{ app_config.app.version }}, found
+      {{ _postgresql_conf_files.files | map(attribute='path') | join(', ') }}.
+
+- name: PostgreSQL | Set configuration paths
+  ansible.builtin.set_fact:
+    _postgresql_conf: "{{ _postgresql_conf_files.files[0].path }}"
+    _postgresql_hba: "{{ _postgresql_conf_files.files[0].path | dirname }}/pg_hba.conf"
+
+- name: PostgreSQL | Set shared buffer size
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*shared_buffers\s*='
+    line: "shared_buffers = {{ _postgresql_shared_buffers_mib }}MB"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Set planner cache estimate
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*effective_cache_size\s*='
+    line: "effective_cache_size = {{ _postgresql_effective_cache_size_mib }}MB"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Set per-operation work memory
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*work_mem\s*='
+    line: "work_mem = {{ _postgresql_work_mem_mib }}MB"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Listen on the guest address
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = '*'"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Permit only declared application networks
+  ansible.builtin.blockinfile:
+    path: "{{ _postgresql_hba }}"
+    marker: "# {mark} homelab-infra application clients"
+    block: |
+      {% for cidr in app_config.app.client_cidrs %}
+      host    all             all             {{ cidr }}               scram-sha-256
+      {% endfor %}
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Permit native recovery through the local superuser socket
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_hba }}"
+    regexp: '^local\s+replication\s+postgres\s+peer\s*$'
+    line: "local replication postgres peer"
+    insertbefore: BOF
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: PostgreSQL | Apply configuration changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: PostgreSQL | Verify local server readiness
+  ansible.builtin.command:
+    argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
+  changed_when: false

@@ -3,3 +3,10 @@
   ansible.builtin.systemd:
     name: "{{ app_config.app.service_name }}"
     state: restarted
+  when: not (postgresql_docker | bool)
+
+- name: Restart PostgreSQL container
+  community.docker.docker_compose_v2:
+    project_src: "{{ postgresql_project_dir }}"
+    state: restarted
+  when: postgresql_docker | bool

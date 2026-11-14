@@ -1,0 +1,6 @@
+# Managed by homelab-infra. The socket directory's mode is what limits local access.
+local   all             all                                     trust
+local   replication     all                                     trust
+{% for cidr in app_config.app.client_cidrs %}
+host    all             all             {{ cidr }}               scram-sha-256
+{% endfor %}

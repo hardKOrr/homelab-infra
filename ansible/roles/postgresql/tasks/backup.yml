@@ -25,6 +25,7 @@
     argv: [pg_lsclusters, --no-header]
   register: _postgresql_backup_clusters
   changed_when: false
+  when: not (postgresql_docker | bool)
 
 - name: PostgreSQL backup | Resolve the main cluster
   ansible.builtin.set_fact:
@@ -34,6 +35,7 @@
     _postgresql_backup_main_lines: >-
       {{ _postgresql_backup_clusters.stdout_lines | default([])
          | select('match', '^' ~ (app_config.app.version | string) ~ '[ ]+main[ ]+') | list }}
+  when: not (postgresql_docker | bool)
 
 - name: PostgreSQL backup | Require one main cluster on the configured port
   ansible.builtin.assert:
@@ -44,6 +46,7 @@
     fail_msg: >-
       PostgreSQL backup requires exactly the configured main cluster and port; no data
       has been changed.
+  when: not (postgresql_docker | bool)
 
 - name: PostgreSQL backup | Refuse unsupported external tablespaces
   ansible.builtin.command:
@@ -113,7 +116,7 @@
     - name: PostgreSQL backup | Upload the physical archive to PBS
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if postgresql_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _postgresql_backup_id }}"
         pbs_client_archives:
           - name: postgresql.pxar
