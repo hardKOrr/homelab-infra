@@ -8,6 +8,8 @@ reconciliation, and scoped guest removal.
 """
 
 import hashlib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -94,7 +96,10 @@ def check_defaults_and_deploy():
     assert "requirepass" not in template
 
 
-def run_default_acl_reconciliation(acl_path, playbook_path, password):
+LAST_HANDLERS = []
+
+
+def run_default_acl_reconciliation(acl_path, playbook_path, password, docker=False):
     task_path = ROOT / "ansible/roles/redis/tasks/reconcile-default-user.yml"
     playbook = [
         {
@@ -105,6 +110,7 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
             "vars": {
                 "_redis_acl_path": str(acl_path),
                 "_redis_password": password,
+                "redis_docker": docker,
             },
             "tasks": [
                 {"name": "Run the role task", "ansible.builtin.import_tasks": str(task_path)}
@@ -113,7 +119,11 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
                 {
                     "name": "Restart Redis",
                     "ansible.builtin.debug": {"msg": "Redis restart requested"},
-                }
+                },
+                {
+                    "name": "Restart Redis container",
+                    "ansible.builtin.debug": {"msg": "Redis container restart requested"},
+                },
             ],
         }
     ]
@@ -126,6 +136,7 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
         check=False,
         text=True,
     )
+    LAST_HANDLERS[:] = re.findall(r"RUNNING HANDLER \[(.+?)\]", result.stdout)
     assert result.returncode == 0, f"Redis ACL reconciliation failed:\n{result.stdout}\n{result.stderr}"
     recap = next(line for line in result.stdout.splitlines() if line.startswith("localhost") and "changed=" in line)
     changed = re.search(r"changed=(\d+)", recap)
@@ -156,7 +167,7 @@ def check_default_acl_reconciliation():
     assert lineinfile["regexp"] == r"^user default(?: |$)"
     assert lineinfile["line"] == "{{ _redis_default_acl_line }}"
     assert "when" not in task
-    assert task["notify"] == "Restart Redis"
+    assert "Restart Redis container" in task["notify"] and "'Restart Redis'" in task["notify"]
     assert task.get("no_log") is True
 
     with tempfile.TemporaryDirectory(prefix="redis-acl-reconcile-") as directory:
@@ -199,6 +210,13 @@ def check_default_acl_reconciliation():
 
         rotation_repeat = run_default_acl_reconciliation(acl_path, playbook_path, rotated_password)
         assert rotation_repeat == 0
+        assert LAST_HANDLERS == []
+
+        # An ACL-only change on Docker restarts the container, never the native service.
+        docker_acl = Path(directory) / "docker-users.acl"
+        docker_acl.write_text(f"{canary_user}\n")
+        assert run_default_acl_reconciliation(docker_acl, playbook_path, first_password, docker=True) == 1
+        assert LAST_HANDLERS == ["Restart Redis container"]
 
         empty_acl_path = Path(directory) / "empty-users.acl"
         empty_acl_path.write_text(f"{canary_user}\n")
@@ -250,8 +268,8 @@ def check_backup():
     for task in (pause, acl_save, rdb, unpause):
         assert task["environment"]["REDISCLI_AUTH"] == "{{ _redis_backup_password }}"
     assert acl_save.get("no_log") is True
-    assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
-    assert acl_mode["ansible.builtin.file"]["group"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["owner"] == "{{ redis_owner }}"
+    assert acl_mode["ansible.builtin.file"]["group"] == "{{ redis_owner }}"
     assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     assert "--rdb" in rdb["ansible.builtin.command"]["argv"]
     assert rdb.get("no_log") is True
@@ -261,7 +279,7 @@ def check_backup():
 
     upload = task_named(backup_tasks, "Redis backup | Upload the native export to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ 'docker' if redis_docker | bool else 'native' }}"
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "data.pxar", "path": "{{ _redis_backup_stage.path }}"}
     ]
@@ -288,6 +306,8 @@ elif args == ['ACL', 'SAVE']:
 def run_hook(hook, root, variables=None):
     tasks = read_yaml(f"ansible/roles/redis/tasks/restore-{hook}.yml")
     for task in tasks:
+        if task.get("ansible.builtin.include_tasks") == "validate-rdb.yml":
+            task["ansible.builtin.include_tasks"] = str(ROOT / "ansible/roles/redis/tasks/validate-rdb.yml")
         task.pop("no_log", None)
         if "until" in task:
             task["retries"] = 1
@@ -314,10 +334,13 @@ def check_restore():
     """Redis supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
     swap = swap_inputs("redis")
     assert swap["recovery_swap_paths"] == [{"path": "{{ _redis_restore_data_path }}",
-                                           "owner": "redis", "group": "redis", "mode": "0750"}]
-    assert swap["recovery_swap_runtime"] == "native"
+                                           "owner": "{{ redis_owner }}", "group": "{{ redis_owner }}",
+                                           "mode": "0750"}]
+    assert swap["recovery_swap_runtime"] == "{{ 'docker' if redis_docker | bool else 'native' }}"
+    assert swap["recovery_swap_compose_project"] == "{{ redis_project_dir if redis_docker | bool else '' }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["{{ _redis_restore_service_name }}"]
+    assert "_redis_restore_service_name" in swap["recovery_swap_stop_services"]
+    assert "redis_compose_service" in swap["recovery_swap_stop_services"]
     restore = read_yaml("ansible/roles/redis/tasks/restore.yml")
     names = [task.get("name") for task in restore]
     assert names.index("Redis restore | Refuse an inactive target") < names.index(
@@ -353,6 +376,30 @@ def check_restore():
         (root / "stage/data/users.acl").write_text("user default on\n")
         result = run_hook("staged", root)
         assert result.returncode == 0, result.stdout + result.stderr
+
+        # Docker's RDB version can be newer than the host checker. The validator must
+        # use the actual running image, without pulling or writing to the staged dump.
+        docker = root / "bin/docker"
+        docker.write_text("""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+if args == ['inspect', 'redis']:
+    print(json.dumps([{'Image': 'sha256:running-image'}]))
+else:
+    assert args[:11] == ['run', '--rm', '--pull', 'never', '--network', 'none',
+                         '--read-only', '--user', '0:0', '--volume', args[10]]
+    assert args[11:] == ['--entrypoint', 'redis-check-rdb', 'sha256:running-image', '/recovery/dump.rdb']
+    assert args[10].endswith(':/recovery/dump.rdb:ro')
+    dump = pathlib.Path(args[10].removesuffix(':/recovery/dump.rdb:ro'))
+    sys.exit(0 if dump.read_text().startswith('REDIS') else 1)
+""")
+        docker.chmod(0o755)
+        docker_vars = {"redis_docker": True, "instance": "redis"}
+        result = run_hook("staged", root, docker_vars)
+        assert result.returncode == 0, result.stdout + result.stderr
+        (root / "stage/data/dump.rdb").write_text("corrupt")
+        assert run_hook("staged", root, docker_vars).returncode != 0, "Docker must reject a corrupt staged RDB"
+        (root / "stage/data/dump.rdb").write_text("REDIS0012")
 
         (root / "stage/data").rename(root / "data")
         result = run_hook("replaced", root)
@@ -420,10 +467,86 @@ def check_remove_scope():
     assert destroy_tasks.index(shutdown) < destroy_tasks.index(confirm_stopped) < destroy_tasks.index(destroy_guest) < destroy_tasks.index(verify_absent)
 
 
+def check_runtime_guards():
+    """Render and execute real runtime checks; Docker sees no Jinja raw tags."""
+    executable = Path(sys.executable).with_name("ansible-playbook")
+    with tempfile.TemporaryDirectory(prefix="redis-runtime-") as directory:
+        root = Path(directory)
+        docker = root / "docker"
+        docker.write_text("#!/bin/sh\n[ \"$1\" = inspect ] && [ \"$2\" = redis ] && [ \"$#\" = 2 ] || exit 9\nprintf '%s' \"$TEST_INSPECT\"\nexit \"$TEST_RC\"\n")
+        docker.chmod(0o755)
+        systemctl = root / "systemctl"
+        systemctl.write_text("#!/bin/sh\nprintf '%s' \"$TEST_INSPECT\"\nexit \"$TEST_RC\"\n")
+        systemctl.chmod(0o755)
+        for operation in ("backup", "restore"):
+            tasks = read_yaml(f"ansible/roles/redis/tasks/{operation}.yml")
+            start = next(i for i, task in enumerate(tasks)
+                         if task.get("register") == f"_redis_{operation}_service_state")
+            for is_docker, output, rc, passes in (
+                (True, json.dumps([{"State": {"Status": "running"}}]), 0, True),
+                (True, json.dumps([{"State": {"Status": "exited"}}]), 0, False),
+                (True, "", 1, False),
+                (False, "active", 0, True),
+                (False, "inactive", 3, False),
+            ):
+                playbook = root / "runtime.yml"
+                playbook.write_text(yaml.safe_dump([{
+                    "hosts": "localhost", "gather_facts": False,
+                    "environment": {"PATH": str(root) + ":" + os.environ["PATH"],
+                                    "TEST_INSPECT": output, "TEST_RC": str(rc)},
+                    "vars": {"instance": "redis", "redis_docker": is_docker,
+                             "restore_overwrite": True,
+                             f"_redis_{operation}_service_name": "redis-server"},
+                    "tasks": tasks[start:start + 2],
+                }]))
+                result = subprocess.run(
+                    [executable, "-i", "localhost,", "-c", "local", str(playbook)],
+                    capture_output=True, text=True, check=False,
+                )
+                assert (result.returncode == 0) == passes, (
+                    operation, is_docker, output, result.stdout, result.stderr)
+
+
+def check_config_read_guard():
+    """Only an absent config may bypass reading the existing password guard."""
+    tasks = read_yaml("ansible/roles/redis/tasks/main.yml")
+    start = next(i for i, task in enumerate(tasks)
+                 if task.get("name") == "Redis | Check for existing managed configuration")
+    executable = Path(sys.executable).with_name("ansible-playbook")
+    with tempfile.TemporaryDirectory(prefix="redis-config-") as directory:
+        root = Path(directory)
+        managed = root / "managed.conf"
+        managed.write_text("# Managed by homelab-infra\n")
+        unreadable = root / "not-a-file"
+        unreadable.mkdir()
+        for docker in (False, True):
+            for path, known, passes in (
+                (root / "missing.conf", False, True),
+                (managed, False, False),
+                (managed, True, True),
+                (unreadable, True, False),
+            ):
+                playbook = root / "config-read.yml"
+                playbook.write_text(yaml.safe_dump([{
+                    "hosts": "localhost", "gather_facts": False,
+                    "vars": {"redis_conf_path": str(path), "instance": "redis",
+                             "redis_docker": docker, "_redis_credentials_known": known},
+                    "tasks": tasks[start:start + 3],
+                }]))
+                result = subprocess.run(
+                    [executable, "-i", "localhost,", "-c", "local", str(playbook)],
+                    capture_output=True, text=True, check=False,
+                )
+                assert (result.returncode == 0) == passes, (
+                    docker, str(path), known, result.stdout, result.stderr)
+
+
 def main():
     check_defaults_and_deploy()
     check_default_acl_reconciliation()
     check_backup()
+    check_runtime_guards()
+    check_config_read_guard()
     check_restore()
     check_remove_scope()
     print("Redis: native LXC deploy, ACL and RDB PBS recovery, restore swap inputs and hooks, and scoped removal passed")

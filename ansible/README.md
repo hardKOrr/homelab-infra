@@ -160,7 +160,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
   [home-assistant](roles/home-assistant/README.md), [mariadb](roles/mariadb/README.md), [mysql](roles/mysql/README.md),
   [navidrome](roles/navidrome/README.md), [observability](roles/observability/README.md),
   [ollama](roles/ollama/README.md), [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md),
-  [plex](roles/plex/README.md), [postgresql](roles/postgresql/README.md),
+  [plex](roles/plex/README.md), [postgresql](roles/postgresql/README.md), [redis](roles/redis/README.md),
   [qbittorrent](roles/qbittorrent/README.md), [sabnzbd](roles/sabnzbd/README.md), [slskd](roles/slskd/README.md),
   [servarr](roles/servarr/README.md), [wireguard](roles/wireguard/README.md).
 - `vars/` contains Git-managed defaults (`vars/app-defaults/<app>.yml`) and the

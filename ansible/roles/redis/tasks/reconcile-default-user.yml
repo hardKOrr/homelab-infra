@@ -47,5 +47,5 @@
     regexp: '^user default(?: |$)'
     line: "{{ _redis_default_acl_line }}"
     mode: "0600"
-  notify: Restart Redis
+  notify: "{{ 'Restart Redis container' if redis_docker | default(false) | bool else 'Restart Redis' }}"
   no_log: true

@@ -22,6 +22,6 @@
     label: "{{ item.item }}"
 
 - name: Redis restore | Validate the staged RDB
-  ansible.builtin.command:
-    argv: [redis-check-rdb, "{{ recovery_swap_stage }}/data/dump.rdb"]
-  changed_when: false
+  ansible.builtin.include_tasks: validate-rdb.yml
+  vars:
+    redis_validate_rdb_path: "{{ recovery_swap_stage }}/data/dump.rdb"

@@ -1,0 +1,51 @@
+---
+- name: Resolve Redis's native default and opt-in Docker stacks
+  hosts: localhost
+  gather_facts: false
+  vars:
+    instance: redis
+    hosting_app_slug: redis
+    hosting_app_defaults_file: "{{ playbook_dir }}/../../ansible/vars/app-defaults/redis.yml"
+    hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
+    _redis_defaults: >-
+      {{ (lookup('ansible.builtin.file', hosting_app_defaults_file) | from_yaml).redis_defaults }}
+    homelabinfra_config:
+      infrastructure:
+        stacks:
+          redis-lxc:
+            guest_type: lxc
+  tasks:
+    - name: Validate the default configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: "{{ _redis_defaults }}"
+
+    - name: Require the unchanged native default
+      ansible.builtin.assert:
+        that: _hosting_combination == 'native-lxc'
+
+    - name: Validate the VM drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _redis_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'redis'}, recursive=True) }}
+
+    - name: Require the VM combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-vm'
+          - _hosting_stack_name == 'redis'
+
+    - name: Validate the LXC drill configuration
+      ansible.builtin.include_tasks: ../../ansible/tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_config: >-
+          {{ _redis_defaults
+             | combine({'hosting': {'method': 'docker'}, 'stack': 'redis-lxc'}, recursive=True) }}
+
+    - name: Require the LXC combination
+      ansible.builtin.assert:
+        that:
+          - _hosting_combination == 'docker-lxc'
+          - _hosting_stack_name == 'redis-lxc'
