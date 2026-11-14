@@ -4,8 +4,8 @@
 # service accepts the target's Vaultwarden password and its ACL file has been saved again.
 - name: Redis restore | Resolve paths, credentials and recovery identities
   ansible.builtin.set_fact:
-    _redis_restore_data_path: "{{ app_config.app.data_path | default('') }}"
-    _redis_restore_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
+    _redis_restore_data_path: "{{ redis_data_path }}"
+    _redis_restore_acl_path: "{{ redis_acl_path }}"
     _redis_restore_service_name: "{{ app_config.app.service_name | default('redis-server') }}"
     _redis_restore_source_instance: "{{ restore_source_instance | default(instance, true) }}"
     _redis_restore_target_backup_id: >-
@@ -61,7 +61,8 @@
 
 - name: Redis restore | Require the service to be active
   ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _redis_restore_service_name }}"]
+    argv: "{{ ['docker', 'inspect', '--format', '{% raw %}{{.State.Status}}{% endraw %}', instance]
+              if redis_docker | bool else ['systemctl', 'is-active', _redis_restore_service_name] }}"
   register: _redis_restore_service_state
   failed_when: false
   changed_when: false
@@ -69,22 +70,24 @@
 
 - name: Redis restore | Refuse an inactive target
   ansible.builtin.assert:
-    that: _redis_restore_service_state.stdout | trim == 'active'
+    that: _redis_restore_service_state.stdout | trim in ['active', 'running']
     fail_msg: Start Redis before replacing its application data.
   when: restore_overwrite | bool
 
 - name: Redis restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: native
+    recovery_swap_runtime: "{{ 'docker' if redis_docker | bool else 'native' }}"
     recovery_swap_pre_restore_backup_id: "{{ _redis_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
       - path: "{{ _redis_restore_data_path }}"
-        owner: redis
-        group: redis
+        owner: "{{ redis_owner }}"
+        group: "{{ redis_owner }}"
         mode: "0750"
-    recovery_swap_stop_services: ["{{ _redis_restore_service_name }}"]
+    recovery_swap_stop_services: >-
+      {{ [redis_compose_service] if redis_docker | bool else [_redis_restore_service_name] }}
+    recovery_swap_compose_project: "{{ redis_project_dir if redis_docker | bool else '' }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
     recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

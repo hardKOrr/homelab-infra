@@ -1,0 +1,16 @@
+# docker-compose.yml for Redis ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  {{ redis_compose_service }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ redis_data_path }}:/data"
+      - "{{ redis_conf_path }}:/usr/local/etc/redis/redis.conf:ro"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"

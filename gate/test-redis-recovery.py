@@ -250,8 +250,8 @@ def check_backup():
     for task in (pause, acl_save, rdb, unpause):
         assert task["environment"]["REDISCLI_AUTH"] == "{{ _redis_backup_password }}"
     assert acl_save.get("no_log") is True
-    assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
-    assert acl_mode["ansible.builtin.file"]["group"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["owner"] == "{{ redis_owner }}"
+    assert acl_mode["ansible.builtin.file"]["group"] == "{{ redis_owner }}"
     assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     assert "--rdb" in rdb["ansible.builtin.command"]["argv"]
     assert rdb.get("no_log") is True
@@ -261,7 +261,7 @@ def check_backup():
 
     upload = task_named(backup_tasks, "Redis backup | Upload the native export to PBS")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ 'docker' if redis_docker | bool else 'native' }}"
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "data.pxar", "path": "{{ _redis_backup_stage.path }}"}
     ]
@@ -314,10 +314,13 @@ def check_restore():
     """Redis supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
     swap = swap_inputs("redis")
     assert swap["recovery_swap_paths"] == [{"path": "{{ _redis_restore_data_path }}",
-                                           "owner": "redis", "group": "redis", "mode": "0750"}]
-    assert swap["recovery_swap_runtime"] == "native"
+                                           "owner": "{{ redis_owner }}", "group": "{{ redis_owner }}",
+                                           "mode": "0750"}]
+    assert swap["recovery_swap_runtime"] == "{{ 'docker' if redis_docker | bool else 'native' }}"
+    assert swap["recovery_swap_compose_project"] == "{{ redis_project_dir if redis_docker | bool else '' }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["{{ _redis_restore_service_name }}"]
+    assert "_redis_restore_service_name" in swap["recovery_swap_stop_services"]
+    assert "redis_compose_service" in swap["recovery_swap_stop_services"]
     restore = read_yaml("ansible/roles/redis/tasks/restore.yml")
     names = [task.get("name") for task in restore]
     assert names.index("Redis restore | Refuse an inactive target") < names.index(

@@ -2,8 +2,11 @@
 redis_defaults:
   hosting:
     method: native
-    supported: [native-lxc, native-vm]
+    # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
+  stack: ""
   recovery:
     methods: [native]
     native:
@@ -17,7 +20,8 @@ redis_defaults:
     memory: 1024
     disk_volume: {size: 16}
     tags: [_+lab, _-debian]
-  app: {port: 6379, service_name: redis-server, data_path: /var/lib/redis, acl_path: /var/lib/redis/users.acl}
+  # Native paths; Docker keeps data and the ACL file in /opt/<instance>/data. image: Docker only.
+  app: {image: "redis:7", port: 6379, service_name: redis-server, data_path: /var/lib/redis, acl_path: /var/lib/redis/users.acl}
   routing: {proxy: none, identity: none}
   backup:
     enabled: true

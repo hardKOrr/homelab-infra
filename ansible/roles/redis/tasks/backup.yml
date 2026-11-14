@@ -3,8 +3,8 @@
 # creates a consistent RDB export and ACL SAVE persists the matching user file.
 - name: Redis backup | Resolve paths and the recovery identity
   ansible.builtin.set_fact:
-    _redis_backup_data_path: "{{ app_config.app.data_path | default('') }}"
-    _redis_backup_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
+    _redis_backup_data_path: "{{ redis_data_path }}"
+    _redis_backup_acl_path: "{{ redis_acl_path }}"
     _redis_backup_service_name: "{{ app_config.app.service_name | default('redis-server') }}"
     _redis_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
     _redis_backup_password: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}).get('password', '') }}"
@@ -15,7 +15,7 @@
 - name: Redis backup | Require the backend password in Vaultwarden
   ansible.builtin.assert:
     that: _redis_backup_password | length > 0
-    fail_msg: Redis native backup needs the backend password stored in Vaultwarden.
+    fail_msg: Redis backup needs the backend password stored in Vaultwarden.
   no_log: true
 
 - name: Redis backup | Assert the application recovery contract
@@ -59,14 +59,15 @@
 
 - name: Redis backup | Require the Redis service to be active
   ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _redis_backup_service_name }}"]
+    argv: "{{ ['docker', 'inspect', '--format', '{% raw %}{{.State.Status}}{% endraw %}', instance]
+              if redis_docker | bool else ['systemctl', 'is-active', _redis_backup_service_name] }}"
   register: _redis_backup_service_state
   failed_when: false
   changed_when: false
 
 - name: Redis backup | Refuse to snapshot an inactive service
   ansible.builtin.assert:
-    that: _redis_backup_service_state.stdout | trim == 'active'
+    that: _redis_backup_service_state.stdout | trim in ['active', 'running']
     fail_msg: Start and verify Redis before creating an application recovery point.
 
 - name: Redis backup | Export and upload the recovery point
