@@ -6,8 +6,11 @@
 influxdb_defaults:
   hosting:
     method: native
-    supported: [native-lxc, native-vm]
+    # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
+  stack: ""
   recovery:
     methods: [native]
     native:
@@ -24,10 +27,12 @@ influxdb_defaults:
       size: 32
     tags: [_+lab, _-debian]
   app:
+    image: "influxdb:2.7"
     port: 8086
     service_name: influxdb
-    # The Debian package stores its Bolt database and engine beneath this path. Keep
-    # native backup, restore and Remove aligned with the existing package data.
+    # Native only (Docker uses /opt/<instance>/data). The Debian package stores its Bolt
+    # database and engine beneath this path. Keep native backup, restore and Remove
+    # aligned with the existing package data.
     data_path: /var/lib/influxdb
     admin_user: homelab
     organization: homelab

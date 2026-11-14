@@ -1,0 +1,21 @@
+# docker-compose.yml for InfluxDB ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  {{ influxdb_compose_service }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    user: "{{ influxdb_owner }}:{{ influxdb_owner }}"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - INFLUXD_HTTP_BIND_ADDRESS=:{{ app_config.app.port }}
+      - INFLUXD_BOLT_PATH=/var/lib/influxdb2/influxd.bolt
+      - INFLUXD_ENGINE_PATH=/var/lib/influxdb2/engine
+      - INFLUXD_SQLITE_PATH=/var/lib/influxdb2/influxd.sqlite
+      - INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE={{ _influxdb_cache_max_memory_mib | int * 1024 * 1024 }}
+      - INFLUXD_STORAGE_CACHE_SNAPSHOT_MEMORY_SIZE={{ _influxdb_cache_snapshot_memory_mib | int * 1024 * 1024 }}
+    volumes:
+      - "{{ influxdb_data_path }}:/var/lib/influxdb2"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"

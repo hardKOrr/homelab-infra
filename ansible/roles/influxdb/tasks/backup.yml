@@ -3,7 +3,7 @@
 # metadata store, SQLite metadata, TSM files and WAL then belong to one point.
 - name: InfluxDB backup | Resolve paths and recovery identity
   ansible.builtin.set_fact:
-    _influxdb_backup_data_path: "{{ app_config.app.data_path | default('') }}"
+    _influxdb_backup_data_path: "{{ influxdb_data_path }}"
     _influxdb_backup_service_name: "{{ app_config.app.service_name | default('influxdb') }}"
     _influxdb_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
     _application_backup_complete: false
@@ -49,14 +49,19 @@
 
 - name: InfluxDB backup | Require the service to be active
   ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _influxdb_backup_service_name }}"]
+    argv: "{{ ['docker', 'inspect', instance]
+              if influxdb_docker | bool else ['systemctl', 'is-active', _influxdb_backup_service_name] }}"
   register: _influxdb_backup_service_state
   failed_when: false
   changed_when: false
 
 - name: InfluxDB backup | Refuse to snapshot an inactive service
   ansible.builtin.assert:
-    that: _influxdb_backup_service_state.stdout | trim == 'active'
+    that:
+      - _influxdb_backup_service_state.rc == 0
+      - >-
+        (((_influxdb_backup_service_state.stdout | from_json | first).State.Status == 'running')
+         if influxdb_docker | bool else _influxdb_backup_service_state.stdout | trim == 'active')
     fail_msg: >-
       InfluxDB service {{ _influxdb_backup_service_name }} is not active; start and verify
       it before creating an application recovery point.
@@ -67,9 +72,11 @@
     - name: InfluxDB backup | Upload the quiesced data directory
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: native
+        pbs_client_runtime: "{{ 'docker' if influxdb_docker | bool else 'native' }}"
         pbs_client_backup_id: "{{ _influxdb_backup_id }}"
-        pbs_client_stop_services: ["{{ _influxdb_backup_service_name }}"]
+        pbs_client_stop_services: >-
+          {{ [influxdb_compose_service] if influxdb_docker | bool else [_influxdb_backup_service_name] }}
+        pbs_client_compose_project: "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"
         pbs_client_archives:
           - name: data.pxar
             path: "{{ _influxdb_backup_data_path }}"

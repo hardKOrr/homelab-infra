@@ -1,9 +1,17 @@
 ---
-# InfluxDB OSS v2 is deliberately a standalone LXC or VM backend. Its initial setup
+# InfluxDB OSS v2 is a standalone backend: native on its own LXC or VM, or the official
+# image under Compose on a stack host (`hosting.method: docker`). Its initial setup
 # creates an operator token, so the token and password are recorded in
 # Vaultwarden before the API call that puts them into service.
 - name: InfluxDB | Resolve configured guest memory
   ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+  when: not (influxdb_docker | bool)
+
+# Docker: the stack host is shared, so size the cache from its total memory.
+- name: InfluxDB | Size the cache from the stack host's memory
+  ansible.builtin.set_fact:
+    _database_backend_memory_mib: "{{ ansible_memtotal_mb }}"
+  when: influxdb_docker | bool
 
 - name: InfluxDB | Resolve database memory settings
   ansible.builtin.import_tasks: resolve-memory.yml
@@ -13,30 +21,35 @@
     name: [ca-certificates, gpg]
     state: present
     update_cache: true
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Create APT keyring directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
     mode: "0755"
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Download the official repository signing key
   ansible.builtin.get_url:
     url: https://repos.influxdata.com/influxdata-archive.key
     dest: /etc/apt/keyrings/influxdata-archive.key
     mode: "0644"
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Verify the repository signing-key fingerprint
   ansible.builtin.command:
     argv: [gpg, --show-keys, --with-colons, /etc/apt/keyrings/influxdata-archive.key]
   register: _influxdb_signing_key
   changed_when: false
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Assert the official repository signing key
   ansible.builtin.assert:
     that: >-
       _influxdb_signing_key.stdout is search("^fpr:::::::::24C975CBA61A024EE1B631787C3D57159FC2F927:", multiline=True)
     fail_msg: "InfluxData repository key fingerprint did not match the upstream-published key."
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Install the official repository signing key
   ansible.builtin.command:
@@ -48,6 +61,7 @@
       - /etc/apt/keyrings/influxdata-archive.gpg
       - /etc/apt/keyrings/influxdata-archive.key
     creates: /etc/apt/keyrings/influxdata-archive.gpg
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Configure the official APT repository
   ansible.builtin.apt_repository:
@@ -55,12 +69,14 @@
     filename: influxdata
     state: present
     update_cache: true
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Install OSS v2 server
   ansible.builtin.apt:
     name: influxdb2
     state: present
     update_cache: true
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Set the per-shard cache maximum
   ansible.builtin.lineinfile:
@@ -72,6 +88,7 @@
     group: root
     mode: "0644"
   notify: Restart InfluxDB
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Set the cache snapshot threshold
   ansible.builtin.lineinfile:
@@ -83,10 +100,12 @@
     group: root
     mode: "0644"
   notify: Restart InfluxDB
+  when: not (influxdb_docker | bool)
 
 - name: InfluxDB | Install the pinned PBS client when this lab declares backups
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
   when:
+    - not (influxdb_docker | bool)
     - app_config.backup.enabled | default(false) | bool
     - >-
       ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
@@ -97,6 +116,42 @@
     name: "{{ app_config.app.service_name }}"
     state: started
     enabled: true
+  when: not (influxdb_docker | bool)
+
+- name: InfluxDB | Create the Docker project and data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ influxdb_project_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ influxdb_data_path }}", owner: "{{ influxdb_owner }}", mode: "0750"}
+  when: influxdb_docker | bool
+
+- name: InfluxDB | Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ influxdb_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart InfluxDB container
+  when: influxdb_docker | bool
+
+- name: InfluxDB | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ influxdb_project_dir }}"
+    policy: missing
+  when: influxdb_docker | bool
+
+- name: InfluxDB | Start the container
+  community.docker.docker_compose_v2:
+    project_src: "{{ influxdb_project_dir }}"
+    state: present
+    remove_orphans: true
+  when: influxdb_docker | bool
 
 - name: InfluxDB | Apply cache changes before health check
   ansible.builtin.meta: flush_handlers
