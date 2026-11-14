@@ -19,6 +19,8 @@ services:
       - -c
       - listen_addresses=*
       - -c
+      - port={{ app_config.app.port }}
+      - -c
       - unix_socket_directories=/run/pgsock
       - -c
       - shared_buffers={{ _postgresql_shared_buffers_mib }}MB
@@ -33,4 +35,4 @@ services:
       # socket directory is mounted elsewhere and the server is pointed at it.
       - /var/run/postgresql:/run/pgsock
     ports:
-      - "{{ app_config.app.port }}:5432"
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"
