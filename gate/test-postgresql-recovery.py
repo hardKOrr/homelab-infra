@@ -173,6 +173,8 @@ def check_contract():
     docker_tasks = (ROLE / "tasks/docker.yml").read_text(encoding="utf-8")
     assert "Refuse a second backend on this stack host" in docker_tasks
     assert "Refuse an undeclared pg_hba.conf" in docker_tasks
+    assert "unix_socket_directories=/run/pgsock" in compose and "/var/run/postgresql:/run/pgsock" in compose
+    assert "Verify an unrelated host user cannot connect" in docker_tasks
     assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
     order = [docker_tasks.index(t) for t in (
         "PostgreSQL | Start the service", "PostgreSQL | Wait for the final server\n",

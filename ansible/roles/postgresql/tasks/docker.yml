@@ -65,7 +65,7 @@
     home: /var/lib/postgresql
     create_home: false
 
-# The image runs the server as uid 999. /run is a tmpfs, so tmpfiles recreates the shared
+# The image runs the server as uid 999 and never touches the host side (see the Compose file). /run is a tmpfs, so tmpfiles recreates the shared
 # socket directory on every boot, before Docker starts. Local access is trust, so mode
 # 0750 is what keeps other host users off the socket; the shared operations run as root or
 # as the postgres group member.
@@ -173,3 +173,32 @@
   ansible.builtin.assert:
     that: _postgresql_hba_in_force.stdout | trim == '/etc/postgresql/pg_hba.conf'
     fail_msg: PostgreSQL is not using the declared pg_hba.conf; the published port would not honor client_cidrs.
+
+# Local access is trust: the directory mode is the only barrier, so check it after every start.
+- name: PostgreSQL | Read the shared socket directory
+  ansible.builtin.stat:
+    path: /var/run/postgresql
+  register: _postgresql_socket_dir
+
+- name: PostgreSQL | Refuse a socket directory open to other host users
+  ansible.builtin.assert:
+    that: _postgresql_socket_dir.stat.mode == '0750'
+    fail_msg: /var/run/postgresql must stay mode 0750; local access is trust.
+
+- name: PostgreSQL | Verify an unrelated host user cannot connect
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - nobody
+      - --
+      - psql
+      - --no-psqlrc
+      - --host=/var/run/postgresql
+      - "--port={{ app_config.app.port }}"
+      - --username=postgres
+      - --dbname=postgres
+      - --command=SELECT 1
+  register: _postgresql_unrelated_user
+  failed_when: _postgresql_unrelated_user.rc == 0
+  changed_when: false
