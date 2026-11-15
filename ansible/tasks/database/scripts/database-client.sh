@@ -7,7 +7,7 @@
 #
 # usage: database-client.sh dump|verify|restore FILE
 #        database-client.sh inspect
-# env:   DB_ENGINE (postgresql|mariadb|mysql|redis) DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
+# env:   DB_ENGINE (postgresql|mariadb|mysql|redis|influxdb) DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 #        (verify needs only DB_ENGINE)
 #
 # dump     PostgreSQL: custom format without owners or grants.
@@ -39,6 +39,13 @@
 #   server-load    makes the running server a replica of a throwaway Redis that holds FILE,
 #                  waits for the full sync, promotes it again and saves. The point's `default`
 #                  user is skipped: this server keeps its own login. DB_HOST is the server.
+#
+# Whole InfluxDB OSS v2 server (DB_ENGINE=influxdb, DB_PASSWORD its operator token, FILE a
+# tar of an `influx backup` directory; DB_USER and DB_NAME are not used):
+#   server-dump    `influx backup` over HTTP: metadata (users, tokens, orgs), every bucket.
+#   server-load    `influx restore --full` into the running server. The point's operator
+#                  token replaces the target's, so server-inspect then uses
+#                  DB_RESTORED_PASSWORD when it is set.
 set -eu
 
 action=${1:-}
@@ -292,6 +299,42 @@ redis_server() {
   cli SAVE > /dev/null
 }
 
+# One InfluxDB server as a unit: its metadata and every bucket, as one tar.
+influxdb_server() {
+  if [ "$action" = server-verify ]; then
+    tar -tf "$file" | grep -q '\.manifest$'
+    return
+  fi
+  url="http://$DB_HOST:$DB_PORT"
+  if [ "$action" = server-inspect ]; then
+    token="${DB_RESTORED_PASSWORD:-$DB_PASSWORD}"
+    attempt=0
+    until curl -fsS -H "Authorization: Token $token" "$url/api/v2/buckets?limit=100" > "$work/buckets" 2> "$work/inspect.err"; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        cat "$work/inspect.err" >&2
+        return 1
+      fi
+      sleep 2
+    done
+    echo "$(grep -o '"orgID"' "$work/buckets" | wc -l) buckets"
+    return
+  fi
+  umask 077
+  if [ "$action" = server-dump ]; then
+    mkdir "$work/backup"
+    influx backup "$work/backup" --host "$url" --token "$DB_PASSWORD" > /dev/null
+    tar -cf "$work/dump.tar" -C "$work/backup" .
+    test -s "$work/dump.tar"
+    mv "$work/dump.tar" "$file"
+    return
+  fi
+  test -s "$file"
+  mkdir "$work/point"
+  tar -xf "$file" -C "$work/point"
+  influx restore "$work/point" --full --host "$url" --token "$DB_PASSWORD" > /dev/null
+}
+
 # One PostgreSQL server as a unit: every database, role and grant, as one pg_dumpall script.
 # DB_USER is the bootstrap superuser, which connects from the pod network only.
 postgresql_server() {
@@ -345,18 +388,18 @@ postgresql_server() {
 }
 
 case "$DB_ENGINE" in
-  postgresql | mariadb | mysql | redis) ;;
+  postgresql | mariadb | mysql | redis | influxdb) ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;
 esac
 case "$action" in
-  server-*) case "$DB_ENGINE" in postgresql) postgresql_server ;; redis) redis_server ;; *) sql_server ;; esac
+  server-*) case "$DB_ENGINE" in postgresql) postgresql_server ;; redis) redis_server ;; influxdb) influxdb_server ;; *) sql_server ;; esac
             [ "$action" = server-inspect ] && exit 0
             echo "database-client.sh: $action $DB_ENGINE server complete ($(wc -c < "$file") bytes)"
             exit 0 ;;
 esac
 
 case "$DB_ENGINE" in
-  redis) echo "database-client.sh: $action needs a server action for redis" >&2; exit 64 ;;
+  redis | influxdb) echo "database-client.sh: $action needs a server action for $DB_ENGINE" >&2; exit 64 ;;
   postgresql) postgresql ;;
   mariadb | mysql) mysql_compatible ;;
   *) echo "database-client.sh: unsupported DB_ENGINE $DB_ENGINE" >&2; exit 64 ;;

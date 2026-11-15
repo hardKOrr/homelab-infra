@@ -1,7 +1,7 @@
 ---
-# Open a Kubernetes-hosted MariaDB, MySQL, PostgreSQL or Redis backend's port on the firewall for every registered
+# Open a Kubernetes-hosted MariaDB, MySQL, PostgreSQL, Redis or InfluxDB backend's port on the firewall for every registered
 # consumer: each application whose canonical item names this backend's address and port
-# (`database_host` and `database_port`, or `redis_host` and `redis_port` for Redis).
+# (`database_host` and `database_port`, `redis_host` and `redis_port` for Redis, `influxdb_host` and `influxdb_port` for InfluxDB).
 # A consumer on a guest is allowed by its own address; one on the cluster by the
 # cluster-node alias (ansible/tasks/kubernetes/README.md → Firewall access). Rules are
 # egress rules from the consumer to the ingress address, described
@@ -9,7 +9,7 @@
 # the backend's own rules. A consumer deployed after this backend runs Deploy again (or
 # its own Deploy opens nothing): re-run the backend's Deploy to cover it.
 #
-# Inputs (localhost): database_consumer_provider (mariadb, mysql, postgresql or redis), instance, app_config
+# Inputs (localhost): database_consumer_provider (mariadb, mysql, postgresql, redis or influxdb), instance, app_config
 # (the backend's merged config), homelabinfra_infra
 # with the cluster registered, an inventory refreshed this run. Does nothing without an
 # OPNsense firewall.
@@ -20,7 +20,7 @@
   block:
     - name: SQL consumers | Find the registered consumers
       vars:
-        _sql_prefix: "{{ 'redis' if database_consumer_provider == 'redis' else 'database' }}"
+        _sql_prefix: "{{ database_consumer_provider if database_consumer_provider in ['redis', 'influxdb'] else 'database' }}"
       ansible.builtin.set_fact:
         _sql_consumers: >-
           {%- set found = [] -%}
@@ -28,7 +28,7 @@
           {%-   if name != instance
                   and item.get(_sql_prefix ~ '_host', '') == homelabinfra_infra.kubernetes.ingress_vip
                   and (item.get(_sql_prefix ~ '_port', '') | string) == (app_config.app.port | string)
-                  and (_sql_prefix == 'redis' or item.get('database_provider', '') == database_consumer_provider) -%}
+                  and (_sql_prefix != 'database' or item.get('database_provider', '') == database_consumer_provider) -%}
           {%-     set _ = found.append(name) -%}
           {%-   endif -%}
           {%- endfor -%}

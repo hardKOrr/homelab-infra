@@ -7,10 +7,14 @@ influxdb_defaults:
   hosting:
     method: native
     # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
-    supported: [native-lxc, native-vm, docker-lxc, docker-vm]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm).
   stack: ""
+  # Kubernetes method: `hosting.method: kubernetes` runs one Deployment on the k3s cluster,
+  # its data on a default-StorageClass volume, behind a LoadBalancer Service on the cluster's
+  # ingress address (`app.port`; two backends on one cluster need different ports).
+  kubernetes: {}
   recovery:
     methods: [native]
     native:
@@ -29,6 +33,8 @@ influxdb_defaults:
   app:
     image: "influxdb:2.7"
     port: 8086
+    # Kubernetes only: the data volume, in Gi.
+    storage: 8
     service_name: influxdb
     # Native only (Docker uses /opt/<instance>/data). The Debian package stores its Bolt
     # database and engine beneath this path. Keep native backup, restore and Remove
@@ -51,3 +57,13 @@ influxdb_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    # Kubernetes method only: the shared backup CronJob (tasks/kubernetes/recovery-backup.yml).
+    schedule: "0 3 * * *"
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
