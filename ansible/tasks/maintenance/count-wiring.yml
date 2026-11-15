@@ -13,7 +13,8 @@
 # unreachable). A provider set to none leaves its count at 0.
 #
 # The lookups are the ones the unwire halves use (tasks/unwiring/), widened to count
-# every match instead of taking the first, so a duplicate shows up.
+# every match instead of taking the first, so a duplicate shows up. Authentik filters
+# applications by slug only with superuser_full_list (tasks/wiring/authentik/application.yml).
 
 - name: Count wiring | Start from zero
   ansible.builtin.set_fact:
@@ -123,7 +124,9 @@
 
 - name: Count wiring | Read Authentik
   ansible.builtin.uri:
-    url: "{{ homelabinfra_infra.sso.host }}/api/v3/{{ item }}{{ wiring_app_name | urlencode }}"
+    url: >-
+      {{ homelabinfra_infra.sso.host }}/api/v3/{{ item }}{{ wiring_app_name | urlencode }}{{
+         '&superuser_full_list=true' if item is search('slug') else '' }}
     method: GET
     headers:
       Authorization: "Bearer {{ homelabinfra_infra.sso.token | default('') }}"
