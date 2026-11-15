@@ -9,9 +9,7 @@ routing:
   proxy: none
   access: internal
   identity: none
-backup:
-  enabled: true
-  schedule: "0 3 * * *"
+# No backup by default: the runner is ephemeral and re-registers on Deploy.
 
 # Store runner_token only in Vaultwarden item homelab-infra/apps/<instance>. Runner
 # deregistration uses runner_api_token for a user-scoped registration or admin_api_token
