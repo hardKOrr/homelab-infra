@@ -17,8 +17,9 @@ Options:
 The steps are the procedure in ansible/playbooks/maintenance/recovery-drill.md, through
 $HOMELAB_LAB_DIR/runner-lab-run.sh: Deploy twice, canary create, Backup, Remove with
 delete_data=true, fresh Deploy, canary absent, pre-restore Backup, Restore preview,
-Restore, canary verify, final Deploy. An app that declares no recovery.methods runs the
-stateless variant: Deploy twice, Remove, fresh Deploy, final Deploy. After each Deploy and
+Restore, canary verify, final Deploy. An app with backups disabled runs the stateless
+variant: Deploy twice, Remove, fresh Deploy, final Deploy. An app with backups enabled but
+no recovery.methods is refused. After each Deploy and
 the Restore the URL must answer over HTTPS, and after each Deploy and the Remove
 playbooks/maintenance/check-wiring.yml requires the route, DNS record, monitor and SSO
 entry exactly once, or not at all. Running it authorizes Remove with
@@ -105,9 +106,15 @@ def canary_of(app, role, defaults):
     return "none", ""
 
 
-def stateful(defaults):
-    return bool((defaults.get("recovery") or {}).get("methods")) and \
-        bool((defaults.get("backup") or {}).get("enabled"))
+def stateful(app, defaults):
+    """An app with backups must restore through Backup App and Restore App to be drilled:
+    otherwise the stateless variant's Remove would delete data nothing can bring back."""
+    methods = bool((defaults.get("recovery") or {}).get("methods"))
+    backups = bool((defaults.get("backup") or {}).get("enabled"))
+    if backups and not methods:
+        die(f"{app} enables backups but declares no recovery.methods; the drill cannot "
+            "restore what Remove deletes")
+    return methods and backups
 
 
 class Drill:
@@ -271,7 +278,7 @@ class Drill:
             if not os.environ.get("HOMELAB_LAB_DIR"):
                 die("HOMELAB_LAB_DIR is not set")
             os.makedirs(self.logs, exist_ok=True)
-        kind = "stateful" if stateful(self.defaults) else "stateless"
+        kind = "stateful" if stateful(self.app, self.defaults) else "stateless"
         if self.seeded and (kind == "stateless" or self.tier == "none"):
             die("--seed-wrong-point needs a stateful app with a canary")
         self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind} "
@@ -293,13 +300,16 @@ class Drill:
         self.remove(**remove)
         self.deploy("deploy-fresh")
         self.canary_step("fresh")
+        if self.seeded:
+            # The wrong point: the fresh install's own backup, which holds no canary. It
+            # cannot be the pre-restore point too (Restore refuses that), and this third
+            # same-day backup prunes the canary's point, which a seeded drill never restores.
+            point = self.backup("backup-wrong-point")
         pre_restore = self.backup("backup-pre-restore")
         self.playbook("restore-preview", "playbooks/maintenance/restore-app.yml",
                       recovery_point=point, overwrite="false")
-        # Seeded: restore the fresh install's own backup, which holds no canary.
         self.playbook("restore", "playbooks/maintenance/restore-app.yml",
-                      recovery_point=pre_restore if self.seeded else point, overwrite="true",
-                      pre_restore_point=pre_restore)
+                      recovery_point=point, overwrite="true", pre_restore_point=pre_restore)
         self.https("restore")
         self.canary_step("verify")
         self.deploy("deploy-final", repeat=True)
@@ -351,9 +361,10 @@ def run_all(ref, plan):
             log.seek(0)
             text = log.read()
         at = re.search(r"FAIL at (\S+?):", text)
+        refused = re.search(r"^lab-drill: (.*)$", text, re.M)
         method = re.search(r"^METHOD (\S+)", text, re.M)
         minutes = round((time.monotonic() - began) / 60)
-        result = "PASS" if rc == 0 else "FAIL"
+        result = "PASS" if rc == 0 else (f"refused: {refused.group(1)}" if refused else "FAIL")
         failed += rc != 0
         row(instance, method.group(1) if method else "?", tier, result, minutes,
             at.group(1) if at else "")

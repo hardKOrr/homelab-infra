@@ -51,12 +51,20 @@ if steps(stateless) != ["deploy", "wiring-deploy", "deploy-repeat", "wiring-depl
 seeded = plan("--seed-wrong-point", "tautulli")
 restore = [line for line in seeded.splitlines() if line.split()[1:2] and line.split()[1].endswith("-restore")
            and "restore-app.yml" in line]
-if not restore or "recovery_point=<backup-pre-restore-point>" not in restore[0]:
-    failures.append("--seed-wrong-point restores the fresh install's backup")
+if "backup-wrong-point" not in seeded or not restore \
+        or "recovery_point=<backup-wrong-point-point>" not in restore[0] \
+        or "pre_restore_point=<backup-pre-restore-point>" not in restore[0]:
+    failures.append("--seed-wrong-point restores a fresh-install backup that is not the pre-restore point")
 refused = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan",
                           "--seed-wrong-point", "homepage"], capture_output=True, text=True)
 if refused.returncode != 2:
     failures.append("--seed-wrong-point refuses an app with nothing to restore")
+
+for app in ("wordpress", "bookstack"):
+    unrecoverable = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan",
+                                    app], capture_output=True, text=True)
+    if unrecoverable.returncode != 2 or "recovery.methods" not in unrecoverable.stderr:
+        failures.append(f"{app}: backups without recovery.methods refuse the drill")
 
 renamed = plan("--app", "radarr", "radarr-4k")
 if "instance=radarr-4k" not in renamed or "app=radarr" not in renamed:
