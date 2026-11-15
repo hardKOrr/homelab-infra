@@ -12,7 +12,9 @@
   vars:
     recovery_pre_restore_backup_id: >-
       {{ restore_target_config.backup.backup_id | default('', true) or restore_target }}
-  when: restore_overwrite | bool
+  when:
+    - restore_overwrite | bool
+    - restore_destination == 'existing'
 
 - name: WordPress Kubernetes restore | Describe the target database recovery step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml

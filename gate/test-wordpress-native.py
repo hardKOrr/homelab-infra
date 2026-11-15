@@ -74,6 +74,15 @@ assert "tasks/database/dump.yml" in (role / "tasks/backup-quiesced.yml").read_te
 schedule = (role / "tasks/recovery-schedule.yml").read_text()
 assert "'native' if wordpress_native" in schedule and "ansible.builtin.cron" in schedule
 assert "recovery-schedule.yml" in main and "recovery-docker" not in main
+# Day-2 actions reach a native guest through the shared resolver, which takes only the
+# instance's own _+lab guest; an untagged same-name guest is never accepted.
+target = yaml.safe_load((repo / "ansible/tasks/maintenance/resolve-app-target.yml").read_text())
+owned = next(t for t in target if t.get("name") == "Resolve app target | Resolve the native instance's owned guest")
+assert owned["ansible.builtin.include_tasks"].endswith("proxmox/resolve-instance-guest.yml")
+check = next(t for t in target if t.get("name") == "Resolve app target | Require exactly one owned native guest")
+assert "groups['lab_managed']" in str(check["ansible.builtin.assert"]["that"])
+select = next(t for t in target if t.get("name") == "Resolve app target | Select the native guest")
+assert select["ansible.builtin.set_fact"]["_rat_host"] == "{{ resolve_guest_hosts[0] }}"
 restore = (role / "tasks/restore-guest.yml").read_text()
 assert "wordpress_native | bool" in restore and "tasks/recovery/restore-swap.yml" in restore
 

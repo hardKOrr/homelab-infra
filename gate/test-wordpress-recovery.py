@@ -81,6 +81,13 @@ def check_playbook_contract():
         "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
     guest = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore-guest.yml").read_text())
     identity = guest[0]["ansible.builtin.set_fact"]
+    # `instance` is the source (an extra var): target paths come from restore_target and
+    # the rebased data_path, never from `instance`.
+    assert identity["_wordpress_restore_target_backup_id"].endswith("or restore_target }}")
+    assert identity["wordpress_project_dir"] == "/opt/{{ restore_target }}"
+    rebase = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore-config.yml").read_text())[0]
+    assert rebase["ansible.builtin.include_tasks"].endswith("tasks/recovery/rebase-target-path.yml")
+    assert rebase["vars"] == {"restore_rebase_key": "data_path", "restore_rebase_instance": True}
     assert identity["wordpress_restore_backup_id"] == "{{ restore_backup_id }}", \
         "a point from another WordPress instance"
     assert identity["wordpress_fqdn"] == "{{ restore_target_fqdn | default('') }}"
@@ -107,7 +114,8 @@ def check_playbook_contract():
         "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
     age = next(task for task in guest if "require-recent-pre-restore-point" in
                str(task.get("ansible.builtin.include_tasks", "")))
-    assert age["when"] == "restore_overwrite | bool"
+    assert age["when"] == ["restore_overwrite | bool", "restore_destination == 'existing'"], \
+        "a new target has no earlier backup to require"
     assert age["vars"]["recovery_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
 
 

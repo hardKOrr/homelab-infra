@@ -241,7 +241,8 @@ def check_shared_recovery_inputs():
     assert "tasks/kubernetes/recovery-restore.yml" in restore_text
     safety = next(task for task in restore
                   if "require-recent-pre-restore-point.yml" in str(task))
-    assert safety["when"] == "restore_overwrite | bool"
+    assert safety["when"] == ["restore_overwrite | bool", "restore_destination == 'existing'"], \
+        "a new target has no earlier backup to require"
     assert "restore_target_config.backup.backup_id" in str(safety["vars"])
     shared_restore = next(task for task in restore
                           if "recovery-restore.yml" in str(task))

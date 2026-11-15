@@ -1,8 +1,11 @@
 ---
-# The Docker and native half of restore.yml.
+# The Docker and native half of restore.yml. `instance` is the source (an extra var), so
+# the target's identity comes from restore_target: its backup group and its project
+# directory. restore-config.yml rebases data_path, which wp-content follows.
 - name: WordPress restore | Resolve the target and the point's group
   ansible.builtin.set_fact:
-    _wordpress_restore_target_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _wordpress_restore_target_backup_id: "{{ app_config.backup.backup_id | default('', true) or restore_target }}"
+    wordpress_project_dir: "/opt/{{ restore_target }}"
     wordpress_restore_backup_id: "{{ restore_backup_id }}"
     wordpress_fqdn: "{{ restore_target_fqdn | default('') }}"
 
@@ -33,7 +36,9 @@
   ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
   vars:
     recovery_pre_restore_backup_id: "{{ _wordpress_restore_target_backup_id }}"
-  when: restore_overwrite | bool
+  when:
+    - restore_overwrite | bool
+    - restore_destination == 'existing'
 
 - name: WordPress restore | Preview or replace wp-content and the database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
