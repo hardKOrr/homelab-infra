@@ -188,7 +188,7 @@ class Drill:
                 self.fail(label, "browser canary failed")
             return
         self.playbook(f"canary-{mode}", "playbooks/maintenance/drill-canary.yml",
-                      canary_action=mode, canary_id=self.id, canary_epoch=self.epoch)
+                      drill_action=mode, drill_id=self.id, drill_epoch=self.epoch)
 
     def backup(self, name):
         began = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
