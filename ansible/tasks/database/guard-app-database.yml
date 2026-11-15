@@ -8,47 +8,24 @@
 #   - the backend address is exactly one homelab-infra-owned guest (`_<backend instance>`),
 #     or, for a backend on Kubernetes, the backend's own labelled namespace;
 #   - a PostgreSQL database that exists is owned by the application's role.
-- name: Database guard | Find other applications using this database or login
+- name: Database guard | Refuse a database or login another application uses
+  ansible.builtin.include_tasks: guard-other-consumers.yml
   vars:
-    _other_items: >-
-      {{ (homelabinfra_vault.apps | default({}) | dict2items)
-         | rejectattr('key', 'equalto', database_app_instance)
-         | selectattr('value.database_host', 'defined')
-         | selectattr('value.database_host', 'equalto', database_app_target.host)
-         | list }}
-    # Backends on the cluster share its ingress address and differ by port.
-    _other_ports: >-
-      {%- set kept = [] -%}
-      {%- for entry in _other_items -%}
-      {%-   if not (database_app_target.kubernetes | default(false) | bool)
-              or (entry.value.database_port | default(database_app_target.port) | string)
-                 == (database_app_target.port | string) -%}
-      {%-     set _ = kept.append(entry) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {{ kept | to_json }}
-  ansible.builtin.set_fact:
-    _database_guard_other_consumers: >-
-      {{ (_other_ports | from_json | selectattr('value.database_name', 'defined')
-          | selectattr('value.database_name', 'equalto', database_app_target.name) | list)
-         + (_other_ports | from_json | selectattr('value.database_user', 'defined')
-          | selectattr('value.database_user', 'equalto', database_app_target.role) | list) }}
+    database_consumers_instance: "{{ database_app_instance }}"
+    database_consumers_target: "{{ database_app_target }}"
+
+- name: Database guard | Refuse an own item that names a different database
+  vars:
     _database_guard_own_item: >-
       {{ (homelabinfra_vault.apps | default({})).get(database_app_instance, {}) }}
-  no_log: true
-
-- name: Database guard | Refuse a shared or mismatched database
   ansible.builtin.assert:
     that:
-      - _database_guard_other_consumers | length == 0
       - _database_guard_own_item.database_host | default(database_app_target.host) == database_app_target.host
       - _database_guard_own_item.database_name | default(database_app_target.name) == database_app_target.name
       - _database_guard_own_item.database_user | default(database_app_target.role) == database_app_target.role
     fail_msg: >-
       Refusing to change {{ database_app_instance }}'s database {{ database_app_target.name }}:
-      another application's item uses it or its login
-      ({{ _database_guard_other_consumers | map(attribute='key') | unique | join(', ') | default('none', true) }}), or
-      {{ database_app_instance }}'s own item names a different database.
+      {{ database_app_instance }}'s own item names a different database or login.
 
 - name: Database guard | Check the backend guest's ownership
   when: not (database_app_target.kubernetes | default(false) | bool)

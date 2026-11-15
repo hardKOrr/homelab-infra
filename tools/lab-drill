@@ -1,0 +1,454 @@
+#!/usr/bin/env python3
+"""lab-drill — run the application recovery drill on one instance and stop at the first failure.
+
+  tools/lab-start drill-tautulli -- tools/lab-drill [options] <instance>
+  tools/lab-wait drill-tautulli
+  tools/lab-start drill-all -- tools/lab-drill --all [--ref <git-ref>]
+
+Options:
+  --ref <git-ref>     candidate checkout the runner uses (default master)
+  --app <app>         when the instance was deployed under another name
+  --url <https://..>  the instance's URL when its Deploy wires no monitor
+  --destroy-guest     Remove also destroys the instance's own native guest
+  --seed-wrong-point  restore the fresh install's backup instead of the canary's point;
+                      the drill passes only when canary verify then fails
+  --plan              print the steps and the canary it would use, run nothing
+
+The steps are the procedure in ansible/playbooks/maintenance/recovery-drill.md, through
+$HOMELAB_LAB_DIR/runner-lab-run.sh: Deploy, canary create, repeat Deploy, Backup, Remove
+with delete_data=true, fresh Deploy, canary absent, pre-restore Backup, Restore preview,
+Restore, canary verify, final Deploy, canary verify again. An app with backups disabled
+runs the stateless variant: Deploy twice, Remove, fresh Deploy, final Deploy. An app with
+backups enabled but no recovery.methods is refused. After each Deploy and the Remove,
+playbooks/maintenance/check-wiring.yml requires the route, DNS record, monitor and SSO
+entry exactly once, or not at all. After each Deploy and the Restore the URL (the
+monitor's, else the route's that check-wiring reports) must answer over HTTPS. Running
+it authorizes Remove with delete_data=true and overwrite Restore on this instance only.
+
+The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
+(modes create, fresh, verify), else a task hook roles/<role>/tasks/drill-canary.yml or a
+marker file in the app-defaults' drill.canary_path, both through
+playbooks/maintenance/drill-canary.yml. With none, the drill runs and its result says
+canary=none. The marker proves the backup transport, not that the app reads its data.
+
+Each step's log is in $LAB_JOB_DIR/drill-<instance>-<id>/ (default /tmp/lab-jobs). A
+Deploy that reports changed tasks on a repeat run is listed, not failed. Exit 0 when every
+step passes.
+
+--all drills one instance per catalog app, one at a time, and keeps going after a failure:
+the instance named after the app, else the first configured one the runner publishes for
+it. It skips essential apps (no Remove) and the apps with their own playbook and drill
+(OWN_DRILL). The table (instance, method, canary, result, minutes, first failed step) is
+printed row by row and written to $LAB_JOB_DIR/drill-all-<id>.md. Exit 0 when every
+drilled row passes.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+ANSIBLE = os.path.join(REPO, "ansible")
+POINT = re.compile(r"host/[A-Za-z0-9._-]+/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+MONITOR = re.compile(r"monitor for (\S+) on (https://[^\s/]+)")
+RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
+UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
+# Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
+OWN_DRILL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
+# Read on the runner by --all: the published instance lists and the instance files.
+INVENTORY = r"""
+import glob, json, os
+cfg = "/var/lib/rundeck/homelab-infra/config"
+lists = {os.path.basename(f)[:-5]: [i["value"] if isinstance(i, dict) else i
+                                     for i in json.load(open(f))]
+         for f in glob.glob("/var/lib/rundeck/app-instances/*.json")}
+files = [os.path.basename(f)[:-4] for f in glob.glob(cfg + "/apps/*.yml")]
+print(json.dumps({"lists": lists, "files": files}))
+"""
+
+
+def die(message, code=2):
+    print(f"lab-drill: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def load_yaml(path):
+    import yaml
+    with open(path) as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def app_defaults(app):
+    path = os.path.join(ANSIBLE, "vars", "app-defaults", f"{app}.yml")
+    if not os.path.exists(path):
+        die(f"no app-defaults for {app}; pass --app")
+    return load_yaml(path).get(f"{app.replace('-', '_')}_defaults", {})
+
+
+def role_of(app, defaults):
+    declared = ((defaults.get("recovery") or {}).get("native") or {}).get("role")
+    aliases = load_yaml(os.path.join(REPO, "gate", "structure.yml")).get("role_aliases") or {}
+    return declared or aliases.get(app) or app
+
+
+def canary_of(app, role, defaults):
+    """(tier, detail): browser spec path, hook, marker, or none."""
+    browser = os.path.join(ANSIBLE, "roles", role, "browser")
+    for name in (f"{app}-recovery.js", "recovery.js"):
+        if os.path.exists(os.path.join(browser, name)):
+            return "browser", os.path.join(browser, name)
+    if os.path.exists(os.path.join(ANSIBLE, "roles", role, "tasks", "drill-canary.yml")):
+        return "hook", f"roles/{role}/tasks/drill-canary.yml"
+    if (defaults.get("drill") or {}).get("canary_path"):
+        return "marker", defaults["drill"]["canary_path"]
+    return "none", ""
+
+
+def kind_of(app, defaults, backups):
+    """(kind, refusal). An app with backups must restore through Backup App and Restore
+    App to be drilled: otherwise the stateless variant's Remove would delete data nothing
+    can bring back."""
+    methods = bool((defaults.get("recovery") or {}).get("methods"))
+    if backups and not methods:
+        return None, (f"{app} enables backups but declares no recovery.methods; the drill "
+                      "cannot restore what Remove deletes")
+    return ("stateful" if methods and backups else "stateless"), None
+
+
+class Drill:
+    def __init__(self, instance, app, ref, url, destroy_guest, plan, seed_wrong_point=False):
+        self.instance, self.app, self.ref, self.url = instance, app, ref, url
+        self.destroy_guest, self.plan, self.seeded = destroy_guest, plan, seed_wrong_point
+        self.defaults = app_defaults(app)
+        self.role = role_of(app, self.defaults)
+        self.tier, self.canary = canary_of(app, self.role, self.defaults)
+        self.epoch = int(time.time())
+        self.id = "d" + time.strftime("%Y%m%d-%H%M%S", time.gmtime(self.epoch))
+        self.logs = os.path.join(os.environ.get("LAB_JOB_DIR", "/tmp/lab-jobs"),
+                                 f"drill-{instance}-{self.id}")
+        self.step_no, self.repeat_changes, self.points, self.method = 0, [], {}, ""
+        self.backups = None
+
+    # ── plumbing ────────────────────────────────────────────────────────────────
+    def say(self, line):
+        print(line, flush=True)
+
+    def fail(self, step, why):
+        self.say(f"DRILL {self.instance} FAIL at {step}: {why}")
+        self.summary(False)
+        sys.exit(1)
+
+    def playbook(self, name, playbook, expect_fail=False, **extra):
+        """Run one playbook on the runner; return (log text, changed count)."""
+        self.step_no += 1
+        label = f"{self.step_no:02d}-{name}"
+        if self.app != self.instance:
+            extra.setdefault("app", self.app)
+        args = [f"{k}={v}" for k, v in {"instance": self.instance, **extra}.items()]
+        if self.plan:
+            self.say(f"STEP {label} {playbook} {' '.join(args)}")
+            return "", 0
+        argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), self.ref, playbook]
+        for arg in args:
+            argv += ["-e", arg]
+        log = os.path.join(self.logs, label + ".log")
+        began = time.monotonic()
+        with open(log, "wb") as out:
+            rc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out,
+                                stderr=subprocess.STDOUT).returncode
+        with open(log, errors="replace") as handle:
+            text = handle.read()
+        found = RESULT.findall(text)
+        changed = int(found[-1][1]) if found else -1
+        took = int(time.monotonic() - began)
+        verdict = "PASS" if rc == 0 else "FAIL"
+        self.say(f"STEP {label} {verdict} changed={changed} {took}s log={log}")
+        if expect_fail:
+            self.seeded_result(label, rc != 0)
+        if rc != 0:
+            self.fail(label, f"exit {rc}; " + (found[-1][0] if found else "no HOMELAB_RUN line"))
+        return text, changed
+
+    def seeded_result(self, label, failed):
+        """End a --seed-wrong-point drill at canary verify. Its failure is the pass only when
+        the fresh check then passes: the app answered, the login worked and the canary is
+        absent, so verify failed on the data, not on transport or setup."""
+        if not failed:
+            self.fail(label, "canary verify passed after restoring the wrong recovery point")
+        self.canary_step("absent")
+        self.say(f"CHECK {label} failed on the wrong recovery point, as seeded")
+        self.summary(True)
+        sys.exit(0)
+
+    def deploy(self, name, repeat=False):
+        text, changed = self.playbook(name, f"playbooks/apps/{self.app}.yml")
+        if self.plan:
+            self.wiring(name, "present")
+            return
+        for instance, url in MONITOR.findall(text):
+            if instance == self.instance and not self.url:
+                self.url = url
+        if repeat and changed:
+            self.repeat_changes.append(f"{name}:{changed}")
+        self.wiring(name, "present")
+        self.https(name)
+
+    def wiring(self, after, expect):
+        """The instance's route, DNS record, monitor and SSO entry: once each, or none."""
+        text, _ = self.playbook(f"wiring-{after}", "playbooks/maintenance/check-wiring.yml",
+                                expect=expect)
+        method = re.search(r"WIRING \S+ method=(\S+)", text)
+        backups = re.search(r"\bbackup=(True|False)\b", text)
+        url = re.search(r"\burl=(https://\S+)", text)
+        if url and not self.url:
+            self.url = url.group(1)
+        if backups and self.backups is None:
+            self.backups = backups.group(1) == "True"
+        if method and not self.method:
+            self.method = method.group(1)
+            self.say(f"METHOD {self.method}")
+            if self.tier == "marker" and self.method == "kubernetes":
+                self.tier, self.canary = "none", ""
+                self.say("CANARY none: a marker file needs a Docker or native guest")
+
+    def remove(self, **extra):
+        self.playbook("remove", "playbooks/apps/remove.yml", **extra)
+        self.wiring("remove", "absent")
+
+    def https(self, name):
+        """The URL answers over HTTPS; an SSO route may 404 for minutes after a fresh deploy."""
+        if self.plan or not self.url:
+            return
+        deadline, code = time.monotonic() + 420, ""
+        while time.monotonic() < deadline:
+            probe = subprocess.run(
+                [os.path.join(REPO, "tools", "lab-exec"),
+                 f"curl -sk -o /dev/null -w '%{{http_code}}' --max-time 20 {self.url}/"],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            code = probe.stdout.strip()
+            if UP_CODES.match(code):
+                self.say(f"CHECK {name} https {self.url} {code}")
+                return
+            time.sleep(20)
+        self.fail(f"{name} https", f"{self.url} answered {code or 'nothing'}")
+
+    def canary_step(self, step):
+        """create, fresh, verify; final verifies again after the final Deploy and absent
+        runs the fresh check after a seeded verify failed."""
+        mode = {"final": "verify", "absent": "fresh"}.get(step, step)
+        expect_fail = self.seeded and step == "verify"
+        if self.tier == "none":
+            if expect_fail:
+                self.fail(f"{self.step_no + 1:02d}-canary-verify",
+                          "no canary on this hosting method to catch the wrong point")
+            return
+        if self.tier == "browser":
+            self.step_no += 1
+            label = f"{self.step_no:02d}-canary-{step}"
+            if self.plan:
+                self.say(f"STEP {label} lab-browser {self.canary} drill={mode}")
+                return
+            if not self.url:
+                self.fail(label, "no URL for the browser canary; pass --url")
+            with open(self.canary) as handle:
+                item = f"{self.app}-drill-owner" if "drill-owner" in handle.read() else self.instance
+            log = os.path.join(self.logs, label + ".log")
+            with open(log, "wb") as out:
+                rc = subprocess.run(
+                    [os.path.join(REPO, "tools", "lab-browser"), "--ref", self.ref, item,
+                     f"{self.url}/?drill={mode}&scope={self.instance}", self.canary],
+                    stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT).returncode
+            self.say(f"STEP {label} {'PASS' if rc == 0 else 'FAIL'} log={log}")
+            if expect_fail:
+                self.seeded_result(label, rc != 0)
+            if rc != 0:
+                self.fail(label, "browser canary failed")
+            return
+        extra = {"drill_final": "true"} if step == "final" else {}
+        self.playbook(f"canary-{step}", "playbooks/maintenance/drill-canary.yml",
+                      expect_fail=expect_fail, drill_action=mode, drill_id=self.id,
+                      drill_epoch=self.epoch, **extra)
+
+    def backup(self, name):
+        began = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
+        text, _ = self.playbook(name, "playbooks/maintenance/backup-app.yml")
+        if self.plan:
+            return f"<{name}-point>"
+        points = sorted(p for p in POINT.findall(text) if p.rsplit("/", 1)[1] >= began)
+        if not points:
+            listing, _ = self.playbook(f"{name}-list", "playbooks/maintenance/restore-app.yml",
+                                       overwrite="false")
+            points = sorted(p for p in POINT.findall(listing) if p.rsplit("/", 1)[1] >= began)
+        if not points:
+            self.fail(name, "no recovery point newer than the backup's start")
+        self.say(f"POINT {name} {points[-1]}")
+        return points[-1]
+
+    def summary(self, ok):
+        converge = ",".join(self.repeat_changes) or "clean"
+        verdict = "PLAN" if self.plan else ("PASS" if ok else "FAIL")
+        seeded = " seeded=wrong-point" if self.seeded else ""
+        self.say(f"RESULT {self.instance} {verdict}{seeded} canary={self.tier} "
+                 f"repeat-deploy-changes={converge} logs={self.logs}")
+
+    # ── the drill ───────────────────────────────────────────────────────────────
+    def run(self):
+        if not self.plan:
+            if not os.environ.get("HOMELAB_LAB_DIR"):
+                die("HOMELAB_LAB_DIR is not set")
+            os.makedirs(self.logs, exist_ok=True)
+        # From the app defaults until the first wiring check reports the instance's own
+        # backup.enabled, before anything is created or deleted.
+        kind, refusal = kind_of(self.app, self.defaults,
+                                bool((self.defaults.get("backup") or {}).get("enabled")))
+        if refusal and self.plan:
+            die(refusal)
+        if self.seeded and (kind == "stateless" or self.tier == "none"):
+            die("--seed-wrong-point needs a stateful app with a canary")
+        self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind or 'refused'} "
+                 f"canary={self.tier} {self.canary} ref={self.ref} id={self.id}")
+        remove = {"delete_data": "true"}
+        if self.destroy_guest:
+            remove["destroy_guest"] = "true"
+
+        self.deploy("deploy")
+        if not self.plan:
+            backups = self.backups if self.backups is not None else \
+                bool((self.defaults.get("backup") or {}).get("enabled"))
+            effective, refusal = kind_of(self.app, self.defaults, backups)
+            if refusal:
+                self.fail("deploy", refusal)
+            if effective != kind:
+                self.say(f"KIND {effective}: the instance's backup.enabled overrides the app's")
+                kind = effective
+            if self.seeded and (kind == "stateless" or self.tier == "none"):
+                self.fail("deploy", "--seed-wrong-point needs a stateful app with a canary")
+        if kind == "stateless":
+            self.deploy("deploy-repeat", repeat=True)
+            self.remove(**remove)
+            self.deploy("deploy-fresh")
+            self.deploy("deploy-final", repeat=True)
+            self.summary(True)
+            return
+        # Before the repeat Deploy, so the backup, and the checks after the restore and the
+        # final Deploy, show that a repeat Deploy keeps the data.
+        self.canary_step("create")
+        self.deploy("deploy-repeat", repeat=True)
+        point = self.backup("backup")
+        self.remove(**remove)
+        self.deploy("deploy-fresh")
+        self.canary_step("fresh")
+        if self.seeded:
+            # The wrong point: the fresh install's own backup, which holds no canary. It
+            # cannot be the pre-restore point too (Restore refuses that), and this third
+            # same-day backup prunes the canary's point, which a seeded drill never restores.
+            point = self.backup("backup-wrong-point")
+        pre_restore = self.backup("backup-pre-restore")
+        self.playbook("restore-preview", "playbooks/maintenance/restore-app.yml",
+                      recovery_point=point, overwrite="false")
+        self.playbook("restore", "playbooks/maintenance/restore-app.yml",
+                      recovery_point=point, overwrite="true", pre_restore_point=pre_restore)
+        self.https("restore")
+        self.canary_step("verify")
+        self.deploy("deploy-final", repeat=True)
+        self.canary_step("final")
+        self.summary(True)
+
+
+def run_all(ref, plan):
+    if not os.environ.get("HOMELAB_LAB_DIR"):
+        die("HOMELAB_LAB_DIR is not set")
+    catalog = load_yaml(os.path.join(REPO, "catalog", "applications.yml"))["applications"]
+    probe = subprocess.run([os.path.join(REPO, "tools", "lab-exec")],
+                           input=f"/opt/homelab-ansible/bin/python3 - <<'PY'\n{INVENTORY}\nPY\n",
+                           capture_output=True, text=True)
+    if probe.returncode != 0:
+        die(f"reading the runner's instances failed: {probe.stderr.strip()}")
+    inventory = json.loads(probe.stdout)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    jobs = os.environ.get("LAB_JOB_DIR", "/tmp/lab-jobs")
+    table = os.path.join(jobs, f"drill-all-{stamp}.md")
+    rows = ["| Instance | Method | Canary | Result | Minutes | First failed step |",
+            "| --- | --- | --- | --- | --- | --- |"]
+    failed = 0
+
+    def row(*cells):
+        rows.append("| " + " | ".join(str(c) for c in cells) + " |")
+        print(rows[-1], flush=True)
+
+    print("\n".join(rows), flush=True)
+    for app, entry in catalog.items():
+        if (entry or {}).get("essential") or app in OWN_DRILL:
+            reason = "essential, no Remove" if (entry or {}).get("essential") else "own drill"
+            row(app, "", "", f"skipped: {reason}", "", "")
+            continue
+        listed = [i for i in inventory["lists"].get(app, []) if i in inventory["files"]]
+        if not listed:
+            row(app, "", "", "skipped: no configured instance", "", "")
+            continue
+        instance = app if app in listed else listed[0]
+        tier = canary_of(app, role_of(app, app_defaults(app)), app_defaults(app))[0]
+        argv = [sys.executable, os.path.realpath(__file__), "--ref", ref, "--app", app, instance]
+        if plan:
+            row(instance, "", tier, "planned", "", "")
+            continue
+        os.makedirs(jobs, exist_ok=True)
+        began = time.monotonic()
+        with open(os.path.join(jobs, f"drill-all-{stamp}-{instance}.log"), "w+") as log:
+            rc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT).returncode
+            log.seek(0)
+            text = log.read()
+        at = re.search(r"FAIL at (\S+?):", text)
+        refused = re.search(r"^lab-drill: (.*)$", text, re.M)
+        method = re.search(r"^METHOD (\S+)", text, re.M)
+        minutes = round((time.monotonic() - began) / 60)
+        result = "PASS" if rc == 0 else (f"refused: {refused.group(1)}" if refused else "FAIL")
+        failed += rc != 0
+        row(instance, method.group(1) if method else "?", tier, result, minutes,
+            at.group(1) if at else "")
+        with open(table, "w") as out:
+            out.write("\n".join(rows) + "\n")
+    if not plan:
+        print(f"TABLE {table}")
+    return 1 if failed else 0
+
+
+def main(argv):
+    opts = {"--ref": "master", "--app": None, "--url": None}
+    flags = {"--destroy-guest": False, "--plan": False, "--seed-wrong-point": False,
+             "--all": False}
+    instance = None
+    while argv:
+        arg = argv.pop(0)
+        if arg in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        if arg in opts and argv:
+            opts[arg] = argv.pop(0)
+        elif arg in flags:
+            flags[arg] = True
+        elif instance is None and re.fullmatch(r"[a-z0-9][a-z0-9-]*", arg):
+            instance = arg
+        else:
+            die("usage: lab-drill [--ref R] [--app A] [--url U] [--destroy-guest] "
+                "[--seed-wrong-point] [--plan] <instance> | --all")
+    if flags["--all"]:
+        if instance or opts["--app"] or opts["--url"] or flags["--seed-wrong-point"] \
+                or flags["--destroy-guest"]:
+            die("--all takes only --ref and --plan")
+        return run_all(opts["--ref"], flags["--plan"])
+    if instance is None:
+        die("name the instance")
+    url = (opts["--url"] or "").rstrip("/") or None
+    if url and not url.startswith("https://"):
+        die("--url must start with https://")
+    Drill(instance, opts["--app"] or instance, opts["--ref"], url,
+          flags["--destroy-guest"], flags["--plan"], flags["--seed-wrong-point"]).run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

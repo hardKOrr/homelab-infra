@@ -128,13 +128,15 @@
       when: (_rm_hooks ~ '/remove-native-data.yml') is file
 
     # A native app's recovery unit can span more than data_path (Ntfy keeps its
-    # message cache in cache_path), so delete every declared state path.
-    - name: Delete the data and cache paths
+    # message cache in cache_path; Tautulli and the *arrs keep all state in
+    # config_path), so delete every declared state path.
+    - name: Delete the data, config and cache paths
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
         - "{{ app_config.app.data_path | default('') }}"
+        - "{{ app_config.app.config_path | default('') }}"
         - "{{ app_config.app.cache_path | default('') }}"
       when:
         - _rm_delete_data | bool

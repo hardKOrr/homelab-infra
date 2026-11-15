@@ -1,0 +1,179 @@
+---
+# Count one instance's wiring objects on each configured provider, read-only. Included by
+# playbooks/maintenance/check-wiring.yml after the estate is resolved.
+#
+# Inputs:
+#   wiring_app_name   the instance; the route id, monitor name and Authentik slug
+#   wiring_domain     the instance's FQDN; the DNS record and route host
+#   homelabinfra_infra with the estate overlay and secrets (tasks/load-user-vars.yml)
+#   wiring_removed    true after Remove: a provider this instance is itself (its registry
+#                     entry names it) went with it, so its objects count 0 unqueried
+#
+# Result: _cw_counts {route, dns, monitor, sso_application, sso_provider}: how many
+# objects each provider holds for this instance, or -1 when the provider is configured
+# but this file cannot count on it (unsupported provider, missing credentials, API
+# unreachable). A provider set to none leaves its count at 0.
+#
+# The lookups are the ones the unwire halves use (tasks/unwiring/), widened to count
+# every match instead of taking the first, so a duplicate shows up. Authentik filters
+# applications by slug only with superuser_full_list (tasks/wiring/authentik/application.yml).
+
+- name: Count wiring | Start from zero
+  ansible.builtin.set_fact:
+    _cw_counts: {route: 0, dns: 0, monitor: 0, sso_application: 0, sso_provider: 0}
+    _cw_proxy: "{{ 'none' if 'reverse_proxy' in _cw_gone else _cw_entries.reverse_proxy.provider | default('none') }}"
+    _cw_dns: "{{ 'none' if 'dns' in _cw_gone else _cw_entries.dns.provider | default('none') }}"
+    _cw_monitor: "{{ 'none' if 'monitoring' in _cw_gone else _cw_entries.monitoring.provider | default('none') }}"
+    _cw_sso: "{{ 'none' if 'sso' in _cw_gone else _cw_entries.sso.provider | default('none') }}"
+  vars:
+    _cw_entries:
+      reverse_proxy: "{{ homelabinfra_infra.reverse_proxy | default({}) }}"
+      dns: "{{ homelabinfra_infra.dns | default({}) }}"
+      monitoring: "{{ homelabinfra_infra.monitoring | default({}) }}"
+      sso: "{{ homelabinfra_infra.sso | default({}) }}"
+    _cw_gone: >-
+      {{ (_cw_entries | dict2items | selectattr('value.instance', 'defined')
+          | selectattr('value.instance', 'equalto', wiring_app_name)
+          | map(attribute='key') | list)
+         if wiring_removed | default(false) | bool else [] }}
+
+- name: Count wiring | Unsupported providers count as unknown
+  ansible.builtin.set_fact:
+    _cw_counts: >-
+      {{ _cw_counts | combine(
+           ({'route': -1} if _cw_proxy not in ['none', 'caddy'] else {})
+           | combine({'dns': -1} if _cw_dns not in ['none', 'opnsense'] else {})
+           | combine({'monitor': -1} if _cw_monitor not in ['none', 'uptime_kuma'] else {})
+           | combine({'sso_application': -1, 'sso_provider': -1}
+                     if _cw_sso not in ['none', 'authentik'] else {})) }}
+
+# Caddy: routes carrying the instance's @id, and route matchers naming its FQDN. The
+# larger of the two is the count, so a second route under another id still shows.
+- name: Count wiring | Read the Caddy servers
+  ansible.builtin.uri:
+    url: >-
+      {{ homelabinfra_infra.reverse_proxy.host }}:{{
+         homelabinfra_infra.reverse_proxy.port | default(2019) }}/config/apps/http/servers
+    method: GET
+    status_code: [200]
+    timeout: 20
+  register: _cw_caddy
+  failed_when: false
+  changed_when: false
+  when: _cw_proxy == 'caddy'
+
+- name: Count wiring | Count Caddy routes
+  ansible.builtin.set_fact:
+    _cw_counts: >-
+      {{ _cw_counts | combine({'route':
+           ([(_cw_text | regex_findall('"@id": "route_' ~ (wiring_app_name | regex_escape) ~ '"')
+              | length),
+             (_cw_text | regex_findall('"host": \[[^\]]*"' ~ (wiring_domain | regex_escape) ~ '"')
+              | length)] | max)
+           if _cw_caddy.status | default(0) == 200 else -1}) }}
+  vars:
+    _cw_text: "{{ _cw_caddy.json | default({}) | to_json }}"
+  when: _cw_proxy == 'caddy'
+
+- name: Count wiring | Search the OPNsense host overrides
+  ansible.builtin.uri:
+    url: >-
+      {{ (homelabinfra_infra.dns.host if homelabinfra_infra.dns.host is search('^https?://')
+          else 'https://' ~ homelabinfra_infra.dns.host) }}/api/unbound/settings/searchHostOverride
+    method: POST
+    url_username: "{{ homelabinfra_infra.dns.api_key | default('') }}"
+    url_password: "{{ homelabinfra_infra.dns.api_secret | default('') }}"
+    force_basic_auth: true
+    validate_certs: "{{ homelabinfra_infra.dns.validate_certs | default(false) | bool }}"
+    body_format: json
+    body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': wiring_domain.split('.')[0]} }}"
+    status_code: [200]
+    timeout: 20
+  register: _cw_opn
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _cw_dns == 'opnsense'
+
+- name: Count wiring | Count OPNsense host overrides
+  ansible.builtin.set_fact:
+    _cw_counts: >-
+      {{ _cw_counts | combine({'dns':
+           ((_cw_opn.json.rows | default([]))
+            | selectattr('hostname', 'equalto', wiring_domain.split('.')[0])
+            | selectattr('domain', 'equalto', wiring_domain.split('.')[1:] | join('.'))
+            | list | length)
+           if _cw_opn.status | default(0) == 200 else -1}) }}
+  when: _cw_dns == 'opnsense'
+
+- name: Count wiring | Open an Uptime Kuma session
+  ansible.builtin.include_tasks: ../kuma/open-session.yml
+  vars:
+    kuma_base: "{{ homelabinfra_infra.monitoring.host | default('') }}"
+    kuma_user: "{{ homelabinfra_infra.monitoring.admin_user | default('') }}"
+    kuma_password: "{{ homelabinfra_infra.monitoring.admin_password | default('') }}"
+  when: _cw_monitor == 'uptime_kuma'
+
+- name: Count wiring | Ask Uptime Kuma for its monitors
+  ansible.builtin.include_tasks: ../kuma/call.yml
+  vars:
+    kuma_call_event: getMonitorList
+    kuma_call_ack_id: 1
+  when:
+    - _cw_monitor == 'uptime_kuma'
+    - kuma_session_ready | default(false) | bool
+
+- name: Count wiring | Count Uptime Kuma monitors
+  ansible.builtin.set_fact:
+    _cw_counts: >-
+      {{ _cw_counts | combine({'monitor':
+           (((kuma_session_frames | select('match', '42\["monitorList",') | list
+              | last | default('42["monitorList",{}]'))
+             | regex_replace('^42', '') | from_json | last).values() | list
+            | selectattr('name', 'defined')
+            | selectattr('name', 'equalto', wiring_app_name) | list | length)
+           if kuma_session_ready | default(false) | bool and _cw_listed | bool else -1}) }}
+  vars:
+    # Signed in is not answered: without a monitorList frame the count is unknown.
+    _cw_listed: >-
+      {{ (kuma_call_ok | default(false) | bool)
+         and (kuma_session_frames | default([]) | select('match', '42\["monitorList",') | list | length > 0) }}
+  when: _cw_monitor == 'uptime_kuma'
+
+- name: Count wiring | Read Authentik
+  ansible.builtin.uri:
+    url: >-
+      {{ homelabinfra_infra.sso.host }}/api/v3/{{ item }}{{ wiring_app_name | urlencode }}{{
+         '&superuser_full_list=true' if item is search('slug') else '' }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ homelabinfra_infra.sso.token | default('') }}"
+      Accept: application/json
+    status_code: [200]
+    timeout: 20
+  loop:
+    - core/applications/?slug=
+    - providers/proxy/?name=
+    - providers/oauth2/?name=
+  register: _cw_ak
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _cw_sso == 'authentik'
+
+- name: Count wiring | Count Authentik objects
+  ansible.builtin.set_fact:
+    _cw_counts: >-
+      {{ _cw_counts | combine(
+           {'sso_application': _cw_apps | selectattr('slug', 'equalto', wiring_app_name)
+                                         | list | length,
+            'sso_provider': _cw_providers | selectattr('name', 'equalto', wiring_app_name)
+                                          | list | length}
+           if _cw_ak.results | map(attribute='status', default=0) | unique == [200]
+           else {'sso_application': -1, 'sso_provider': -1}) }}
+  vars:
+    _cw_apps: "{{ _cw_ak.results[0].json.results | default([]) }}"
+    _cw_providers: >-
+      {{ (_cw_ak.results[1].json.results | default([]))
+         + (_cw_ak.results[2].json.results | default([])) }}
+  when: _cw_sso == 'authentik'

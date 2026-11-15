@@ -121,6 +121,29 @@
     # Laravel's migrations before the web container answers a probe.
     k8s_wait_timeout: 600
 
+- name: Mixpost | Ensure the administrator login
+  ansible.builtin.include_tasks: admin.yml
+  vars:
+    mixpost_admin_host: "{{ k8s_api_host }}"
+    mixpost_admin_artisan:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - -i
+      - "deployment/{{ instance }}"
+      - --container
+      - mixpost
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - www-data
+      - -c
+      - cd /var/www/html && exec php artisan "$@"
+      - artisan
+
 # ── Application-consistent backup ──────────────────────────────────────────────
 #
 # Last, and after the workload is up, on purpose. The CronJob mounts the storage volume

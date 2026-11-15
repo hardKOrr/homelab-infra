@@ -1,0 +1,9 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml): a drill-owned bucket with
+# exact points, through canary.yml.
+- name: InfluxDB drill canary | Run the bucket canary
+  ansible.builtin.include_tasks: canary.yml
+  vars:
+    canary_action: "{{ {'create': 'seed', 'fresh': 'absent', 'verify': 'present'}[drill_canary_action] }}"
+    canary_bucket: "p2-canary-influxdb-{{ drill_canary_id }}"
+    canary_epoch: "{{ drill_canary_epoch }}"

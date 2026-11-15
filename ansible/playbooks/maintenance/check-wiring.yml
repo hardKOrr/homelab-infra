@@ -1,0 +1,120 @@
+---
+# Check one instance's wiring, read-only: after Deploy its route, DNS record, uptime
+# monitor and SSO entry each exist exactly once; after Remove none of them exists.
+# tools/lab-drill runs it after every Deploy and after Remove.
+#
+# Usage:
+#   lab-run playbooks/maintenance/check-wiring.yml -e instance=tautulli -e expect=present
+#   lab-run playbooks/maintenance/check-wiring.yml -e instance=tautulli -e expect=absent
+#
+# Inputs:
+#   instance  the instance (required); app when it differs from instance
+#   expect    present (after Deploy) or absent (after Remove)
+#
+# What Deploy wires: every object for an app that serves a UI (routing.proxy is not
+# none), the SSO application only when routing.identity is not none, and an SSO
+# provider only for oidc and forward_auth. An app that wires something else declares the
+# list in its app-defaults as `drill.wiring` (route, dns, monitor, sso). A provider this
+# check cannot count on fails it. Counting is tasks/maintenance/count-wiring.yml.
+
+- name: "Check Wiring | {{ instance | default('(no instance)') }}"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Validate the inputs
+      ansible.builtin.assert:
+        that:
+          - instance | default('') is match('^[a-z0-9][a-z0-9-]*$')
+          - expect | default('') in ['present', 'absent']
+        fail_msg: Pass instance=<name> and expect=present|absent.
+
+    - name: Load the app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/{{ app | default(instance) }}.yml"
+        name: _cw_defaults
+      failed_when: false
+
+    - name: Load the instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _cw_instance
+      failed_when: false
+
+    - name: Merge the app config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ (_cw_defaults | default({})).get((app | default(instance)) | replace('-', '_')
+                                              ~ '_defaults', {})
+             | combine(_cw_instance | default({}), recursive=True) }}
+
+    # The report also names the hosting method and whether backups are on, from the
+    # merged config: tools/lab-drill reads both.
+    - name: Resolve the hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: "{{ app | default(instance) }}"
+
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Name the instance's FQDN
+      ansible.builtin.set_fact:
+        _cw_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{
+             homelabinfra_infra.domain | default('invalid') }}
+
+    - name: Count the instance's wiring objects
+      ansible.builtin.include_tasks: ../../tasks/maintenance/count-wiring.yml
+      vars:
+        wiring_app_name: "{{ instance }}"
+        wiring_removed: "{{ expect == 'absent' }}"
+        wiring_domain: "{{ _cw_fqdn }}"
+
+    - name: Decide what Deploy wires
+      ansible.builtin.set_fact:
+        _cw_wired: >-
+          {{ (app_config.drill | default({})).wiring
+             | default(['route', 'dns', 'monitor', 'sso']
+                       if _cw_routing.proxy | default('internal') != 'none' else [], true) }}
+        _cw_identity: "{{ _cw_routing.identity | default('catalog') }}"
+      vars:
+        _cw_routing: "{{ app_config.routing | default({}) }}"
+
+    - name: Set the expected counts
+      ansible.builtin.set_fact:
+        _cw_expected:
+          route: "{{ 1 if present and 'route' in _cw_wired and _cw_proxy != 'none' else 0 }}"
+          dns: "{{ 1 if present and 'dns' in _cw_wired and _cw_dns != 'none' else 0 }}"
+          monitor: "{{ 1 if present and 'monitor' in _cw_wired and _cw_monitor != 'none' else 0 }}"
+          sso_application: "{{ 1 if _sso and _cw_identity != 'none' else 0 }}"
+          sso_provider: "{{ 1 if _sso and _cw_identity in ['oidc', 'forward_auth'] else 0 }}"
+      vars:
+        present: "{{ expect == 'present' }}"
+        _sso: "{{ expect == 'present' and 'sso' in _cw_wired and _cw_sso != 'none' }}"
+
+    - name: Report the wiring
+      ansible.builtin.debug:
+        msg: >-
+          WIRING {{ instance }} method={{ _hosting_combination }}
+          backup={{ (app_config.backup | default({})).enabled | default(false) | bool }}
+          url={{ ('https://' ~ _cw_fqdn) if 'route' in _cw_wired and _cw_proxy != 'none' else '-' }}
+          expect={{ expect }}
+          {% for kind in _cw_counts | sort %}{{ kind }}={{ _cw_counts[kind] }}/{{
+          _cw_expected[kind] }} {% endfor %}
+
+    - name: Require exactly the expected objects
+      ansible.builtin.assert:
+        that: _cw_counts[item] | int == _cw_expected[item] | int
+        fail_msg: >-
+          {{ instance }} has {{ _cw_counts[item] }} {{ item }} object(s) where
+          {{ 'Deploy' if expect == 'present' else 'Remove' }} should leave
+          {{ _cw_expected[item] }}{{ ' (-1: this check cannot count on that provider)'
+          if _cw_counts[item] | int < 0 else '' }}.
+        quiet: true
+      loop: "{{ _cw_counts | sort }}"

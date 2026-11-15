@@ -45,6 +45,9 @@ wireguard_defaults:
         protocol: UDP
         port: 51820
         enabled: true
+  # playbooks/maintenance/check-wiring.yml: Deploy wires a DNS record and a monitor, no route.
+  drill:
+    wiring: [dns, monitor]
   routing:
     proxy: none
     identity: none

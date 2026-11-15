@@ -1,7 +1,7 @@
 ---
 # restore-swap.yml replaced hook. The restored database was written under the source's
-# application keys: record them against the target and render them into the environment
-# the application starts with.
+# application keys and holds the source's login: record them against the target and render
+# the keys into the environment the application starts with.
 - name: Mixpost restore | Record that the target keys are being replaced
   ansible.builtin.set_fact:
     _mp_restore_keys_replaced: true
@@ -11,9 +11,15 @@
   vars:
     vault_item_name: "homelab-infra/apps/{{ instance }}"
     vault_item_merge: true
-    vault_item_fields:
-      app_key: "{{ restore_source_mixpost_secrets.app_key }}"
-    vault_item_secret_fields: [app_key]
+    # The source's login opens the restored users table; a source older than the login
+    # (no admin_password) leaves the target's, and the next Deploy creates that user.
+    vault_item_fields: >-
+      {{ {'app_key': restore_source_mixpost_secrets.app_key}
+         | combine({'admin_user': restore_source_mixpost_secrets.admin_user,
+                    'admin_password': restore_source_mixpost_secrets.admin_password}
+                   if restore_source_mixpost_secrets.admin_password | default('') | length > 0
+                   else {}) }}
+    vault_item_secret_fields: [app_key, admin_password]
   no_log: true
 
 - name: Mixpost restore | Render the carried keys

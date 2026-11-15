@@ -220,16 +220,25 @@ def render(expression, variables):
 
 def guard_passes(variables):
     guard = tasks(DATABASE / "guard-app-database.yml")
-    facts = task_named(guard, "Database guard | Find other applications using this database or login")
+    consumers = tasks(DATABASE / "guard-other-consumers.yml")
+    include = task_named(guard, "Database guard | Refuse a database or login another application uses")
+    assert include["ansible.builtin.include_tasks"] == "guard-other-consumers.yml"
+    facts = task_named(consumers, "Database consumers | Find other applications using this database or login")
     variables = dict(variables)
+    for name, expression in include["vars"].items():
+        variables[name] = render(expression, variables)
     # Task vars are templated lazily and may refer to earlier ones; set_fact values may
     # only use them, never one another.
     for name, expression in facts["vars"].items():
         variables[name] = render(expression, variables)
     for name, expression in facts["ansible.builtin.set_fact"].items():
         variables[name] = render(expression, variables)
+    own = task_named(guard, "Database guard | Refuse an own item that names a different database")
+    for name, expression in own["vars"].items():
+        variables[name] = render(expression, variables)
     checks = [
-        task_named(guard, "Database guard | Refuse a shared or mismatched database"),
+        task_named(consumers, "Database consumers | Refuse a database or login another application uses"),
+        own,
         task_named(guard, "Database guard | Require one owned backend guest at the registered address"),
     ]
     if variables["database_app_target"]["provider"] == "postgresql":
@@ -272,6 +281,11 @@ def check_ownership_guard():
         assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault)), (
             f"{provider}: a login another app uses must not be touched")
         vault = guard_fixture(provider)["homelabinfra_vault"]
+        vault["apps"]["other"].update(database_name="app", database_port="3307")
+        target = guard_fixture(provider)["database_app_target"] | {"port": "3306"}
+        assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target)), (
+            f"{provider}: a guest backend is changed through its socket, so another port is no escape")
+        vault = guard_fixture(provider)["homelabinfra_vault"]
         vault["apps"]["app"]["database_name"] = "elsewhere"
         assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault))
         assert not guard_passes(guard_fixture(provider, groups={
@@ -289,6 +303,10 @@ def check_destructive_files_use_the_guard():
     for name in ["drop.yml", "restore.yml"]:
         steps = [task.get("ansible.builtin.include_tasks") for task in tasks(DATABASE / name)]
         assert steps[:2] == ["resolve-app-database.yml", "guard-app-database.yml"], name
+    # Deploy checks the same ownership before it creates a login or sets its password.
+    provision = [task.get("name") for task in tasks(DATABASE / "provision.yml")]
+    guard_at = provision.index("Database | Refuse a database or login another application uses")
+    assert guard_at < provision.index("Database | Generate an initial or rotated application password")
     restore = tasks(DATABASE / "restore.yml")
     provision = task_named(restore, "Database restore | Create the database, login, grants and extensions")
     assert provision["ansible.builtin.include_tasks"] == "provision.yml"
@@ -380,6 +398,17 @@ def check_remove_wiring():
             kept = str(render(expression, {"delete_data": False, "app_config": {"app": {"database": database}}, "instance": path.stem})).strip()
             assert kept == "False", path.name
     assert {"bookstack", "immich", "litellm", "plane", "wordpress"} <= set(registered)
+
+    # A hosting method that keeps no database on the named backend says so through its
+    # remove-inputs.yml hook: Mixpost on Kubernetes runs MySQL in its own namespace.
+    flag = yaml.safe_load((ROOT / "ansible/roles/mixpost/tasks/remove-inputs.yml").read_text())[0][
+        "ansible.builtin.set_fact"]["_rm_no_named_database"]
+    mixpost = yaml.safe_load((ROOT / "ansible/vars/app-defaults/mixpost.yml").read_text())["mixpost_defaults"]
+    for method, expected in (("kubernetes", "False"), ("docker", "True"), ("native", "True")):
+        config = mixpost | {"hosting": {"method": method}}
+        variables = {"delete_data": True, "app_config": config, "instance": "mixpost",
+                     "_rm_no_named_database": render(flag, {"app_config": config})}
+        assert str(render(expression, variables)).strip() == expected, method
 
     drop_play = next(play for play in remove if play["name"] == "Remove App | Drop its named database")
     assert drop_play["hosts"] == "localhost", "the backend must be reached without the app host"

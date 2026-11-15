@@ -10,7 +10,8 @@ module.exports = async ({ page, step, url, secrets }) => {
   const label = `p2-canary-sonarr-${scope || 'docker-lxc'}`;
   const saved = `/var/lib/rundeck/scratch/${scope || 'issue649'}/sonarr-canaries.json`;
   const vault = JSON.parse(process.env.HOMELABINFRA_VAULT_JSON || '{}');
-  const key = vault.media?.sonarr?.api_key;
+  // Deploy keeps each instance's key under media[<instance>]; scope is the instance.
+  const key = vault.media?.[scope || 'sonarr']?.api_key;
   const username = secrets.username || vault.sso?.admin_user;
   const password = secrets.password || vault.sso?.admin_password;
   const api = async (path, method = 'get', data) => {

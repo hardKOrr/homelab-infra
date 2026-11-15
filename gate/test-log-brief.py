@@ -68,6 +68,8 @@ assert banners(brief) == ["Reports a finding", "Changes something", "Loop that c
 for needle in ("finding-text", "boom-text", "HOMELAB RESULT", "FAILED"):
     assert needle in brief, f"brief log lost {needle!r}:\n{brief}"
 assert len(brief) < len(full)
+for log in (full, brief):
+    assert "HOMELAB_RUN result=FAILED changed=2 failed=1" in log, f"no machine result line:\n{log}"
 
 spec = importlib.util.spec_from_file_location("log_brief", repo / "rundeck" / "log-brief.py")
 log_brief = importlib.util.module_from_spec(spec)

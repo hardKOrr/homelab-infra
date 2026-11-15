@@ -1,13 +1,15 @@
 ---
 # Restore Mixpost's application-consistent MariaDB database and storage directory on
 # Docker or natively through the shared swap. The restored database was written under the source's
-# application keys, so the replaced hook gives them to the target; a failure after the
+# application keys and holds the source's login, so the replaced hook gives both to the target; a failure after the
 # stop puts the original storage, database and keys back and starts the application.
 
 - name: Mixpost restore | Resolve the target's keys and database identity
   ansible.builtin.set_fact:
     _mp_restore_target_keys:
       app_key: "{{ app_config.app.app_key | default('') }}"
+      admin_user: "{{ app_config.app.admin_user | default('') }}"
+      admin_password: "{{ app_config.app.admin_password | default('') }}"
     _mp_restore_database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(
            app_config.app.database.instance | default(''), {}) }}

@@ -178,7 +178,7 @@ hooks under `roles/<app>/tasks/`, each run only when the file exists:
 
 | Hook | Remove runs it |
 | --- | --- |
-| `remove-inputs.yml` | on localhost before unwiring: validate delete targets, declare `_rm_database_backend` or `_rm_keeps_guest_record` |
+| `remove-inputs.yml` | on localhost before unwiring: validate delete targets, declare `_rm_database_backend`, `_rm_keeps_guest_record` or `_rm_no_named_database` (this hosting method keeps no database on the named backend) |
 | `remove-unwire.yml` | on localhost after provider unwiring, before the registry prune: withdraw the app from other apps |
 | `remove-units.yml` | on a native guest: set `_rm_service_names` instead of `app.service_name` |
 | `remove-native-data.yml` | on a native guest after the service stops, before the data paths go |

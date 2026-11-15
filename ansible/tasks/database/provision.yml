@@ -54,6 +54,17 @@
       {{ database_provision_config.provider }} backend {{ database_provision_config.instance }} is not registered.
       Deploy that backend before deploying {{ database_provision_app_instance }}.
 
+- name: Database | Refuse a database or login another application uses
+  ansible.builtin.include_tasks: guard-other-consumers.yml
+  vars:
+    database_consumers_instance: "{{ database_provision_app_instance }}"
+    database_consumers_target:
+      host: "{{ _database_backend.host }}"
+      port: "{{ _database_backend.port }}"
+      kubernetes: "{{ _database_backend.kubernetes | default({}) | length > 0 }}"
+      name: "{{ database_provision_config.name }}"
+      role: "{{ database_provision_config.role }}"
+
 - name: Database | Resolve the requested credential action
   ansible.builtin.set_fact:
     _database_credential_action: "{{ database_provision_config.credential_action | default('reuse') }}"

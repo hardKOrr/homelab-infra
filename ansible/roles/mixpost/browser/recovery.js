@@ -1,9 +1,10 @@
 // Recovery drill: ?drill=create seeds a draft and timezone; ?drill=absent checks
 // a fresh install. Default verifies the exact restored values in Mixpost Lite.
-// Run with the canonical owner item (mixpost-drill-owner) as lab-browser's instance.
+// Signs in with the administrator login Deploy records in the instance's own item.
 module.exports = async ({ page, step, url, secrets }) => {
   const target = new URL(url);
-  const mode = target.searchParams.get('drill') || 'verify';
+  const requested = target.searchParams.get('drill') || 'verify';
+  const mode = requested === 'fresh' ? 'absent' : requested; // tools/lab-drill says fresh
   const base = target.origin;
   const canary = 'p2-canary-mixpost-676: exact Docker recovery draft; no social account connected.';
   const timezone = 'America/Denver';

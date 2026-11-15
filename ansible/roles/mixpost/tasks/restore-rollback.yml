@@ -10,9 +10,14 @@
       vars:
         vault_item_name: "homelab-infra/apps/{{ instance }}"
         vault_item_merge: true
+        # Both admin fields, even an empty password: a target that recorded none must not
+        # keep the source's login, or its next Deploy would trust a password its database
+        # does not hold.
         vault_item_fields:
           app_key: "{{ _mp_restore_target_keys.app_key }}"
-        vault_item_secret_fields: [app_key]
+          admin_user: "{{ _mp_restore_target_keys.admin_user }}"
+          admin_password: "{{ _mp_restore_target_keys.admin_password }}"
+        vault_item_secret_fields: [app_key, admin_password]
       no_log: true
 
     - name: Mixpost restore | Put the target's own keys back in the environment

@@ -1,0 +1,51 @@
+---
+# Refuse when another application's canonical item uses this database, or its login, on
+# the same backend. provision.yml runs it before Deploy creates a login or sets its
+# password; guard-app-database.yml runs it before a drop or a restore. Without it, a
+# second instance left on an app's default database role re-passworded the first
+# instance's login on its first Deploy.
+#
+# Inputs:
+#   database_consumers_instance  the application instance acting on the database
+#   database_consumers_target    {host, port, kubernetes (bool), name, role}
+#   homelabinfra_vault.apps      every instance's canonical item (tasks/load-user-vars.yml)
+#
+# Result: _database_guard_other_consumers, the other items found (the assert fails first).
+- name: Database consumers | Find other applications using this database or login
+  vars:
+    _other_items: >-
+      {{ (homelabinfra_vault.apps | default({}) | dict2items)
+         | rejectattr('key', 'equalto', database_consumers_instance)
+         | selectattr('value.database_host', 'defined')
+         | selectattr('value.database_host', 'equalto', database_consumers_target.host)
+         | list }}
+    # Backends on the cluster share its ingress address and differ by port. A guest
+    # backend is changed through its local socket whatever port an item recorded, so
+    # there the address alone decides.
+    _other_ports: >-
+      {%- set kept = [] -%}
+      {%- for entry in _other_items -%}
+      {%-   if not (database_consumers_target.kubernetes | default(false) | bool)
+              or (entry.value.database_port | default(database_consumers_target.port) | string)
+                 == (database_consumers_target.port | string) -%}
+      {%-     set _ = kept.append(entry) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ kept | to_json }}
+  ansible.builtin.set_fact:
+    _database_guard_other_consumers: >-
+      {{ (_other_ports | from_json | selectattr('value.database_name', 'defined')
+          | selectattr('value.database_name', 'equalto', database_consumers_target.name) | list)
+         + (_other_ports | from_json | selectattr('value.database_user', 'defined')
+          | selectattr('value.database_user', 'equalto', database_consumers_target.role) | list) }}
+  no_log: true
+
+- name: Database consumers | Refuse a database or login another application uses
+  ansible.builtin.assert:
+    that: _database_guard_other_consumers | length == 0
+    fail_msg: >-
+      Refusing to touch database {{ database_consumers_target.name }} or login
+      {{ database_consumers_target.role }} for {{ database_consumers_instance }}: another
+      application's item uses it on the same backend
+      ({{ _database_guard_other_consumers | map(attribute='key') | unique | join(', ') }}).
+      Give this instance its own app.database.name and app.database.role.
