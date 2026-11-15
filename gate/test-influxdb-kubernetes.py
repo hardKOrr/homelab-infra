@@ -261,4 +261,18 @@ assert "'influxdb']" in access and "_sql_prefix ~ '_host'" in access
 assert not (ROLE / "templates/kubernetes").exists()
 assert not any("kubectl" in p.read_text(encoding="utf-8") and "apply" in p.read_text(encoding="utf-8")
                for p in (ROLE / "tasks").glob("*.yml") if p.name != "kubernetes.yml")
+# The drill reaches Kubernetes through the VIP, and guest methods through their host.
+canary_tasks = yaml.safe_load((ROLE / "tasks/canary.yml").read_text())
+api_inputs = next(t["ansible.builtin.set_fact"] for t in canary_tasks
+                  if t["name"].endswith("Resolve API inputs"))
+for kind, address in [("kubernetes", "192.0.2.30"), ("native", "192.0.2.40"),
+                      ("docker", "192.0.2.40")]:
+    result = Templar(loader=DataLoader(), variables={
+        "_rat_kind": kind, "_rat_host": "target",
+        "hostvars": {"target": {"ansible_host": "192.0.2.40"}},
+        "homelabinfra_infra": {"kubernetes": {"ingress_vip": "192.0.2.30"}},
+        "app_config": {"app": {"port": 8086}},
+    }).template(api_inputs["_canary_url"], fail_on_undefined=True)
+    assert result == f"http://{address}:8086", result
+
 print("InfluxDB keeps the guests as default and runs on Kubernetes through the shared operations")

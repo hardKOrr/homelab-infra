@@ -18,10 +18,11 @@
 #   app       — the application the instance belongs to. Defaults to `instance`; the
 #               Rundeck jobs always pass it, because a second instance named radarr-4k is
 #               still app radarr and its defaults live in app-defaults/radarr.yml.
-#   resolve_app_target_kinds — allowed hosting kinds; defaults to [native, docker]
+#   resolve_app_target_kinds — allowed hosting kinds; defaults to [native, docker].
+#                              Kubernetes callers opt in and target the cluster API host.
 #
 # Outputs, on localhost:
-#   _rat_kind         native | docker
+#   _rat_kind         the selected hosting method
 #   _rat_stack        the logical stack for a Docker app, else ''
 #   _rat_host         the inventory host the action must run on
 #   group apptarget_<instance>, holding that one host, with these facts attached:
@@ -148,6 +149,15 @@
   ansible.builtin.set_fact:
     _rat_host: "{{ _rat_instance }}"
   when: _rat_kind == 'native'
+
+- name: Resolve app target | Resolve the Kubernetes cluster
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+  when: _rat_kind == 'kubernetes'
+
+- name: Resolve app target | Select the Kubernetes API host
+  ansible.builtin.set_fact:
+    _rat_host: "{{ k8s_api_host }}"
+  when: _rat_kind == 'kubernetes'
 
 - name: Resolve app target | Assert the target host exists
   ansible.builtin.assert:

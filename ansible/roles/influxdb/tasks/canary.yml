@@ -9,7 +9,10 @@
 
 - name: Canary | Resolve API inputs
   ansible.builtin.set_fact:
-    _canary_url: "http://{{ hostvars[_rat_host].ansible_host }}:{{ app_config.app.port }}"
+    _canary_url: >-
+      http://{{ homelabinfra_infra.kubernetes.ingress_vip
+                if _rat_kind == 'kubernetes'
+                else hostvars[_rat_host].ansible_host }}:{{ app_config.app.port }}
     _canary_credentials: "{{ homelabinfra_vault.apps[instance] }}"
   no_log: true
 
