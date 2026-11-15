@@ -51,7 +51,8 @@
                                               ~ '_defaults', {})
              | combine(_cw_instance | default({}), recursive=True) }}
 
-    # Also names the hosting method in the report, which tools/lab-drill --all tabulates.
+    # The report also names the hosting method and whether backups are on, from the
+    # merged config: tools/lab-drill reads both.
     - name: Resolve the hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -95,7 +96,8 @@
     - name: Report the wiring
       ansible.builtin.debug:
         msg: >-
-          WIRING {{ instance }} method={{ _hosting_combination }} expect={{ expect }}
+          WIRING {{ instance }} method={{ _hosting_combination }}
+          backup={{ (app_config.backup | default({})).enabled | default(false) | bool }} expect={{ expect }}
           {% for kind in _cw_counts | sort %}{{ kind }}={{ _cw_counts[kind] }}/{{
           _cw_expected[kind] }} {% endfor %}
 

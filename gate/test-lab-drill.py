@@ -75,6 +75,30 @@ for spec in ("mixpost", "wordpress"):
     if "requested === 'fresh'" not in text:
         failures.append(f"{spec} browser spec accepts the drill's fresh mode")
 
+# The instance's own backup.enabled, reported by check-wiring.yml, picks the sequence
+# before anything destructive runs. A fake runner answers every playbook.
+import tempfile
+with tempfile.TemporaryDirectory() as lab:
+    def drill(app, backup):
+        runner = os.path.join(lab, "runner-lab-run.sh")
+        with open(runner, "w") as handle:
+            handle.write("#!/bin/sh\n"
+                         f"case \"$2\" in *check-wiring*) echo 'WIRING x method=native-lxc backup={backup} "
+                         "expect=present';; esac\n"
+                         "echo 'HOMELAB_RUN result=SUCCEEDED changed=0 failed=0'\n")
+        os.chmod(runner, 0o755)
+        env = dict(os.environ, HOMELAB_LAB_DIR=lab, LAB_JOB_DIR=os.path.join(lab, "jobs"))
+        return subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), app],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
+    off = drill("tautulli", "False")
+    ran = [line.split()[1].split("-", 1)[1] for line in off.stdout.splitlines() if line.startswith("STEP ")]
+    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[4:6] != ["remove", "wiring-remove"]:
+        failures.append(f"an instance with backups off runs the stateless drill: {off.stdout[-400:]}")
+    on = drill("homepage", "True")
+    if on.returncode == 0 or "recovery.methods" not in on.stdout or "-remove " in on.stdout:
+        failures.append(f"an instance with backups on and no recovery.methods stops before Remove: "
+                        f"{on.stdout[-400:]}")
+
 if failures:
     print("\n".join(failures))
     sys.exit(1)

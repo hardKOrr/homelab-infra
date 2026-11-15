@@ -106,15 +106,15 @@ def canary_of(app, role, defaults):
     return "none", ""
 
 
-def stateful(app, defaults):
-    """An app with backups must restore through Backup App and Restore App to be drilled:
-    otherwise the stateless variant's Remove would delete data nothing can bring back."""
+def kind_of(app, defaults, backups):
+    """(kind, refusal). An app with backups must restore through Backup App and Restore
+    App to be drilled: otherwise the stateless variant's Remove would delete data nothing
+    can bring back."""
     methods = bool((defaults.get("recovery") or {}).get("methods"))
-    backups = bool((defaults.get("backup") or {}).get("enabled"))
     if backups and not methods:
-        die(f"{app} enables backups but declares no recovery.methods; the drill cannot "
-            "restore what Remove deletes")
-    return methods and backups
+        return None, (f"{app} enables backups but declares no recovery.methods; the drill "
+                      "cannot restore what Remove deletes")
+    return ("stateful" if methods and backups else "stateless"), None
 
 
 class Drill:
@@ -129,6 +129,7 @@ class Drill:
         self.logs = os.path.join(os.environ.get("LAB_JOB_DIR", "/tmp/lab-jobs"),
                                  f"drill-{instance}-{self.id}")
         self.step_no, self.repeat_changes, self.points, self.method = 0, [], {}, ""
+        self.backups = None
 
     # ── plumbing ────────────────────────────────────────────────────────────────
     def say(self, line):
@@ -196,6 +197,9 @@ class Drill:
         text, _ = self.playbook(f"wiring-{after}", "playbooks/maintenance/check-wiring.yml",
                                 expect=expect)
         method = re.search(r"WIRING \S+ method=(\S+)", text)
+        backups = re.search(r"\bbackup=(True|False)\b", text)
+        if backups and self.backups is None:
+            self.backups = backups.group(1) == "True"
         if method and not self.method:
             self.method = method.group(1)
             self.say(f"METHOD {self.method}")
@@ -284,7 +288,12 @@ class Drill:
             if not os.environ.get("HOMELAB_LAB_DIR"):
                 die("HOMELAB_LAB_DIR is not set")
             os.makedirs(self.logs, exist_ok=True)
-        kind = "stateful" if stateful(self.app, self.defaults) else "stateless"
+        # From the app defaults until the first wiring check reports the instance's own
+        # backup.enabled; the sequences differ only after the repeat Deploy.
+        kind, refusal = kind_of(self.app, self.defaults,
+                                bool((self.defaults.get("backup") or {}).get("enabled")))
+        if refusal:
+            die(refusal)
         if self.seeded and (kind == "stateless" or self.tier == "none"):
             die("--seed-wrong-point needs a stateful app with a canary")
         self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind} "
@@ -295,6 +304,15 @@ class Drill:
 
         self.deploy("deploy")
         self.deploy("deploy-repeat", repeat=True)
+        if not self.plan and self.backups is not None:
+            effective, refusal = kind_of(self.app, self.defaults, self.backups)
+            if refusal:
+                self.fail("deploy-repeat", refusal)
+            if effective != kind:
+                self.say(f"KIND {effective}: the instance's backup.enabled overrides the app's")
+                kind = effective
+            if self.seeded and (kind == "stateless" or self.tier == "none"):
+                self.fail("deploy-repeat", "--seed-wrong-point needs a stateful app with a canary")
         if kind == "stateless":
             self.remove(**remove)
             self.deploy("deploy-fresh")

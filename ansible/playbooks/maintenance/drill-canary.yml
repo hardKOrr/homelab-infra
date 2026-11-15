@@ -70,6 +70,16 @@
           a browser recovery spec, or drill.canary_path in its app-defaults (Docker or
           native only).
 
+    # The marker play writes on the resolved host, which the resolver takes from
+    # inventory by name; only a guest homelab-infra owns may be changed.
+    - name: Require a homelab-infra guest for the marker
+      ansible.builtin.assert:
+        that: _rat_host in groups['lab_managed'] | default([])
+        fail_msg: >-
+          {{ _rat_host }} does not carry _+lab; the drill writes its marker only on a guest
+          homelab-infra owns.
+      when: not _dc_hook.stat.exists
+
     - name: Run the role's canary hook
       ansible.builtin.include_role:
         name: "{{ _dc_role }}"
