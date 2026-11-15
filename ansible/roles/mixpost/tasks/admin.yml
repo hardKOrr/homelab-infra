@@ -1,0 +1,55 @@
+---
+# Mixpost's administrator login, on every hosting method. Mixpost Lite has no setup page,
+# so an install whose database holds no user cannot be signed in to. Deploy creates
+# app.admin_user with `mixpost-auth:create` (prompts answered on stdin, so the password is
+# in no argv) and records the login in the instance's Vaultwarden item. A user that
+# already exists is left as it is: a later Deploy, and a Restore that brings the user back
+# with its database, keep the password the item already holds.
+#
+# Input: mixpost_admin_artisan, the argv that runs `php artisan` as the web user for this
+# hosting method; mixpost_admin_host, the host that runs it (default this one).
+- name: Mixpost | Resolve the administrator login
+  ansible.builtin.set_fact:
+    _mp_admin_recorded: "{{ app_config.app.admin_password | default('', true) | length > 0 }}"
+    _mp_admin_password: >-
+      {{ app_config.app.admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Mixpost | Create the administrator unless it exists
+  ansible.builtin.command:
+    argv: "{{ mixpost_admin_artisan + ['mixpost-auth:create'] }}"
+    stdin: "{{ app_config.app.admin_name }}\n{{ app_config.app.admin_user }}\n{{ _mp_admin_password }}"
+  delegate_to: "{{ mixpost_admin_host | default(inventory_hostname) }}"
+  become: true
+  register: _mp_admin_create
+  changed_when: "'created successfully' in _mp_admin_create.stdout"
+  failed_when: false
+  no_log: true
+
+# The command's output holds prompts and the result, never the password.
+- name: Mixpost | Require a login that Vaultwarden can open
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - _mp_admin_create.stdout is search('created successfully|already exists')
+      - _mp_admin_create.changed or _mp_admin_recorded | bool
+    fail_msg: >-
+      {{ 'mixpost-auth:create failed: ' ~ (_mp_admin_create.stdout_lines | default([]) | last | default(''))
+         ~ ' ' ~ (_mp_admin_create.stderr | default(''))
+         if _mp_admin_create.stdout is not search('created successfully|already exists') else
+         'Mixpost ' ~ instance ~ ' already has user ' ~ app_config.app.admin_user ~ ', but
+         Vaultwarden item homelab-infra/apps/' ~ instance ~ ' holds no admin_password for it.
+         Restore the item, or set a password with mixpost-auth:password and record it there
+         as admin_password, then rerun Deploy.' }}
+
+- name: Mixpost | Record the administrator login
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  when: _mp_admin_create.changed | default(false)
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _mp_admin_password }}"
+    vault_item_secret_fields: [admin_password]

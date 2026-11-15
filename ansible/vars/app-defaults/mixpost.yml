@@ -72,6 +72,11 @@ mixpost_defaults:
     # here, because the public-DNS status task renders this file without an instance.
     data_path: ""
 
+    # The login Deploy creates on an install with no such user (roles/mixpost/tasks/admin.yml);
+    # its generated password is admin_password in the instance's Vaultwarden item.
+    admin_user: admin@example.invalid
+    admin_name: Homelab Admin
+
     # No worker or scheduler Deployment. Mixpost Lite's image runs Laravel's queue and
     # scheduler inside the application container itself — upstream's compose file has one
     # service, not three — so splitting them here would mean running processes the image

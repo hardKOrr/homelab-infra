@@ -10,9 +10,12 @@
       vars:
         vault_item_name: "homelab-infra/apps/{{ instance }}"
         vault_item_merge: true
-        vault_item_fields:
-          app_key: "{{ _mp_restore_target_keys.app_key }}"
-        vault_item_secret_fields: [app_key]
+        vault_item_fields: >-
+          {{ {'app_key': _mp_restore_target_keys.app_key}
+             | combine({'admin_user': _mp_restore_target_keys.admin_user,
+                        'admin_password': _mp_restore_target_keys.admin_password}
+                       if _mp_restore_target_keys.admin_password | length > 0 else {}) }}
+        vault_item_secret_fields: [app_key, admin_password]
       no_log: true
 
     - name: Mixpost restore | Put the target's own keys back in the environment

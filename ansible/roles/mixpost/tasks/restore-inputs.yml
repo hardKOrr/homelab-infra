@@ -5,4 +5,6 @@
   ansible.builtin.set_fact:
     restore_source_mixpost_secrets:
       app_key: "{{ app_config.app.app_key | default('') }}"
+      admin_user: "{{ app_config.app.admin_user | default('') }}"
+      admin_password: "{{ app_config.app.admin_password | default('') }}"
   no_log: true

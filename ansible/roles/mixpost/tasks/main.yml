@@ -14,3 +14,10 @@
 
 - name: Mixpost | Wait for the login page
   ansible.builtin.include_tasks: verify.yml
+
+- name: Mixpost | Ensure the administrator login
+  ansible.builtin.include_tasks: admin.yml
+  vars:
+    mixpost_admin_artisan: >-
+      {{ [mixpost_artisan] if mixpost_native | bool else
+         ['docker', 'exec', '-i', '-u', 'www-data', '-w', '/var/www/html', instance, 'php', 'artisan'] }}

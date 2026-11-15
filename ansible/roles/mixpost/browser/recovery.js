@@ -1,6 +1,6 @@
 // Recovery drill: ?drill=create seeds a draft and timezone; ?drill=absent checks
 // a fresh install. Default verifies the exact restored values in Mixpost Lite.
-// Run with the canonical owner item (mixpost-drill-owner) as lab-browser's instance.
+// Signs in with the administrator login Deploy records in the instance's own item.
 module.exports = async ({ page, step, url, secrets }) => {
   const target = new URL(url);
   const requested = target.searchParams.get('drill') || 'verify';
