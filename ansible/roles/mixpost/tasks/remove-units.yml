@@ -1,0 +1,15 @@
+---
+# Remove App hook, run on a native guest before the services stop. Native Mixpost runs as
+# a Horizon worker and a scheduler behind nginx, with a guest-private Redis
+# (defaults/main.yml mixpost_native_restore_services); no unit is named for the instance.
+# Remove tolerates the PHP-FPM unit of the release this guest does not run. Deploy starts
+# and enables every one of them again.
+- name: Mixpost remove | Stop the application services
+  ansible.builtin.set_fact:
+    _rm_service_names:
+      - "{{ instance }}-horizon"
+      - "{{ instance }}-scheduler"
+      - nginx
+      - php8.2-fpm
+      - php8.3-fpm
+      - redis-server

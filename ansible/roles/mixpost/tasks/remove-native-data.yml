@@ -1,0 +1,14 @@
+---
+# Remove App hook, run on a native guest after the services stop. Laravel's file cache
+# (cached settings) lives in the release tree under /opt/<instance>/src, not in data_path,
+# and the guest-private Redis holds the queue; delete_data removes both so a fresh Deploy
+# starts empty. Remove deletes data_path itself; Deploy rebuilds the release.
+- name: Mixpost remove | Delete the project directory and Redis data
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/opt/{{ instance }}"
+    - /var/lib/redis/dump.rdb
+    - /var/lib/redis/appendonlydir
+  when: _rm_delete_data | bool
