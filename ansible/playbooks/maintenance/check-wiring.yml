@@ -63,13 +63,18 @@
       vars:
         resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
 
+    - name: Name the instance's FQDN
+      ansible.builtin.set_fact:
+        _cw_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{
+             homelabinfra_infra.domain | default('invalid') }}
+
     - name: Count the instance's wiring objects
       ansible.builtin.include_tasks: ../../tasks/maintenance/count-wiring.yml
       vars:
         wiring_app_name: "{{ instance }}"
-        wiring_domain: >-
-          {{ app_config.routing.subdomain | default(instance, true) }}.{{
-             homelabinfra_infra.domain | default('invalid') }}
+        wiring_removed: "{{ expect == 'absent' }}"
+        wiring_domain: "{{ _cw_fqdn }}"
 
     - name: Decide what Deploy wires
       ansible.builtin.set_fact:
@@ -97,7 +102,9 @@
       ansible.builtin.debug:
         msg: >-
           WIRING {{ instance }} method={{ _hosting_combination }}
-          backup={{ (app_config.backup | default({})).enabled | default(false) | bool }} expect={{ expect }}
+          backup={{ (app_config.backup | default({})).enabled | default(false) | bool }}
+          url={{ ('https://' ~ _cw_fqdn) if 'route' in _cw_wired and _cw_proxy != 'none' else '-' }}
+          expect={{ expect }}
           {% for kind in _cw_counts | sort %}{{ kind }}={{ _cw_counts[kind] }}/{{
           _cw_expected[kind] }} {% endfor %}
 

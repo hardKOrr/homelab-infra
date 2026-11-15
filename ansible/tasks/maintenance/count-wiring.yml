@@ -6,6 +6,8 @@
 #   wiring_app_name   the instance; the route id, monitor name and Authentik slug
 #   wiring_domain     the instance's FQDN; the DNS record and route host
 #   homelabinfra_infra with the estate overlay and secrets (tasks/load-user-vars.yml)
+#   wiring_removed    true after Remove: a provider this instance is itself (its registry
+#                     entry names it) went with it, so its objects count 0 unqueried
 #
 # Result: _cw_counts {route, dns, monitor, sso_application, sso_provider}: how many
 # objects each provider holds for this instance, or -1 when the provider is configured
@@ -19,10 +21,21 @@
 - name: Count wiring | Start from zero
   ansible.builtin.set_fact:
     _cw_counts: {route: 0, dns: 0, monitor: 0, sso_application: 0, sso_provider: 0}
-    _cw_proxy: "{{ (homelabinfra_infra.reverse_proxy | default({})).provider | default('none') }}"
-    _cw_dns: "{{ (homelabinfra_infra.dns | default({})).provider | default('none') }}"
-    _cw_monitor: "{{ (homelabinfra_infra.monitoring | default({})).provider | default('none') }}"
-    _cw_sso: "{{ (homelabinfra_infra.sso | default({})).provider | default('none') }}"
+    _cw_proxy: "{{ 'none' if 'reverse_proxy' in _cw_gone else _cw_entries.reverse_proxy.provider | default('none') }}"
+    _cw_dns: "{{ 'none' if 'dns' in _cw_gone else _cw_entries.dns.provider | default('none') }}"
+    _cw_monitor: "{{ 'none' if 'monitoring' in _cw_gone else _cw_entries.monitoring.provider | default('none') }}"
+    _cw_sso: "{{ 'none' if 'sso' in _cw_gone else _cw_entries.sso.provider | default('none') }}"
+  vars:
+    _cw_entries:
+      reverse_proxy: "{{ homelabinfra_infra.reverse_proxy | default({}) }}"
+      dns: "{{ homelabinfra_infra.dns | default({}) }}"
+      monitoring: "{{ homelabinfra_infra.monitoring | default({}) }}"
+      sso: "{{ homelabinfra_infra.sso | default({}) }}"
+    _cw_gone: >-
+      {{ (_cw_entries | dict2items | selectattr('value.instance', 'defined')
+          | selectattr('value.instance', 'equalto', wiring_app_name)
+          | map(attribute='key') | list)
+         if wiring_removed | default(false) | bool else [] }}
 
 - name: Count wiring | Unsupported providers count as unknown
   ansible.builtin.set_fact:

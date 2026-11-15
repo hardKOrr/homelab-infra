@@ -17,13 +17,13 @@ Options:
 The steps are the procedure in ansible/playbooks/maintenance/recovery-drill.md, through
 $HOMELAB_LAB_DIR/runner-lab-run.sh: Deploy, canary create, repeat Deploy, Backup, Remove
 with delete_data=true, fresh Deploy, canary absent, pre-restore Backup, Restore preview,
-Restore, canary verify, final Deploy, canary verify again. An app with backups disabled runs the stateless
-variant: Deploy twice, Remove, fresh Deploy, final Deploy. An app with backups enabled but
-no recovery.methods is refused. After each Deploy and
-the Restore the URL must answer over HTTPS, and after each Deploy and the Remove
+Restore, canary verify, final Deploy, canary verify again. An app with backups disabled
+runs the stateless variant: Deploy twice, Remove, fresh Deploy, final Deploy. An app with
+backups enabled but no recovery.methods is refused. After each Deploy and the Remove,
 playbooks/maintenance/check-wiring.yml requires the route, DNS record, monitor and SSO
-entry exactly once, or not at all. Running it authorizes Remove with
-delete_data=true and overwrite Restore on this instance only.
+entry exactly once, or not at all. After each Deploy and the Restore the URL (the
+monitor's, else the route's that check-wiring reports) must answer over HTTPS. Running
+it authorizes Remove with delete_data=true and overwrite Restore on this instance only.
 
 The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
 (modes create, fresh, verify), else a task hook roles/<role>/tasks/drill-canary.yml or a
@@ -192,8 +192,8 @@ class Drill:
                 self.url = url
         if repeat and changed:
             self.repeat_changes.append(f"{name}:{changed}")
-        self.https(name)
         self.wiring(name, "present")
+        self.https(name)
 
     def wiring(self, after, expect):
         """The instance's route, DNS record, monitor and SSO entry: once each, or none."""
@@ -201,6 +201,9 @@ class Drill:
                                 expect=expect)
         method = re.search(r"WIRING \S+ method=(\S+)", text)
         backups = re.search(r"\bbackup=(True|False)\b", text)
+        url = re.search(r"\burl=(https://\S+)", text)
+        if url and not self.url:
+            self.url = url.group(1)
         if backups and self.backups is None:
             self.backups = backups.group(1) == "True"
         if method and not self.method:
