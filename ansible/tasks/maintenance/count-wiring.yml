@@ -132,7 +132,12 @@
              | regex_replace('^42', '') | from_json | last).values() | list
             | selectattr('name', 'defined')
             | selectattr('name', 'equalto', wiring_app_name) | list | length)
-           if kuma_session_ready | default(false) | bool else -1}) }}
+           if kuma_session_ready | default(false) | bool and _cw_listed | bool else -1}) }}
+  vars:
+    # Signed in is not answered: without a monitorList frame the count is unknown.
+    _cw_listed: >-
+      {{ (kuma_call_ok | default(false) | bool)
+         and (kuma_session_frames | default([]) | select('match', '42\\["monitorList",') | list | length > 0) }}
   when: _cw_monitor == 'uptime_kuma'
 
 - name: Count wiring | Read Authentik

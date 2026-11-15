@@ -116,18 +116,24 @@
             mode: "0644"
           when: drill_action == 'create'
 
-        - name: Read the marker
-          ansible.builtin.slurp:
-            src: "{{ _dc_file }}"
-          register: _dc_read
-          failed_when: false
+        # Existence first, so a marker that cannot be read is an error, not an absence.
+        - name: Look for the marker
+          ansible.builtin.stat:
+            path: "{{ _dc_file }}"
+          register: _dc_stat
           when: drill_action != 'create'
 
         - name: Require the marker absent on a fresh instance
           ansible.builtin.assert:
-            that: _dc_read.content is not defined
+            that: not _dc_stat.stat.exists
             fail_msg: "{{ _dc_file }} exists on a fresh {{ instance }}: data survived Remove."
           when: drill_action == 'fresh'
+
+        - name: Read the marker
+          ansible.builtin.slurp:
+            src: "{{ _dc_file }}"
+          register: _dc_read
+          when: drill_action == 'verify' and _dc_stat.stat.isreg | default(false)
 
         - name: Require the restored marker
           ansible.builtin.assert:
