@@ -55,6 +55,9 @@ applications:
     root: Platform
     category: Access and Identity
     scope: lab                          # the platform's single TLS edge fronts every estate
+    # Its application archive exists only on Kubernetes; a native or Docker Caddy
+    # refuses Backup/Restore App in one sentence and recovers through the guest jobs.
+    extra: [backup, restore]
     essential: true
 
   postgresql:
@@ -64,6 +67,7 @@ applications:
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
+    extra: [backup, restore]
 
   mysql:
     name: MySQL
@@ -72,6 +76,7 @@ applications:
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
+    extra: [backup, restore]
 
   influxdb:
     name: InfluxDB
@@ -80,6 +85,7 @@ applications:
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
+    extra: [backup, restore]
 
   redis:
     name: Redis
@@ -87,6 +93,7 @@ applications:
     root: Platform
     category: Data Services
     scope: lab
+    extra: [backup, restore]
   opnsense:
     name: OPNsense
     job: deploy-opnsense.yaml
@@ -99,7 +106,7 @@ applications:
     root: Platform
     category: Network
     scope: lab
-    actions: [configure, restart, tail, wireguard_remove]
+    actions: [backup, configure, restart, restore, tail, wireguard_remove]
 
   bazarr:
     name: Bazarr
@@ -126,6 +133,7 @@ applications:
     category: Media & Entertainment
     type: Media Servers
     scope: estate
+    extra: [backup, restore]
 
   emby:
     name: Emby
@@ -275,6 +283,7 @@ applications:
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one notification hub for the whole lab
+    extra: [backup, restore]
 
   observability:
     name: Observability
@@ -346,6 +355,7 @@ applications:
     category: Media & Entertainment
     type: Download Clients
     scope: estate
+    extra: [backup, restore]
 
   sonarr:
     name: Sonarr
@@ -362,6 +372,7 @@ applications:
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one status view of the whole lab
+    extra: [backup, restore]
 
   vaultwarden:
     name: Vaultwarden
@@ -369,6 +380,7 @@ applications:
     root: Platform
     category: Access and Identity
     scope: lab                          # one vault is the platform's root of trust
+    extra: [backup, restore]
     essential: true
 
   mariadb:
@@ -377,6 +389,7 @@ applications:
     root: Platform
     category: Data Services
     scope: lab
+    extra: [backup, restore]
 
   odoo:
     name: Odoo Community CRM
@@ -505,6 +518,7 @@ applications:
     category: Media & Entertainment
     type: Video Surveillance
     scope: estate
+    extra: [backup, restore]
     # Recordings live on an external retention-sized mount; its dedicated GPU VM owns
     # the iGPU and Coral, so this is not a shared media-stack tenant.
 

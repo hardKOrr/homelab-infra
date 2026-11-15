@@ -66,6 +66,19 @@ def check_jobs_and_instances(work):
         assert routing.get(
             "subdomain"
         ), f"app-defaults/{slug}.yml declares no routing.subdomain, so its hostname would follow the instance name"
+    # An app that declares recovery.methods has Backup App and Restore App behind it, so
+    # its folder must offer both; drills run Ansible directly and never notice a gap.
+    actions = render_job.load_actions()
+    missing = sorted(
+        slug
+        for slug, app in render_job.load_applications().items()
+        if (render_job.app_defaults_of(slug).get("recovery") or {}).get("methods")
+        and not {"backup", "restore"} <= set(render_job.actions_for(app, actions))
+    )
+    assert not missing, (
+        f"declare recovery.methods but render no Backup/Restore job: {missing}; "
+        "add `extra: [backup, restore]` in catalog/applications.yml"
+    )
     catalog_text = (repo / "catalog" / "applications.yml").read_text(encoding="utf-8")
     try:
         render_job.load_document
