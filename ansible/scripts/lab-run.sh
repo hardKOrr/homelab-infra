@@ -8,8 +8,8 @@
 #   1. resolves the checkout, the ansible venv and the tracked branch from
 #      /etc/homelab-infra/lab-run.env (written by rundeck/bootstrap-rundeck.sh),
 #      from the environment, or from its own location
-#   2. optionally refreshes the checkout to origin/<branch>; ordinary runs use
-#      the checkout as it stands and echo its resolved commit
+#   2. echoes the checkout's commit; it runs the checkout as it stands and never
+#      changes it (Reimport Jobs is the one path that moves the runner checkout)
 #   3. enforces Seed/Vault mode and unlocks Vaultwarden before mutation
 #   4. runs config-doctor.sh — a missing key fails here, at the front door,
 #      instead of as a stack trace mid-provision
@@ -17,7 +17,7 @@
 #      PROXMOX_API_* environment the community.proxmox dynamic inventory reads
 #
 # Job files therefore carry a playbook name and its arguments and nothing else.
-# Path and refresh policy live here, in one file: the lesson of commit 059316a,
+# Path policy lives here, in one file: the lesson of commit 059316a,
 # where one wrapper bug failed all 15 jobs identically and one wrapper fix
 # repaired them all.
 #
@@ -25,9 +25,6 @@
 #   LAB_REPO       path to the checkout            (default: this script's repo root)
 #   LAB_VENV       ansible venv root               (default: /opt/homelab-ansible)
 #   LAB_BRANCH     branch to track                 (default: master)
-#   LAB_REFRESH    1 opts this run into a git refresh; defaults to 0 everywhere.
-#                  Values in lab-run.env are ignored so a stored setting cannot make
-#                  ordinary jobs refresh the shared checkout. Refresh refuses tracked edits.
 #   LAB_DOCTOR     0 disables the config check     (default: 1)
 #   LAB_LOG_BRIEF  1 prints only what a reader who pays per line needs (an LLM agent):
 #                  no colour codes, no routine progress lines, no TLS warning, a one-line
@@ -64,7 +61,7 @@ die() { printf '\033[1;31m[lab-run] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 [ "$#" -ge 1 ] || die "usage: lab-run <playbook> [ansible-playbook args...]"
 
 # Bootstrap installs lab-run as a symlink. Resolve the running source before
-# loading helpers, including Seed runs with refresh/re-exec disabled.
+# loading helpers.
 _lab_source="$(readlink -f -- "${BASH_SOURCE[0]}")"
 _self_repo="$(cd -- "$(dirname -- "$_lab_source")/../.." && pwd -P)"
 
@@ -88,8 +85,7 @@ if [ -r "$LAB_ENV_FILE" ]; then
   # private or staging CA — trusts what the operator declared. bootstrap reaches here
   # through sudo, which drops the caller's environment, so the file is the only source.
   # The helper validates each path and shell-quotes its value, so eval sees one literal
-  # assignment per line. An unusable setting only warns: this runs above the refresh,
-  # where a fatal check could never be repaired by pushing a fix (see below).
+  # assignment per line. An unusable setting only warns and the run continues.
   _lab_tls_env="$(python3 "$_self_repo/rundeck/preserve-tls-env.py" "$LAB_ENV_FILE")" \
     || { log "WARNING: ignoring unusable CA settings in $LAB_ENV_FILE"; _lab_tls_env=""; }
   while IFS= read -r _line; do
@@ -144,14 +140,6 @@ LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
 BW_SERVER="${BW_SERVER:-}"
 export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR LAB_BRANCH
-# THE REFRESH DEFAULTS TO OFF, INCLUDING ON BOOTSTRAPPED RUNNERS.
-#
-# The refresh is a `git reset --hard`, which destroys uncommitted work in whatever
-# checkout it is pointed at. Ordinary jobs therefore use the checkout as it stands.
-# `LAB_REFRESH=1` must be supplied by the caller for an explicit one-off update. Do not
-# read it from lab-run.env: legacy files may still contain `=1`, and are ignored.
-#
-LAB_REFRESH="${LAB_REFRESH:-0}"
 
 [ -d "$LAB_REPO/ansible" ] || die "no ansible/ under LAB_REPO=$LAB_REPO"
 
@@ -160,40 +148,6 @@ ANSIBLE_PLAYBOOK="$LAB_VENV/bin/ansible-playbook"
   ANSIBLE_PLAYBOOK="$(command -v ansible-playbook || true)"
   [ -n "$ANSIBLE_PLAYBOOK" ] || die "ansible-playbook not found in $LAB_VENV/bin or on PATH"
 }
-
-# ── Refresh the checkout ──────────────────────────────────────────────────────
-# An explicit refresh updates the shared runner checkout to origin/<branch>. A push by
-# itself never changes files under a running job because ordinary runs skip this block.
-# config/ is gitignored and untracked, so `reset --hard` cannot touch proxmox.yml,
-# infrastructure.yml, .generated/facts.yml, apps/*.yml or .backups/ — the checkout is
-# git plus local config, and that invariant is what makes the reset safe.
-#
-# LAB_REFRESHED guards the re-exec below: this script is itself part of the tree it
-# just replaced, so it restarts from the refreshed copy before doing any real work.
-if [ "$LAB_REFRESH" = "1" ] && [ -z "${LAB_REFRESHED:-}" ]; then
-  if [ -d "$LAB_REPO/.git" ]; then
-    # Second, independent safety net: never discard tracked changes someone is holding.
-    # A bootstrapped runner never has any — its checkout is only ever written by git — so
-    # this costs nothing there and refuses loudly anywhere it would destroy work.
-    if [ -n "$(git -C "$LAB_REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
-      git -C "$LAB_REPO" status --short --untracked-files=no >&2
-      die "$LAB_REPO has uncommitted tracked changes and the refresh would discard them.
-       Commit or stash them, or run with LAB_REFRESH=0 to use the tree as it stands."
-    fi
-    log "refreshing $LAB_REPO to origin/$LAB_BRANCH"
-    git config --global --add safe.directory "$LAB_REPO" 2>/dev/null || true
-    git -C "$LAB_REPO" fetch --quiet --prune origin "$LAB_BRANCH" \
-      || die "git fetch failed — set LAB_REFRESH=0 to run the on-disk checkout unchanged"
-    git -C "$LAB_REPO" checkout --quiet -B "$LAB_BRANCH" "origin/$LAB_BRANCH"
-    git -C "$LAB_REPO" reset --hard --quiet "origin/$LAB_BRANCH"
-    export LAB_REFRESHED=1 LAB_REPO LAB_VENV LAB_BRANCH LAB_REFRESH LAB_DOCTOR BW_SERVER RUNDECK_URL RUNDECK_PROJECT
-    export LAB_SSH_KEY="${LAB_SSH_KEY:-}"
-    exec bash "$LAB_REPO/ansible/scripts/lab-run.sh" "$@"
-  fi
-  log "LAB_REPO is not a git checkout — skipping refresh"
-elif [ "$LAB_REFRESH" != "1" ]; then
-  log_detail "refresh off — running $LAB_REPO as it stands"
-fi
 
 if [ -d "$LAB_REPO/.git" ]; then
   # Exported as well as logged: ansible/callback_plugins/homelab.py prints it in the
@@ -218,14 +172,6 @@ elif [ -z "${ANSIBLE_FORCE_COLOR:-}" ] && [ -z "${NO_COLOR:-}" ] && [ -z "${ANSI
   export ANSIBLE_FORCE_COLOR=1
 fi
 
-# EVERY FATAL CHECK BELONGS BELOW THE REFRESH, NEVER ABOVE IT.
-#
-# The refresh re-execs this script from the tree it just reset, so anything above it
-# runs from the copy the runner already had. A check that exits above the refresh can
-# never be repaired by pushing a commit — the runner dies before it fetches the fix,
-# and the only way out is editing the checkout by hand on the runner. That is exactly
-# how the Vault-mode key check below stranded the first job after cutover.
-#
 # In Vault mode the runner key is deliberately absent from disk: cutover removes it
 # once the canonical item verifies, and the Vaultwarden preflight writes it into the
 # session temp directory on every run. An unreadable path is therefore the expected

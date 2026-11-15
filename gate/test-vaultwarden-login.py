@@ -104,7 +104,6 @@ def check_lab_run(work: Path) -> None:
         "LAB_REPO": str(lab_repo),
         "LAB_VENV": str(venv),
         "LAB_STATE_DIR": str(state),
-        "LAB_REFRESH": "0",
         "BW_SERVER": "https://127.0.0.1:9",
         "BW_CLIENTID": "from-the-job",
         "ANSIBLE_VAULT_PASSWORD_FILE": str(password),
@@ -156,7 +155,6 @@ def check_login_rate_limit(work: Path) -> None:
         "LAB_REPO": str(lab_repo),
         "LAB_VENV": str(Path(sys.executable).parent.parent),
         "LAB_STATE_DIR": str(state),
-        "LAB_REFRESH": "0",
         "LAB_VAULT_LOGIN_RETRY_DELAY": "0",
         "BW_SERVER": "https://127.0.0.1:9",
     } | LOGIN
@@ -245,7 +243,6 @@ def check_edge_copy(work: Path) -> None:
         "LAB_REPO": str(lab_repo),
         "LAB_VENV": str(venv),
         "LAB_STATE_DIR": str(state),
-        "LAB_REFRESH": "0",
         "LAB_DOCTOR": "0",
         "BW_SERVER": "https://127.0.0.1:9",
     }

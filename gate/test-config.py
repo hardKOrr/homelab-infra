@@ -291,7 +291,7 @@ def configuration_layers_and_estates():
         homelabinfra_config=user_vars_override,
     )
     check(
-        "the highest-precedence layer (user_vars_file/env) wins over config/proxmox.yml",
+        "homelabinfra_config from an earlier play wins over config/proxmox.yml",
         result_override["proxmox"]["node"],
         "pve-override",
     )

@@ -8,9 +8,8 @@ playbooks; they do not define Ansible behavior.
 
 A Rundeck job calls `lab-run`, the installed entry point for
 `ansible/scripts/lab-run.sh`. The wrapper reads its runner environment from
-`/etc/homelab-infra/lab-run.env` (or `LAB_ENV_FILE`). With `LAB_REFRESH=1`, it
-refreshes the checkout to `origin/$LAB_BRANCH` and re-executes the refreshed wrapper;
-refresh defaults off for every caller, including a bootstrapped runner. `LAB_DOCTOR`
+`/etc/homelab-infra/lab-run.env` (or `LAB_ENV_FILE`) and runs the checkout as it stands;
+only Reimport Jobs moves the runner checkout. `LAB_DOCTOR`
 defaults to `1`, validating configuration before the selected playbook runs; set it to
 `0` to disable that check. The playbook orchestrates reusable roles and task files.
 
@@ -77,7 +76,7 @@ sudo -u rundeck -H bash -c '
   git -C "$1" log --oneline -1' _ "$c" <branch>
 
 IFS= read -r LAB_VAULT_PASSWORD; export LAB_VAULT_PASSWORD
-sudo -u rundeck -H --preserve-env=LAB_VAULT_PASSWORD env LAB_REPO="$c" LAB_REFRESH=0 \
+sudo -u rundeck -H --preserve-env=LAB_VAULT_PASSWORD env LAB_REPO="$c" \
   bash "$c/ansible/scripts/lab-run.sh" playbooks/apps/<app>.yml -e instance=<instance>
 ```
 
@@ -122,8 +121,8 @@ Sizing and placement apply at creation; other tenants stay on their existing sta
 ## Live operations
 
 Live runs may overlap; there is no lab lock. Ordinary runs use the on-disk checkout, so a
-push does not change files under a running job. `LAB_REFRESH=1` is an explicit shared
-checkout update; the Reimport Jobs path also refreshes before importing job definitions.
+push does not change files under a running job; Reimport Jobs refreshes the checkout
+before importing job definitions.
 The [recovery drill and application data port](playbooks/maintenance/recovery-drill.md)
 are the live procedures for one instance; moving PBS with its datastore is in
 [`roles/pbs/README.md`](roles/pbs/README.md#moving-pbs-to-another-node-with-its-datastore).
