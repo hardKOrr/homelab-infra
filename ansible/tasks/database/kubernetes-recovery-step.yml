@@ -20,13 +20,18 @@
 #                                             every schema or database and the grants or
 #                                             roles, `<engine>.sql`; PostgreSQL is
 #                                             `postgresql.sql`, one pg_dumpall script; Redis is
-#                                             `redis.rdb` beside `redis.acl`, its ACL users)
+#                                             `redis.rdb` beside `redis.acl`, its ACL users;
+#                                             InfluxDB is `influxdb.tar`, an `influx backup`)
 #   k8s_database_step_config     the merged config of the instance whose database this is
 #   k8s_database_step_instance   that instance's name (namespace-mysql: its pod is
 #                                `<instance>-db`)
 #   k8s_database_step_root_password  namespace-mysql and namespace-server: that
 #                                server's root password (the server step reads the
-#                                image, Service port and root hosts from the config's `app`)
+#                                image, Service port and root hosts from the config's `app`);
+#                                InfluxDB: its operator token
+#   k8s_database_step_restored_password  optional, InfluxDB: the operator token the loaded
+#                                point carries, which replaces the target's and which the
+#                                step's final inspection then uses
 #
 # Sets k8s_database_step:
 #   image        the client image, matched to the server
@@ -131,6 +136,7 @@
           {{ 'mariadb' if 'mariadb' in _kds_image
              else 'postgresql' if _kds_image is match('^(docker.io/library/)?postgres:')
              else 'redis' if _kds_image is match('^(docker.io/library/)?redis:')
+             else 'influxdb' if _kds_image is match('^(docker.io/library/)?influxdb:')
              else 'mysql' }}
       ansible.builtin.set_fact:
         _kds:
@@ -139,13 +145,13 @@
           host: "{{ k8s_database_step_instance }}"
           port: "{{ k8s_database_step_config.app.port | default(3306) | string }}"
           name: ""
-          user: "{{ {'postgresql': 'postgres', 'redis': 'default'}.get(_kds_engine, 'root') }}"
+          user: "{{ {'postgresql': 'postgres', 'redis': 'default', 'influxdb': 'operator'}.get(_kds_engine, 'root') }}"
           password: "{{ k8s_database_step_root_password }}"
           root_hosts: "{{ k8s_database_step_config.kubernetes.root_host | default('10.42.%') }}"
           describe: >-
-            the whole {{ {'mariadb': 'MariaDB', 'mysql': 'MySQL', 'postgresql': 'PostgreSQL', 'redis': 'Redis'}[_kds_engine] }}
+            the whole {{ {'mariadb': 'MariaDB', 'mysql': 'MySQL', 'postgresql': 'PostgreSQL', 'redis': 'Redis', 'influxdb': 'InfluxDB'}[_kds_engine] }}
             server {{ k8s_database_step_instance }}
-            ({{ {'postgresql': 'every database and role', 'redis': 'every key and ACL user'}.get(_kds_engine, 'every schema and grant') }})
+            ({{ {'postgresql': 'every database and role', 'redis': 'every key and ACL user', 'influxdb': 'every bucket, user and token'}.get(_kds_engine, 'every schema and grant') }})
       no_log: true
 
 - name: Database recovery step | Require the database login
@@ -164,22 +170,28 @@
     k8s_database_step:
       image: "{{ _kds.image }}"
       # DB_ROOT_HOSTS is MariaDB/MySQL's root account host list; PostgreSQL's access list is
-      # its pg_hba.conf and Redis has no account hosts.
+      # its pg_hba.conf; Redis and InfluxDB have no account hosts.
       env: >-
         {{ {'DB_ENGINE': _kds.engine, 'DB_HOST': _kds.host, 'DB_PORT': _kds.port, 'DB_USER': _kds.user}
-           | combine({} if _kds.engine in ['postgresql', 'redis'] else {'DB_ROOT_HOSTS': _kds.root_hosts}) }}
-      secret_env:
-        DB_PASSWORD: db-password
+           | combine({} if _kds.engine in ['postgresql', 'redis', 'influxdb'] else {'DB_ROOT_HOSTS': _kds.root_hosts}) }}
+      secret_env: >-
+        {{ {'DB_PASSWORD': 'db-password'}
+           | combine({'DB_RESTORED_PASSWORD': 'restored-password'}
+                     if k8s_database_step_restored_password | default('') | length > 0 else {}) }}
       secret_files:
         - key: database-client.sh
           path: database-client.sh
-      secret_data:
-        db-password: "{{ _kds.password }}"
-        database-client.sh: "{{ lookup('ansible.builtin.file', 'scripts/database-client.sh') }}"
+      secret_data: >-
+        {{ {'db-password': _kds.password,
+            'database-client.sh': lookup('ansible.builtin.file', 'scripts/database-client.sh')}
+           | combine({'restored-password': k8s_database_step_restored_password}
+                     if k8s_database_step_restored_password | default('') | length > 0 else {}) }}
       describe: "{{ _kds.describe }}"
-      dump: sh /etc/recovery-credentials/database-client.sh server-dump "${DUMP_DIR}/{{ _kds.engine }}.{{ 'rdb' if _kds.engine == 'redis' else 'sql' }}"
+      dump: >-
+        sh /etc/recovery-credentials/database-client.sh server-dump
+        "${DUMP_DIR}/{{ _kds.engine }}.{{ {'redis': 'rdb', 'influxdb': 'tar'}.get(_kds.engine, 'sql') }}"
       load: |
-        set -- "${DUMP_DIR}"/{{ _kds.engine }}.{{ 'rdb' if _kds.engine == 'redis' else 'sql' }}
+        set -- "${DUMP_DIR}"/{{ _kds.engine }}.{{ {'redis': 'rdb', 'influxdb': 'tar'}.get(_kds.engine, 'sql') }}
         if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
           echo "expected one {{ _kds.engine }} server dump in the recovery point, found: $*"
           exit 1

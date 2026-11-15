@@ -171,7 +171,8 @@ from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
 loop_var = load("ansible/tasks/database/open-consumer-access.yml")[0]["block"][1]["loop_control"]["loop_var"]
-templar = Templar(loader=DataLoader(), variables={loop_var: "bookstack", "instance": "mysql-test"})
+templar = Templar(loader=DataLoader(), variables={loop_var: "bookstack", "instance": "mysql-test",
+                                               "_sql_consumer_k8s": False})
 for task in load("ansible/tasks/database/open-one-consumer-access.yml"):
     values = [task["name"], *task.get("vars", {}).values()]
     values = [v for v in values if "_consumer_guest" not in str(v) and "database_consumer_provider" not in str(v)]

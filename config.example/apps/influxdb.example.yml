@@ -30,6 +30,17 @@
 #     storage_cache_max_memory_size_mib: 128
 #     storage_cache_snapshot_memory_size_mib: 4
 
+# Kubernetes instead: one Deployment on the k3s cluster, its data on a default-StorageClass
+# volume of app.storage Gi. app.port is the LoadBalancer port on the cluster's ingress
+# address, so a second InfluxDB on one cluster needs a different port. Deploy opens that
+# port on the firewall for each registered consumer (`influxdb_host` and `influxdb_port` in
+# the consumer's item). Caddy, DNS and the monitor are wired as on the other methods.
+# hosting:
+#   method: kubernetes
+# app:
+#   port: 8086
+#   storage: 8
+
 # The native UI is served at https://influxdb.<lab-domain> through an internal
 # Caddy route. InfluxDB keeps its own login; Authentik provides a catalog tile.
 # routing:

@@ -284,14 +284,14 @@
           - "instance={{ hostvars['localhost']._ra_target }}"
           - -e
           - recovery_isolated=false
-          # LiteLLM's restore task applies the archived routing ConfigMap. This flag
-          # tells its final convergence to preserve that restored artifact rather than
-          # replacing it with the target's pre-restore declarative config. Other roles
-          # ignore the app-specific recovery hint.
+          # Preserve LiteLLM's restored routing ConfigMap during final convergence.
           - -e
           - recovery_restore_config=true
       environment:
         ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
+        # Pass credentials refreshed by provisioning/restore, not the startup snapshot.
+        HOMELABINFRA_VAULT_JSON: "{{ homelabinfra_vault | to_json }}"
+      no_log: true
       changed_when: true
       when:
         - hostvars['localhost'].recovery_destination_resolved == 'new'

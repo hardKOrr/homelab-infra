@@ -9,4 +9,5 @@
     - ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
         app: influxdb
+        resolve_app_target_kinds: [native, docker, kubernetes]
     - ansible.builtin.include_tasks: ../../roles/influxdb/tasks/canary.yml

@@ -8,6 +8,8 @@ import subprocess
 import sys
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
 from remove_plan import load_playbook
 
 
@@ -72,6 +74,14 @@ def main():
     assert reconcile_task["ansible.builtin.command"]["argv"][0] == (
         "{{ ansible_playbook_python | dirname }}/ansible-playbook"
     )
+    # Restore hooks replace credentials after lab-run captures its startup snapshot.
+    live_vault = {"apps": {"restored-target": {"token": "restored-fixture-token"}}}
+    templar = Templar(loader=DataLoader(), variables={"homelabinfra_vault": live_vault})
+    child_snapshot = templar.template(
+        reconcile_task["environment"]["HOMELABINFRA_VAULT_JSON"]
+    )
+    assert json.loads(child_snapshot) == live_vault
+    assert reconcile_task["no_log"] is True
     print("Vault runtime stdin input checks passed")
 
 

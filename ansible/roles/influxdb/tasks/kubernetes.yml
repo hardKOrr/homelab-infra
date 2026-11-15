@@ -1,0 +1,178 @@
+---
+# InfluxDB as one Deployment on the k3s cluster (hosting.method: kubernetes; main.yml is the
+# guest methods). Runs on localhost, like every Kubernetes app role: the shared adapter
+# tasks delegate kubectl to a cluster node.
+#
+# Applications, Caddy and the recovery Jobs reach the HTTP API on the ingress address at
+# app.port. The recovery point is `influx backup` of the whole server (metadata and every
+# bucket), taken and loaded by the shared database step
+# (tasks/database/kubernetes-recovery-step.yml, namespace-server) over the network.
+#
+# Inputs: instance, app_config (merged, with the instance's Vaultwarden item on app).
+- name: InfluxDB Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: InfluxDB Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Two backends cannot answer on one address and port; MetalLB would leave the second
+# Service without an address while the pod runs.
+- name: InfluxDB Kubernetes | Read every LoadBalancer Service in the cluster
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, services, --all-namespaces, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _influxdb_services
+  changed_when: false
+
+- name: InfluxDB Kubernetes | Refuse an address and port another Service holds
+  ansible.builtin.assert:
+    that: _influxdb_port_holders | length == 0
+    fail_msg: >-
+      Service {{ _influxdb_port_holders | first | default('') }} already answers on the
+      cluster's ingress address at port {{ app_config.app.port }}. Give {{ instance }} its
+      own app.port.
+  vars:
+    _influxdb_port_holders: >-
+      {%- set held = [] -%}
+      {%- set services = (_influxdb_services.stdout | from_json)['items'] -%}
+      {%- for svc in services -%}
+      {%-   if svc.spec.type == 'LoadBalancer' and svc.metadata.namespace != k8s_namespace
+              and (app_config.app.port | string) in (svc.spec.ports | map(attribute='port') | map('string') | list)
+              and svc.metadata.get('annotations', {}).get('metallb.io/loadBalancerIPs', '')
+                  == homelabinfra_infra.kubernetes.ingress_vip -%}
+      {%-     set _ = held.append(svc.metadata.namespace ~ '/' ~ svc.metadata.name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ held | to_json | from_json }}
+
+# The cache is per shard and the pod has no declared size: size it from app.memory or a
+# 2 GiB reference, as a guest of the default size would be.
+- name: InfluxDB Kubernetes | Resolve database memory settings
+  ansible.builtin.set_fact:
+    _database_backend_memory_mib: 2048
+
+- name: InfluxDB Kubernetes | Derive the cache limits
+  ansible.builtin.import_tasks: resolve-memory.yml
+
+# The entrypoint ignores setup values once the metadata store exists, so credentials
+# generated here for a volume that already holds data would never be in use.
+- name: InfluxDB Kubernetes | Look for an existing data volume
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, pvc, "{{ instance }}-data", -n, "{{ k8s_namespace }}", -o, name]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _influxdb_pvc
+  failed_when: false
+  changed_when: false
+
+- name: InfluxDB Kubernetes | Resolve the administrator credentials
+  ansible.builtin.set_fact:
+    _influxdb_admin_password: >-
+      {{ app_config.app.admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _influxdb_operator_token: >-
+      {{ app_config.app.operator_token
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _influxdb_credentials_known: >-
+      {{ app_config.app.admin_password | default('') | length > 0
+         and app_config.app.operator_token | default('') | length > 0 }}
+  no_log: true
+
+- name: InfluxDB Kubernetes | Refuse to replace unavailable existing credentials
+  ansible.builtin.assert:
+    that: _influxdb_credentials_known | bool or _influxdb_pvc.rc != 0
+    fail_msg: >-
+      InfluxDB instance {{ instance }} already has a data volume, but its Vaultwarden
+      credentials are unavailable. Restore homelab-infra/apps/{{ instance }} before
+      re-running; do not rotate an unknown operator token through deployment.
+  no_log: true
+
+# Stored before the manifest is applied, so a generated credential is never in use without
+# being recorded.
+- name: InfluxDB Kubernetes | Store the credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _influxdb_admin_password }}"
+      operator_token: "{{ _influxdb_operator_token }}"
+      organization: "{{ app_config.app.organization }}"
+      bucket: "{{ app_config.app.bucket }}"
+    vault_item_secret_fields: [admin_password, operator_token]
+  no_log: true
+
+- name: InfluxDB Kubernetes | Sync the credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      admin-password: "{{ _influxdb_admin_password }}"
+      operator-token: "{{ _influxdb_operator_token }}"
+  no_log: true
+
+- name: InfluxDB Kubernetes | Fingerprint the setup values, tuning and credentials
+  ansible.builtin.set_fact:
+    _influxdb_config_checksum: >-
+      {{ [app_config.app.image, app_config.app.admin_user, app_config.app.organization,
+          app_config.app.bucket, _influxdb_cache_max_memory_mib,
+          _influxdb_cache_snapshot_memory_mib, _influxdb_admin_password | hash('sha256'),
+          _influxdb_operator_token | hash('sha256')] | to_json | hash('sha256') }}
+  no_log: true
+
+- name: InfluxDB Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _influxdb_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+  no_log: true
+
+- name: InfluxDB Kubernetes | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _influxdb_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+# The pod's own environment holds the token the Secret carries, so the check never puts
+# it on a command line.
+- name: InfluxDB Kubernetes | Verify the stored operator token
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - exec
+      - -n
+      - "{{ k8s_namespace }}"
+      - "deployment/{{ instance }}"
+      - --
+      - sh
+      - -c
+      - influx auth list --host http://127.0.0.1:8086 --token "$DOCKER_INFLUXDB_INIT_ADMIN_TOKEN" > /dev/null
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _influxdb_token_check
+  until: _influxdb_token_check.rc == 0
+  retries: 15
+  delay: 4
+  changed_when: false
+
+- name: InfluxDB Kubernetes | Describe the server's recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+    k8s_database_step_root_password: "{{ _influxdb_operator_token }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: InfluxDB Kubernetes | Schedule the server backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          config_map: "{{ instance }}-config"
+      database: "{{ k8s_database_step | default({}) }}"
+      describe: the whole InfluxDB server (every bucket, user and token) plus its tuning

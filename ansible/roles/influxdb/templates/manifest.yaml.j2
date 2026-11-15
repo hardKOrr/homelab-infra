@@ -1,0 +1,129 @@
+{# One InfluxDB backend: its tuning, one data volume, one Deployment, one LoadBalancer. #}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels | trim | indent(4, true) }}
+data:
+  INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE: "{{ _influxdb_cache_max_memory_mib | int * 1024 * 1024 }}"
+  INFLUXD_STORAGE_CACHE_SNAPSHOT_MEMORY_SIZE: "{{ _influxdb_cache_snapshot_memory_mib | int * 1024 * 1024 }}"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-data
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: the old pod must release it first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+  template:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+        app.kubernetes.io/component: server
+      annotations:
+        # The server reads its tuning and the initial setup values once, at start.
+        homelab-infra.io/config-checksum: "{{ _influxdb_config_checksum }}"
+    spec:
+      initContainers:
+        # The image's entrypoint refuses a data directory that is not 0700 and its own.
+        - name: data-owner
+          image: "{{ app_config.app.image }}"
+          command: [/bin/sh, -c, "chown 1000:1000 /var/lib/influxdb2 && chmod 0700 /var/lib/influxdb2"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/influxdb2
+      containers:
+        - name: influxdb
+          image: "{{ app_config.app.image }}"
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          envFrom:
+            - configMapRef:
+                name: {{ instance }}-config
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+            - name: INFLUXD_HTTP_BIND_ADDRESS
+              value: ":8086"
+            # First start only: the entrypoint runs the initial setup, and skips it once
+            # the metadata store exists (a restore or an earlier deploy).
+            - name: DOCKER_INFLUXDB_INIT_MODE
+              value: setup
+            - name: DOCKER_INFLUXDB_INIT_USERNAME
+              value: "{{ app_config.app.admin_user }}"
+            - name: DOCKER_INFLUXDB_INIT_ORG
+              value: "{{ app_config.app.organization }}"
+            - name: DOCKER_INFLUXDB_INIT_BUCKET
+              value: "{{ app_config.app.bucket }}"
+            - name: DOCKER_INFLUXDB_INIT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: admin-password }
+            - name: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: operator-token }
+          ports:
+            - containerPort: 8086
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/influxdb2
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8086
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+  annotations:
+    # The ingress address, shared with Traefik: Caddy and consumers reach the HTTP API
+    # on app.port, not through an ingress route.
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    # Recovery Jobs share the instance label but do not serve connections.
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: 8086

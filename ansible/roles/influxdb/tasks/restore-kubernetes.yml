@@ -1,0 +1,76 @@
+---
+# Restore the whole InfluxDB server (metadata and every bucket) from one PBS recovery point
+# into the namespace of an InfluxDB instance that is already deployed. The server keeps
+# running: the shared Job runs `influx restore --full` against it over the pod network.
+# Stop the server's consumers first. Called by restore.yml; recovery-restore.yml is the
+# mechanism.
+#
+# The point carries the SOURCE's users and operator token, which replace the target's. A
+# new target then records the source credentials, as the guest restore does.
+- name: InfluxDB restore | Read the source and target credentials
+  ansible.builtin.set_fact:
+    _influxdb_restore_source_credentials: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_source_instance | default(instance, true), {}) }}
+    _influxdb_restore_target_credentials: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}) }}
+  no_log: true
+
+- name: InfluxDB restore | Require both credential sets
+  ansible.builtin.assert:
+    that:
+      - _influxdb_restore_target_credentials.operator_token | default('') | length > 0
+      - _influxdb_restore_source_credentials.operator_token | default('') | length > 0
+      - _influxdb_restore_source_credentials.admin_password | default('') | length > 0
+    fail_msg: >-
+      InfluxDB restore needs the operator tokens of the source and the target in
+      homelab-infra/apps/<instance>; the restored state is verified with the source's.
+  no_log: true
+
+- name: InfluxDB restore | Describe the target's server step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: namespace-server
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+    k8s_database_step_root_password: "{{ _influxdb_restore_target_credentials.operator_token }}"
+    k8s_database_step_restored_password: "{{ _influxdb_restore_source_credentials.operator_token }}"
+
+- name: InfluxDB restore | Restore the server through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: InfluxDB
+      archives:
+        - name: config
+          config_map: "{{ restore_target }}-config"
+      database: "{{ k8s_database_step }}"
+      # The server is the restore's target, so nothing is stopped.
+      stop: []
+      live_server: true
+      # The point's tuning replaces the target's ConfigMap after the load; the restart
+      # applies it and proves the data came back from the volume.
+      restart: ["{{ restore_target }}"]
+      # A new target's stale workload and backup credentials are replaced here.
+      after_restore_tasks: "{{ role_path }}/tasks/restore-credentials.yml"
+      describe: "{{ k8s_database_step.describe }} and its tuning"
+      verify:
+        - >-
+          Connect one registered consumer to the restored server and read its data.
+
+# Only the Job's rows changed: a new target now holds the source's users and token.
+- name: InfluxDB restore | Align a new target's Vaultwarden credentials with the restored state
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ _influxdb_restore_source_credentials.admin_user }}"
+      admin_password: "{{ _influxdb_restore_source_credentials.admin_password }}"
+      operator_token: "{{ _influxdb_restore_source_credentials.operator_token }}"
+      organization: "{{ _influxdb_restore_source_credentials.organization }}"
+      bucket: "{{ _influxdb_restore_source_credentials.bucket }}"
+    vault_item_secret_fields: [admin_password, operator_token]
+  when:
+    - restore_overwrite | bool
+    - restore_destination | default('existing') == 'new'
+  no_log: true

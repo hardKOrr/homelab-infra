@@ -241,7 +241,7 @@ with tempfile.TemporaryDirectory(prefix="redis-client-") as tmp:
 
 # ── Firewall: consumers name Redis by redis_host and redis_port ────────────────────────
 access = read("ansible/tasks/database/open-consumer-access.yml")
-assert "'redis' if database_consumer_provider == 'redis'" in access and "_sql_prefix ~ '_host'" in access
+assert "database_consumer_provider in ['redis', 'influxdb']" in access and "_sql_prefix ~ '_host'" in access
 
 # ── No role-local copy of a shared operation ───────────────────────────────────────────
 assert not (ROLE / "templates/kubernetes").exists()

@@ -31,7 +31,7 @@ DEPLOY = yaml.safe_load(
     (ROOT / "ansible/playbooks/apps/influxdb.yml").read_text(encoding="utf-8")
 )
 RESTORE = yaml.safe_load(
-    (ROOT / "ansible/roles/influxdb/tasks/restore.yml").read_text(encoding="utf-8")
+    (ROOT / "ansible/roles/influxdb/tasks/restore-guest.yml").read_text(encoding="utf-8")
 )
 BACKUP = yaml.safe_load(
     (ROOT / "ansible/roles/influxdb/tasks/backup.yml").read_text(encoding="utf-8")
@@ -185,7 +185,7 @@ def run_hook(hook, stage, port, overrides=None):
 
 def check_restore_swap(server):
     """InfluxDB supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("influxdb")
+    swap = swap_inputs("influxdb", "restore-guest.yml")
     assert swap["recovery_swap_paths"] == [{"path": "{{ influxdb_data_path }}",
                                            "owner": "{{ influxdb_owner }}", "group": "{{ influxdb_owner }}",
                                            "mode": "{{ '0700' if influxdb_docker | bool else '0750' }}"}]
