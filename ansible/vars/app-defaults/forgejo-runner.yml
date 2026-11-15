@@ -42,8 +42,12 @@ forgejo_runner_defaults:
     proxy: none
     access: internal
     identity: none
+  # The runner is ephemeral: a fresh Deploy registers it again from the token in
+  # Vaultwarden, so nothing on it needs a recovery point. Off by default; a Kubernetes
+  # Deploy removes an existing backup CronJob. The keys below stay because the shared
+  # scheduler renders them either way.
   backup:
-    enabled: true
+    enabled: false
     schedule: "0 3 * * *"
     retention_days: 14
     client:
