@@ -50,6 +50,8 @@
       # The point's tuning replaces the target's ConfigMap after the load; the restart
       # applies it and proves the data came back from the volume.
       restart: ["{{ restore_target }}"]
+      # A new target's stale workload and backup credentials are replaced here.
+      after_restore_tasks: "{{ role_path }}/tasks/restore-credentials.yml"
       describe: "{{ k8s_database_step.describe }} and its tuning"
       verify:
         - >-

@@ -177,6 +177,12 @@ spec = job["vars"]["k8s_recovery"]
 assert spec["live_server"] is True and spec["stop"] == []
 assert spec["restart"] == ["{{ restore_target }}"]
 assert spec["archives"] == [{"name": "config", "config_map": "{{ restore_target }}-config"}]
+# A new target's workload Secret and backup login follow the restored token.
+assert spec["after_restore_tasks"].endswith("tasks/restore-credentials.yml")
+creds = load("ansible/roles/influxdb/tasks/restore-credentials.yml")
+assert any(t.get("vars", {}).get("k8s_secret_name") == "{{ restore_target }}" for t in creds)
+patch = next(t for t in creds if t["name"].endswith("Point the backup login at the restored token"))
+assert "db-password" in patch["ansible.builtin.command"]["stdin"] and "-backup" in str(patch["ansible.builtin.command"]["argv"])
 inspect_step = next(t for t in restore if t["name"].endswith("Describe the target's server step"))
 assert inspect_step["vars"]["k8s_database_step_restored_password"].endswith("source_credentials.operator_token }}")
 
