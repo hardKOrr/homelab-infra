@@ -20,10 +20,10 @@ def steps(text):
     return [line.split()[1].split("-", 1)[1] for line in text.splitlines() if line.startswith("STEP ")]
 
 
-STATEFUL = ["deploy", "wiring-deploy", "deploy-repeat", "wiring-deploy-repeat", "canary-create",
+STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring-deploy-repeat",
             "backup", "remove", "wiring-remove", "deploy-fresh", "wiring-deploy-fresh",
             "canary-fresh", "backup-pre-restore", "restore-preview", "restore", "canary-verify",
-            "deploy-final", "wiring-deploy-final"]
+            "deploy-final", "wiring-deploy-final", "canary-final"]
 
 out = plan("tautulli")
 if steps(out) != STATEFUL:
@@ -60,6 +60,9 @@ refused = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill
 if refused.returncode != 2:
     failures.append("--seed-wrong-point refuses an app with nothing to restore")
 
+final = [line for line in out.splitlines() if "-canary-final " in line]
+if not final or "drill_action=verify" not in final[0] or "drill_final=true" not in final[0]:
+    failures.append("the last canary check runs verify with drill_final after the final Deploy")
 for app in ("wordpress", "bookstack"):
     unrecoverable = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan",
                                     app], capture_output=True, text=True)
@@ -92,8 +95,13 @@ with tempfile.TemporaryDirectory() as lab:
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
     off = drill("tautulli", "False")
     ran = [line.split()[1].split("-", 1)[1] for line in off.stdout.splitlines() if line.startswith("STEP ")]
-    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[4:6] != ["remove", "wiring-remove"]:
+    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[2:6] != [
+            "deploy-repeat", "wiring-deploy-repeat", "remove", "wiring-remove"]:
         failures.append(f"an instance with backups off runs the stateless drill: {off.stdout[-400:]}")
+    wordpress = drill("wordpress", "False")
+    if wordpress.returncode != 0 or "KIND stateless" not in wordpress.stdout:
+        failures.append(f"a WordPress instance with backups off runs the stateless drill: "
+                        f"{wordpress.stdout[-300:]}{wordpress.stderr[-300:]}")
     on = drill("homepage", "True")
     if on.returncode == 0 or "recovery.methods" not in on.stdout or "-remove " in on.stdout:
         failures.append(f"an instance with backups on and no recovery.methods stops before Remove: "

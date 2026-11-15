@@ -6,10 +6,14 @@ module.exports = async ({ page, step, url, secrets }) => {
   const target = new URL(url);
   const base = target.origin;
   const mode = target.searchParams.get('drill') || 'verify';
-  const label = 'p2-canary-prowlarr-kubernetes';
-  const saved = '/var/lib/rundeck/scratch/prowlarr-kubernetes-canaries.json';
+  const scope = target.searchParams.get('scope');
+  if (scope && !/^[a-zA-Z0-9-]+$/.test(scope)) throw new Error('Invalid drill scope');
+  const label = `p2-canary-prowlarr-${scope || 'kubernetes'}`;
+  const saved = scope ? `/var/lib/rundeck/scratch/${scope}/prowlarr-canaries.json`
+    : '/var/lib/rundeck/scratch/prowlarr-kubernetes-canaries.json';
   const vault = JSON.parse(process.env.HOMELABINFRA_VAULT_JSON || '{}');
-  const key = vault.media?.prowlarr?.api_key;
+  // Deploy keeps each instance's key under media[<instance>]; scope is the instance.
+  const key = vault.media?.[scope || 'prowlarr']?.api_key;
   const api = async (path, method = 'get', data) => {
     const response = await page.request[method](`${base}/api/v1/${path}`, {
       headers: { 'X-Api-Key': key }, ...(data === undefined ? {} : { data })

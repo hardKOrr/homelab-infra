@@ -15,9 +15,9 @@ Options:
   --plan              print the steps and the canary it would use, run nothing
 
 The steps are the procedure in ansible/playbooks/maintenance/recovery-drill.md, through
-$HOMELAB_LAB_DIR/runner-lab-run.sh: Deploy twice, canary create, Backup, Remove with
-delete_data=true, fresh Deploy, canary absent, pre-restore Backup, Restore preview,
-Restore, canary verify, final Deploy. An app with backups disabled runs the stateless
+$HOMELAB_LAB_DIR/runner-lab-run.sh: Deploy, canary create, repeat Deploy, Backup, Remove
+with delete_data=true, fresh Deploy, canary absent, pre-restore Backup, Restore preview,
+Restore, canary verify, final Deploy, canary verify again. An app with backups disabled runs the stateless
 variant: Deploy twice, Remove, fresh Deploy, final Deploy. An app with backups enabled but
 no recovery.methods is refused. After each Deploy and
 the Restore the URL must answer over HTTPS, and after each Deploy and the Remove
@@ -228,8 +228,10 @@ class Drill:
             time.sleep(20)
         self.fail(f"{name} https", f"{self.url} answered {code or 'nothing'}")
 
-    def canary_step(self, mode):
-        expect_fail = self.seeded and mode == "verify"
+    def canary_step(self, step):
+        """create, fresh, verify, or final: verify again after the final Deploy."""
+        mode = "verify" if step == "final" else step
+        expect_fail = self.seeded and step == "verify"
         if self.tier == "none":
             if expect_fail:
                 self.fail(f"{self.step_no + 1:02d}-canary-verify",
@@ -237,7 +239,7 @@ class Drill:
             return
         if self.tier == "browser":
             self.step_no += 1
-            label = f"{self.step_no:02d}-canary-{mode}"
+            label = f"{self.step_no:02d}-canary-{step}"
             if self.plan:
                 self.say(f"STEP {label} lab-browser {self.canary} drill={mode}")
                 return
@@ -257,8 +259,10 @@ class Drill:
             if rc != 0:
                 self.fail(label, "browser canary failed")
             return
-        self.playbook(f"canary-{mode}", "playbooks/maintenance/drill-canary.yml",
-                      expect_fail=expect_fail, drill_action=mode, drill_id=self.id, drill_epoch=self.epoch)
+        extra = {"drill_final": "true"} if step == "final" else {}
+        self.playbook(f"canary-{step}", "playbooks/maintenance/drill-canary.yml",
+                      expect_fail=expect_fail, drill_action=mode, drill_id=self.id,
+                      drill_epoch=self.epoch, **extra)
 
     def backup(self, name):
         began = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
@@ -289,37 +293,42 @@ class Drill:
                 die("HOMELAB_LAB_DIR is not set")
             os.makedirs(self.logs, exist_ok=True)
         # From the app defaults until the first wiring check reports the instance's own
-        # backup.enabled; the sequences differ only after the repeat Deploy.
+        # backup.enabled, before anything is created or deleted.
         kind, refusal = kind_of(self.app, self.defaults,
                                 bool((self.defaults.get("backup") or {}).get("enabled")))
-        if refusal:
+        if refusal and self.plan:
             die(refusal)
         if self.seeded and (kind == "stateless" or self.tier == "none"):
             die("--seed-wrong-point needs a stateful app with a canary")
-        self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind} "
+        self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind or 'refused'} "
                  f"canary={self.tier} {self.canary} ref={self.ref} id={self.id}")
         remove = {"delete_data": "true"}
         if self.destroy_guest:
             remove["destroy_guest"] = "true"
 
         self.deploy("deploy")
-        self.deploy("deploy-repeat", repeat=True)
-        if not self.plan and self.backups is not None:
-            effective, refusal = kind_of(self.app, self.defaults, self.backups)
+        if not self.plan:
+            backups = self.backups if self.backups is not None else \
+                bool((self.defaults.get("backup") or {}).get("enabled"))
+            effective, refusal = kind_of(self.app, self.defaults, backups)
             if refusal:
-                self.fail("deploy-repeat", refusal)
+                self.fail("deploy", refusal)
             if effective != kind:
                 self.say(f"KIND {effective}: the instance's backup.enabled overrides the app's")
                 kind = effective
             if self.seeded and (kind == "stateless" or self.tier == "none"):
-                self.fail("deploy-repeat", "--seed-wrong-point needs a stateful app with a canary")
+                self.fail("deploy", "--seed-wrong-point needs a stateful app with a canary")
         if kind == "stateless":
+            self.deploy("deploy-repeat", repeat=True)
             self.remove(**remove)
             self.deploy("deploy-fresh")
             self.deploy("deploy-final", repeat=True)
             self.summary(True)
             return
+        # Before the repeat Deploy, so the backup, and the checks after the restore and the
+        # final Deploy, show that a repeat Deploy keeps the data.
         self.canary_step("create")
+        self.deploy("deploy-repeat", repeat=True)
         point = self.backup("backup")
         self.remove(**remove)
         self.deploy("deploy-fresh")
@@ -337,6 +346,7 @@ class Drill:
         self.https("restore")
         self.canary_step("verify")
         self.deploy("deploy-final", repeat=True)
+        self.canary_step("final")
         self.summary(True)
 
 

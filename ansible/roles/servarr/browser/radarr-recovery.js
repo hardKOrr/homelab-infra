@@ -10,7 +10,8 @@ module.exports = async ({ page, step, url, secrets }) => {
   const label = `p2-canary-radarr-${scope || 'docker-lxc'}`;
   const saved = `/var/lib/rundeck/scratch/${scope || 'issue640'}/radarr-canaries.json`;
   const vault = JSON.parse(process.env.HOMELABINFRA_VAULT_JSON || '{}');
-  const key = vault.media?.radarr?.api_key;
+  // Deploy keeps each instance's key under media[<instance>]; scope is the instance.
+  const key = vault.media?.[scope || 'radarr']?.api_key;
   const { username, password } = secrets;
   const api = async (path, method = 'get', data) => {
     const response = await page.request[method](`${base}/api/v3/${path}`, {
