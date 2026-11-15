@@ -1373,9 +1373,8 @@ fi
 # the checkout, the venv and the tracked branch are, plus a symlink so every job step is
 # a single `lab-run <playbook>` call with no path in it.
 #
-# This file configures runner paths and credentials. It deliberately leaves LAB_REFRESH
-# unset: ordinary jobs use this checkout as it stands; an explicit caller may set
-# LAB_REFRESH=1 for a one-off update.
+# This file configures runner paths and credentials. Jobs use this checkout as it
+# stands; Reimport Jobs is the one path that updates it.
 say "lab-run wiring at $LAB_ETC"
 install -d -m 0755 "$LAB_ETC"
 tls_env="$(mktemp)"
@@ -2418,7 +2417,7 @@ to mint a token the runner can use."
   # Carry the secret on stdin, then expose it only in the child process environment.
   # pct/sudo command arguments and the Ansible extra-vars list remain non-secret.
   printf '%s\n' "${CLOUDFLARE_API_TOKEN:-}" | in_ct sudo -u rundeck env \
-    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_DOCTOR=1 \
     ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" bash -c '
       IFS= read -r CLOUDFLARE_API_TOKEN
       export CLOUDFLARE_API_TOKEN
@@ -2436,7 +2435,7 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
   # Vaultwarden comes up behind an already-live proxy. Its wiring pass adds the
   # HTTPS route immediately, so the enrollment URL is the first supported entry.
   in_ct sudo -u rundeck env \
-    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_DOCTOR=1 \
     ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" \
     /usr/local/bin/lab-run playbooks/apps/vaultwarden.yml -e instance=vaultwarden
   info "Vaultwarden and Caddy are online; the HTTPS route is configured"
@@ -2494,7 +2493,7 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
   else
     log "Vaultwarden enrollment"
     if printf '%s\n' "$RD_TOKEN" | in_ct sudo -u rundeck env \
-         HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+         HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_DOCTOR=1 \
          VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
          VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" bash -c '
            IFS= read -r RUNDECK_API_TOKEN

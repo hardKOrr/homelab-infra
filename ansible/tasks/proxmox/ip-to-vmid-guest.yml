@@ -13,8 +13,7 @@
 # creating a second guest on top of the first.
 #
 # homelabinfra_config is NOT rebuilt from scratch per play: load-user-vars.yml merges the
-# previous play's dict on top of the freshly loaded layers (its legacy `user_vars_file`
-# precedence rule). So a VMID derived while deploying app N is still sitting in
+# previous play's dict on top of the freshly loaded layers. So a VMID derived while deploying app N is still sitting in
 # proxmox.lxc.vmid when app N+1 derives its own — and "vmid is already defined" made this
 # task skip, leaving app N+1 pointed at app N's container. community.proxmox then finds
 # that VMID, takes its UPDATE branch, and rewrites the earlier guest's config with the new

@@ -26,8 +26,8 @@
     - Adding or removing a job
     - Changing a job name, option, group, or description
 
-    Playbook-only changes do **not** need reimporting. Ordinary runs use the current runner
-    checkout; set `LAB_REFRESH=1` on a run to explicitly update it first.
+    Playbook-only changes do **not** need reimporting, but this is the one job that moves
+    the runner checkout to the tracked branch; ordinary runs use it as it stands.
     Jobs update in place by UUID. Definitions in `rundeck/retired-jobs.yml` are removed, and
     a failed removal fails this job.
   loglevel: INFO

@@ -98,19 +98,16 @@ def doctor(proxmox, invalid=False):
 
 def disabled_playbook_noop():
     playbook = ROOT / "ansible/playbooks/maintenance/reconcile-proxmox-host-firewall.yml"
-    with tempfile.TemporaryDirectory() as directory:
-        variables = Path(directory) / "vars.yml"
-        variables.write_text(yaml.safe_dump({
-            "homelabinfra_config": {"proxmox": {}}
-        }))
-        result = subprocess.run(
-            [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(playbook),
-             "-e", f"user_vars_file={variables}"],
-            capture_output=True, text=True, check=False,
-            env={**os.environ, "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg")},
-        )
-        check("disabled baseline playbook exits successfully", result.returncode, 0)
-        check("disabled baseline reports no changed tasks", "changed=0" in result.stdout, True)
+    # An extra var outranks the loader's set_fact, so this pins the flag off whatever
+    # config/ holds on the machine running the gate.
+    disabled = json.dumps({"homelabinfra_config": {"proxmox": {"firewall": {"enabled": False}}}})
+    result = subprocess.run(
+        [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(playbook), "-e", disabled],
+        capture_output=True, text=True, check=False,
+        env={**os.environ, "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg")},
+    )
+    check("disabled baseline playbook exits successfully", result.returncode, 0)
+    check("disabled baseline reports no changed tasks", "changed=0" in result.stdout, True)
 
 
 def delete_rule_retries_digest_races():

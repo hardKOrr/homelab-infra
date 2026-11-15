@@ -34,7 +34,6 @@ configuration, a cached fact or a service-registry field; see
 | `vars/app-defaults/<app>.yml` | none | `app_config` (per-play app merge — see [app layering](contract/app-layering.md)) | separate merge, not part of `homelabinfra_config` |
 | `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | whole file merges over `<app>_defaults` via `combine(recursive=True)` — see [app layering](contract/app-layering.md) |
 | `config/.generated/facts.yml` | none | generated base of `homelabinfra_infra`; Vaultwarden runtime fields overlay it recursively | written incrementally by `write-generated-facts.yml` |
-| `user_vars_file` (back-compat) | `homelabinfra_config:` | `homelabinfra_config` | legacy single-file path; already self-wrapping |
 
 The [app hosting contract](contract/hosting.md) declares which hosting forms each app
 supports.
@@ -248,7 +247,7 @@ configure any application itself.
 1. `vars/homelabinfra-defaults.yml` (unwrap `homelabinfra_defaults:`) → seed of `homelabinfra_config`.
 2. `config/proxmox.yml` (loader injects `proxmox`/`networks`/`ansible` under `homelabinfra_config`).
 3. `config/infrastructure.yml` (loader injects under `homelabinfra_config.infrastructure`).
-4. `user_vars_file` if present (back-compat; already carries its own `homelabinfra_config:` wrapper).
+4. `homelabinfra_config` already set by an earlier play in the same run.
 
 All merges use `combine(recursive=True)`; later layers win per key.
 

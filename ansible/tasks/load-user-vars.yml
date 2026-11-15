@@ -4,7 +4,7 @@
 #   1. vars/homelabinfra-defaults.yml   (seed; unwrap `homelabinfra_defaults:`)
 #   2. config/proxmox.yml               (top-level proxmox/networks/ansible keys, injected as-is)
 #   3. config/infrastructure.yml        (whole file wrapped under .infrastructure)
-#   4. user_vars_file / pre-set homelabinfra_config  (legacy back-compat; wins on conflict)
+#   4. homelabinfra_config already set by an earlier play in the run (wins on conflict)
 #   5. PROXMOX_API_TOKEN / _TOKEN_ID / _USER, VAULTWARDEN_ADMIN_TOKEN and
 #      CLOUDFLARE_API_TOKEN from the
 #      environment (slice 010; secrets only, and only when actually set)
@@ -87,11 +87,6 @@
     file: "{{ _luv_config_dir }}/infrastructure.yml"
     name: _config_infrastructure
   failed_when: false
-
-- name: Load user vars from file option (legacy back-compat — highest precedence)
-  ansible.builtin.include_vars:
-    file: "{{ user_vars_file }}"
-  when: user_vars_file is defined and user_vars_file | length > 0
 
 - name: Merge config layers into homelabinfra_config
   ansible.builtin.set_fact:
