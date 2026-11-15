@@ -6,6 +6,11 @@
 # and stored in Vaultwarden as homelab-infra/apps/<instance>. Do not put either
 # secret in this file.
 
+# Docker instead of a native guest: the stack's guest_type picks the LXC or VM.
+# hosting:
+#   method: docker
+# stack: influxdb
+#
 # proxmox:
 #   guest_type: lxc        # lxc (default) or vm
 #   node: <pve-node-2>     # optional; defaults to config/proxmox.yml proxmox.node

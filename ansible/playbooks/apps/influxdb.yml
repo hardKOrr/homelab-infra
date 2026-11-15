@@ -26,11 +26,15 @@
         hosting_app_slug: influxdb
   tasks:
     - ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'native'
     - name: Resolve this instance's guest, reusing one Remove kept
       ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-instance-guest.yml
       vars: {resolve_guest_instance: "{{ instance }}"}
+      when: app_config.hosting.method == 'native'
+
     - ansible.builtin.set_fact:
         _existing_hosts: "{{ resolve_guest_hosts }}"
+      when: app_config.hosting.method == 'native'
 
     # Remove deliberately leaves the lab-owned guest in place after deleting the app's
     # data and withdrawing its instance tag. Resolve the declared network before looking
@@ -38,19 +42,20 @@
     - name: Resolve InfluxDB network before checking for a removed guest
       ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
       vars: {resolve_network_app: influxdb, resolve_network_estate: ''}
-      when: _existing_hosts | length == 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length == 0
 
     - name: Find a removed InfluxDB guest that still has exact lab ownership
       ansible.builtin.include_tasks: ../../roles/influxdb/tasks/reuse-removed-guest.yml
-      when: _existing_hosts | length == 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length == 0
 
     - name: Reuse the exact lab-owned guest left by Remove
       ansible.builtin.set_fact:
         _existing_hosts: "{{ _influxdb_removed_guest_hosts }}"
-      when: _existing_hosts | length == 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length == 0
 
     - name: Resolve InfluxDB guest placement and check existing type
       ansible.builtin.include_tasks: ../../tasks/database/resolve-backend-placement.yml
+      when: app_config.hosting.method == 'native'
 
     - ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
@@ -62,16 +67,26 @@
         _database_backend_guest_type: "{{ _database_backend_guest_type }}"
         app_config: "{{ app_config }}"
       changed_when: false
-      when: _existing_hosts | length > 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length > 0
 
     - ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
       vars: {ensure_guest_host: "{{ _existing_hosts[0] }}"}
-      when: _existing_hosts | length > 0
+      when: app_config.hosting.method == 'native' and _existing_hosts | length > 0
 
     - name: Provision a new InfluxDB backend guest
       ansible.builtin.include_tasks: ../../tasks/database/provision-backend-guest.yml
       vars:
         database_backend_network_app: influxdb
+      when: app_config.hosting.method == 'native'
+
+    # Docker: the stack host (LXC or VM per the stack's guest_type), found or created.
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
 
 - name: InfluxDB | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -83,6 +98,9 @@
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
     - ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
   tasks:
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role: {name: docker}
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
     - ansible.builtin.include_role: {name: influxdb}
 
 - name: InfluxDB | Register backend
@@ -125,7 +143,7 @@
     - name: Record InfluxDB on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
-        record_guest_kind: native
+        record_guest_kind: "{{ 'docker' if _influxdb_host.app_config.hosting.method == 'docker' else 'native' }}"
 
     - name: Skip external wiring while the restore target is isolated
       ansible.builtin.meta: end_play

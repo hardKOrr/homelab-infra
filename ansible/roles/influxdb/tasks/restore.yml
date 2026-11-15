@@ -20,7 +20,7 @@
     that:
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
-      - app_config.app.data_path | default('') is match('^/[^/].*')
+      - influxdb_data_path is match('^/[^/].*')
       - _influxdb_restore_source_instance is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
       - restore_overwrite is defined
       - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
@@ -72,7 +72,8 @@
 
 - name: InfluxDB restore | Require the service to be active
   ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ _influxdb_restore_service_name }}"]
+    argv: "{{ ['docker', 'inspect', instance]
+              if influxdb_docker | bool else ['systemctl', 'is-active', _influxdb_restore_service_name] }}"
   register: _influxdb_restore_service_state
   failed_when: false
   changed_when: false
@@ -80,7 +81,11 @@
 
 - name: InfluxDB restore | Refuse an inactive target
   ansible.builtin.assert:
-    that: _influxdb_restore_service_state.stdout | trim == 'active'
+    that:
+      - _influxdb_restore_service_state.rc == 0
+      - >-
+        (((_influxdb_restore_service_state.stdout | from_json | first).State.Status == 'running')
+         if influxdb_docker | bool else _influxdb_restore_service_state.stdout | trim == 'active')
     fail_msg: >-
       InfluxDB service {{ _influxdb_restore_service_name }} is not active; restore the
       service before replacing its data.
@@ -89,15 +94,17 @@
 - name: InfluxDB restore | Preview or replace the data directory
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: native
+    recovery_swap_runtime: "{{ 'docker' if influxdb_docker | bool else 'native' }}"
     recovery_swap_pre_restore_backup_id: "{{ _influxdb_restore_target_backup_id }}"
     recovery_swap_archives: [data.pxar]
     recovery_swap_paths:
-      - path: "{{ app_config.app.data_path }}"
-        owner: influxdb
-        group: influxdb
-        mode: "0750"
-    recovery_swap_stop_services: ["{{ _influxdb_restore_service_name }}"]
+      - path: "{{ influxdb_data_path }}"
+        owner: "{{ influxdb_owner }}"
+        group: "{{ influxdb_owner }}"
+        mode: "{{ '0700' if influxdb_docker | bool else '0750' }}"
+    recovery_swap_stop_services: >-
+      {{ [influxdb_compose_service] if influxdb_docker | bool else [_influxdb_restore_service_name] }}
+    recovery_swap_compose_project: "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
     recovery_swap_health_url: "http://127.0.0.1:{{ app_config.app.port }}/health"
     recovery_swap_health_retries: 30

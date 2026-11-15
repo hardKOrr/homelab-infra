@@ -100,7 +100,7 @@ def check_contract_and_wiring():
     assert wire_tasks[record_index]["ansible.builtin.include_tasks"] == (
         "../../tasks/proxmox/record-app-on-guest.yml"
     )
-    assert wire_tasks[record_index]["vars"]["record_guest_kind"] == "native"
+    assert "'docker' if" in wire_tasks[record_index]["vars"]["record_guest_kind"]
     assert wire_tasks[isolation_index]["ansible.builtin.meta"] == "end_play"
     assert isolation_index < degradation_index
     assert degradation_index == len(wire_tasks) - 1
@@ -186,11 +186,14 @@ def run_hook(hook, stage, port, overrides=None):
 def check_restore_swap(server):
     """InfluxDB supplies its path, owner and checks; gate/test-restore-swap.py proves the swap."""
     swap = swap_inputs("influxdb")
-    assert swap["recovery_swap_paths"] == [{"path": "{{ app_config.app.data_path }}",
-                                           "owner": "influxdb", "group": "influxdb", "mode": "0750"}]
-    assert swap["recovery_swap_runtime"] == "native"
+    assert swap["recovery_swap_paths"] == [{"path": "{{ influxdb_data_path }}",
+                                           "owner": "{{ influxdb_owner }}", "group": "{{ influxdb_owner }}",
+                                           "mode": "{{ '0700' if influxdb_docker | bool else '0750' }}"}]
+    assert swap["recovery_swap_runtime"] == "{{ 'docker' if influxdb_docker | bool else 'native' }}"
+    assert swap["recovery_swap_compose_project"] == "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["{{ _influxdb_restore_service_name }}"]
+    assert "_influxdb_restore_service_name" in swap["recovery_swap_stop_services"]
+    assert "influxdb_compose_service" in swap["recovery_swap_stop_services"]
     assert swap["recovery_swap_health_url"].endswith("/health")
     names = [task.get("name") for task in RESTORE]
     assert names.index("InfluxDB restore | Refuse an inactive target") < names.index(
@@ -225,8 +228,10 @@ def check_restore_swap(server):
 def check_backup_uses_shared_client():
     upload = task_named(list(all_tasks(BACKUP)), "InfluxDB backup | Upload the quiesced data directory")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "native"
-    assert upload["vars"]["pbs_client_stop_services"] == ["{{ _influxdb_backup_service_name }}"]
+    assert upload["vars"]["pbs_client_runtime"] == "{{ 'docker' if influxdb_docker | bool else 'native' }}"
+    assert "_influxdb_backup_service_name" in upload["vars"]["pbs_client_stop_services"]
+    assert "influxdb_compose_service" in upload["vars"]["pbs_client_stop_services"]
+    assert upload["vars"]["pbs_client_compose_project"] == "{{ influxdb_project_dir if influxdb_docker | bool else '' }}"
     assert upload["vars"]["pbs_client_archives"] == [
         {"name": "data.pxar", "path": "{{ _influxdb_backup_data_path }}"}
     ]

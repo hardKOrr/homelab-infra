@@ -1,0 +1,12 @@
+---
+# Recovery drill API checks. canary_action: seed | present | absent.
+# canary_bucket must name a drill-owned bucket; seed never changes an existing bucket.
+- name: InfluxDB | Recovery canaries
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        app: influxdb
+    - ansible.builtin.include_tasks: ../../roles/influxdb/tasks/canary.yml

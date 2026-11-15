@@ -1,0 +1,9 @@
+---
+# Role-internal defaults; user-facing knobs live in vars/app-defaults/influxdb.yml.
+influxdb_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
+# Docker: the Compose project and its data live together in /opt/<instance>.
+influxdb_project_dir: "/opt/{{ instance }}"
+influxdb_compose_service: influxdb
+# The official image runs the server as uid/gid 1000; the host has no such account.
+influxdb_owner: "{{ '1000' if influxdb_docker | bool else 'influxdb' }}"
+influxdb_data_path: "{{ influxdb_project_dir ~ '/data' if influxdb_docker | bool else app_config.app.data_path | default('') }}"
