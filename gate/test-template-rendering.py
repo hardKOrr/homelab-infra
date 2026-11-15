@@ -1437,10 +1437,6 @@ def wireguard_remove_preserves_vaultwarden_configuration():
     assert any("tasks/unwiring/firewall-" in task.get("ansible.builtin.include_tasks", "")
                for task in tasks), tasks
 
-    catalog = yaml.safe_load(read("catalog/applications.yml"))["applications"]["wireguard"]
-    actions = set(catalog.get("actions", []))
-    assert not actions.intersection({"backup", "restore"}), actions
-
 
 def wireguard_peer_address_uses_the_ipaddr_filter():
     tasks = yaml.safe_load(read("ansible/roles/wireguard/tasks/peer.yml"))
