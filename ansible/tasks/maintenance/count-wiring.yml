@@ -137,7 +137,7 @@
     # Signed in is not answered: without a monitorList frame the count is unknown.
     _cw_listed: >-
       {{ (kuma_call_ok | default(false) | bool)
-         and (kuma_session_frames | default([]) | select('match', '42\\["monitorList",') | list | length > 0) }}
+         and (kuma_session_frames | default([]) | select('match', '42\["monitorList",') | list | length > 0) }}
   when: _cw_monitor == 'uptime_kuma'
 
 - name: Count wiring | Read Authentik
