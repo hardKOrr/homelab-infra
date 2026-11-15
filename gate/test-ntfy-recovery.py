@@ -54,8 +54,10 @@ def check_contract():
     assert [a["name"] for a in upload["vars"]["pbs_client_archives"]] == ["data.pxar", "cache.pxar"]
 
     remove = list(tasks_recursive(load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")))
-    delete = task_named(remove, "Delete the data and cache paths")
+    delete = task_named(remove, "Delete the data, config and cache paths")
     assert "{{ app_config.app.cache_path | default('') }}" in delete["loop"]
+    # Native Tautulli and the *arrs keep all state in config_path; delete_data removes it.
+    assert "{{ app_config.app.config_path | default('') }}" in delete["loop"]
 
 
 

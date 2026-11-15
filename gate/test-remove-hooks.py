@@ -41,7 +41,7 @@ WINDOWS = {
                           "Decide whether Remove drops a named database"),
     "remove-unwire.yml": ("Unwire firewall", "Unregister from the service registry"),
     "remove-units.yml": ("Remove App | Stop", "Stop and disable every service unit"),
-    "remove-native-data.yml": ("Report an already-removed service", "Delete the data and cache paths"),
+    "remove-native-data.yml": ("Report an already-removed service", "Delete the data, config and cache paths"),
     "remove.yml": ("Stop and remove the containers", "Remove the instance's PBS client settings"),
     "remove-devices.yml": ("Delete bind-mounted data and config paths",
                            "Detach the app's project-owned shared device"),
