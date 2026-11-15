@@ -1,0 +1,8 @@
+---
+# Remove App hook, run on localhost before any unwiring. On Kubernetes, Mixpost keeps its
+# MySQL in its own namespace and never provisions app.database.instance, which still
+# names the backend the Docker and native methods use. Remove must not drop that
+# backend's database and login: they belong to the instances that do use it.
+- name: Mixpost | Keep the named backend's database on Kubernetes
+  ansible.builtin.set_fact:
+    _rm_no_named_database: "{{ app_config.hosting.method | default('') == 'kubernetes' }}"

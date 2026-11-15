@@ -19,13 +19,13 @@
          | selectattr('value.database_host', 'defined')
          | selectattr('value.database_host', 'equalto', database_consumers_target.host)
          | list }}
-    # Backends on the cluster share its ingress address and differ by port.
+    # Backends on one address differ by port: the cluster's ingress, or two backends on
+    # one Docker stack host.
     _other_ports: >-
       {%- set kept = [] -%}
+      {%- set port = database_consumers_target.port | default('') | string -%}
       {%- for entry in _other_items -%}
-      {%-   if not (database_consumers_target.kubernetes | default(false) | bool)
-              or (entry.value.database_port | default(database_consumers_target.port) | string)
-                 == (database_consumers_target.port | string) -%}
+      {%-   if (entry.value.database_port | default(port) | string) == port -%}
       {%-     set _ = kept.append(entry) -%}
       {%-   endif -%}
       {%- endfor -%}

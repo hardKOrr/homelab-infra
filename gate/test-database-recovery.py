@@ -281,6 +281,13 @@ def check_ownership_guard():
         assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault)), (
             f"{provider}: a login another app uses must not be touched")
         vault = guard_fixture(provider)["homelabinfra_vault"]
+        vault["apps"]["other"].update(database_name="app", database_port="3307")
+        target = guard_fixture(provider)["database_app_target"] | {"port": "3306"}
+        assert guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target)), (
+            f"{provider}: a same-named database on another port of the host is another server")
+        vault["apps"]["other"]["database_port"] = "3306"
+        assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target))
+        vault = guard_fixture(provider)["homelabinfra_vault"]
         vault["apps"]["app"]["database_name"] = "elsewhere"
         assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault))
         assert not guard_passes(guard_fixture(provider, groups={
@@ -393,6 +400,17 @@ def check_remove_wiring():
             kept = str(render(expression, {"delete_data": False, "app_config": {"app": {"database": database}}, "instance": path.stem})).strip()
             assert kept == "False", path.name
     assert {"bookstack", "immich", "litellm", "plane", "wordpress"} <= set(registered)
+
+    # A hosting method that keeps no database on the named backend says so through its
+    # remove-inputs.yml hook: Mixpost on Kubernetes runs MySQL in its own namespace.
+    flag = yaml.safe_load((ROOT / "ansible/roles/mixpost/tasks/remove-inputs.yml").read_text())[0][
+        "ansible.builtin.set_fact"]["_rm_no_named_database"]
+    mixpost = yaml.safe_load((ROOT / "ansible/vars/app-defaults/mixpost.yml").read_text())["mixpost_defaults"]
+    for method, expected in (("kubernetes", "False"), ("docker", "True"), ("native", "True")):
+        config = mixpost | {"hosting": {"method": method}}
+        variables = {"delete_data": True, "app_config": config, "instance": "mixpost",
+                     "_rm_no_named_database": render(flag, {"app_config": config})}
+        assert str(render(expression, variables)).strip() == expected, method
 
     drop_play = next(play for play in remove if play["name"] == "Remove App | Drop its named database")
     assert drop_play["hosts"] == "localhost", "the backend must be reached without the app host"

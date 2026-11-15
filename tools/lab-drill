@@ -172,9 +172,12 @@ class Drill:
         return text, changed
 
     def seeded_result(self, label, failed):
-        """End a --seed-wrong-point drill at canary verify: its failure is the pass."""
+        """End a --seed-wrong-point drill at canary verify. Its failure is the pass only when
+        the fresh check then passes: the app answered, the login worked and the canary is
+        absent, so verify failed on the data, not on transport or setup."""
         if not failed:
             self.fail(label, "canary verify passed after restoring the wrong recovery point")
+        self.canary_step("absent")
         self.say(f"CHECK {label} failed on the wrong recovery point, as seeded")
         self.summary(True)
         sys.exit(0)
@@ -229,8 +232,9 @@ class Drill:
         self.fail(f"{name} https", f"{self.url} answered {code or 'nothing'}")
 
     def canary_step(self, step):
-        """create, fresh, verify, or final: verify again after the final Deploy."""
-        mode = "verify" if step == "final" else step
+        """create, fresh, verify; final verifies again after the final Deploy and absent
+        runs the fresh check after a seeded verify failed."""
+        mode = {"final": "verify", "absent": "fresh"}.get(step, step)
         expect_fail = self.seeded and step == "verify"
         if self.tier == "none":
             if expect_fail:

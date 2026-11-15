@@ -102,6 +102,34 @@ with tempfile.TemporaryDirectory() as lab:
     if wordpress.returncode != 0 or "KIND stateless" not in wordpress.stdout:
         failures.append(f"a WordPress instance with backups off runs the stateless drill: "
                         f"{wordpress.stdout[-300:]}{wordpress.stderr[-300:]}")
+    # Seeded: verify fails on the wrong point; the drill passes only when the fresh check
+    # that follows succeeds, showing the app answered and the canary is absent.
+    def seeded(transport_down):
+        runner = os.path.join(lab, "runner-lab-run.sh")
+        verified = os.path.join(lab, "verified")
+        if os.path.exists(verified):
+            os.remove(verified)
+        with open(runner, "w") as handle:
+            handle.write("#!/bin/sh\n"
+                         "case \"$*\" in\n"
+                         "  *check-wiring*) echo 'WIRING x method=native-lxc backup=True expect=present';;\n"
+                         f"  *drill_action=verify*) touch {verified}; exit 2;;\n"
+                         f"  *drill_action=fresh*) {'[ -e ' + verified + ' ] && exit 2' if transport_down else ':'};;\n"
+                         "  *backup-app*) echo \"host/x/$(date -u +%Y-%m-%dT%H:%M:%SZ)\";;\n"
+                         "esac\n"
+                         "echo 'HOMELAB_RUN result=SUCCEEDED changed=0 failed=0'\n")
+        os.chmod(runner, 0o755)
+        env = dict(os.environ, HOMELAB_LAB_DIR=lab, LAB_JOB_DIR=os.path.join(lab, "jobs"))
+        return subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"),
+                               "--seed-wrong-point", "tautulli"],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
+    caught = seeded(False)
+    if caught.returncode != 0 or "as seeded" not in caught.stdout or "canary-absent" not in caught.stdout:
+        failures.append(f"a seeded drill passes when verify fails and the canary is absent: "
+                        f"{caught.stdout[-400:]}")
+    broken = seeded(True)
+    if broken.returncode == 0 or "as seeded" in broken.stdout:
+        failures.append("a seeded drill fails when the app cannot be checked at all")
     on = drill("homepage", "True")
     if on.returncode == 0 or "recovery.methods" not in on.stdout or "-remove " in on.stdout:
         failures.append(f"an instance with backups on and no recovery.methods stops before Remove: "

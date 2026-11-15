@@ -151,7 +151,7 @@ mysql = read("ansible/tasks/database/provision-mysql-compatible.yml")
 assert mysql.count("_database_backend.kubernetes | default({}) | length == 0") == 2
 assert "provision-kubernetes-sql.yml" in mysql
 assert "database_app_target.kubernetes | default(false) | bool" in read("ansible/tasks/database/guard-app-database.yml")
-assert "database_consumers_target.kubernetes | default(false) | bool" in read("ansible/tasks/database/guard-other-consumers.yml")
+assert "entry.value.database_port" in read("ansible/tasks/database/guard-other-consumers.yml")
 client = read("ansible/tasks/database/scripts/database-client.sh")
 for action in ("server-dump", "server-verify", "server-load", "server-inspect"):
     assert action in client, action

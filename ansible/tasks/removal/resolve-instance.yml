@@ -74,7 +74,8 @@
     _rm_drops_database: >-
       {{ (delete_data | default(false) | bool)
          and (app_config.app.database.provider | default('')) in ['postgresql', 'mariadb', 'mysql']
-         and (app_config.app.database.instance | default('') | length > 0) }}
+         and (app_config.app.database.instance | default('') | length > 0)
+         and not (_rm_no_named_database | default(false) | bool) }}
 
 - name: Resolve the app's named database before unwiring
   ansible.builtin.include_tasks: ../database/resolve-app-database.yml
