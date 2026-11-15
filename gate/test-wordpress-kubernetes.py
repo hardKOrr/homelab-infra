@@ -17,7 +17,7 @@ from ansible.template import Templar
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
-ROLE = ROOT / "ansible/roles/wordpress-kubernetes"
+ROLE = ROOT / "ansible/roles/wordpress"
 
 
 def render(path, variables):
@@ -30,23 +30,26 @@ def tasks(path):
 
 
 def fixture():
+    app_config = {"app": {
+        "image": "wordpress:6.9.4-php8.3-apache",
+        "cli_image": "wordpress:cli-2.12.0-php8.3",
+        "container_port": 80,
+        "storage": 10,
+        "default_theme": "twentytwentyfive",
+        "admin_user": "admin",
+        "admin_email": "admin@example.test",
+        "admin_name": "Homelab Admin",
+        "site_title": "Homelab WordPress",
+    }}
     return {
         "instance": "wordpress",
+        "wordpress_k8s_instance": "wordpress",
+        "wordpress_k8s_config": app_config,
         "wordpress_fqdn": "wordpress.example.test",
         "wordpress_k8s_content_claim": "wordpress-content",
         "wordpress_k8s_admin_secret": "wordpress-admin",
         "wordpress_k8s_admin_marker": "/var/www/html/wp-content/.homelab-infra-admin",
-        "app_config": {"app": {
-            "image": "wordpress:6.9.4-php8.3-apache",
-            "cli_image": "wordpress:cli-2.12.0-php8.3",
-            "container_port": 80,
-            "storage": 10,
-            "default_theme": "twentytwentyfive",
-            "admin_user": "admin",
-            "admin_email": "admin@example.test",
-            "admin_name": "Homelab Admin",
-            "site_title": "Homelab WordPress",
-        }},
+        "app_config": app_config,
     }
 
 
@@ -72,7 +75,7 @@ def check_defaults_and_dispatch():
     assert provision["ansible.builtin.include_tasks"].endswith("database/provision.yml")
     assert stack["when"] == "app_config.hosting.method == 'docker'"
     k8s = next(play for play in deploy if play.get("name") == "WordPress | Deploy on Kubernetes")
-    assert k8s["tasks"][0]["ansible.builtin.include_role"]["name"] == "wordpress-kubernetes"
+    assert k8s["tasks"][0]["ansible.builtin.include_role"] == {"name": "wordpress", "tasks_from": "kubernetes"}
     assert k8s["tasks"][0]["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
     wire = deploy[-1]
     assert "homelabinfra_infra.kubernetes.ingress_vip" in wire["vars"]["wiring_upstream_host"]
@@ -81,24 +84,30 @@ def check_defaults_and_dispatch():
                       if task.get("name") == "Record WordPress on each Kubernetes node")
     assert k8s_record["when"] == "app_config.hosting.method == 'kubernetes'"
 
-    backup = tasks("ansible/playbooks/maintenance/wordpress-backup.yml")
-    assert any(task.get("ansible.builtin.include_role", {}).get("name") == "wordpress-kubernetes"
-               and task["ansible.builtin.include_role"].get("tasks_from") == "backup.yml"
-               for task in backup[0]["tasks"])
-    assert any(task.get("when") == "hostvars['localhost'].app_config.hosting.method == 'docker'"
-               for task in backup[1]["tasks"])
-
-    restore = tasks("ansible/playbooks/maintenance/wordpress-restore.yml")
-    assert any(task.get("ansible.builtin.include_role", {}).get("name") == "wordpress-kubernetes"
-               and task["ansible.builtin.include_role"].get("tasks_from") == "restore.yml"
-               for task in restore[2]["tasks"])
-    assert restore[2]["tasks"][0]["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
+    # Backup App and Restore App own WordPress's recovery on every method; the role's
+    # backup.yml and restore.yml dispatch by hosting method.
+    assert defaults["recovery"] == {"methods": ["native"], "native": {
+        "backup_playbook": "backup-app.yml", "restore_playbook": "restore-app.yml"}}
+    restore = tasks("ansible/roles/wordpress/tasks/restore.yml")
+    assert [task["ansible.builtin.include_tasks"] for task in restore] == [
+        "restore-kubernetes.yml", "restore-guest.yml"]
+    assert "== 'kubernetes'" in restore[0]["when"]
+    backup = tasks("ansible/roles/wordpress/tasks/backup.yml")
+    assert backup[0]["when"] == "not (wordpress_native | bool)"
+    assert backup[0]["block"][0]["ansible.builtin.command"]["argv"] == [
+        "{{ wordpress_recovery_script }}", "--backup"]
+    assert backup[1]["ansible.builtin.include_tasks"] == "backup-native.yml"
+    inputs = tasks("ansible/roles/wordpress/tasks/restore-inputs.yml")
+    assert "restore_target_config.routing.subdomain" in inputs[1]["ansible.builtin.set_fact"]["restore_target_fqdn"]
+    seam = next(play for play in tasks("ansible/playbooks/maintenance/restore-app.yml")
+                if play["name"].startswith("Restore App | Restore Docker"))["tasks"][0]["vars"]
+    assert seam["restore_target_fqdn"] == "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
 
 
 def check_workload_and_cli_jobs():
     variables = fixture()
     manifest = list(yaml.safe_load_all(render(
-        "ansible/roles/wordpress-kubernetes/templates/manifest.yaml.j2", variables
+        "ansible/roles/wordpress/templates/manifest.yaml.j2", variables
     )))
     claim = next(doc for doc in manifest if doc["kind"] == "PersistentVolumeClaim")
     assert claim["metadata"]["name"] == "wordpress-content"
@@ -126,7 +135,7 @@ def check_workload_and_cli_jobs():
             "_wordpress_k8s_install_state": "uninstalled",
         }
         job = yaml.safe_load(render(
-            "ansible/roles/wordpress-kubernetes/templates/cli-job.yaml.j2", job_vars
+            "ansible/roles/wordpress/templates/cli-job.yaml.j2", job_vars
         ))
         pod = job["spec"]["template"]["spec"]
         init = pod["initContainers"][0]
@@ -176,7 +185,7 @@ def check_workload_and_cli_jobs():
 
 
 def check_shared_recovery_inputs():
-    main = tasks("ansible/roles/wordpress-kubernetes/tasks/main.yml")
+    main = tasks("ansible/roles/wordpress/tasks/kubernetes.yml")
     main_text = str(main)
     for shared in (
         "tasks/kubernetes/apply-manifest.yml",
@@ -195,7 +204,7 @@ def check_shared_recovery_inputs():
     initialize = next(task for task in main
                       if task.get("name") == "WordPress Kubernetes | Initialize the administrator and record continuity")
     assert initialize["when"] == "not (_wordpress_k8s_admin_marker_present | bool)"
-    cli_runner = tasks("ansible/roles/wordpress-kubernetes/tasks/run-cli-job.yml")
+    cli_runner = tasks("ansible/roles/wordpress/tasks/kubernetes-cli-job.yml")
     job_vars = cli_runner[1]["vars"]
     assert job_vars["k8s_job_expected_exit_codes"] == "{{ [41, 42] if wordpress_k8s_cli_mode == 'detect' else [] }}"
     assert job_vars["k8s_job_report_changed"] == "{{ wordpress_k8s_cli_mode != 'detect' }}"
@@ -226,7 +235,7 @@ def check_shared_recovery_inputs():
     assert recovery["stop"] == ["{{ instance }}"]
     assert "k8s_database_step" in recovery["database"]
 
-    restore = tasks("ansible/roles/wordpress-kubernetes/tasks/restore.yml")
+    restore = tasks("ansible/roles/wordpress/tasks/restore-kubernetes.yml")
     restore_text = str(restore)
     assert "tasks/database/kubernetes-recovery-step.yml" in restore_text
     assert "tasks/kubernetes/recovery-restore.yml" in restore_text
@@ -237,7 +246,17 @@ def check_shared_recovery_inputs():
     shared_restore = next(task for task in restore
                           if "recovery-restore.yml" in str(task))
     assert restore.index(safety) < restore.index(shared_restore)
-    assert "after-restore.yml" in restore_text
+    assert "restore-kubernetes-rekey.yml" in restore_text
+    # The re-key acts on the restore target, which differs from `instance` (the source)
+    # when a point is restored into another WordPress.
+    rekey = tasks("ansible/roles/wordpress/tasks/restore-kubernetes-rekey.yml")[0]["vars"]
+    assert rekey["wordpress_k8s_instance"] == "{{ restore_target }}"
+    assert rekey["wordpress_k8s_config"] == "{{ restore_target_config }}"
+    target = {**fixture(), "wordpress_k8s_cli_mode": "restore", "wordpress_k8s_instance": "wordpress-copy",
+              "wordpress_k8s_admin_secret": "wordpress-copy-admin", "_wordpress_k8s_install_state": "installed"}
+    job = yaml.safe_load(render("ansible/roles/wordpress/templates/cli-job.yaml.j2", target))
+    assert job["metadata"]["name"] == "wordpress-copy-wordpress-restore"
+    assert "wordpress-copy-env" in str(job) and "'wordpress-env'" not in str(job)
     assert not (ROLE / "templates/backup-cronjob.yaml.j2").exists()
     assert not (ROLE / "templates/restore-job.yaml.j2").exists()
 

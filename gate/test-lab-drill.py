@@ -64,10 +64,14 @@ final = [line for line in out.splitlines() if "-canary-final " in line]
 if not final or "drill_action=verify" not in final[0] or "drill_final=true" not in final[0]:
     failures.append("the last canary check runs verify with drill_final after the final Deploy")
 for app in ("wordpress", "bookstack"):
-    unrecoverable = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan",
-                                    app], capture_output=True, text=True)
-    if unrecoverable.returncode != 2 or "recovery.methods" not in unrecoverable.stderr:
-        failures.append(f"{app}: backups without recovery.methods refuse the drill")
+    if " stateful " not in plan(app).splitlines()[0]:
+        failures.append(f"{app}: drills as stateful through Backup App and Restore App")
+# No catalog app is refused today; the rule itself stays covered.
+from importlib.machinery import SourceFileLoader
+lab_drill = SourceFileLoader("lab_drill", os.path.join(repo, "tools", "lab-drill")).load_module()
+kind, refusal = lab_drill.kind_of("example", {"backup": {"enabled": True}}, True)
+if kind is not None or "recovery.methods" not in (refusal or ""):
+    failures.append("backups without recovery.methods refuse the drill")
 
 renamed = plan("--app", "radarr", "radarr-4k")
 if "instance=radarr-4k" not in renamed or "app=radarr" not in renamed:

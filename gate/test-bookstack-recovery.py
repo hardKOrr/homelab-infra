@@ -30,7 +30,6 @@ REMOVE = load_playbook(ROOT / "ansible/playbooks/apps/remove.yml")
 BOOKSTACK_DEFAULTS = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())["bookstack_defaults"]
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_DOCKER = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/docker.yml").read_text())
-BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
 # Plays the shared database client: `docker run ... -v DIR:/work[:ro] ... --entrypoint /bin/sh
@@ -161,7 +160,7 @@ def check_backup_scheduler_contract():
 
 
 def check_restore_contract():
-    swap = swap_inputs("bookstack")
+    swap = swap_inputs("bookstack", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "storage.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _bookstack_restore_data_path }}", "source": "storage",
@@ -179,28 +178,16 @@ def check_restore_contract():
     assert swap["recovery_swap_stop_services"] == \
         "{{ bookstack_native_services if bookstack_native | bool else ['bookstack'] }}"
     assert swap["recovery_swap_health_url"].endswith("/login")
-    restore = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/restore.yml").read_text())
+    restore = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/restore-guest.yml").read_text())
     age = next(task for task in restore if "require-recent-pre-restore-point" in
                str(task.get("ansible.builtin.include_tasks", "")))
     assert age["when"] == "restore_overwrite | bool"
     assert restore.index(age) < restore.index(next(task for task in restore if "restore-swap" in
                                                    str(task.get("ansible.builtin.include_tasks", ""))))
 
-    validate = next(task for task in BOOKSTACK_RESTORE[0]["pre_tasks"]
-                    if task.get("ansible.builtin.assert"))
-    requirements = validate["ansible.builtin.assert"]["that"]
-    assert any("pre_restore_point" in item and "length > 0" in item for item in requirements)
-    assert any("pre_restore_point != snapshot" in item for item in requirements)
-
-    tasks = list(tasks_recursive(BOOKSTACK_RESTORE))
-    run = next(task for task in tasks if task.get("name") == "Plan or perform the BookStack restore")
-    assert run["ansible.builtin.include_role"] == {"name": "bookstack", "tasks_from": "restore"}
-    for name in ("app_config", "homelabinfra_infra", "homelabinfra_vault"):
-        assert run["vars"][name] == "{{ hostvars['localhost'].%s }}" % name, name
-    assert run["vars"]["restore_pre_restore_point"] == "{{ pre_restore_point | default('') }}"
-    check = next(task for task in tasks if task.get("name") == "Fail if BookStack restore did not complete")
-    assert "bookstack_restore_complete" in str(check["ansible.builtin.assert"]["that"])
-    assert "homelab-infra-bookstack-recovery" not in str(BOOKSTACK_RESTORE), "the guest helper only backs up"
+    # Restore App runs this restore; its validate-restore.yml requires a distinct
+    # pre_restore_point for an overwrite. The guest helper only backs up.
+    assert "homelab-infra-bookstack-recovery" not in str(restore)
 
 
 def check_backup(case):
@@ -257,7 +244,7 @@ def check_backup(case):
 def check_native_contract():
     """Native backup uses the shared PBS backup and database dump, and the archives the
     Docker helper writes, so one restore reads either; the install is the pinned manual one."""
-    backup = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/backup.yml").read_text())
+    backup = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/backup-native.yml").read_text())
     run = next(task for task in backup if "pbs-client-backup" in
                str(task.get("ansible.builtin.include_tasks", "")) or "block" in task)
     run = next(t for t in run["block"] if "pbs-client-backup" in str(t.get("ansible.builtin.include_tasks", "")))

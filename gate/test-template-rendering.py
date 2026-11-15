@@ -1835,7 +1835,7 @@ def backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored, in
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
     templates = [ROOT / "ansible/templates/kubernetes/recovery-backup.yaml.j2"]
-    bookstack_kubernetes = ROOT / "ansible/roles/bookstack-kubernetes/templates/backup-cronjob.yaml.j2"
+    bookstack_kubernetes = ROOT / "ansible/roles/bookstack/templates/backup-cronjob.yaml.j2"
     assert not bookstack_kubernetes.exists(), "BookStack must use the shared Kubernetes backup template"
     templates_with_inline_pruning = templates
     for template in templates_with_inline_pruning:

@@ -17,7 +17,7 @@ from ansible.template import Templar
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["ANSIBLE_CONFIG"] = str(ROOT / "ansible/ansible.cfg")
-ROLE = ROOT / "ansible/roles/bookstack-kubernetes"
+ROLE = ROOT / "ansible/roles/bookstack"
 
 
 def recent_recovery_point():
@@ -111,29 +111,38 @@ def check_defaults_and_dispatch():
     assert stack["when"] == "app_config.hosting.method == 'docker'"
     k8s_play = next(play for play in deploy if play.get("name") == "BookStack | Deploy on Kubernetes")
     k8s_include = k8s_play["tasks"][0]
-    assert k8s_include["ansible.builtin.include_role"]["name"] == "bookstack-kubernetes"
+    assert k8s_include["ansible.builtin.include_role"] == {"name": "bookstack", "tasks_from": "kubernetes"}
     assert k8s_include["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
     assert "homelabinfra_infra.kubernetes.ingress_vip" in str(deploy[-1]["vars"]["wiring_upstream_host"])
     assert "80 if app_config.hosting.method == 'kubernetes'" in deploy[-1]["vars"]["wiring_upstream_port"]
     assert "else app_config.app.port" in deploy[-1]["vars"]["wiring_upstream_port"]
 
-    backup = yaml.safe_load(
-        (ROOT / "ansible/playbooks/maintenance/bookstack-backup.yml").read_text()
-    )
-    restore = yaml.safe_load(
-        (ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text()
-    )
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "bookstack-kubernetes"
-        and task["ansible.builtin.include_role"].get("tasks_from") == "backup.yml"
-        for task in backup[0]["tasks"]
-    )
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "bookstack-kubernetes"
-        and task["ansible.builtin.include_role"].get("tasks_from") == "restore.yml"
-        for task in next(play for play in restore
-                         if play["name"] == "BookStack Restore | Run on Kubernetes")["tasks"]
-    )
+    # Backup App and Restore App own BookStack's recovery on every method: the shared
+    # backup runs the deployed CronJob on Kubernetes and the role's backup.yml on a guest,
+    # and the role's restore.yml dispatches by hosting method.
+    defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/bookstack.yml").read_text())
+    recovery = defaults["bookstack_defaults"]["recovery"]
+    assert recovery["methods"] == ["native"]
+    assert recovery["native"] == {"backup_playbook": "backup-app.yml", "restore_playbook": "restore-app.yml"}
+    assert defaults["bookstack_defaults"]["backup"]["application_consistent"] is True
+    restore = yaml.safe_load((ROLE / "tasks/restore.yml").read_text())
+    assert [(task["ansible.builtin.include_tasks"], task["when"]) for task in restore] == [
+        ("restore-kubernetes.yml", "app_config.hosting.method == 'kubernetes'"),
+        ("restore-guest.yml", "app_config.hosting.method in ['docker', 'native']"),
+    ]
+    inputs = yaml.safe_load((ROLE / "tasks/restore-inputs.yml").read_text())
+    assert inputs[0]["ansible.builtin.assert"]["that"] == [
+        "_ra_destination == 'existing'", "_ra_target == instance",
+    ]
+    backup = yaml.safe_load((ROLE / "tasks/backup.yml").read_text())
+    helper = backup[0]["block"][0]
+    assert backup[0]["when"] == "not (bookstack_native | bool)"
+    assert helper["ansible.builtin.command"]["argv"] == ["{{ bookstack_recovery_script }}", "--backup"]
+    assert backup[1] == {
+        "name": "BookStack backup | Back up the native guest",
+        "ansible.builtin.include_tasks": "backup-native.yml",
+        "when": "bookstack_native | bool",
+    }
 
     remove = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
     database_remove_play = next(
@@ -153,7 +162,7 @@ def check_defaults_and_dispatch():
 
 
 def check_workload_manifest():
-    rendered = documents("ansible/roles/bookstack-kubernetes/templates/manifest.yaml.j2", fixture())
+    rendered = documents("ansible/roles/bookstack/templates/manifest.yaml.j2", fixture())
     objects = {doc["kind"]: doc for doc in rendered if doc}
     assert {"PersistentVolumeClaim", "Deployment", "Service", "Ingress"} <= set(objects)
     assert not {"ConfigMap", "ServiceAccount", "Role", "RoleBinding"} & set(objects)
@@ -175,7 +184,7 @@ def check_workload_manifest():
 
 def check_backup_and_restore_jobs():
     main_tasks = yaml.safe_load(
-        (ROLE / "tasks/main.yml").read_text(encoding="utf-8")
+        (ROLE / "tasks/kubernetes.yml").read_text(encoding="utf-8")
     )
     database_backup = next(
         task for task in main_tasks
@@ -194,11 +203,11 @@ def check_backup_and_restore_jobs():
     assert backup["database"] == "{{ k8s_database_step | default({}) }}"
 
     restore_tasks = yaml.safe_load(
-        (ROLE / "tasks/restore.yml").read_text(encoding="utf-8")
+        (ROLE / "tasks/restore-kubernetes.yml").read_text(encoding="utf-8")
     )
     database_restore = next(
         task for task in restore_tasks
-        if task.get("name") == "BookStack Kubernetes Restore | Describe the external database recovery step"
+        if task.get("name") == "BookStack Kubernetes restore | Describe the external database recovery step"
     )
     assert database_restore["vars"]["k8s_database_step_source"] == "registered"
     recovery_task = next(

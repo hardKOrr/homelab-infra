@@ -1,0 +1,12 @@
+---
+# Restore App hook, run on localhost before the target identity checks: the target's
+# published name, which the restore writes into the site URL (restore_target_fqdn).
+- name: WordPress restore | Resolve the target's estate
+  ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ restore_target_config.routing.estate | default('') }}"
+
+- name: WordPress restore | Derive the target's published name
+  ansible.builtin.set_fact:
+    restore_target_fqdn: >-
+      {{ restore_target_config.routing.subdomain | default(_ra_target, true) }}.{{ homelabinfra_infra.domain }}

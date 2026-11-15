@@ -1,0 +1,13 @@
+---
+# Restore App hook, run on localhost before anything is provisioned. A BookStack point
+# restores only over the instance that wrote it: its database holds values encrypted with
+# that instance's APP_KEY, which a different target does not have.
+- name: BookStack restore | Require the instance that wrote the point
+  ansible.builtin.assert:
+    that:
+      - _ra_destination == 'existing'
+      - _ra_target == instance
+    fail_msg: >-
+      BookStack restores a point only over the instance that wrote it ({{ instance }}),
+      with destination=existing and target blank. A different target lacks the source's
+      APP_KEY, so encrypted values in the restored database would be unreadable.

@@ -81,7 +81,7 @@
 - name: WordPress Kubernetes | Detect the database install and administrator continuity
   block:
     - name: WordPress Kubernetes | Run the read-only install check
-      ansible.builtin.include_tasks: run-cli-job.yml
+      ansible.builtin.include_tasks: kubernetes-cli-job.yml
       vars:
         wordpress_k8s_cli_mode: detect
 
@@ -139,7 +139,7 @@
   no_log: true
 
 - name: WordPress Kubernetes | Initialize the administrator and record continuity
-  ansible.builtin.include_tasks: run-cli-job.yml
+  ansible.builtin.include_tasks: kubernetes-cli-job.yml
   vars:
     wordpress_k8s_cli_mode: initialize
   when: not (_wordpress_k8s_admin_marker_present | bool)

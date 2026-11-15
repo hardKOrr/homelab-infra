@@ -429,7 +429,7 @@ applications:
     category: Content & Publishing
     type: Documentation
     scope: estate
-    extra: [bookstack_backup, bookstack_restore]
+    extra: [backup, restore]
 
   wordpress:
     name: WordPress
@@ -438,7 +438,7 @@ applications:
     category: Content & Publishing
     type: Website
     scope: estate
-    extra: [wordpress_backup, wordpress_restore]
+    extra: [backup, restore]
 
   hi-events:
     name: Hi.Events
