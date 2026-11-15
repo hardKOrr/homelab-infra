@@ -283,10 +283,8 @@ def check_ownership_guard():
         vault = guard_fixture(provider)["homelabinfra_vault"]
         vault["apps"]["other"].update(database_name="app", database_port="3307")
         target = guard_fixture(provider)["database_app_target"] | {"port": "3306"}
-        assert guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target)), (
-            f"{provider}: a same-named database on another port of the host is another server")
-        vault["apps"]["other"]["database_port"] = "3306"
-        assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target))
+        assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault, database_app_target=target)), (
+            f"{provider}: a guest backend is changed through its socket, so another port is no escape")
         vault = guard_fixture(provider)["homelabinfra_vault"]
         vault["apps"]["app"]["database_name"] = "elsewhere"
         assert not guard_passes(guard_fixture(provider, homelabinfra_vault=vault))
