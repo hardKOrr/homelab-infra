@@ -5,6 +5,10 @@ Live procedures for one application instance. How live runs and fixes work is in
 
 ## Application recovery drill
 
+[`tools/lab-drill`](../../../tools/lab-drill) runs these steps on one instance and stops
+at the first failure; its header says which canary it uses. Walk them by hand only to
+investigate the step it failed at.
+
 The drill proves deploy, convergence and native recovery for one instance. Running it
 authorizes every step below on the issue's target instance, including Remove with
 `delete_data=true` and overwrite Restore. Go straight through. A lab-owned resource in the

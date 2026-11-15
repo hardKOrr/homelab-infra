@@ -1,0 +1,124 @@
+---
+# Write or check one instance's recovery drill canary. tools/lab-drill calls it; it changes
+# only drill-owned data.
+#
+# Usage:
+#   lab-run playbooks/maintenance/drill-canary.yml -e instance=tautulli \
+#       -e canary_action=create -e canary_id=d20261114-1530 -e canary_epoch=1763130600
+#
+# Inputs:
+#   instance       the instance (required); app when it differs from instance
+#   canary_action  create (write it), fresh (require it absent), verify (require it
+#                  exactly as written, then delete a marker file)
+#   canary_id      the drill run's id; the same value for all three actions
+#   canary_epoch   the drill run's start time in seconds, for canaries that need a time
+#
+# Dispatch: roles/<role>/tasks/drill-canary.yml when the role has it (it gets
+# drill_canary_action, drill_canary_id and drill_canary_epoch, plus the target that
+# tasks/maintenance/resolve-app-target.yml resolved). Otherwise an app that declares
+# `drill.canary_path` in its app-defaults gets a marker file there: a path the role's
+# backup archives, on a Docker or native guest. That proves the backup and restore
+# transport, not that the application reads the data. A browser canary
+# (roles/<role>/browser/*recovery.js) runs from tools/lab-drill instead of this playbook.
+
+- name: "Drill Canary | {{ instance | default('(no instance)') }}"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Validate the canary inputs
+      ansible.builtin.assert:
+        that:
+          - canary_action | default('') in ['create', 'fresh', 'verify']
+          - canary_id | default('') is match('^[A-Za-z0-9-]{1,40}$')
+          - canary_epoch | default('0') | int > 0
+        fail_msg: Pass canary_action=create|fresh|verify, a plain canary_id and canary_epoch.
+
+    - name: Resolve the instance's target
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        resolve_app_target_kinds: [native, docker, kubernetes]
+
+    - name: Resolve the canary
+      ansible.builtin.set_fact:
+        _dc_role: >-
+          {{ ((app_config.recovery | default({})).native | default({})).role
+             | default(_rat_app, true) }}
+        _dc_marker_dir: "{{ (app_config.drill | default({})).canary_path | default('', true) }}"
+
+    - name: Find the role's canary hook
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../roles/{{ _dc_role }}/tasks/drill-canary.yml"
+      register: _dc_hook
+
+    - name: Require a canary for this instance
+      ansible.builtin.assert:
+        that: >-
+          _dc_hook.stat.exists
+          or (_dc_marker_dir | length > 0 and _rat_kind in ['docker', 'native'])
+        fail_msg: >-
+          {{ instance }} has no drill canary: add roles/{{ _dc_role }}/tasks/drill-canary.yml,
+          a browser recovery spec, or drill.canary_path in its app-defaults (Docker or
+          native only).
+
+    - name: Run the role's canary hook
+      ansible.builtin.include_role:
+        name: "{{ _dc_role }}"
+        tasks_from: drill-canary
+      vars:
+        drill_canary_action: "{{ canary_action }}"
+        drill_canary_id: "{{ canary_id }}"
+        drill_canary_epoch: "{{ canary_epoch | int }}"
+      when: _dc_hook.stat.exists
+
+- name: "Drill Canary | Marker file"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _dc: "{{ hostvars['localhost'] }}"
+    _dc_file: "{{ _dc._dc_marker_dir }}/.lab-drill-canary"
+  tasks:
+    - name: Marker canary
+      when: not _dc._dc_hook.stat.exists
+      block:
+        - name: Require the marker directory
+          ansible.builtin.stat:
+            path: "{{ _dc._dc_marker_dir }}"
+          register: _dc_dir
+          failed_when: not (_dc_dir.stat.isdir | default(false))
+
+        - name: Write the marker
+          ansible.builtin.copy:
+            dest: "{{ _dc_file }}"
+            content: "{{ canary_id }}\n"
+            mode: "0644"
+          when: canary_action == 'create'
+
+        - name: Read the marker
+          ansible.builtin.slurp:
+            src: "{{ _dc_file }}"
+          register: _dc_read
+          failed_when: false
+          when: canary_action != 'create'
+
+        - name: Require the marker absent on a fresh instance
+          ansible.builtin.assert:
+            that: _dc_read.content is not defined
+            fail_msg: "{{ _dc_file }} exists on a fresh {{ instance }}: data survived Remove."
+          when: canary_action == 'fresh'
+
+        - name: Require the restored marker
+          ansible.builtin.assert:
+            that: (_dc_read.content | default('') | b64decode | trim) == canary_id
+            fail_msg: "{{ _dc_file }} does not hold {{ canary_id }} after Restore."
+          when: canary_action == 'verify'
+
+        - name: Delete the verified marker
+          ansible.builtin.file:
+            path: "{{ _dc_file }}"
+            state: absent
+          when: canary_action == 'verify'

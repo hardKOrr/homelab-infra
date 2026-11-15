@@ -2,7 +2,8 @@
 // the default verifies exact restored values. Credentials come from lab-browser.
 module.exports = async ({ page, context, step, url, secrets }) => {
   const parsed = new URL(url);
-  const mode = parsed.searchParams.get('drill') || 'verify';
+  const requested = parsed.searchParams.get('drill') || 'verify';
+  const mode = requested === 'fresh' ? 'absent' : requested; // tools/lab-drill says fresh
   const base = parsed.origin;
   const slug = 'p2-canary-wordpress-2026-11-10-lxc';
   const title = 'WordPress LXC recovery canary 660';

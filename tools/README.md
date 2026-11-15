@@ -10,6 +10,7 @@ options; `<script> --help` prints it.
 | Block until it ends, in one call, then see its exit code, error lines and log tail | `tools/lab-wait <name>`; exit 124 means call it again |
 | A shell command inside the runner, or on a lab node | `tools/lab-exec '<cmd>'`, `tools/lab-exec --node '<cmd>'` |
 | A shell command inside one `_+lab` guest (LXC directly, VM through lab-run) | `tools/guest-exec <name or vmid> '<cmd>'` |
+| Run the whole recovery drill on one instance, stopping at the first failure | `tools/lab-start drill-<i> -- tools/lab-drill <instance>`; `--plan` prints the steps |
 | Check an app in a browser: sign in, pages render, a flow works | `tools/lab-browser <instance> <url> ansible/roles/<app>/browser/<spec>.js` |
 
 `lab-exec` and `guest-exec` take a script on stdin instead of a command string. Exit codes are the command's.

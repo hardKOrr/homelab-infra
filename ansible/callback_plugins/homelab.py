@@ -352,3 +352,7 @@ class CallbackModule(DefaultCallback):
                 self._display.display('    %8s  %s' % (self._duration(elapsed), name))
 
         self._display.display('')
+        # One fixed line for a script that sequences runs (tools/lab-drill), so it reads
+        # the verdict and the changed count without parsing the block above.
+        self._display.display('HOMELAB_RUN result=%s changed=%d failed=%d'
+                              % (verdict.replace(' ', '_'), totals['changed'], broken))
