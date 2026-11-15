@@ -151,6 +151,7 @@ mysql = read("ansible/tasks/database/provision-mysql-compatible.yml")
 assert mysql.count("_database_backend.kubernetes | default({}) | length == 0") == 2
 assert "provision-kubernetes-sql.yml" in mysql
 assert "database_app_target.kubernetes | default(false) | bool" in read("ansible/tasks/database/guard-app-database.yml")
+assert "database_consumers_target.kubernetes | default(false) | bool" in read("ansible/tasks/database/guard-other-consumers.yml")
 client = read("ansible/tasks/database/scripts/database-client.sh")
 for action in ("server-dump", "server-verify", "server-load", "server-inspect"):
     assert action in client, action
@@ -165,7 +166,7 @@ print("MariaDB keeps the guests as default and runs on Kubernetes through the sh
 
 # A set_fact cannot read a fact it defines itself: the ownership guard's intermediate
 # list is a task var, never a sibling key.
-guard = load("ansible/tasks/database/guard-app-database.yml")[0]
+guard = load("ansible/tasks/database/guard-other-consumers.yml")[0]
 assert "_other_ports" in guard["vars"]
 assert "_other_ports" not in guard["ansible.builtin.set_fact"]
 

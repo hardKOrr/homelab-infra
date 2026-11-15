@@ -20,6 +20,7 @@ that interface.
   The live [recovery drill and application data port](recovery-drill.md) prove one
   instance's deploy, backup and restore end to end.
   `drill-canary.yml` writes and checks the drill canary for `tools/lab-drill`.
+  `check-wiring.yml` counts an instance's route, DNS record, monitor and SSO entry for it.
   `influxdb-canary.yml` runs the InfluxDB role's authenticated recovery checks; its
   [role README](../../roles/influxdb/README.md#recovery-checks) describes the inputs.
 - Status and ascent verification read state without enforcing drift.

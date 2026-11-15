@@ -123,6 +123,9 @@ caddy_defaults:
   update:
     github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link
 
+  # playbooks/maintenance/check-wiring.yml: Deploy wires a DNS record and a monitor, no route.
+  drill:
+    wiring: [dns, monitor]
   routing:
     proxy: none                 # Caddy IS the reverse proxy — never route it through itself
     access: internal            # unused while proxy is none; kept so the key is never absent

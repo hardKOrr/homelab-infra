@@ -20,15 +20,18 @@ def steps(text):
     return [line.split()[1].split("-", 1)[1] for line in text.splitlines() if line.startswith("STEP ")]
 
 
-STATEFUL = ["deploy", "deploy-repeat", "canary-create", "backup", "remove", "deploy-fresh",
+STATEFUL = ["deploy", "wiring-deploy", "deploy-repeat", "wiring-deploy-repeat", "canary-create",
+            "backup", "remove", "wiring-remove", "deploy-fresh", "wiring-deploy-fresh",
             "canary-fresh", "backup-pre-restore", "restore-preview", "restore", "canary-verify",
-            "deploy-final"]
+            "deploy-final", "wiring-deploy-final"]
 
 out = plan("tautulli")
 if steps(out) != STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
 if "canary=marker" not in out:
     failures.append("Tautulli's drill.canary_path selects the marker canary")
+if "expect=absent" not in out.split("wiring-remove", 1)[-1].splitlines()[0]:
+    failures.append("the wiring check after Remove expects nothing left")
 if "delete_data=true" not in out or "pre_restore_point=<backup-pre-restore-point>" not in out:
     failures.append("Remove deletes data and Restore passes the pre-restore point")
 
@@ -40,8 +43,20 @@ if "role=servarr" not in radarr or "radarr-recovery.js" not in radarr:
     failures.append("a role alias finds the app's own browser spec")
 
 stateless = plan("homepage")
-if steps(stateless) != ["deploy", "deploy-repeat", "remove", "deploy-fresh", "deploy-final"]:
+if steps(stateless) != ["deploy", "wiring-deploy", "deploy-repeat", "wiring-deploy-repeat",
+                        "remove", "wiring-remove", "deploy-fresh", "wiring-deploy-fresh",
+                        "deploy-final", "wiring-deploy-final"]:
     failures.append(f"stateless sequence: {steps(stateless)}")
+
+seeded = plan("--seed-wrong-point", "tautulli")
+restore = [line for line in seeded.splitlines() if line.split()[1:2] and line.split()[1].endswith("-restore")
+           and "restore-app.yml" in line]
+if not restore or "recovery_point=<backup-pre-restore-point>" not in restore[0]:
+    failures.append("--seed-wrong-point restores the fresh install's backup")
+refused = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan",
+                          "--seed-wrong-point", "homepage"], capture_output=True, text=True)
+if refused.returncode != 2:
+    failures.append("--seed-wrong-point refuses an app with nothing to restore")
 
 renamed = plan("--app", "radarr", "radarr-4k")
 if "instance=radarr-4k" not in renamed or "app=radarr" not in renamed:
@@ -55,4 +70,5 @@ for spec in ("mixpost", "wordpress"):
 if failures:
     print("\n".join(failures))
     sys.exit(1)
-print("lab-drill plans the stateful and stateless drills and picks each app's canary")
+print("lab-drill plans the stateful, stateless and seeded drills, its wiring checks and each "
+      "app's canary")

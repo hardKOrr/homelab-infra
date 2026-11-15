@@ -78,6 +78,10 @@ backup:
 # app:
 #   database:
 #     instance: mariadb-mixpost   # the named MariaDB backend; deploy it first
+#     # A second instance on the same backend needs its own database and login; Deploy
+#     # refuses one another instance already uses.
+#     # name: mixpost_<variant>
+#     # role: mixpost_<variant>
 # # On Docker the backup stops Mixpost and its Redis, dumps the database and archives
 # # the storage directory as one recovery point.
 
