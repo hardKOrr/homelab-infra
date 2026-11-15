@@ -256,6 +256,20 @@ with tempfile.TemporaryDirectory(prefix="influxdb-client-") as tmp:
 # ── Firewall: consumers name InfluxDB by influxdb_host and influxdb_port ───────────────
 access = read("ansible/tasks/database/open-consumer-access.yml")
 assert "'influxdb']" in access and "_sql_prefix ~ '_host'" in access
+consumer = load("ansible/tasks/database/open-one-consumer-access.yml")
+hosting = next(t["ansible.builtin.set_fact"]["_sql_consumer_k8s"] for t in consumer
+               if "_sql_consumer_k8s" in t.get("ansible.builtin.set_fact", {}))
+guest = consumer[-1]["vars"]["_consumer_guest"]
+for method, expected in [("kubernetes", True), ("native", False), ("docker", False),
+                         (None, False)]:
+    inputs = {"ansible_facts": {"_sql_consumer_inputs": {"hosting": {"method": method}}}} if method else {}
+    resolved = Templar(loader=DataLoader(), variables={"_sql_consumer_inputs_read": inputs}).template(hosting)
+    assert resolved is expected, resolved
+    variables = {"_sql_consumer_k8s": resolved, "tag_group_name": "old",
+                 "groups": {"old": ["retained-one", "retained-two"] if expected else ["guest"]}}
+    target = Templar(loader=DataLoader(), variables=variables).template(guest)
+    assert target == ("" if expected else "guest"), target
+assert consumer[-2]["when"] == "not (_sql_consumer_k8s | bool)"
 
 # ── No role-local copy of a shared operation ───────────────────────────────────────────
 assert not (ROLE / "templates/kubernetes").exists()

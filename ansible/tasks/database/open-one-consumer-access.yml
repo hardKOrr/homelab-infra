@@ -1,15 +1,34 @@
 ---
 # One consumer of open-consumer-access.yml: a guest is allowed by its address, anything
 # else by the cluster-node alias.
+- name: SQL consumer {{ _sql_consumer }} | Read its declared hosting method
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/apps/{{ _sql_consumer }}.yml"
+    name: _sql_consumer_inputs
+  register: _sql_consumer_inputs_read
+  failed_when: false
+  no_log: true
+
+# Use this include's result, not a previous loop iteration's optional config. Retained
+# guest tags do not describe a consumer that has moved to Kubernetes.
+- name: SQL consumer {{ _sql_consumer }} | Resolve whether it runs on Kubernetes
+  ansible.builtin.set_fact:
+    _sql_consumer_k8s: >-
+      {{ (_sql_consumer_inputs_read.ansible_facts | default({}))
+         .get('_sql_consumer_inputs', {}).get('hosting', {}).get('method', '') == 'kubernetes' }}
+
 - name: SQL consumer {{ _sql_consumer }} | Resolve its guest, if it has one
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_{{ _sql_consumer }}"
+  when: not (_sql_consumer_k8s | bool)
 
 - name: SQL consumer {{ _sql_consumer }} | Open the backend's port
   ansible.builtin.include_tasks: ../firewall/open-app-access.yml
   vars:
-    _consumer_guest: "{{ groups[tag_group_name] | default([]) | first | default('') }}"
+    _consumer_guest: >-
+      {{ '' if _sql_consumer_k8s | bool
+         else groups[tag_group_name] | default([]) | first | default('') }}
     wiring_app_name: "{{ instance }} for {{ _sql_consumer }}"
     wiring_upstream_host: >-
       {{ hostvars[_consumer_guest].ansible_host if _consumer_guest | length > 0
