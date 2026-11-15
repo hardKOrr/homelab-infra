@@ -113,11 +113,12 @@
       operator-token: "{{ _influxdb_operator_token }}"
   no_log: true
 
-- name: InfluxDB Kubernetes | Fingerprint the setup values and credentials
+- name: InfluxDB Kubernetes | Fingerprint the setup values, tuning and credentials
   ansible.builtin.set_fact:
     _influxdb_config_checksum: >-
       {{ [app_config.app.image, app_config.app.admin_user, app_config.app.organization,
-          app_config.app.bucket, _influxdb_admin_password | hash('sha256'),
+          app_config.app.bucket, _influxdb_cache_max_memory_mib,
+          _influxdb_cache_snapshot_memory_mib, _influxdb_admin_password | hash('sha256'),
           _influxdb_operator_token | hash('sha256')] | to_json | hash('sha256') }}
   no_log: true
 

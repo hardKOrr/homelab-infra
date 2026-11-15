@@ -147,6 +147,10 @@ assert any(str(t.get("ansible.builtin.include_tasks", "")).endswith("tasks/kuber
            for t in deploy)
 guard = next(t for t in deploy if t["name"].endswith("Refuse to replace unavailable existing credentials"))
 assert "_influxdb_pvc.rc != 0" in guard["ansible.builtin.assert"]["that"]
+fingerprint = next(t for t in deploy if t["name"].endswith("Fingerprint the setup values, tuning and credentials"))
+text = fingerprint["ansible.builtin.set_fact"]["_influxdb_config_checksum"]
+# The ConfigMap is read once, at start: its tuning must change the pod template.
+assert "_influxdb_cache_max_memory_mib" in text and "_influxdb_cache_snapshot_memory_mib" in text
 backup = next(
     t for t in deploy if str(t.get("ansible.builtin.include_tasks", "")).endswith("recovery-backup.yml")
 )
