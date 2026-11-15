@@ -199,6 +199,9 @@ class Drill:
         if method and not self.method:
             self.method = method.group(1)
             self.say(f"METHOD {self.method}")
+            if self.tier == "marker" and self.method == "kubernetes":
+                self.tier, self.canary = "none", ""
+                self.say("CANARY none: a marker file needs a Docker or native guest")
 
     def remove(self, **extra):
         self.playbook("remove", "playbooks/apps/remove.yml", **extra)
@@ -224,6 +227,9 @@ class Drill:
     def canary_step(self, mode):
         expect_fail = self.seeded and mode == "verify"
         if self.tier == "none":
+            if expect_fail:
+                self.fail(f"{self.step_no + 1:02d}-canary-verify",
+                          "no canary on this hosting method to catch the wrong point")
             return
         if self.tier == "browser":
             self.step_no += 1

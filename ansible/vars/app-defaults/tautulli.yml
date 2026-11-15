@@ -28,9 +28,10 @@ tautulli_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
 
-  # tools/lab-drill writes its marker canary here: the directory the backup archives.
+  # tools/lab-drill writes its marker canary in app.config_path, the directory the backup
+  # archives (a name without a leading / is an app key; see drill-canary.yml).
   drill:
-    canary_path: "/opt/{{ instance }}/config"
+    canary_path: config_path
 
   app:
     # Docker and native run the same upstream release. Native clones this tag of
