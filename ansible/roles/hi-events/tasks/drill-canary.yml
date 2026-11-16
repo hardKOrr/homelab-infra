@@ -6,8 +6,9 @@
 #                  default is USD)
 # Deploy provisions no login, so a create registers the lab-only owner kept in Vaultwarden
 # item homelab-infra/apps/<instance>-drill-owner (kept when it exists); on a fresh instance
-# that owner cannot sign in. The final verify (drill_final) deletes the event and the
-# organizer.
+# that owner cannot sign in. The owner also keeps a standing organizer, Drill Owner, because
+# Hi.Events never deletes an account's last one. The final verify (drill_final) deletes the
+# event and the canary organizer.
 - name: Hi.Events drill canary | Resolve the instance's URL
   ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
 
@@ -121,6 +122,25 @@
     - name: Hi.Events drill canary | Keep the canary organizer
       ansible.builtin.set_fact:
         _he_organizers: "{{ _he_list.json.data | selectattr('name', 'equalto', _he_canary) | list }}"
+
+    # Hi.Events refuses to delete an account's last organizer, so the owner keeps its own.
+    - name: Hi.Events drill canary | Give the drill owner its standing organizer
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/organizers"
+        method: POST
+        headers: "{{ _he_headers }}"
+        body_format: json
+        body:
+          name: Drill Owner
+          email: "{{ _he_owner.email | default(_he_owner.username) }}"
+          timezone: UTC
+          currency: USD
+        status_code: [200, 201]
+      changed_when: true
+      no_log: true
+      when: >-
+        drill_canary_action == 'create'
+        and _he_list.json.data | selectattr('name', 'equalto', 'Drill Owner') | list | length == 0
 
     - name: Hi.Events drill canary | Write the organizer, the event and its ticket
       when: drill_canary_action == 'create' and _he_organizers | length == 0
