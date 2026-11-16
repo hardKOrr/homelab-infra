@@ -57,3 +57,6 @@ Add `&scope=<drill-name>` to isolate the canary label and saved comparison betwe
 `browser/sonarr-recovery.js` checks an unmonitored The Office series, its tag and
 season/profile associations, media-management settings and canonical API key using
 `sonarr-drill-owner` with the same modes and scope option.
+
+Lidarr has no browser spec; its canary is `tasks/drill-canary.yml`, through the API with
+the instance's key. A kind with a browser spec keeps using it (`tools/lab-drill`).
