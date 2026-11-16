@@ -181,8 +181,8 @@
 
         - name: Hi.Events drill canary | Keep the new organizer and event
           ansible.builtin.set_fact:
-            _he_organizers: ["{{ _he_new_organizer.json.data }}"]
-            _he_events: ["{{ _he_new_event.json.data }}"]
+            _he_organizers: "{{ [_he_new_organizer.json.data] }}"
+            _he_events: "{{ [_he_new_event.json.data] }}"
 
     - name: Hi.Events drill canary | Read the organizer and the event's tickets
       ansible.builtin.uri:
