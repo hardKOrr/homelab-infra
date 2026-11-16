@@ -1,0 +1,224 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Karakeep's REST API
+# and its tRPC user settings as the drill owner, as test(karakeep) #410 defined it:
+#   data           list p2-canary-karakeep-<id> holding one link bookmark of the same title
+#                  (the instance's own routed URL, which the lab reaches)
+#   configuration  the owner's bookmarkClickAction set to expand_bookmark_preview (default
+#                  open_original_link)
+# Deploy provisions no login, so a create signs up the lab-only owner kept in Vaultwarden
+# item homelab-infra/apps/<instance>-drill-owner (kept when it exists) and stores the API
+# key it exchanges there as api_key, so a verify writes nothing. On a fresh instance that
+# key no longer works. The final verify (drill_final) deletes the bookmark and the list and
+# sets bookmarkClickAction back.
+- name: Karakeep drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Karakeep drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _kk_canary: "p2-canary-karakeep-{{ drill_canary_id }}"
+    _kk_owner_item: "{{ instance }}-drill-owner"
+    _kk_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+- name: Karakeep drill canary | Try the stored API key
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/v1/users/me"
+    headers: "{{ drill_app_headers | combine({'Authorization': 'Bearer ' ~ (_kk_owner.api_key | default('none', true))}) }}"
+    status_code: [200, 401]
+  register: _kk_whoami
+  changed_when: false
+  no_log: true
+
+- name: Karakeep drill canary | Require the stored key refused on a fresh instance
+  ansible.builtin.assert:
+    that: _kk_whoami.status == 401
+    fail_msg: "{{ instance }} accepts the drill owner's API key on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Karakeep drill canary | Sign up the drill owner and exchange its API key
+  when: drill_canary_action == 'create' and _kk_whoami.status != 200
+  block:
+    - name: Karakeep drill canary | Choose the drill owner
+      ansible.builtin.set_fact:
+        _kk_owner: >-
+          {{ _kk_owner if _kk_owner.password | default('') | length > 0
+             else {'email': 'drill-owner@' ~ instance ~ '.invalid',
+                   'password': lookup('ansible.builtin.password', '/dev/null', length=32,
+                                      chars=['ascii_letters', 'digits'])} }}
+      no_log: true
+
+    - name: Karakeep drill canary | Exchange the owner's password for an API key
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/trpc/apiKeys.exchange"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          json:
+            keyName: "drill-{{ drill_canary_id }}"
+            email: "{{ _kk_owner.email }}"
+            password: "{{ _kk_owner.password }}"
+        status_code: [200, 401]
+      register: _kk_exchange
+      changed_when: _kk_exchange.status == 200
+      no_log: true
+
+    - name: Karakeep drill canary | Sign up the owner when it has no account
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/trpc/users.create"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          json:
+            name: Drill Owner
+            email: "{{ _kk_owner.email }}"
+            password: "{{ _kk_owner.password }}"
+            confirmPassword: "{{ _kk_owner.password }}"
+      changed_when: true
+      no_log: true
+      when: _kk_exchange.status == 401
+
+    - name: Karakeep drill canary | Exchange the new owner's password for an API key
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/trpc/apiKeys.exchange"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          json:
+            keyName: "drill-{{ drill_canary_id }}"
+            email: "{{ _kk_owner.email }}"
+            password: "{{ _kk_owner.password }}"
+      register: _kk_exchange_new
+      changed_when: true
+      no_log: true
+      when: _kk_exchange.status == 401
+
+    - name: Karakeep drill canary | Store the owner and its API key
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _kk_owner_item }}"
+        vault_item_fields:
+          email: "{{ _kk_owner.email }}"
+          password: "{{ _kk_owner.password }}"
+          api_key: "{{ (_kk_exchange_new if _kk_exchange.status == 401 else _kk_exchange).json.result.data.json.key }}"
+        vault_item_secret_fields: [password, api_key]
+
+    - name: Karakeep drill canary | Keep the API key
+      ansible.builtin.set_fact:
+        _kk_owner: "{{ _kk_owner | combine({'api_key': (_kk_exchange_new if _kk_exchange.status == 401 else _kk_exchange).json.result.data.json.key}) }}"
+      no_log: true
+
+- name: Karakeep drill canary | Read and check the canaries
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: Karakeep drill canary | Keep the session
+      ansible.builtin.set_fact:
+        _kk_headers: "{{ drill_app_headers | combine({'Authorization': 'Bearer ' ~ (_kk_owner.api_key | default('none', true))}) }}"
+      no_log: true
+
+    - name: Karakeep drill canary | Read the lists and the settings
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item }}"
+        headers: "{{ _kk_headers }}"
+        status_code: [200, 401]
+      register: _kk_read
+      changed_when: false
+      no_log: true
+      loop: [api/v1/lists, api/trpc/users.settings]
+
+    - name: Karakeep drill canary | Require the drill owner's API key
+      ansible.builtin.assert:
+        that: _kk_read.results[0].status == 200
+        fail_msg: "{{ instance }} refused the API key in homelab-infra/apps/{{ _kk_owner_item }}."
+
+    - name: Karakeep drill canary | Write the list, the bookmark and the setting
+      when: >-
+        drill_canary_action == 'create'
+        and _kk_read.results[0].json.lists | selectattr('name', 'equalto', _kk_canary) | list | length == 0
+      block:
+        - name: Karakeep drill canary | Create the list and the bookmark
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/v1/{{ item.path }}"
+            method: POST
+            headers: "{{ _kk_headers }}"
+            body_format: json
+            body: "{{ item.body }}"
+            status_code: [200, 201]
+          register: _kk_new
+          changed_when: true
+          no_log: true
+          loop:
+            - {path: lists, body: {name: "{{ _kk_canary }}", icon: "🐤"}}
+            - {path: bookmarks, body: {type: link, url: "{{ drill_app_routed_url }}/", title: "{{ _kk_canary }}"}}
+
+        - name: Karakeep drill canary | Put the bookmark in the list and set the setting
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/{{ item.path }}"
+            method: "{{ item.method }}"
+            headers: "{{ _kk_headers }}"
+            body_format: json
+            body: "{{ item.body | default(omit) }}"
+            status_code: [200, 204]
+          changed_when: true
+          no_log: true
+          loop:
+            - path: "api/v1/lists/{{ _kk_new.results[0].json.id }}/bookmarks/{{ _kk_new.results[1].json.id }}"
+              method: PUT
+            - path: api/trpc/users.updateSettings
+              method: POST
+              body: {json: {bookmarkClickAction: expand_bookmark_preview}}
+
+    - name: Karakeep drill canary | Read the lists and the settings after the write
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item }}"
+        headers: "{{ _kk_headers }}"
+      register: _kk_state
+      changed_when: false
+      no_log: true
+      loop: [api/v1/lists, api/trpc/users.settings]
+
+    - name: Karakeep drill canary | Keep the canary list
+      ansible.builtin.set_fact:
+        _kk_lists: "{{ _kk_state.results[0].json.lists | selectattr('name', 'equalto', _kk_canary) | list }}"
+        _kk_click: "{{ _kk_state.results[1].json.result.data.json.bookmarkClickAction }}"
+
+    - name: Karakeep drill canary | Read the list's bookmarks
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/lists/{{ _kk_lists[0].id }}/bookmarks"
+        headers: "{{ _kk_headers }}"
+      register: _kk_marks
+      changed_when: false
+      no_log: true
+      when: _kk_lists | length == 1
+
+    - name: Karakeep drill canary | Require the list, its bookmark and the setting
+      ansible.builtin.assert:
+        that:
+          - _kk_lists | length == 1
+          - _kk_titles == [_kk_canary]
+          - _kk_click == 'expand_bookmark_preview'
+        fail_msg: >-
+          {{ instance }} holds {{ _kk_lists | length }} canary list(s) with bookmarks
+          {{ _kk_titles }} and bookmarkClickAction {{ _kk_click }}.
+      vars:
+        _kk_titles: "{{ (_kk_marks.json | default({})).bookmarks | default([]) | map(attribute='title') | list }}"
+
+    - name: Karakeep drill canary | Delete the canary after the final verify
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ _kk_headers }}"
+        body_format: json
+        body: "{{ item.body | default(omit) }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      loop:
+        - {path: "api/v1/bookmarks/{{ _kk_marks.json.bookmarks[0].id }}", method: DELETE}
+        - {path: "api/v1/lists/{{ _kk_lists[0].id }}", method: DELETE}
+        - path: api/trpc/users.updateSettings
+          method: POST
+          body: {json: {bookmarkClickAction: open_original_link}}
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
