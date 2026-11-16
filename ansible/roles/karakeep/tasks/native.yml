@@ -119,6 +119,26 @@
     - {path: "{{ karakeep_data_path }}", owner: karakeep}
     - {path: "{{ karakeep_meilisearch_data_path | trim }}", owner: meilisearch}
 
+# The install script migrates only when it installs or updates; an emptied data directory
+# needs the schema too. Karakeep's own migrator applies only what is missing.
+- name: Karakeep native | Apply the database migrations
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      count() {
+        python3 -c 'import sqlite3, sys
+      try: print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM __drizzle_migrations").fetchone()[0])
+      except sqlite3.Error: print(0)' "{{ karakeep_data_path }}/db.db"
+      }
+      before="$(count)"
+      cd /opt/karakeep/packages/db
+      DATA_DIR="{{ karakeep_data_path }}" pnpm --silent migrate
+      [ "$(count)" = "$before" ] || echo changed
+    executable: /bin/bash
+  become_user: karakeep
+  register: _karakeep_migrate
+  changed_when: "'changed' in _karakeep_migrate.stdout"
+
 - name: Karakeep native | Render the Meilisearch configuration
   ansible.builtin.template:
     src: meilisearch.toml.j2
