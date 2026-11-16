@@ -1,0 +1,23 @@
+---
+# Resolve the base URL a role's drill-canary.yml hook calls the app's API on from the
+# runner: the guest's address and app port for a native or Docker app, the routed HTTPS
+# name for a Kubernetes app (the platform Caddy fronts the cluster's ingress).
+#
+# Inputs, besides instance, app_config, _rat_kind and _rat_host from
+# playbooks/maintenance/drill-canary.yml:
+#   drill_url_port  the guest port (default app_config.app.port)
+# Sets: drill_app_url, with no trailing slash.
+- name: Drill URL | Resolve the estate's domain
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+  when: _rat_kind == 'kubernetes'
+
+- name: Drill URL | Resolve the app's base URL
+  ansible.builtin.set_fact:
+    drill_app_url: >-
+      {{ 'https://' ~ (app_config.routing.subdomain | default(instance, true)) ~ '.'
+           ~ (homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain, true))
+         if _rat_kind == 'kubernetes'
+         else 'http://' ~ hostvars[_rat_host].ansible_host ~ ':'
+           ~ (drill_url_port | default(app_config.app.port)) }}

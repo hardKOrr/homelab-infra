@@ -1,0 +1,53 @@
+---
+# Run one command inside a drill target's own runtime, for a role's drill-canary.yml hook:
+# on its guest (native), in its container (Docker) or in its pod (Kubernetes), so the
+# canary goes through the application's own CLI on every hosting method.
+#
+# Inputs, besides instance, _rat_kind and _rat_host from playbooks/maintenance/drill-canary.yml:
+#   drill_exec_argv            the command as the app sees it, e.g. [ntfy, user, list]
+#   drill_exec_stdin           optional stdin
+#   drill_exec_container       Docker container (default: the instance name)
+#   drill_exec_workload        Kubernetes exec target (default: deployment/<instance>)
+#   drill_exec_pod_container   optional container inside that pod
+#   drill_exec_secret          true hides the command and its output (default false)
+#   drill_exec_changes         true when the command writes (default false)
+# Sets: drill_exec_result, the command's result (rc, stdout, stdout_lines).
+- name: Drill exec | Require a command and a homelab-infra target
+  ansible.builtin.assert:
+    that:
+      - drill_exec_argv | default([]) | length > 0
+      - _rat_kind in ['native', 'docker', 'kubernetes']
+      - _rat_kind == 'kubernetes' or _rat_host in groups['lab_managed'] | default([])
+    fail_msg: app-exec.yml needs drill_exec_argv and a _+lab target.
+
+- name: Drill exec | Resolve the cluster and the instance's namespace
+  ansible.builtin.include_tasks: "{{ item }}"
+  vars:
+    k8s_namespace_for: "{{ instance }}"
+  loop:
+    - ../kubernetes/resolve-cluster.yml
+    - ../kubernetes/derive-namespace.yml
+  when: _rat_kind == 'kubernetes' and k8s_api_host is not defined
+
+- name: Drill exec | Build the command for the hosting method
+  ansible.builtin.set_fact:
+    _drill_exec_full: >-
+      {{ drill_exec_argv if _rat_kind == 'native'
+         else ['docker', 'exec', '-i', drill_exec_container | default(instance)] + drill_exec_argv
+           if _rat_kind == 'docker'
+         else ['k3s', 'kubectl', '--namespace', k8s_namespace, 'exec', '-i',
+               drill_exec_workload | default('deployment/' ~ instance)]
+              + (['--container', drill_exec_pod_container]
+                 if drill_exec_pod_container | default('') | length > 0 else [])
+              + ['--'] + drill_exec_argv }}
+  no_log: "{{ drill_exec_secret | default(false) | bool }}"
+
+- name: Drill exec | Run the command in the app
+  ansible.builtin.command:
+    argv: "{{ _drill_exec_full }}"
+    stdin: "{{ drill_exec_stdin | default(omit) }}"
+  delegate_to: "{{ k8s_api_host if _rat_kind == 'kubernetes' else _rat_host }}"
+  become: true
+  register: drill_exec_result
+  changed_when: drill_exec_changes | default(false) | bool
+  no_log: "{{ drill_exec_secret | default(false) | bool }}"

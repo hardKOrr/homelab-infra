@@ -1,0 +1,126 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Authentik's API, as
+# test(authentik) #444 defined it:
+#   data           user p2-canary-authentik-<id> in a group of the same name
+#   configuration  a brand titled p2-canary-authentik-<id> on domain
+#                  p2-canary-authentik-<id>.invalid (drill-owned, so the lab's own sign-in
+#                  brand keeps its title)
+# The final verify (drill_final) deletes all three.
+- name: Authentik drill canary | Resolve the instance's URL and token
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Authentik drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _ak_canary: "p2-canary-authentik-{{ drill_canary_id }}"
+    _ak_canary_api: "{{ drill_app_url }}/api/v3"
+    _ak_canary_headers:
+      Authorization: >-
+        Bearer {{ ((homelabinfra_infra.sso | default({}))
+                   if app_config.routing.estate | default('') | length == 0
+                   else ((homelabinfra_infra.estates | default({}))[app_config.routing.estate]
+                         | default({})).sso | default({})).token }}
+  no_log: true
+
+- name: Authentik drill canary | Read the group, the user and the brand
+  ansible.builtin.uri:
+    url: "{{ _ak_canary_api }}/{{ item }}"
+    headers: "{{ _ak_canary_headers }}"
+    return_content: true
+  register: _ak_canary_read
+  changed_when: false
+  loop: &ak_canary_reads
+    - "core/groups/?name={{ _ak_canary }}"
+    - "core/users/?username={{ _ak_canary }}"
+    - "core/brands/?domain={{ _ak_canary }}.invalid"
+
+- name: Authentik drill canary | Write the group, the user and the brand
+  when: drill_canary_action == 'create'
+  block:
+    - name: Authentik drill canary | Create the group
+      ansible.builtin.uri:
+        url: "{{ _ak_canary_api }}/core/groups/"
+        method: POST
+        headers: "{{ _ak_canary_headers }}"
+        body_format: json
+        body: {name: "{{ _ak_canary }}"}
+        status_code: 201
+      register: _ak_canary_group
+      changed_when: true
+      when: _ak_canary_read.results[0].json.results | length == 0
+
+    - name: Authentik drill canary | Create the user in the group
+      ansible.builtin.uri:
+        url: "{{ _ak_canary_api }}/core/users/"
+        method: POST
+        headers: "{{ _ak_canary_headers }}"
+        body_format: json
+        body:
+          username: "{{ _ak_canary }}"
+          name: "{{ _ak_canary }}"
+          is_active: false
+          groups:
+            - "{{ (_ak_canary_group.json | default(_ak_canary_read.results[0].json.results[0])).pk }}"
+        status_code: 201
+      changed_when: true
+      when: _ak_canary_read.results[1].json.results | length == 0
+
+    - name: Authentik drill canary | Create the brand
+      ansible.builtin.uri:
+        url: "{{ _ak_canary_api }}/core/brands/"
+        method: POST
+        headers: "{{ _ak_canary_headers }}"
+        body_format: json
+        body: {domain: "{{ _ak_canary }}.invalid", default: false, branding_title: "{{ _ak_canary }}"}
+        status_code: 201
+      changed_when: true
+      when: _ak_canary_read.results[2].json.results | length == 0
+
+    - name: Authentik drill canary | Read what was written
+      ansible.builtin.uri:
+        url: "{{ _ak_canary_api }}/{{ item }}"
+        headers: "{{ _ak_canary_headers }}"
+        return_content: true
+      register: _ak_canary_reread
+      changed_when: false
+      loop: *ak_canary_reads
+
+    # Its own register: a skipped task would overwrite _ak_canary_read on verify.
+    - name: Authentik drill canary | Use the read-back
+      ansible.builtin.set_fact:
+        _ak_canary_read: "{{ _ak_canary_reread }}"
+
+- name: Authentik drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _ak_canary_groups: "{{ _ak_canary_read.results[0].json.results }}"
+    _ak_canary_users: "{{ _ak_canary_read.results[1].json.results }}"
+    _ak_canary_brands: "{{ _ak_canary_read.results[2].json.results }}"
+
+- name: Authentik drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that: (_ak_canary_groups + _ak_canary_users + _ak_canary_brands) | length == 0
+    fail_msg: "{{ instance }} already has {{ _ak_canary }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Authentik drill canary | Require the user in its group and the brand
+  ansible.builtin.assert:
+    that:
+      - _ak_canary_groups | length == 1
+      - _ak_canary_users | length == 1
+      - _ak_canary_groups[0].pk in _ak_canary_users[0].groups
+      - _ak_canary_brands | length == 1
+      - _ak_canary_brands[0].branding_title == _ak_canary
+    fail_msg: "{{ instance }} does not hold {{ _ak_canary }}'s user in its group and its brand."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Authentik drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ _ak_canary_api }}/{{ item }}/"
+    method: DELETE
+    headers: "{{ _ak_canary_headers }}"
+    status_code: 204
+  changed_when: true
+  loop:
+    - "core/users/{{ _ak_canary_users[0].pk }}"
+    - "core/groups/{{ _ak_canary_groups[0].pk }}"
+    - "core/brands/{{ _ak_canary_brands[0].brand_uuid }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

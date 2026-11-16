@@ -1,0 +1,93 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Ollama's API, as
+# test(ollama) #455 defined it:
+#   data           the small pulled model smollm:135m, plus model p2-canary-ollama-<id>
+#                  built from it
+#   configuration  that model's system prompt
+# Deploy pulls no model, so the final verify (drill_final) deletes both.
+- name: Ollama drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Ollama drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _ollama_canary: "p2-canary-ollama-{{ drill_canary_id }}"
+    _ollama_canary_base: smollm:135m
+    _ollama_canary_system: "p2-canary-ollama-{{ drill_canary_id }}: answer in one word."
+
+- name: Ollama drill canary | Write the models
+  when: drill_canary_action == 'create'
+  block:
+    - name: Ollama drill canary | Pull the base model
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/pull"
+        method: POST
+        body_format: json
+        body: {model: "{{ _ollama_canary_base }}", stream: false}
+        timeout: 900
+      changed_when: true
+
+    - name: Ollama drill canary | Build the canary model with its system prompt
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/create"
+        method: POST
+        body_format: json
+        body:
+          model: "{{ _ollama_canary }}"
+          from: "{{ _ollama_canary_base }}"
+          system: "{{ _ollama_canary_system }}"
+          stream: false
+        timeout: 300
+      changed_when: true
+
+- name: Ollama drill canary | Read the models
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/tags"
+  register: _ollama_canary_tags
+  changed_when: false
+
+- name: Ollama drill canary | Read the canary model
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/show"
+    method: POST
+    body_format: json
+    body: {model: "{{ _ollama_canary }}"}
+    status_code: [200, 404]
+  register: _ollama_canary_show
+  changed_when: false
+
+- name: Ollama drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _ollama_canary_names: >-
+      {{ _ollama_canary_tags.json.models | map(attribute='name')
+         | select('in', [_ollama_canary_base, _ollama_canary ~ ':latest']) | sort }}
+
+- name: Ollama drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _ollama_canary_names | length == 0
+      - _ollama_canary_show.status == 404
+    fail_msg: "{{ instance }} already has {{ _ollama_canary_names }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Ollama drill canary | Require both models and the system prompt
+  ansible.builtin.assert:
+    that:
+      - _ollama_canary_names == [_ollama_canary ~ ':latest', _ollama_canary_base] | sort
+      - _ollama_canary_show.status == 200
+      - _ollama_canary_show.json.system | default('') == _ollama_canary_system
+    fail_msg: >-
+      {{ instance }} holds {{ _ollama_canary_names }}; system prompt
+      {{ _ollama_canary_show.json.system | default('none') }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Ollama drill canary | Delete the models after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/delete"
+    method: DELETE
+    body_format: json
+    body: {model: "{{ item }}"}
+  changed_when: true
+  loop:
+    - "{{ _ollama_canary }}"
+    - "{{ _ollama_canary_base }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

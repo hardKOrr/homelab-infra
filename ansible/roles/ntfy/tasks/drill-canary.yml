@@ -1,0 +1,84 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through the ntfy CLI in the
+# app's runtime (tasks/drill/app-exec.yml), as test(ntfy) #453 defined it:
+#   data           user p2-canary-ntfy-<id> with read-write access to topic of that name
+#   configuration  an access rule denying everyone that topic
+# The final verify (drill_final) deletes both.
+- name: Ntfy drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _ntfy_canary: "p2-canary-ntfy-{{ drill_canary_id }}"
+
+- name: Ntfy drill canary | Write the user, its grant and the access rule
+  when: drill_canary_action == 'create'
+  block:
+    - name: Ntfy drill canary | List the users
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: [ntfy, user, list]
+
+    # ntfy reads the new user's password from NTFY_PASSWORD; the canary user is lab-only and
+    # deleted after the drill, so the password is generated and never stored.
+    - name: Ntfy drill canary | Add the user
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv:
+          - env
+          - "NTFY_PASSWORD={{ lookup('ansible.builtin.password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+          - ntfy
+          - user
+          - add
+          - --role=user
+          - "{{ _ntfy_canary }}"
+        drill_exec_secret: true
+        drill_exec_changes: true
+      when: drill_exec_result.stdout is not search('^user ' ~ _ntfy_canary ~ ' ', multiline=True)
+
+    - name: Ntfy drill canary | Grant the user its topic and deny everyone else
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: "{{ item }}"
+        drill_exec_changes: true
+      loop:
+        - [ntfy, access, "{{ _ntfy_canary }}", "{{ _ntfy_canary }}", rw]
+        - [ntfy, access, everyone, "{{ _ntfy_canary }}", deny]
+
+- name: Ntfy drill canary | Read the canary user's access
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [ntfy, access]
+
+- name: Ntfy drill canary | Read what the access list holds
+  ansible.builtin.set_fact:
+    _ntfy_canary_has_user: >-
+      {{ drill_exec_result.stdout is search('^user ' ~ _ntfy_canary ~ ' \(role: user', multiline=True) }}
+    _ntfy_canary_lines: >-
+      {{ drill_exec_result.stdout_lines | map('trim')
+         | select('search', 'topic ' ~ _ntfy_canary ~ '$') | list }}
+
+- name: Ntfy drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - not _ntfy_canary_has_user
+      - _ntfy_canary_lines | length == 0
+    fail_msg: "{{ instance }} already has {{ _ntfy_canary }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+# `ntfy access` lists the user's grant, then everyone's rule under `user *`.
+- name: Ntfy drill canary | Require the user, its grant and the access rule
+  ansible.builtin.assert:
+    that:
+      - _ntfy_canary_has_user
+      - _ntfy_canary_lines == ['- read-write access to topic ' ~ _ntfy_canary,
+                               '- no access to topic ' ~ _ntfy_canary]
+    fail_msg: "{{ instance }} holds {{ _ntfy_canary_lines }} for {{ _ntfy_canary }}, not its grant and rule."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Ntfy drill canary | Delete the canary after the final verify
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: "{{ item }}"
+    drill_exec_changes: true
+  loop:
+    - [ntfy, access, --reset, everyone, "{{ _ntfy_canary }}"]
+    - [ntfy, user, del, "{{ _ntfy_canary }}"]
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

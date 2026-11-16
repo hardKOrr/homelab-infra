@@ -1,0 +1,69 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through SABnzbd's API, as
+# test(sabnzbd) #366 defined it:
+#   data           category p2-canary-sabnzbd-<id>
+#   configuration  misc max_art_tries set to 7 (default 3; sabnzbd.ini is seeded once and
+#                  Deploy authors only api_key)
+# The final verify (drill_final) deletes the category and sets max_art_tries back to 3.
+- name: SABnzbd drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: SABnzbd drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _sab_canary: "p2-canary-sabnzbd-{{ drill_canary_id }}"
+    _sab_canary_tries: 7
+    _sab_canary_api: >-
+      {{ drill_app_url }}/api?output=json&apikey={{
+         homelabinfra_vault.media[instance].api_key | urlencode }}
+  no_log: true
+
+- name: SABnzbd drill canary | Write the category and the setting
+  ansible.builtin.uri:
+    url: "{{ _sab_canary_api }}&mode=set_config&{{ item }}"
+  changed_when: true
+  no_log: true
+  loop:
+    - "section=categories&keyword={{ _sab_canary }}"
+    - "section=misc&keyword=max_art_tries&value={{ _sab_canary_tries }}"
+  when: drill_canary_action == 'create'
+
+- name: SABnzbd drill canary | Read the categories and the setting
+  ansible.builtin.uri:
+    url: "{{ _sab_canary_api }}&mode=get_config&section={{ item }}"
+  register: _sab_canary_read
+  changed_when: false
+  no_log: true
+  loop: [categories, misc]
+
+- name: SABnzbd drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _sab_canary_categories: >-
+      {{ _sab_canary_read.results[0].json.config.categories | map(attribute='name')
+         | select('equalto', _sab_canary) | list }}
+    _sab_canary_read_tries: "{{ _sab_canary_read.results[1].json.config.misc.max_art_tries | int }}"
+
+- name: SABnzbd drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _sab_canary_categories | length == 0
+      - _sab_canary_read_tries | int != _sab_canary_tries
+    fail_msg: "{{ instance }} already has {{ _sab_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: SABnzbd drill canary | Require the category and the setting
+  ansible.builtin.assert:
+    that:
+      - _sab_canary_categories == [_sab_canary]
+      - _sab_canary_read_tries | int == _sab_canary_tries
+    fail_msg: "{{ instance }} holds {{ _sab_canary_categories }} and max_art_tries {{ _sab_canary_read_tries }}."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: SABnzbd drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ _sab_canary_api }}&{{ item }}"
+  changed_when: true
+  no_log: true
+  loop:
+    - "mode=del_config&section=categories&keyword={{ _sab_canary }}"
+    - "mode=set_config&section=misc&keyword=max_art_tries&value=3"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

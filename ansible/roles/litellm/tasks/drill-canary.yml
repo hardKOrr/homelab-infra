@@ -1,0 +1,110 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through LiteLLM's admin API
+# with the master key, as test(litellm) #418 defined it:
+#   data           virtual key with alias p2-canary-litellm-<id>
+#   configuration  team p2-canary-litellm-<id> with max_budget 7.5, holding that key
+# The final verify (drill_final) deletes the key, then the team.
+- name: LiteLLM drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: LiteLLM drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _llm_canary: "p2-canary-litellm-{{ drill_canary_id }}"
+    _llm_canary_budget: 7.5
+    _llm_canary_auth:
+      Authorization: "Bearer {{ homelabinfra_vault.apps[instance].master_key }}"
+  no_log: true
+
+- name: LiteLLM drill canary | Read the teams and the key
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item }}"
+    headers: "{{ _llm_canary_auth }}"
+  register: _llm_canary_read
+  changed_when: false
+  loop: &llm_canary_reads
+    - team/list
+    - "key/list?key_alias={{ _llm_canary }}&return_full_object=true"
+
+- name: LiteLLM drill canary | Keep the canary's team and key
+  ansible.builtin.set_fact:
+    _llm_canary_teams: >-
+      {{ _llm_canary_read.results[0].json | selectattr('team_alias', 'defined')
+         | selectattr('team_alias', 'equalto', _llm_canary) | list }}
+    _llm_canary_keys: >-
+      {{ _llm_canary_read.results[1].json['keys'] | selectattr('key_alias', 'defined')
+         | selectattr('key_alias', 'equalto', _llm_canary) | list }}
+
+- name: LiteLLM drill canary | Write the team and the key
+  when: drill_canary_action == 'create'
+  block:
+    - name: LiteLLM drill canary | Create the team
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/team/new"
+        method: POST
+        headers: "{{ _llm_canary_auth }}"
+        body_format: json
+        body: {team_alias: "{{ _llm_canary }}", max_budget: "{{ _llm_canary_budget }}"}
+      register: _llm_canary_team
+      changed_when: true
+      when: _llm_canary_teams | length == 0
+
+    - name: LiteLLM drill canary | Generate the key in the team
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/key/generate"
+        method: POST
+        headers: "{{ _llm_canary_auth }}"
+        body_format: json
+        body:
+          key_alias: "{{ _llm_canary }}"
+          team_id: "{{ (_llm_canary_team.json | default(_llm_canary_teams[0] | default({}))).team_id }}"
+      changed_when: true
+      no_log: true
+      when: _llm_canary_keys | length == 0
+
+    - name: LiteLLM drill canary | Read what was written
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item }}"
+        headers: "{{ _llm_canary_auth }}"
+      register: _llm_canary_reread
+      changed_when: false
+      loop: *llm_canary_reads
+
+    - name: LiteLLM drill canary | Keep what was written
+      ansible.builtin.set_fact:
+        _llm_canary_teams: >-
+          {{ _llm_canary_reread.results[0].json | selectattr('team_alias', 'defined')
+             | selectattr('team_alias', 'equalto', _llm_canary) | list }}
+        _llm_canary_keys: >-
+          {{ _llm_canary_reread.results[1].json['keys'] | selectattr('key_alias', 'defined')
+             | selectattr('key_alias', 'equalto', _llm_canary) | list }}
+
+- name: LiteLLM drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that: (_llm_canary_teams + _llm_canary_keys) | length == 0
+    fail_msg: "{{ instance }} already has {{ _llm_canary }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: LiteLLM drill canary | Require the key in the budgeted team
+  ansible.builtin.assert:
+    that:
+      - _llm_canary_teams | length == 1
+      - _llm_canary_teams[0].max_budget | float == _llm_canary_budget
+      - _llm_canary_keys | length == 1
+      - _llm_canary_keys[0].team_id == _llm_canary_teams[0].team_id
+    fail_msg: "{{ instance }} does not hold {{ _llm_canary }}'s key in its budgeted team."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: LiteLLM drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item.path }}"
+    method: POST
+    headers: "{{ _llm_canary_auth }}"
+    body_format: json
+    body: "{{ item.body }}"
+  changed_when: true
+  loop:
+    - {path: key/delete, body: {key_aliases: ["{{ _llm_canary }}"]}}
+    - {path: team/delete, body: {team_ids: ["{{ _llm_canary_teams[0].team_id }}"]}}
+  loop_control:
+    label: "{{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

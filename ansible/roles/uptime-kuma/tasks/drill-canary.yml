@@ -1,0 +1,168 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), over Uptime Kuma's socket.io
+# API (tasks/kuma/), as test(uptime-kuma) #454 defined it:
+#   data           monitor p2-canary-uptime-kuma-<id>, checking this instance's own entry
+#                  page, with no notification channel
+#   configuration  keep-data days set to 400 (Uptime Kuma's default is 180; Deploy does
+#                  not author it)
+# The final verify (drill_final) deletes the monitor and sets keep-data days back to 180.
+- name: Uptime Kuma drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Uptime Kuma drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _kuma_canary: "p2-canary-uptime-kuma-{{ drill_canary_id }}"
+    _kuma_canary_days: 400
+
+- name: Uptime Kuma drill canary | Sign in
+  ansible.builtin.include_tasks: ../../../tasks/kuma/open-session.yml
+  vars:
+    kuma_base: "{{ drill_app_url }}"
+    kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
+    kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
+
+- name: Uptime Kuma drill canary | Require a signed-in session
+  ansible.builtin.assert:
+    that: kuma_session_ready | bool
+    fail_msg: "{{ instance }} did not sign in: {{ kuma_session_reason }}"
+
+- name: Uptime Kuma drill canary | Read the settings
+  ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+  vars:
+    kuma_call_event: getSettings
+    kuma_call_ack_id: 1
+
+- name: Uptime Kuma drill canary | Keep the settings
+  ansible.builtin.set_fact:
+    _kuma_canary_settings: "{{ kuma_call_result.data | default({}) }}"
+
+- name: Uptime Kuma drill canary | Ask for the monitor list
+  ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+  vars:
+    kuma_call_event: getMonitorList
+    kuma_call_ack_id: 2
+
+- name: Uptime Kuma drill canary | Find the canary monitor
+  ansible.builtin.set_fact:
+    _kuma_canary_monitors: >-
+      {{ ((kuma_session_frames | select('match', '42\["monitorList",') | list
+           | last | default('42["monitorList",{}]'))
+          | regex_replace('^42', '') | from_json | last).values() | list
+         | selectattr('name', 'defined') | selectattr('name', 'equalto', _kuma_canary) | list }}
+
+- name: Uptime Kuma drill canary | Write the monitor and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: Uptime Kuma drill canary | Add the monitor
+      ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+      vars:
+        kuma_call_event: add
+        kuma_call_args:
+          - type: http
+            name: "{{ _kuma_canary }}"
+            url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
+            method: GET
+            interval: 300
+            retryInterval: 300
+            resendInterval: 0
+            maxretries: 0
+            timeout: 48
+            accepted_statuscodes: ["200-299"]
+            active: true
+            expiryNotification: false
+            ignoreTls: false
+            upsideDown: false
+            maxredirects: 10
+            parent: null
+            conditions: []
+            notificationIDList: {}
+        kuma_call_ack_id: 3
+      when: _kuma_canary_monitors | length == 0
+
+    - name: Uptime Kuma drill canary | Require the monitor added
+      ansible.builtin.assert:
+        that: kuma_call_ok | bool
+        fail_msg: "{{ instance }} refused the canary monitor: {{ kuma_call_reason }}"
+      when: _kuma_canary_monitors | length == 0
+
+    - name: Uptime Kuma drill canary | Save keep-data days
+      ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+      vars:
+        kuma_call_event: setSettings
+        kuma_call_args:
+          - "{{ _kuma_canary_settings | combine({'keepDataPeriodDays': _kuma_canary_days}) }}"
+          - "{{ homelabinfra_infra.monitoring.admin_password }}"
+        kuma_call_ack_id: 4
+        kuma_call_secret: true
+
+    - name: Uptime Kuma drill canary | Require the setting saved
+      ansible.builtin.assert:
+        that: kuma_call_ok | bool
+        fail_msg: "{{ instance }} refused the keep-data setting: {{ kuma_call_reason }}"
+
+    - name: Uptime Kuma drill canary | Read the settings and the monitors back
+      ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+      vars:
+        kuma_call_event: "{{ item.event }}"
+        kuma_call_ack_id: "{{ item.ack }}"
+      loop:
+        - {event: getMonitorList, ack: 5}
+        - {event: getSettings, ack: 6}
+
+    - name: Uptime Kuma drill canary | Keep what was written
+      ansible.builtin.set_fact:
+        _kuma_canary_settings: "{{ kuma_call_result.data | default({}) }}"
+        _kuma_canary_monitors: >-
+          {{ ((kuma_session_frames | select('match', '42\["monitorList",') | list
+               | last | default('42["monitorList",{}]'))
+              | regex_replace('^42', '') | from_json | last).values() | list
+             | selectattr('name', 'defined') | selectattr('name', 'equalto', _kuma_canary) | list }}
+
+- name: Uptime Kuma drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _kuma_canary_monitors | length == 0
+      - _kuma_canary_settings.keepDataPeriodDays | default(180) | int != _kuma_canary_days
+    fail_msg: "{{ instance }} already has {{ _kuma_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Uptime Kuma drill canary | Require the monitor and the setting
+  ansible.builtin.assert:
+    that:
+      - _kuma_canary_monitors | length == 1
+      - _kuma_canary_monitors[0].url == 'http://localhost:' ~ app_config.app.port ~ '/api/entry-page'
+      - _kuma_canary_settings.keepDataPeriodDays | default(0) | int == _kuma_canary_days
+    fail_msg: >-
+      {{ instance }} holds {{ _kuma_canary_monitors | length }} monitor(s) named {{ _kuma_canary }}
+      and keep-data days {{ _kuma_canary_settings.keepDataPeriodDays | default('unset') }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Uptime Kuma drill canary | Delete the canary after the final verify
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+  block:
+    - name: Uptime Kuma drill canary | Delete the monitor
+      ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+      vars:
+        kuma_call_event: deleteMonitor
+        kuma_call_args: ["{{ _kuma_canary_monitors[0].id }}"]
+        kuma_call_ack_id: 7
+
+    - name: Uptime Kuma drill canary | Require the monitor deleted
+      ansible.builtin.assert:
+        that: kuma_call_ok | bool
+        fail_msg: "{{ instance }} refused to delete {{ _kuma_canary }}: {{ kuma_call_reason }}"
+
+    - name: Uptime Kuma drill canary | Reset keep-data days
+      ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+      vars:
+        kuma_call_event: setSettings
+        kuma_call_args:
+          - "{{ _kuma_canary_settings | combine({'keepDataPeriodDays': 180}) }}"
+          - "{{ homelabinfra_infra.monitoring.admin_password }}"
+        kuma_call_ack_id: 8
+        kuma_call_secret: true
+
+    - name: Uptime Kuma drill canary | Require keep-data days reset
+      ansible.builtin.assert:
+        that: kuma_call_ok | bool
+        fail_msg: "{{ instance }} refused to reset keep-data days: {{ kuma_call_reason }}"

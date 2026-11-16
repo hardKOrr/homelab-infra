@@ -1,0 +1,85 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through ComfyUI's user-data
+# and settings API, as test(comfyui) #457 defined it:
+#   data           saved workflow workflows/p2-canary-comfyui-<id>.json
+#   configuration  user setting Comfy.TextareaWidget.FontSize set to 13 (default 10)
+# The final verify (drill_final) deletes the workflow and sets the font size back to 10.
+- name: ComfyUI drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: ComfyUI drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _comfy_canary: "p2-canary-comfyui-{{ drill_canary_id }}"
+    _comfy_canary_file: "{{ drill_app_url }}/userdata/workflows%2Fp2-canary-comfyui-{{ drill_canary_id }}.json"
+    _comfy_canary_setting: "{{ drill_app_url }}/settings/Comfy.TextareaWidget.FontSize"
+    _comfy_canary_size: 13
+
+- name: ComfyUI drill canary | Write the workflow and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: ComfyUI drill canary | Save the workflow
+      ansible.builtin.uri:
+        url: "{{ _comfy_canary_file }}?overwrite=true"
+        method: POST
+        body_format: json
+        body:
+          last_node_id: 0
+          last_link_id: 0
+          nodes: []
+          links: []
+          groups: []
+          config: {}
+          extra: {p2_canary: "{{ _comfy_canary }}"}
+          version: 0.4
+      changed_when: true
+
+    - name: ComfyUI drill canary | Save the setting
+      ansible.builtin.uri:
+        url: "{{ _comfy_canary_setting }}"
+        method: POST
+        body_format: json
+        body: "{{ _comfy_canary_size }}"
+      changed_when: true
+
+- name: ComfyUI drill canary | Read the workflow and the setting
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    status_code: [200, 404]
+    return_content: true
+  register: _comfy_canary_read
+  changed_when: false
+  loop:
+    - "{{ _comfy_canary_file }}"
+    - "{{ _comfy_canary_setting }}"
+
+- name: ComfyUI drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _comfy_canary_read.results[0].status == 404
+      - _comfy_canary_read.results[1].content | trim != _comfy_canary_size | string
+    fail_msg: "{{ instance }} already has {{ _comfy_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: ComfyUI drill canary | Require the workflow and the setting
+  ansible.builtin.assert:
+    that:
+      - _comfy_canary_read.results[0].status == 200
+      - (_comfy_canary_read.results[0].content | from_json).extra.p2_canary == _comfy_canary
+      - _comfy_canary_read.results[1].content | trim == _comfy_canary_size | string
+    fail_msg: "{{ instance }} does not hold {{ _comfy_canary }}'s workflow and font size."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: ComfyUI drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ item.url }}"
+    method: "{{ item.method }}"
+    body_format: json
+    body: "{{ item.body }}"
+    status_code: [200, 204]
+  changed_when: true
+  loop:
+    - {url: "{{ _comfy_canary_file }}", method: DELETE, body: ""}
+    - {url: "{{ _comfy_canary_setting }}", method: POST, body: 10}
+  loop_control:
+    label: "{{ item.method }} {{ item.url | basename }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
