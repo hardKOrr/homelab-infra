@@ -141,6 +141,7 @@
   ansible.builtin.include_tasks: drill-canary-run.yml
   vars:
     _dbc_run_script: "{{ _dbc_script }}"
+    _dbc_run_changes: "{{ drill_canary_action == 'create' }}"
 
 - name: Database canary | Read the result
   ansible.builtin.set_fact:
@@ -173,4 +174,5 @@
   ansible.builtin.include_tasks: drill-canary-run.yml
   vars:
     _dbc_run_script: "{{ _dbc_drop }}"
+    _dbc_run_changes: true
   when: drill_canary_action == 'verify' and drill_final | default(false) | bool
