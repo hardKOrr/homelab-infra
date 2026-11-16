@@ -218,7 +218,7 @@
       register: _he_read
       changed_when: false
       no_log: true
-      loop: ['', /events?per_page=100]
+      loop: ['', '/events?per_page=100']
 
     - name: Hi.Events drill canary | Keep the canary event
       ansible.builtin.set_fact:

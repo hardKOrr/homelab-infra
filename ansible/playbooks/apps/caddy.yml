@@ -176,9 +176,7 @@
           instance: "{{ instance }}"
           host: "{{ _caddy_deploy_host.caddy_admin_host }}"
           port: "{{ _caddy_deploy_host.caddy_admin_port | int }}"
-          # Where Caddy's requests to upstreams come from, for apps that trust its scheme
-          # header (tasks/wiring/proxy-sources.yml): its guest, or on Kubernetes the node
-          # running the pod, so every cluster node.
+          # Its upstream requests' origin: the guest, or any cluster node (tasks/wiring/proxy-sources.yml).
           source_addresses: >-
             {{ [_caddy_deploy_host.ansible_host]
                if groups.get('deploy_' ~ instance, []) | length > 0

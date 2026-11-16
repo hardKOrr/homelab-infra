@@ -41,7 +41,9 @@ def exercise_initializer(script):
     with tempfile.TemporaryDirectory(prefix="odoo-init-") as directory:
         root = Path(directory)
         stub = root / "odoo"
-        stub.write_text('#!/bin/sh\nexit "${ODOO_TEST_EXIT:-0}"\n')
+        # `odoo shell` gives the admin user its password (files/admin-login.py) on every start.
+        stub.write_text('#!/bin/sh\nif [ "$1" = shell ]; then cat > "$(dirname "$0")/shell-stdin"; '
+                        'echo kept; exit "${ODOO_SHELL_EXIT:-0}"; fi\nexit "${ODOO_TEST_EXIT:-0}"\n')
         stub.chmod(0o700)
         stub_database(root)
         config = root / "odoo.conf"
@@ -57,6 +59,8 @@ def exercise_initializer(script):
                                   capture_output=True, text=True, check=False)
         assert run().returncode == 0
         assert marker.read_text() == "crm\n"
+        assert "admin_passwd" in (root / "shell-stdin").read_text()
+        assert run({"ODOO_SHELL_EXIT": "3"}).returncode == 3
         # A repeat skips initialization even when the CLI would fail.
         assert run({"ODOO_TEST_EXIT": "7"}).returncode == 0
         environment["ODOO_MODULES"] = "crm,sale"
