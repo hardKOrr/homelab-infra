@@ -1,17 +1,14 @@
 ---
 # Resolve the addresses the platform reverse proxy's requests come from, for an app that
-# trusts X-Forwarded-Proto only from its proxy. Caddy on a guest connects from its own
-# address (reverse_proxy.host). Caddy on Kubernetes is published on the ingress VIP, but
-# its requests leave from whichever cluster node runs the pod, so every node counts.
+# trusts X-Forwarded-Proto only from its proxy: reverse_proxy.source_addresses, which
+# Caddy's Deploy records (its guest, or every cluster node when it runs on Kubernetes,
+# where requests leave from the node running the pod, not from Caddy's own address).
+# A registry written before that field existed falls back to reverse_proxy.host.
 # Sets: wiring_proxy_sources, a list of IP addresses (empty without a reverse proxy).
 - name: Proxy sources | Resolve the reverse proxy's source addresses
   ansible.builtin.set_fact:
     wiring_proxy_sources: >-
-      {{ ([_wps_host] if _wps_host | length > 0 else [])
-         + ((homelabinfra_infra.kubernetes | default({})).nodes | default([])
-            | map(attribute='ip_address') | list
-            if _wps_host | length > 0
-               and _wps_host == (homelabinfra_infra.kubernetes | default({})).ingress_vip | default('')
-            else []) }}
+      {{ _wps.source_addresses | default([], true)
+         or ([_wps.host | urlsplit('hostname')] if _wps.host | default('', true) | length > 0 else []) }}
   vars:
-    _wps_host: "{{ homelabinfra_infra.reverse_proxy.host | default('', true) | urlsplit('hostname') | default('', true) }}"
+    _wps: "{{ homelabinfra_infra.reverse_proxy | default({}) }}"

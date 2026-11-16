@@ -176,6 +176,13 @@
           instance: "{{ instance }}"
           host: "{{ _caddy_deploy_host.caddy_admin_host }}"
           port: "{{ _caddy_deploy_host.caddy_admin_port | int }}"
+          # Where Caddy's requests to upstreams come from, for apps that trust its scheme
+          # header (tasks/wiring/proxy-sources.yml): its guest, or on Kubernetes the node
+          # running the pod, so every cluster node.
+          source_addresses: >-
+            {{ [_caddy_deploy_host.ansible_host]
+               if groups.get('deploy_' ~ instance, []) | length > 0
+               else homelabinfra_infra.kubernetes.nodes | map(attribute='ip_address') | list }}
           # The fallback skips networks that declare no cidr of their own.
           internal_cidrs: >-
             {{ _caddy_deploy_host.homelabinfra_config.infrastructure.reverse_proxy.internal_cidrs

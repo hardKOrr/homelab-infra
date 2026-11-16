@@ -44,5 +44,5 @@ rerun with the explicit rotation input to recover; existing DNS records stay in 
 
 An app that trusts `X-Forwarded-Proto` only from the platform proxy includes
 [`proxy-sources.yml`](proxy-sources.yml) before rendering its web server configuration and
-reads `wiring_proxy_sources`. Caddy on Kubernetes counts every cluster node, because its
-requests leave from the node running the pod, not from the ingress VIP.
+reads `wiring_proxy_sources`, from the `source_addresses` Caddy's Deploy records in the
+`reverse_proxy` registry entry.
