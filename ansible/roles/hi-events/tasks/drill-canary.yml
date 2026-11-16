@@ -110,19 +110,17 @@
                'Authorization': 'Bearer ' ~ _he_login.json.token}) }}
       no_log: true
 
-    - name: Hi.Events drill canary | Read the organizers and the events
+    - name: Hi.Events drill canary | Read the organizers
       ansible.builtin.uri:
-        url: "{{ _he_api }}/{{ item }}?per_page=100"
+        url: "{{ _he_api }}/organizers?per_page=100"
         headers: "{{ _he_headers }}"
-      register: _he_lists
+      register: _he_list
       changed_when: false
       no_log: true
-      loop: [organizers, events]
 
-    - name: Hi.Events drill canary | Keep the canary organizer and event
+    - name: Hi.Events drill canary | Keep the canary organizer
       ansible.builtin.set_fact:
-        _he_organizers: "{{ _he_lists.results[0].json.data | selectattr('name', 'equalto', _he_canary) | list }}"
-        _he_events: "{{ _he_lists.results[1].json.data | selectattr('title', 'equalto', _he_canary) | list }}"
+        _he_organizers: "{{ _he_list.json.data | selectattr('name', 'equalto', _he_canary) | list }}"
 
     - name: Hi.Events drill canary | Write the organizer, the event and its ticket
       when: drill_canary_action == 'create' and _he_organizers | length == 0
@@ -184,44 +182,50 @@
           changed_when: true
           no_log: true
 
-        - name: Hi.Events drill canary | Keep the new organizer and event
+        - name: Hi.Events drill canary | Keep the new organizer
           ansible.builtin.set_fact:
             _he_organizers: "{{ [_he_new_organizer.json.data] }}"
-            _he_events: "{{ [_he_new_event.json.data] }}"
 
-    - name: Hi.Events drill canary | Read the organizer and the event's tickets
+    - name: Hi.Events drill canary | Require one canary organizer
+      ansible.builtin.assert:
+        that: _he_organizers | length == 1
+        fail_msg: "{{ instance }} holds {{ _he_organizers | length }} organizer(s) named {{ _he_canary }}."
+
+    - name: Hi.Events drill canary | Read the organizer and its events
       ansible.builtin.uri:
-        url: "{{ _he_api }}/{{ item }}"
+        url: "{{ _he_api }}/organizers/{{ _he_organizers[0].id }}{{ item }}"
         headers: "{{ _he_headers }}"
-        # A refusal is reported by the next assert with its status.
-        status_code: [200, 403, 404]
       register: _he_read
       changed_when: false
       no_log: true
-      loop:
-        - "organizers/{{ (_he_organizers | first | default({})).id | default(0) }}"
-        # Its categories carry the products; this release's own product listing fails.
-        - "events/{{ (_he_events | first | default({})).id | default(0) }}/product-categories"
-      when: _he_organizers | length == 1 and _he_events | length == 1
+      loop: ['', /events?per_page=100]
+
+    - name: Hi.Events drill canary | Keep the canary event
+      ansible.builtin.set_fact:
+        _he_events: "{{ _he_read.results[1].json.data | selectattr('title', 'equalto', _he_canary) | list }}"
+
+    # Its categories carry the products; this release's own product listing fails.
+    - name: Hi.Events drill canary | Read the event's ticket categories
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/events/{{ _he_events[0].id }}/product-categories"
+        headers: "{{ _he_headers }}"
+      register: _he_categories
+      changed_when: false
+      no_log: true
+      when: _he_events | length == 1
 
     - name: Hi.Events drill canary | Require the event, its ticket and the organizer's currency
       ansible.builtin.assert:
         that:
-          - _he_organizers | length == 1
           - _he_events | length == 1
-          - _he_events[0].organizer_id == _he_organizers[0].id
-          - _he_read.results | map(attribute='status') | list == [200, 200]
           - _he_read.results[0].json.data.currency == 'GBP'
           - _he_tickets == ['Canary Ticket']
         fail_msg: >-
-          {{ instance }} holds {{ _he_organizers | length }} canary organizer(s) and
-          {{ _he_events | length }} event(s){{ '' if _he_read.results is not defined else
-          ' (reads HTTP ' ~ (_he_read.results | map(attribute='status') | join(', ')) ~ ')'
-          ~ ', organizer currency ' ~ ((_he_read.results[0].json | default({})).data.currency | default('?'))
-          ~ ' and tickets ' ~ _he_tickets }}.
+          {{ instance }}'s canary organizer holds {{ _he_events | length }} canary event(s) with
+          tickets {{ _he_tickets }}, in currency {{ _he_read.results[0].json.data.currency | default('?') }}.
       vars:
         _he_tickets: >-
-          {{ ((_he_read.results | default([{}, {}]))[1].json | default({})).data | default([])
+          {{ (_he_categories.json | default({})).data | default([])
              | map(attribute='products') | flatten | map(attribute='title') | list }}
 
     - name: Hi.Events drill canary | Delete the canary after the final verify
