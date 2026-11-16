@@ -120,20 +120,28 @@
     - {path: "{{ karakeep_meilisearch_data_path | trim }}", owner: meilisearch}
 
 # The install script migrates only when it installs or updates; an emptied data directory
-# needs the schema too. Karakeep's own migrator applies only what is missing.
-- name: Karakeep native | Apply the database migrations
+# (Remove with delete_data stops the services first) needs the schema too. Migrate only
+# when the database is behind the release's journal: the running services hold the
+# database, and Karakeep's migrator then fails on its lock.
+- name: Karakeep native | Apply missing database migrations
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      count() {
-        python3 -c 'import sqlite3, sys
-      try: print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM __drizzle_migrations").fetchone()[0])
-      except sqlite3.Error: print(0)' "{{ karakeep_data_path }}/db.db"
-      }
-      before="$(count)"
+      behind="$(python3 - "{{ karakeep_data_path }}/db.db" <<'PY'
+      import json, sqlite3, sys
+      want = len(json.load(open('/opt/karakeep/packages/db/drizzle/meta/_journal.json'))['entries'])
+      try:
+          have = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True).execute(
+              'SELECT count(*) FROM __drizzle_migrations').fetchone()[0]
+      except sqlite3.Error:
+          have = 0
+      print('yes' if have < want else 'no')
+      PY
+      )"
+      [ "$behind" = yes ] || exit 0
       cd /opt/karakeep/packages/db
       DATA_DIR="{{ karakeep_data_path }}" pnpm --silent migrate
-      [ "$(count)" = "$before" ] || echo changed
+      echo changed
     executable: /bin/bash
   become_user: karakeep
   register: _karakeep_migrate
