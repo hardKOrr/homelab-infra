@@ -61,10 +61,12 @@ module.exports = async ({ page, step, url, secrets, text }) => {
         select.value = value;
         select.dispatchEvent(new Event('change', { bubbles: true }));
       }, timezone);
+      // Save & Close leaves the configuration page once the settings are written.
       await Promise.all([
-        page.waitForResponse(r => r.request().method() === 'POST' && r.url().includes('/s/config/edit')),
+        page.waitForURL(u => !u.pathname.endsWith('/s/config/edit')),
         page.click('#config_buttons_save_toolbar')
       ]);
+      await page.waitForLoadState('networkidle');
     });
   }
 
