@@ -1,0 +1,150 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Forgejo's API as the
+# administrator Deploy provisions, as test(forgejo) #411 defined it:
+#   data           private repository p2-canary-forgejo-<id> with one commit (README.md,
+#                  written through the contents API, so the git storage is covered) and one
+#                  issue of the same name
+#   configuration  the administrator's hide_activity user setting turned on (default off)
+# The final verify (drill_final) deletes the repository and turns hide_activity off.
+- name: Forgejo drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Forgejo drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _fj_canary: "p2-canary-forgejo-{{ drill_canary_id }}"
+    _fj_canary_text: "p2-canary-forgejo-{{ drill_canary_id }} recovery drill\n"
+    _fj_api: "{{ drill_app_url }}/api/v1"
+    _fj_user: "{{ app_config.app.admin_user }}"
+    _fj_password: "{{ homelabinfra_vault.apps[instance].admin_password }}"
+  no_log: true
+
+- name: Forgejo drill canary | Read the repository
+  ansible.builtin.uri:
+    url: "{{ _fj_api }}/repos/{{ _fj_user }}/{{ _fj_canary }}"
+    headers: "{{ drill_app_headers }}"
+    url_username: "{{ _fj_user }}"
+    url_password: "{{ _fj_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fj_repo
+  changed_when: false
+  no_log: true
+
+- name: Forgejo drill canary | Write the repository, its commit and issue, and the setting
+  when: drill_canary_action == 'create' and _fj_repo.status == 404
+  block:
+    - name: Forgejo drill canary | Create the private repository
+      ansible.builtin.uri:
+        url: "{{ _fj_api }}/user/repos"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        url_username: "{{ _fj_user }}"
+        url_password: "{{ _fj_password }}"
+        force_basic_auth: true
+        body_format: json
+        body: {name: "{{ _fj_canary }}", private: true, auto_init: false}
+        status_code: 201
+      changed_when: true
+      no_log: true
+
+    - name: Forgejo drill canary | Commit README.md and open the issue
+      ansible.builtin.uri:
+        url: "{{ _fj_api }}/repos/{{ _fj_user }}/{{ _fj_canary }}/{{ item.path }}"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        url_username: "{{ _fj_user }}"
+        url_password: "{{ _fj_password }}"
+        force_basic_auth: true
+        body_format: json
+        body: "{{ item.body }}"
+        status_code: 201
+      changed_when: true
+      no_log: true
+      loop:
+        - path: contents/README.md
+          body: {content: "{{ _fj_canary_text | b64encode }}", message: "{{ _fj_canary }}"}
+        - path: issues
+          body: {title: "{{ _fj_canary }}"}
+
+- name: Forgejo drill canary | Turn hide_activity on
+  ansible.builtin.uri:
+    url: "{{ _fj_api }}/user/settings"
+    method: PATCH
+    headers: "{{ drill_app_headers }}"
+    url_username: "{{ _fj_user }}"
+    url_password: "{{ _fj_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: {hide_activity: true}
+  changed_when: true
+  no_log: true
+  when: drill_canary_action == 'create'
+
+- name: Forgejo drill canary | Read the commit, the issues and the setting
+  ansible.builtin.uri:
+    url: "{{ _fj_api }}/{{ item }}"
+    headers: "{{ drill_app_headers }}"
+    url_username: "{{ _fj_user }}"
+    url_password: "{{ _fj_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fj_read
+  changed_when: false
+  no_log: true
+  loop:
+    - "repos/{{ _fj_user }}/{{ _fj_canary }}/contents/README.md"
+    - "repos/{{ _fj_user }}/{{ _fj_canary }}/commits?limit=10"
+    - "repos/{{ _fj_user }}/{{ _fj_canary }}/issues?state=all&type=issues"
+    - user/settings
+
+- name: Forgejo drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _fj_readme: >-
+      {{ (_fj_read.results[0].json.content | b64decode)
+         if _fj_read.results[0].status == 200 else '' }}
+    _fj_commits: >-
+      {{ _fj_read.results[1].json | map(attribute='commit.message') | map('trim') | list
+         if _fj_read.results[1].status == 200 else [] }}
+    _fj_issues: >-
+      {{ _fj_read.results[2].json | map(attribute='title') | list
+         if _fj_read.results[2].status == 200 else [] }}
+    _fj_hide_activity: "{{ _fj_read.results[3].json.hide_activity | bool }}"
+
+- name: Forgejo drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _fj_read.results[0].status == 404
+      - not _fj_hide_activity
+    fail_msg: "{{ instance }} already has {{ _fj_canary }} or hide_activity on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Forgejo drill canary | Require the repository, its commit and issue, and the setting
+  ansible.builtin.assert:
+    that:
+      - _fj_readme == _fj_canary_text
+      - _fj_commits == [_fj_canary]
+      - _fj_issues == [_fj_canary]
+      - _fj_hide_activity
+    fail_msg: >-
+      {{ instance }} holds commits {{ _fj_commits }}, issues {{ _fj_issues }}, README
+      {{ 'as written' if _fj_readme == _fj_canary_text else 'missing or changed' }} and
+      hide_activity {{ _fj_hide_activity }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Forgejo drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ _fj_api }}/{{ item.path }}"
+    method: "{{ item.method }}"
+    headers: "{{ drill_app_headers }}"
+    url_username: "{{ _fj_user }}"
+    url_password: "{{ _fj_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    status_code: [200, 204]
+  changed_when: true
+  no_log: true
+  loop:
+    - {path: "repos/{{ _fj_user }}/{{ _fj_canary }}", method: DELETE}
+    - {path: user/settings, method: PATCH, body: {hide_activity: false}}
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
