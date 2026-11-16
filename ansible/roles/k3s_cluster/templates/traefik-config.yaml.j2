@@ -25,6 +25,12 @@ spec:
       web:
         expose:
           default: true
+        # Caddy terminates TLS and sends X-Forwarded-Proto: https. Without trust Traefik
+        # replaces it with http, and an app that checks the scheme (WordPress's login)
+        # redirects to itself. Trusted: the lab subnets (Caddy on a guest) and the k3s
+        # pod network (Caddy in the cluster); the VIP is reachable only from the LAN.
+        forwardedHeaders:
+          trustedIPs: {{ k3s_traefik_trusted_cidrs | to_json }}
       websecure:
         expose:
           default: false

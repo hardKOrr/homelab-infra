@@ -34,3 +34,11 @@ k3s_shared_storage_node_daemonset: csi-nfs-node
 # LAN join and short enough that a genuinely stuck node fails the job rather than
 # hanging it.
 k3s_ready_timeout: 180
+
+# Sources whose X-Forwarded-* headers Traefik keeps (templates/traefik-config.yaml.j2):
+# every lab subnet with a CIDR, and the k3s default pod network.
+k3s_pod_cidr: 10.42.0.0/16
+k3s_traefik_trusted_cidrs: >-
+  {{ (homelabinfra_config.networks | default({})).values()
+     | map(attribute='cidr', default='') | select('search', '/') | list
+     + [k3s_pod_cidr] }}
