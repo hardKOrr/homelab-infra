@@ -42,9 +42,14 @@
           INSERT INTO canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }})
             ON CONFLICT (id) DO UPDATE SET epoch = EXCLUDED.epoch;
           SELECT 'canary:' || id || ':' || epoch FROM canary;
+        # A missing canary reads as no row, so the assert below names the failure.
         verify: |
+          SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'lab_drill_canary')
+            AS dbc_present \gset
+          \if :dbc_present
           \connect lab_drill_canary
           SELECT 'canary:' || id || ':' || epoch FROM canary;
+          \endif
         drop: "DROP DATABASE IF EXISTS lab_drill_canary WITH (FORCE);"
       mysql:
         fresh: >-
@@ -56,7 +61,14 @@
             (id varchar(40) PRIMARY KEY, epoch bigint NOT NULL);
           REPLACE INTO lab_drill_canary.canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }});
           SELECT CONCAT('canary:', id, ':', epoch) FROM lab_drill_canary.canary;
-        verify: "SELECT CONCAT('canary:', id, ':', epoch) FROM lab_drill_canary.canary;"
+        verify: |
+          SET @dbc_query = IF((SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'lab_drill_canary' AND table_name = 'canary') = 1,
+            'SELECT CONCAT(''canary:'', id, '':'', epoch) FROM lab_drill_canary.canary',
+            'SELECT ''missing''');
+          PREPARE dbc_read FROM @dbc_query;
+          EXECUTE dbc_read;
+          DEALLOCATE PREPARE dbc_read;
         drop: "DROP DATABASE IF EXISTS lab_drill_canary;"
       # redis-cli echoes replies line by line; the canary lines carry their own prefix.
       redis:
