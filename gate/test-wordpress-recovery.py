@@ -111,7 +111,11 @@ def check_playbook_contract():
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
     assert swap["recovery_swap_staging_parent"] == "{{ wordpress_project_dir }}"
     assert swap["recovery_swap_database"] == {
-        "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
+        "config": "{{ app_config.app.database }}", "dump": "database/database.sql",
+        "instance": "{{ restore_target }}"}, "the target's database identity, not the source's"
+    shared = (ROOT / "ansible/tasks/recovery/restore-swap.yml").read_text()
+    assert shared.count("database_app_instance: \"{{ recovery_swap_database.instance | default(instance) }}\"") == 5
+    assert "database_app_instance: \"{{ instance }}\"" not in shared
     age = next(task for task in guest if "require-recent-pre-restore-point" in
                str(task.get("ansible.builtin.include_tasks", "")))
     assert age["when"] == ["restore_overwrite | bool", "restore_destination == 'existing'"], \

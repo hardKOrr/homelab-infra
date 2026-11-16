@@ -59,6 +59,7 @@
     recovery_swap_database:
       config: "{{ app_config.app.database }}"
       dump: database/database.sql
+      instance: "{{ restore_target }}"
     recovery_swap_stop_services: "{{ wordpress_native_services if wordpress_native | bool else ['wordpress'] }}"
     recovery_swap_compose_project: "{{ wordpress_project_dir }}"
     recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
