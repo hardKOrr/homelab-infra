@@ -80,9 +80,14 @@
         url: "{{ _ak_canary_api }}/{{ item }}"
         headers: "{{ _ak_canary_headers }}"
         return_content: true
-      register: _ak_canary_read
+      register: _ak_canary_reread
       changed_when: false
       loop: *ak_canary_reads
+
+    # Its own register: a skipped task would overwrite _ak_canary_read on verify.
+    - name: Authentik drill canary | Use the read-back
+      ansible.builtin.set_fact:
+        _ak_canary_read: "{{ _ak_canary_reread }}"
 
 - name: Authentik drill canary | Keep what the instance holds
   ansible.builtin.set_fact:

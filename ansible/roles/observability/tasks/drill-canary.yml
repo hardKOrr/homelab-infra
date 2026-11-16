@@ -86,9 +86,14 @@
         url: "{{ drill_app_url }}/api/{{ item }}"
         headers: "{{ _obs_canary_auth }}"
         status_code: [200, 404]
-      register: _obs_canary_read
+      register: _obs_canary_reread
       changed_when: false
       loop: *obs_canary_reads
+
+    # Its own register: a skipped task would overwrite _obs_canary_read on verify.
+    - name: Observability drill canary | Use the read-back
+      ansible.builtin.set_fact:
+        _obs_canary_read: "{{ _obs_canary_reread }}"
 
 - name: Observability drill canary | Require none on a fresh instance
   ansible.builtin.assert:
