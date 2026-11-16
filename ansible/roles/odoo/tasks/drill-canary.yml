@@ -136,7 +136,7 @@
     that:
       - _odoo_partners | length == 0
       - _odoo_files | length == 0
-      - _odoo_freeze != 'True'
+      - _odoo_freeze | string != 'True'
     fail_msg: "{{ instance }} already has {{ _odoo_canary }} or its parameter on a fresh install: data survived Remove."
   when: drill_canary_action == 'fresh'
 
@@ -149,7 +149,7 @@
       - _odoo_files[0].res_id == _odoo_partners[0]
       - _odoo_files[0].store_fname | default(false, true)
       - (_odoo_files[0].datas | default('', true) | b64decode) == _odoo_canary_bytes
-      - _odoo_freeze == 'True'
+      - _odoo_freeze | string == 'True'
     fail_msg: >-
       {{ instance }} holds {{ _odoo_partners | length }} canary contact(s),
       {{ _odoo_files | length }} attachment(s) (bytes
