@@ -84,8 +84,13 @@
         body:
           email: "{{ _he_owner.email | default(_he_owner.username) }}"
           password: "{{ _he_owner.password }}"
-      register: _he_login
+      register: _he_login_new
       changed_when: false
+      no_log: true
+
+    - name: Hi.Events drill canary | Keep the new owner's session
+      ansible.builtin.set_fact:
+        _he_login: "{{ _he_login_new }}"
       no_log: true
 
 - name: Hi.Events drill canary | Read and check the canaries
