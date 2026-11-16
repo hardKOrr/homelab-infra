@@ -61,6 +61,15 @@
         _n8n_owner: "{{ homelabinfra_vault.apps[_n8n_owner_item] }}"
       no_log: true
 
+    - name: n8n drill canary | Require the drill owner's fields
+      ansible.builtin.assert:
+        that:
+          - _n8n_owner.username | default('') is search('@')
+          - _n8n_owner.password | default('') | length > 0
+        fail_msg: >-
+          homelab-infra/apps/{{ _n8n_owner_item }} needs an email address in username and a
+          password; it has fields {{ _n8n_owner.keys() | list | sort }}.
+
     - name: n8n drill canary | Create the owner through first-run setup
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/rest/owner/setup"
