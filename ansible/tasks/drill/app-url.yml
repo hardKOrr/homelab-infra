@@ -1,23 +1,37 @@
 ---
-# Resolve the base URL a role's drill-canary.yml hook calls the app's API on from the
-# runner: the guest's address and app port for a native or Docker app, the routed HTTPS
-# name for a Kubernetes app (the platform Caddy fronts the cluster's ingress).
+# Resolve where a role's drill-canary.yml hook calls the app's API from the runner, without
+# the SSO in front of its route: the guest's address and app port for a native or Docker
+# app; for a Kubernetes app the cluster ingress over HTTP, with the app's routed name as
+# the Host header (as Deploy reaches Bazarr). Pass drill_app_headers on every request.
 #
 # Inputs, besides instance, app_config, _rat_kind and _rat_host from
 # playbooks/maintenance/drill-canary.yml:
 #   drill_url_port  the guest port (default app_config.app.port)
-# Sets: drill_app_url, with no trailing slash.
+# Sets:
+#   drill_app_url         base URL, with no trailing slash
+#   drill_app_headers     {} on a guest, {Host: <routed name>} on Kubernetes
+#   drill_app_routed_url  https://<routed name>, for a client that cannot set Host
+#                         (Uptime Kuma's socket.io); it passes the route's SSO, if any
 - name: Drill URL | Resolve the estate's domain
   ansible.builtin.include_tasks: ../resolve-estate.yml
   vars:
     resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
   when: _rat_kind == 'kubernetes'
 
+- name: Drill URL | Resolve the cluster's ingress
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+  when: _rat_kind == 'kubernetes' and k8s_cluster_facts is not defined
+
 - name: Drill URL | Resolve the app's base URL
   ansible.builtin.set_fact:
+    drill_app_routed_url: "https://{{ _drill_fqdn }}"
     drill_app_url: >-
-      {{ 'https://' ~ (app_config.routing.subdomain | default(instance, true)) ~ '.'
-           ~ (homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain, true))
+      {{ 'http://' ~ k8s_cluster_facts.ingress_vip
          if _rat_kind == 'kubernetes'
          else 'http://' ~ hostvars[_rat_host].ansible_host ~ ':'
            ~ (drill_url_port | default(app_config.app.port)) }}
+    drill_app_headers: "{{ {'Host': _drill_fqdn} if _rat_kind == 'kubernetes' else {} }}"
+  vars:
+    _drill_fqdn: >-
+      {{ (app_config.routing.subdomain | default(instance, true)) ~ '.'
+         ~ (homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain, true)) }}

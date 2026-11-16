@@ -13,12 +13,12 @@
   ansible.builtin.set_fact:
     _ak_canary: "p2-canary-authentik-{{ drill_canary_id }}"
     _ak_canary_api: "{{ drill_app_url }}/api/v3"
-    _ak_canary_headers:
-      Authorization: >-
-        Bearer {{ ((homelabinfra_infra.sso | default({}))
-                   if app_config.routing.estate | default('') | length == 0
-                   else ((homelabinfra_infra.estates | default({}))[app_config.routing.estate]
-                         | default({})).sso | default({})).token }}
+    _ak_canary_headers: >-
+      {{ drill_app_headers | combine({'Authorization': 'Bearer ' ~
+           ((homelabinfra_infra.sso | default({}))
+            if app_config.routing.estate | default('') | length == 0
+            else ((homelabinfra_infra.estates | default({}))[app_config.routing.estate]
+                  | default({})).sso | default({})).token}) }}
   no_log: true
 
 - name: Authentik drill canary | Read the group, the user and the brand

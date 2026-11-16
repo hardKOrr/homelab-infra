@@ -1,0 +1,129 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through qBittorrent's WebUI
+# API, as test(qbittorrent) #367 defined it:
+#   data           category p2-canary-qbittorrent-<id> holding one paused torrent. The
+#                  torrent is a magnet whose info hash is the SHA-1 of that name: no swarm
+#                  has it, so it never fetches metadata and has no payload to clean up.
+#   configuration  max_active_downloads set to 7 (default 3; Deploy does not author it)
+# The final verify (drill_final) deletes the torrent and the category and sets
+# max_active_downloads back to 3.
+- name: qBittorrent drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: qBittorrent drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _qbt_canary: "p2-canary-qbittorrent-{{ drill_canary_id }}"
+    _qbt_canary_hash: "{{ ('p2-canary-qbittorrent-' ~ drill_canary_id) | hash('sha1') }}"
+    _qbt_canary_downloads: 7
+    # CSRF protection wants Origin and Referer to name the address the WebUI is called on.
+    _qbt_canary_origin: >-
+      {{ 'http://' ~ drill_app_headers.Host if drill_app_headers.Host is defined
+         else drill_app_url }}
+
+- name: qBittorrent drill canary | Sign in
+  ansible.builtin.include_tasks: login.yml
+  vars:
+    qbt_login_base: "{{ drill_app_url }}"
+    qbt_login_origin: "{{ _qbt_canary_origin }}"
+    qbt_login_extra_headers: "{{ drill_app_headers }}"
+    qbt_login_user: "{{ homelabinfra_vault.media[instance].username }}"
+    qbt_login_password: "{{ homelabinfra_vault.media[instance].password }}"
+
+- name: qBittorrent drill canary | Require a session
+  ansible.builtin.assert:
+    that: qbt_login_ok | bool
+    fail_msg: "{{ instance }} refused the WebUI login: {{ qbt_login_reason }}"
+
+- name: qBittorrent drill canary | Keep the session headers
+  ansible.builtin.set_fact:
+    _qbt_canary_headers: >-
+      {{ drill_app_headers | combine({'Cookie': qbt_login_cookie,
+           'Referer': _qbt_canary_origin, 'Origin': _qbt_canary_origin}) }}
+  no_log: true
+
+- name: qBittorrent drill canary | Write the category, the torrent and the preference
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/v2/{{ item.path }}"
+    method: POST
+    headers: "{{ _qbt_canary_headers }}"
+    body_format: form-urlencoded
+    body: "{{ item.body }}"
+    # createCategory answers 409 when the category exists, as on a repeated create.
+    status_code: [200, 409]
+  changed_when: true
+  no_log: true
+  loop:
+    - path: torrents/createCategory
+      body: {category: "{{ _qbt_canary }}", savePath: ""}
+    - path: torrents/add
+      body:
+        urls: "magnet:?xt=urn:btih:{{ _qbt_canary_hash }}&dn={{ _qbt_canary }}"
+        category: "{{ _qbt_canary }}"
+        paused: "true"
+        stopped: "true"
+    - path: app/setPreferences
+      body:
+        json: "{{ {'max_active_downloads': _qbt_canary_downloads} | to_json }}"
+  when: drill_canary_action == 'create'
+
+- name: qBittorrent drill canary | Read the categories, the torrents and the preferences
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/v2/{{ item }}"
+    headers: "{{ _qbt_canary_headers }}"
+  register: _qbt_canary_read
+  changed_when: false
+  no_log: true
+  loop:
+    - torrents/categories
+    - "torrents/info?category={{ _qbt_canary | urlencode }}"
+    - app/preferences
+
+- name: qBittorrent drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _qbt_canary_has_category: "{{ _qbt_canary in _qbt_canary_read.results[0].json }}"
+    _qbt_canary_torrents: >-
+      {{ _qbt_canary_read.results[1].json | map(attribute='hash') | list }}
+    _qbt_canary_states: >-
+      {{ _qbt_canary_read.results[1].json | map(attribute='state') | list }}
+    _qbt_canary_read_downloads: "{{ _qbt_canary_read.results[2].json.max_active_downloads | int }}"
+
+- name: qBittorrent drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - not _qbt_canary_has_category | bool
+      - _qbt_canary_torrents | length == 0
+      - _qbt_canary_read_downloads | int != _qbt_canary_downloads
+    fail_msg: "{{ instance }} already has {{ _qbt_canary }} or its preference on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+# qBittorrent 4 reports a paused torrent as paused*, qBittorrent 5 as stopped*.
+- name: qBittorrent drill canary | Require the paused torrent and the preference
+  ansible.builtin.assert:
+    that:
+      - _qbt_canary_has_category | bool
+      - _qbt_canary_torrents == [_qbt_canary_hash]
+      - _qbt_canary_states[0] is match('^(paused|stopped)')
+      - _qbt_canary_read_downloads | int == _qbt_canary_downloads
+    fail_msg: >-
+      {{ instance }} holds category {{ _qbt_canary_has_category }}, torrents
+      {{ _qbt_canary_torrents }} in {{ _qbt_canary_states }} and max_active_downloads
+      {{ _qbt_canary_read_downloads }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: qBittorrent drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/v2/{{ item.path }}"
+    method: POST
+    headers: "{{ _qbt_canary_headers }}"
+    body_format: form-urlencoded
+    body: "{{ item.body }}"
+  changed_when: true
+  no_log: true
+  loop:
+    - path: torrents/delete
+      body: {hashes: "{{ _qbt_canary_hash }}", deleteFiles: "true"}
+    - path: torrents/removeCategories
+      body: {categories: "{{ _qbt_canary }}"}
+    - path: app/setPreferences
+      body: {json: '{"max_active_downloads": 3}'}
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

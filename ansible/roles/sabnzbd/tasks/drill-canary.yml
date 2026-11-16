@@ -20,6 +20,7 @@
 - name: SABnzbd drill canary | Write the category and the setting
   ansible.builtin.uri:
     url: "{{ _sab_canary_api }}&mode=set_config&{{ item }}"
+    headers: "{{ drill_app_headers }}"
   changed_when: true
   no_log: true
   loop:
@@ -30,6 +31,7 @@
 - name: SABnzbd drill canary | Read the categories and the setting
   ansible.builtin.uri:
     url: "{{ _sab_canary_api }}&mode=get_config&section={{ item }}"
+    headers: "{{ drill_app_headers }}"
   register: _sab_canary_read
   changed_when: false
   no_log: true
@@ -61,6 +63,7 @@
 - name: SABnzbd drill canary | Delete the canary after the final verify
   ansible.builtin.uri:
     url: "{{ _sab_canary_api }}&{{ item }}"
+    headers: "{{ drill_app_headers }}"
   changed_when: true
   no_log: true
   loop:

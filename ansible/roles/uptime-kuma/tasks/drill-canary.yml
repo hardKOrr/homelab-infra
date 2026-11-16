@@ -17,7 +17,7 @@
 - name: Uptime Kuma drill canary | Sign in
   ansible.builtin.include_tasks: ../../../tasks/kuma/open-session.yml
   vars:
-    kuma_base: "{{ drill_app_url }}"
+    kuma_base: "{{ drill_app_routed_url if _rat_kind == 'kubernetes' else drill_app_url }}"
     kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
     kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
 

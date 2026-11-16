@@ -20,6 +20,7 @@
     - name: Ollama drill canary | Pull the base model
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/api/pull"
+        headers: "{{ drill_app_headers }}"
         method: POST
         body_format: json
         body: {model: "{{ _ollama_canary_base }}", stream: false}
@@ -29,6 +30,7 @@
     - name: Ollama drill canary | Build the canary model with its system prompt
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/api/create"
+        headers: "{{ drill_app_headers }}"
         method: POST
         body_format: json
         body:
@@ -42,12 +44,14 @@
 - name: Ollama drill canary | Read the models
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/api/tags"
+    headers: "{{ drill_app_headers }}"
   register: _ollama_canary_tags
   changed_when: false
 
 - name: Ollama drill canary | Read the canary model
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/api/show"
+    headers: "{{ drill_app_headers }}"
     method: POST
     body_format: json
     body: {model: "{{ _ollama_canary }}"}
@@ -83,6 +87,7 @@
 - name: Ollama drill canary | Delete the models after the final verify
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/api/delete"
+    headers: "{{ drill_app_headers }}"
     method: DELETE
     body_format: json
     body: {model: "{{ item }}"}

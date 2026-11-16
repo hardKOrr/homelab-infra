@@ -13,10 +13,10 @@
   ansible.builtin.set_fact:
     _obs_canary: "p2-canary-observability-{{ drill_canary_id }}"
     _obs_canary_uid: "p2c-{{ (drill_canary_id | hash('sha1'))[:16] }}"
-    _obs_canary_auth:
-      Authorization: >-
-        Basic {{ ((app_config.app.admin_user | default('admin')) ~ ':'
-                  ~ homelabinfra_infra.metrics.admin_password) | b64encode }}
+    _obs_canary_auth: >-
+      {{ drill_app_headers | combine({'Authorization': 'Basic ' ~
+           ((app_config.app.admin_user | default('admin')) ~ ':'
+            ~ homelabinfra_infra.metrics.admin_password) | b64encode}) }}
   no_log: true
 
 - name: Observability drill canary | Read the folder, dashboard and alert rule

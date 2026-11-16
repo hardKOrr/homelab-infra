@@ -1,0 +1,186 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml) for a Servarr kind without a
+# browser spec (browser/<kind>-recovery.js wins in tools/lab-drill), through its API, as
+# test(lidarr) #364 defined it:
+#   data           artist Kevin MacLeod (looked up from Lidarr's metadata server) in the
+#                  first root folder, monitoring off, tagged p2-canary-<kind>-<id>
+#   configuration  media-management recycleBinCleanupDays set to 17 (default 7; Deploy
+#                  and the media wiring do not author it)
+# The final verify (drill_final) deletes the artist with its folder and the tag, and sets
+# recycleBinCleanupDays back to 7. _servarr_canary_kinds holds each kind's item shape.
+- name: Servarr drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Servarr drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _arr_canary: "p2-canary-{{ app_config.app.media_kind }}-{{ drill_canary_id }}"
+    _arr_canary_days: 17
+    _arr_canary_kind: "{{ _servarr_canary_kinds.get(app_config.app.media_kind, {}) }}"
+    _arr_canary_api: "{{ drill_app_url }}/api/v1"
+    _arr_canary_headers: >-
+      {{ drill_app_headers | combine({'X-Api-Key': homelabinfra_vault.media[instance].api_key}) }}
+  vars:
+    _servarr_canary_kinds:
+      lidarr:
+        items: artist
+        lookup: Kevin MacLeod
+        name_field: artistName
+        add_options: {monitor: none, searchForMissingAlbums: false}
+        extra: {monitorNewItems: none}
+  no_log: true
+
+- name: Servarr drill canary | Require a kind this hook knows
+  ansible.builtin.assert:
+    that: _arr_canary_kind | length > 0
+    fail_msg: >-
+      {{ app_config.app.media_kind }} has no drill canary here: give it
+      browser/{{ app_config.app.media_kind }}-recovery.js or an entry in _servarr_canary_kinds.
+
+- name: Servarr drill canary | Read the items, tags and settings
+  ansible.builtin.uri:
+    url: "{{ _arr_canary_api }}/{{ item }}"
+    headers: "{{ _arr_canary_headers }}"
+  register: _arr_canary_first
+  changed_when: false
+  no_log: true
+  loop: ["{{ _arr_canary_kind['items'] }}", tag, config/mediamanagement]
+
+- name: Servarr drill canary | Write the tagged item and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: Servarr drill canary | Create the tag
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/tag"
+        method: POST
+        headers: "{{ _arr_canary_headers }}"
+        body_format: json
+        body: {label: "{{ _arr_canary }}"}
+        status_code: [200, 201]
+      register: _arr_canary_new_tag
+      changed_when: true
+      no_log: true
+      when: _arr_canary_first.results[1].json | selectattr('label', 'equalto', _arr_canary) | list | length == 0
+
+    - name: Servarr drill canary | Look up the item and the profiles
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/{{ item }}"
+        headers: "{{ _arr_canary_headers }}"
+      register: _arr_canary_refs
+      changed_when: false
+      no_log: true
+      loop:
+        - "{{ _arr_canary_kind['items'] }}/lookup?term={{ _arr_canary_kind.lookup | urlencode }}"
+        - qualityprofile
+        - metadataprofile
+        - rootfolder
+
+    - name: Servarr drill canary | Add the item, unmonitored and tagged
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/{{ _arr_canary_kind['items'] }}"
+        method: POST
+        headers: "{{ _arr_canary_headers }}"
+        body_format: json
+        body: >-
+          {{ _found | combine(_arr_canary_kind.extra, {
+               'qualityProfileId': _arr_canary_refs.results[1].json[0].id,
+               'metadataProfileId': _arr_canary_refs.results[2].json[0].id,
+               'rootFolderPath': _arr_canary_refs.results[3].json[0].path,
+               'monitored': false, 'tags': [_tag_id],
+               'addOptions': _arr_canary_kind.add_options}) }}
+        status_code: [200, 201]
+      vars:
+        _found: >-
+          {{ (_arr_canary_refs.results[0].json
+              | selectattr(_arr_canary_kind.name_field, 'equalto', _arr_canary_kind.lookup)
+              | list + [{}])[0] }}
+        _tag_id: >-
+          {{ _arr_canary_new_tag.json.id if _arr_canary_new_tag.json is defined
+             else (_arr_canary_first.results[1].json
+                   | selectattr('label', 'equalto', _arr_canary) | first).id }}
+      changed_when: true
+      no_log: true
+      when: >-
+        _arr_canary_first.results[0].json
+        | selectattr(_arr_canary_kind.name_field, 'equalto', _arr_canary_kind.lookup)
+        | list | length == 0
+
+    - name: Servarr drill canary | Save the setting
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/config/mediamanagement"
+        method: PUT
+        headers: "{{ _arr_canary_headers }}"
+        body_format: json
+        body: "{{ _arr_canary_first.results[2].json | combine({'recycleBinCleanupDays': _arr_canary_days}) }}"
+        status_code: [200, 202]
+      changed_when: true
+      no_log: true
+
+- name: Servarr drill canary | Read back what was written
+  ansible.builtin.uri:
+    url: "{{ _arr_canary_api }}/{{ item }}"
+    headers: "{{ _arr_canary_headers }}"
+  register: _arr_canary_written
+  changed_when: false
+  no_log: true
+  loop: ["{{ _arr_canary_kind['items'] }}", tag, config/mediamanagement]
+  when: drill_canary_action == 'create'
+
+- name: Servarr drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _arr_canary_tags: "{{ _read.results[1].json | selectattr('label', 'equalto', _arr_canary) | list }}"
+    _arr_canary_found: >-
+      {{ _read.results[0].json
+         | selectattr(_arr_canary_kind.name_field, 'equalto', _arr_canary_kind.lookup) | list }}
+    _arr_canary_read_days: "{{ _read.results[2].json.recycleBinCleanupDays | int }}"
+  vars:
+    _read: "{{ _arr_canary_written if drill_canary_action == 'create' else _arr_canary_first }}"
+  no_log: true
+
+- name: Servarr drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _arr_canary_tags | length == 0
+      - _arr_canary_found | length == 0
+      - _arr_canary_read_days | int != _arr_canary_days
+    fail_msg: "{{ instance }} already has {{ _arr_canary }}, its item or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Servarr drill canary | Require the tagged item and the setting
+  ansible.builtin.assert:
+    that:
+      - _arr_canary_tags | length == 1
+      - _arr_canary_found | length == 1
+      - not _arr_canary_found[0].monitored
+      - _arr_canary_tags[0].id in _arr_canary_found[0].tags
+      - _arr_canary_read_days | int == _arr_canary_days
+    fail_msg: >-
+      {{ instance }} holds {{ _arr_canary_tags | length }} tag(s),
+      {{ _arr_canary_found | length }} {{ _arr_canary_kind.lookup }} item(s) and
+      recycleBinCleanupDays {{ _arr_canary_read_days }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Servarr drill canary | Delete the canary after the final verify
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+  block:
+    - name: Servarr drill canary | Delete the item with its folder, then the tag
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/{{ item }}"
+        method: DELETE
+        headers: "{{ _arr_canary_headers }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      loop:
+        - "{{ _arr_canary_kind['items'] }}/{{ _arr_canary_found[0].id }}?deleteFiles=true"
+        - "tag/{{ _arr_canary_tags[0].id }}"
+
+    - name: Servarr drill canary | Put the setting back
+      ansible.builtin.uri:
+        url: "{{ _arr_canary_api }}/config/mediamanagement"
+        method: PUT
+        headers: "{{ _arr_canary_headers }}"
+        body_format: json
+        body: "{{ _arr_canary_first.results[2].json | combine({'recycleBinCleanupDays': 7}) }}"
+        status_code: [200, 202]
+      changed_when: true
+      no_log: true

@@ -1,0 +1,107 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Bazarr's API, as
+# test(bazarr) #365 defined it:
+#   data           language profile p2-canary-bazarr-<id> (English)
+#   configuration  general minimum_score set to 77 (default 90; Deploy and the media
+#                  wiring do not author it)
+# Bazarr saves language profiles as one list, so a write sends every profile it holds.
+# The final verify (drill_final) deletes the profile and sets minimum_score back to 90.
+- name: Bazarr drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Bazarr drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _bazarr_canary: "p2-canary-bazarr-{{ drill_canary_id }}"
+    _bazarr_canary_score: 77
+    _bazarr_canary_headers: >-
+      {{ drill_app_headers | combine({'X-API-KEY': homelabinfra_vault.media[instance].api_key,
+                                      'Accept': 'application/json'}) }}
+  no_log: true
+
+- name: Bazarr drill canary | Read the profiles and the settings
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    headers: "{{ _bazarr_canary_headers }}"
+  register: _bazarr_canary_first
+  changed_when: false
+  no_log: true
+  loop: [system/languages/profiles, system/settings]
+
+- name: Bazarr drill canary | Write the profile and the setting
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/system/settings"
+    method: POST
+    headers: "{{ _bazarr_canary_headers }}"
+    body_format: form-urlencoded
+    body:
+      languages-profiles: >-
+        {{ (_profiles | rejectattr('name', 'equalto', _bazarr_canary) | list
+            + [{'profileId': (_profiles | map(attribute='profileId') | max | default(0)) + 1,
+                'name': _bazarr_canary, 'cutoff': none, 'mustContain': [],
+                'mustNotContain': [], 'originalFormat': none, 'tag': none,
+                'items': [{'id': 1, 'language': 'en', 'audio_exclude': 'False',
+                           'hi': 'False', 'forced': 'False'}]}]) | to_json }}
+      settings-general-minimum_score: "{{ _bazarr_canary_score }}"
+    status_code: [200, 204]
+  vars:
+    _profiles: "{{ _bazarr_canary_first.results[0].json }}"
+  changed_when: true
+  no_log: true
+  when: drill_canary_action == 'create'
+
+- name: Bazarr drill canary | Read back what was written
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    headers: "{{ _bazarr_canary_headers }}"
+  register: _bazarr_canary_written
+  changed_when: false
+  no_log: true
+  loop: [system/languages/profiles, system/settings]
+  when: drill_canary_action == 'create'
+
+# A skipped task still registers, so a create keeps the read taken after its write.
+- name: Bazarr drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _bazarr_canary_profiles: >-
+      {{ _read.results[0].json | selectattr('name', 'equalto', _bazarr_canary) | list }}
+    _bazarr_canary_all: "{{ _read.results[0].json }}"
+    _bazarr_canary_read_score: "{{ _read.results[1].json.general.minimum_score | int }}"
+  vars:
+    _read: >-
+      {{ _bazarr_canary_written if drill_canary_action == 'create'
+         else _bazarr_canary_first }}
+  no_log: true
+
+- name: Bazarr drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _bazarr_canary_profiles | length == 0
+      - _bazarr_canary_read_score | int != _bazarr_canary_score
+    fail_msg: "{{ instance }} already has {{ _bazarr_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Bazarr drill canary | Require the profile and the setting
+  ansible.builtin.assert:
+    that:
+      - _bazarr_canary_profiles | length == 1
+      - _bazarr_canary_profiles[0]['items'] | map(attribute='language') | list == ['en']
+      - _bazarr_canary_read_score | int == _bazarr_canary_score
+    fail_msg: >-
+      {{ instance }} holds {{ _bazarr_canary_profiles | length }} {{ _bazarr_canary }}
+      profile(s) and minimum_score {{ _bazarr_canary_read_score }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Bazarr drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/system/settings"
+    method: POST
+    headers: "{{ _bazarr_canary_headers }}"
+    body_format: form-urlencoded
+    body:
+      languages-profiles: >-
+        {{ _bazarr_canary_all | rejectattr('name', 'equalto', _bazarr_canary) | list | to_json }}
+      settings-general-minimum_score: "90"
+    status_code: [200, 204]
+  changed_when: true
+  no_log: true
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
