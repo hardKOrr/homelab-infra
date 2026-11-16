@@ -151,6 +151,21 @@
   delay: 5
   changed_when: false
 
+- name: Odoo native | Give the admin user the recorded admin_password
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/odoo
+      - shell
+      - "--config={{ odoo_native_config }}"
+      - "--database={{ app_config.app.database.name }}"
+      - --no-http
+      - --log-level=warn
+    stdin: "{{ lookup('ansible.builtin.file', role_path ~ '/files/admin-login.py') }}"
+  become_user: "{{ odoo_native_user }}"
+  register: _odoo_admin_login
+  changed_when: _odoo_admin_login.stdout_lines[-1:] == ['changed']
+  failed_when: _odoo_admin_login.rc != 0 or _odoo_admin_login.stdout_lines[-1:] not in [['changed'], ['kept']]
+
 - name: Odoo native | Install lab maintenance scripts
   ansible.builtin.copy:
     dest: "/usr/local/bin/{{ item.name }}"
