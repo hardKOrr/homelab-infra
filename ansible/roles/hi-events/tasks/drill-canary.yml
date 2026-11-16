@@ -193,6 +193,8 @@
       ansible.builtin.uri:
         url: "{{ _he_api }}/{{ item }}"
         headers: "{{ _he_headers }}"
+        # A refusal is reported by the next assert with its status.
+        status_code: [200, 403, 404]
       register: _he_read
       changed_when: false
       no_log: true
@@ -207,13 +209,15 @@
           - _he_organizers | length == 1
           - _he_events | length == 1
           - _he_events[0].organizer_id == _he_organizers[0].id
+          - _he_read.results | map(attribute='status') | list == [200, 200]
           - _he_read.results[0].json.data.currency == 'GBP'
           - _he_read.results[1].json.data | map(attribute='title') | list == ['Canary Ticket']
         fail_msg: >-
           {{ instance }} holds {{ _he_organizers | length }} canary organizer(s) and
           {{ _he_events | length }} event(s){{ '' if _he_read.results is not defined else
-          ', organizer currency ' ~ (_he_read.results[0].json.data.currency | default('?'))
-          ~ ' and tickets ' ~ (_he_read.results[1].json.data | default([]) | map(attribute='title') | list) }}.
+          ' (reads HTTP ' ~ (_he_read.results | map(attribute='status') | join(', ')) ~ ')'
+          ~ ', organizer currency ' ~ ((_he_read.results[0].json | default({})).data.currency | default('?'))
+          ~ ' and tickets ' ~ ((_he_read.results[1].json | default({})).data | default([]) | map(attribute='title') | list) }}.
 
     - name: Hi.Events drill canary | Delete the canary after the final verify
       ansible.builtin.uri:
