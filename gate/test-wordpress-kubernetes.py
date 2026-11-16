@@ -239,14 +239,17 @@ def check_shared_recovery_inputs():
     restore_text = str(restore)
     assert "tasks/database/kubernetes-recovery-step.yml" in restore_text
     assert "tasks/kubernetes/recovery-restore.yml" in restore_text
-    safety = next(task for task in restore
+    # Restore App requires the target's recent safety point for every Kubernetes overwrite
+    # of an existing target, before anything changes; the shared Job does not check it.
+    validate = tasks("ansible/tasks/recovery/restore-app-validate.yml")
+    safety = next(task for task in validate
                   if "require-recent-pre-restore-point.yml" in str(task))
-    assert safety["when"] == ["restore_overwrite | bool", "restore_destination == 'existing'"], \
+    assert safety["when"] == ["_ra_kind == 'kubernetes'", "_ra_overwrite | bool",
+                              "recovery_destination_resolved == 'existing'"], \
         "a new target has no earlier backup to require"
     assert "restore_target_config.backup.backup_id" in str(safety["vars"])
-    shared_restore = next(task for task in restore
-                          if "recovery-restore.yml" in str(task))
-    assert restore.index(safety) < restore.index(shared_restore)
+    assert safety["vars"]["restore_pre_restore_point"] == "{{ _ra_pre_restore_point }}"
+    assert "require-recent-pre-restore-point" not in restore_text, "one home: Restore App"
     assert "restore-kubernetes-rekey.yml" in restore_text
     # The re-key acts on the restore target, which differs from `instance` (the source)
     # when a point is restored into another WordPress.
