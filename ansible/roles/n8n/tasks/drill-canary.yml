@@ -1,0 +1,226 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through n8n's REST API as
+# the drill owner, as test(n8n) #408 defined it:
+#   data           header-auth credential p2-canary-n8n-<id> and workflow
+#                  p2-canary-n8n-<id> whose HTTP Request node uses it. The credential is
+#                  read back with its data, which n8n decrypts with the instance's
+#                  encryption key; the header name is the readable proof (n8n redacts the
+#                  value).
+#   configuration  the workflow's timezone setting, Pacific/Honolulu (default: the
+#                  instance's)
+# Deploy provisions no login, so a create on a first-run instance sets up the lab-only
+# owner kept in Vaultwarden item homelab-infra/apps/<instance>-drill-owner (kept when it
+# exists), and a fresh instance is one still on first run: it has no owner, so no canary.
+# The final verify (drill_final) archives and deletes the workflow and deletes the
+# credential.
+- name: n8n drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: n8n drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _n8n_canary: "p2-canary-n8n-{{ drill_canary_id }}"
+    _n8n_canary_header: "X-P2-Canary-{{ drill_canary_id }}"
+    _n8n_canary_timezone: Pacific/Honolulu
+    _n8n_owner_item: "{{ instance }}-drill-owner"
+    _n8n_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+- name: n8n drill canary | Read whether the instance is on first run
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/rest/settings"
+    headers: "{{ drill_app_headers }}"
+  register: _n8n_settings
+  changed_when: false
+
+- name: n8n drill canary | Keep the first-run state
+  ansible.builtin.set_fact:
+    _n8n_first_run: "{{ _n8n_settings.json.data.userManagement.showSetupOnFirstLoad | bool }}"
+
+- name: n8n drill canary | Require a first-run instance when fresh
+  ansible.builtin.assert:
+    that: _n8n_first_run | bool
+    fail_msg: "{{ instance }} already has an owner on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: n8n drill canary | Set up the drill owner on a first-run instance
+  when: drill_canary_action == 'create' and _n8n_first_run | bool
+  block:
+    - name: n8n drill canary | Store a new drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _n8n_owner_item }}"
+        vault_item_fields:
+          username: "drill-owner@{{ instance }}.invalid"
+          # n8n requires a digit and an upper-case letter.
+          password: "Dr1ll-{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+        vault_item_secret_fields: [password]
+      when: _n8n_owner.password | default('') | length == 0
+
+    - name: n8n drill canary | Keep the drill owner
+      ansible.builtin.set_fact:
+        _n8n_owner: "{{ homelabinfra_vault.apps[_n8n_owner_item] }}"
+      no_log: true
+
+    - name: n8n drill canary | Create the owner through first-run setup
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/rest/owner/setup"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          email: "{{ _n8n_owner.username }}"
+          firstName: Drill
+          lastName: Owner
+          password: "{{ _n8n_owner.password }}"
+      changed_when: true
+      no_log: true
+
+- name: n8n drill canary | Read and check the canaries
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: n8n drill canary | Sign in as the drill owner
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/rest/login"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          emailOrLdapLoginId: "{{ _n8n_owner.username | default('') }}"
+          password: "{{ _n8n_owner.password | default('') }}"
+        status_code: [200, 401]
+      register: _n8n_login
+      changed_when: false
+      no_log: true
+
+    - name: n8n drill canary | Require the drill owner's login
+      ansible.builtin.assert:
+        that: _n8n_login.status == 200
+        fail_msg: >-
+          {{ instance }} refused the drill owner from homelab-infra/apps/{{ _n8n_owner_item }}
+          (HTTP {{ _n8n_login.status }}).
+
+    - name: n8n drill canary | Keep the session
+      ansible.builtin.set_fact:
+        _n8n_headers: "{{ drill_app_headers | combine({'Cookie': _n8n_login.cookies_string}) }}"
+      no_log: true
+
+    - name: n8n drill canary | Look for the credential and the workflow
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/rest/{{ item }}"
+        headers: "{{ _n8n_headers }}"
+      register: _n8n_lists
+      changed_when: false
+      no_log: true
+      loop:
+        - credentials
+        - "workflows?filter={{ {'name': _n8n_canary} | to_json | urlencode }}"
+
+    - name: n8n drill canary | Keep the ids
+      ansible.builtin.set_fact:
+        _n8n_credentials: >-
+          {{ _n8n_lists.results[0].json.data | selectattr('name', 'equalto', _n8n_canary)
+             | map(attribute='id') | list }}
+        _n8n_workflows: >-
+          {{ _n8n_lists.results[1].json.data | selectattr('name', 'equalto', _n8n_canary)
+             | map(attribute='id') | list }}
+
+    - name: n8n drill canary | Write the credential and the workflow
+      when: drill_canary_action == 'create' and _n8n_credentials | length == 0
+      block:
+        - name: n8n drill canary | Create the header-auth credential
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/rest/credentials"
+            method: POST
+            headers: "{{ _n8n_headers }}"
+            body_format: json
+            body:
+              name: "{{ _n8n_canary }}"
+              type: httpHeaderAuth
+              data:
+                name: "{{ _n8n_canary_header }}"
+                value: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+          register: _n8n_credential
+          changed_when: true
+          no_log: true
+
+        - name: n8n drill canary | Create the workflow that uses it
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/rest/workflows"
+            method: POST
+            headers: "{{ _n8n_headers }}"
+            body_format: json
+            body:
+              name: "{{ _n8n_canary }}"
+              active: false
+              settings: {timezone: "{{ _n8n_canary_timezone }}"}
+              nodes:
+                - {name: Start, type: n8n-nodes-base.manualTrigger, typeVersion: 1,
+                   position: [0, 0], parameters: {}}
+                - name: Canary
+                  type: n8n-nodes-base.httpRequest
+                  typeVersion: 4.2
+                  position: [220, 0]
+                  parameters:
+                    url: http://localhost/
+                    authentication: genericCredentialType
+                    genericAuthType: httpHeaderAuth
+                  credentials:
+                    httpHeaderAuth: {id: "{{ _n8n_credential.json.data.id }}", name: "{{ _n8n_canary }}"}
+              connections:
+                Start: {main: [[{node: Canary, type: main, index: 0}]]}
+          register: _n8n_workflow
+          changed_when: true
+          no_log: true
+
+        - name: n8n drill canary | Keep the new ids
+          ansible.builtin.set_fact:
+            _n8n_credentials: ["{{ _n8n_credential.json.data.id }}"]
+            _n8n_workflows: ["{{ _n8n_workflow.json.data.id }}"]
+
+    - name: n8n drill canary | Require one credential and one workflow
+      ansible.builtin.assert:
+        that:
+          - _n8n_credentials | length == 1
+          - _n8n_workflows | length == 1
+        fail_msg: >-
+          {{ instance }} holds {{ _n8n_credentials | length }} canary credential(s) and
+          {{ _n8n_workflows | length }} workflow(s).
+
+    - name: n8n drill canary | Read the decrypted credential and the workflow
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/rest/{{ item }}"
+        headers: "{{ _n8n_headers }}"
+      register: _n8n_read
+      changed_when: false
+      no_log: true
+      loop:
+        - "credentials/{{ _n8n_credentials[0] }}?includeData=true"
+        - "workflows/{{ _n8n_workflows[0] }}"
+
+    - name: n8n drill canary | Require the decrypted credential, its use and the setting
+      ansible.builtin.assert:
+        that:
+          - _n8n_cred.type == 'httpHeaderAuth'
+          - _n8n_cred.data.name == _n8n_canary_header
+          - _n8n_flow.settings.timezone == _n8n_canary_timezone
+          - (_n8n_flow.nodes | selectattr('name', 'equalto', 'Canary') | first).credentials.httpHeaderAuth.id
+            == _n8n_credentials[0]
+        fail_msg: >-
+          {{ instance }}'s credential decrypts to header {{ _n8n_cred.data.name | default('(none)') }},
+          and the workflow's timezone is {{ _n8n_flow.settings.timezone | default('(unset)') }}.
+      vars:
+        _n8n_cred: "{{ _n8n_read.results[0].json.data }}"
+        _n8n_flow: "{{ _n8n_read.results[1].json.data }}"
+
+    - name: n8n drill canary | Delete the canary after the final verify
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/rest/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ _n8n_headers }}"
+      changed_when: true
+      no_log: true
+      loop:
+        - {path: "workflows/{{ _n8n_workflows[0] }}/archive", method: POST}
+        - {path: "workflows/{{ _n8n_workflows[0] }}", method: DELETE}
+        - {path: "credentials/{{ _n8n_credentials[0] }}", method: DELETE}
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
