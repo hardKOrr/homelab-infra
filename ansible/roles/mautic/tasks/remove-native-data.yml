@@ -1,0 +1,13 @@
+---
+# Remove App hook, run on a native guest after the services stop. Deploy runs Mautic's
+# installer only while <project dir>/.installed is absent; with delete_data the database
+# and data_path go, so the marker goes too, and the next Deploy installs afresh.
+- name: Mautic remove | Load role defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../roles/mautic/defaults/main.yml"
+
+- name: Mautic remove | Delete the installer marker
+  ansible.builtin.file:
+    path: "{{ mautic_project_dir }}/.installed"
+    state: absent
+  when: _rm_delete_data | bool
