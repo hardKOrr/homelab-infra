@@ -147,8 +147,8 @@
     _dbc_counts: "{{ _dbc_stdout | regex_findall('count:\\s*(\\d+)') | map('int') | list }}"
     _dbc_rows: "{{ _dbc_stdout | regex_findall('canary:[A-Za-z0-9-]+:\\d+') }}"
     _dbc_grants: >-
-      {{ _dbc_stdout | regex_findall('grant:[a-z_-]+:[ \\t]*\\n?[ \\t]*\\S*')
-         | map('regex_replace', '\\s+', '') | list }}
+      {{ _dbc_stdout | regex_findall('grant:[a-z_-]+:[ \t]*\n?[ \t]*\S*')
+         | map('regex_replace', '\s+', '') | list }}
 
 - name: Database canary | Require none on a fresh instance
   ansible.builtin.assert:
