@@ -75,8 +75,18 @@
             email: "{{ _kk_owner.email }}"
             password: "{{ _kk_owner.password }}"
             confirmPassword: "{{ _kk_owner.password }}"
+        status_code: [200, 400, 403, 429]
+      register: _kk_signup
       changed_when: true
       no_log: true
+      when: _kk_exchange.status == 401
+
+    - name: Karakeep drill canary | Require the signup
+      ansible.builtin.assert:
+        that: _kk_signup.status == 200
+        fail_msg: >-
+          {{ instance }} refused the drill owner's signup (HTTP {{ _kk_signup.status }}):
+          {{ _kk_signup.json.error.json.message | default('') }}
       when: _kk_exchange.status == 401
 
     - name: Karakeep drill canary | Exchange the new owner's password for an API key
