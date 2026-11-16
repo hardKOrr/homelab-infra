@@ -200,7 +200,8 @@
       no_log: true
       loop:
         - "organizers/{{ (_he_organizers | first | default({})).id | default(0) }}"
-        - "events/{{ (_he_events | first | default({})).id | default(0) }}/products"
+        # Its categories carry the products; this release's own product listing fails.
+        - "events/{{ (_he_events | first | default({})).id | default(0) }}/product-categories"
       when: _he_organizers | length == 1 and _he_events | length == 1
 
     - name: Hi.Events drill canary | Require the event, its ticket and the organizer's currency
@@ -211,13 +212,17 @@
           - _he_events[0].organizer_id == _he_organizers[0].id
           - _he_read.results | map(attribute='status') | list == [200, 200]
           - _he_read.results[0].json.data.currency == 'GBP'
-          - _he_read.results[1].json.data | map(attribute='title') | list == ['Canary Ticket']
+          - _he_tickets == ['Canary Ticket']
         fail_msg: >-
           {{ instance }} holds {{ _he_organizers | length }} canary organizer(s) and
           {{ _he_events | length }} event(s){{ '' if _he_read.results is not defined else
           ' (reads HTTP ' ~ (_he_read.results | map(attribute='status') | join(', ')) ~ ')'
           ~ ', organizer currency ' ~ ((_he_read.results[0].json | default({})).data.currency | default('?'))
-          ~ ' and tickets ' ~ ((_he_read.results[1].json | default({})).data | default([]) | map(attribute='title') | list) }}.
+          ~ ' and tickets ' ~ _he_tickets }}.
+      vars:
+        _he_tickets: >-
+          {{ ((_he_read.results | default([{}, {}]))[1].json | default({})).data | default([])
+             | map(attribute='products') | flatten | map(attribute='title') | list }}
 
     - name: Hi.Events drill canary | Delete the canary after the final verify
       ansible.builtin.uri:
