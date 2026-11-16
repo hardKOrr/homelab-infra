@@ -1,0 +1,78 @@
+---
+# Run one drill-canary script on a database backend (drill-canary.yml). Sets _dbc_stdout.
+# A guest backend runs its client on the host socket; a Kubernetes one in its server pod.
+- name: Database canary | Run psql on the guest
+  ansible.builtin.command:
+    argv: [psql, --no-psqlrc, --set=ON_ERROR_STOP=1, --username=postgres, --dbname=postgres,
+           "--port={{ app_config.app.port }}", --tuples-only, --no-align]
+    stdin: "{{ _dbc_run_script }}"
+  delegate_to: "{{ _rat_host }}"
+  become: true
+  become_user: postgres
+  register: _dbc_guest_psql
+  changed_when: drill_canary_action != 'fresh'
+  when: drill_database_engine == 'postgresql' and _rat_kind != 'kubernetes'
+
+- name: Database canary | Run SQL on the guest
+  ansible.builtin.command:
+    argv: [sh, -c, 'exec "$(command -v mariadb || command -v mysql)" "$@"', client,
+           --protocol=socket, --socket=/run/mysqld/mysqld.sock, --user=root, --batch,
+           --skip-column-names]
+    stdin: "{{ _dbc_run_script }}"
+  delegate_to: "{{ _rat_host }}"
+  become: true
+  register: _dbc_guest_sql
+  changed_when: drill_canary_action != 'fresh'
+  when: drill_database_engine == 'mysql' and _rat_kind != 'kubernetes'
+
+- name: Database canary | Run redis-cli on the guest
+  ansible.builtin.command:
+    argv: [redis-cli, --no-auth-warning, -h, 127.0.0.1, -p, "{{ app_config.app.port | int }}"]
+    stdin: "{{ _dbc_auth }}\n{{ _dbc_run_script }}"
+  delegate_to: "{{ _rat_host }}"
+  become: true
+  register: _dbc_guest_redis
+  changed_when: drill_canary_action != 'fresh'
+  no_log: true
+  when: drill_database_engine == 'redis' and _rat_kind != 'kubernetes'
+
+- name: Database canary | Run psql in the server pod
+  ansible.builtin.include_tasks: backend-psql.yml
+  vars:
+    database_backend_instance: "{{ instance }}"
+    database_backend_sql: "{{ _dbc_run_script }}"
+  when: drill_database_engine == 'postgresql' and _rat_kind == 'kubernetes'
+
+- name: Database canary | Run SQL in the server pod
+  ansible.builtin.include_tasks: backend-sql.yml
+  vars:
+    database_backend_instance: "{{ instance }}"
+    database_backend_sql: "{{ _dbc_run_script }}"
+  when: drill_database_engine == 'mysql' and _rat_kind == 'kubernetes'
+
+- name: Database canary | Resolve the Redis pod's namespace
+  ansible.builtin.include_tasks: resolve-backend-namespace.yml
+  vars:
+    database_backend_instance: "{{ instance }}"
+  when: drill_database_engine == 'redis' and _rat_kind == 'kubernetes'
+
+- name: Database canary | Run redis-cli in the server pod
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ database_backend_namespace }}", exec, -i,
+           "deployment/{{ instance }}", --container, redis, --,
+           redis-cli, --no-auth-warning, -h, 127.0.0.1, -p, "6379"]
+    stdin: "{{ _dbc_auth }}\n{{ _dbc_run_script }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _dbc_pod_redis
+  changed_when: drill_canary_action != 'fresh'
+  no_log: true
+  when: drill_database_engine == 'redis' and _rat_kind == 'kubernetes'
+
+# backend-psql.yml and backend-sql.yml return database_backend_stdout.
+- name: Database canary | Collect the output
+  ansible.builtin.set_fact:
+    _dbc_stdout: >-
+      {{ [_dbc_guest_psql, _dbc_guest_sql, _dbc_guest_redis, _dbc_pod_redis]
+         | selectattr('stdout', 'defined') | map(attribute='stdout') | first
+         | default(database_backend_stdout | default('')) }}

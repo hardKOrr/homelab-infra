@@ -1,0 +1,7 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml): one drill-owned key through
+# the server's own client, in tasks/database/drill-canary.yml.
+- name: Redis drill canary | Write or check the canary key
+  ansible.builtin.include_tasks: ../../../tasks/database/drill-canary.yml
+  vars:
+    drill_database_engine: redis

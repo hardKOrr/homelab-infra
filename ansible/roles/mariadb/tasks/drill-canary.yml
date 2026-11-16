@@ -1,0 +1,7 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml): one drill-owned row through
+# the server's own client, in tasks/database/drill-canary.yml.
+- name: MariaDB drill canary | Write or check the canary row
+  ansible.builtin.include_tasks: ../../../tasks/database/drill-canary.yml
+  vars:
+    drill_database_engine: mysql
