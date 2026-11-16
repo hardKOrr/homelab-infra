@@ -1,6 +1,7 @@
 ---
-# BookStack's Kubernetes adapter. The instance owns one namespace and one /config PVC;
-# the named MariaDB/MySQL database remains on its separately managed backend.
+# BookStack on Kubernetes, run from the deploy playbook's localhost play. The instance owns
+# one namespace and one /config PVC; the named MariaDB/MySQL database stays on its
+# separately managed backend.
 
 - name: BookStack Kubernetes | Resolve the cluster
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
@@ -12,9 +13,7 @@
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
 
 - name: BookStack Kubernetes | Resolve and store canonical credentials
-  ansible.builtin.include_role:
-    name: bookstack
-    tasks_from: resolve-credentials.yml
+  ansible.builtin.include_tasks: resolve-credentials.yml
 
 - name: BookStack Kubernetes | Sync the application environment
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml

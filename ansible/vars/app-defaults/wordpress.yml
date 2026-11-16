@@ -10,6 +10,13 @@ wordpress_defaults:
     impossible: {}
   stack: services
 
+  # Backup App and Restore App run this app's backup and restore on every hosting method.
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   # Used only when hosting.method is native (the guest type comes from the instance's
   # proxmox.guest_type).
   proxmox:

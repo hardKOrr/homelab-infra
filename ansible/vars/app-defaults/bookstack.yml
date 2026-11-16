@@ -8,6 +8,13 @@ bookstack_defaults:
     impossible: {}
   stack: services
 
+  # Backup App and Restore App run this app's backup and restore on every hosting method.
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     # LinuxServer's image keeps BookStack's .env, uploads, themes and generated files in
     # /config. The tag is pinned so an upstream release cannot change the runtime contract
@@ -55,6 +62,7 @@ bookstack_defaults:
   # no-op and the deploy says so; deploy PBS and rerun BookStack to enable it.
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
     retention_days: 14
     scratch_size: 5

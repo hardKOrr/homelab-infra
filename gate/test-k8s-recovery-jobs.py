@@ -38,7 +38,7 @@ CLIENT = {
 }
 # Archive names are part of every recovery point already in PBS. Changing one strands them.
 APPS = {
-    "bookstack": {"role": "bookstack-kubernetes", "file": "main.yml", "restore": "restore.yml", "engine": "mariadb",
+    "bookstack": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": "mariadb",
                   "archives": ["storage"]},
     "maintainerr": {"file": "kubernetes.yml", "restore": "restore-kubernetes.yml", "engine": None,
                     "archives": ["config"]},

@@ -180,7 +180,8 @@
   tasks:
     - name: Deploy WordPress into its Kubernetes namespace
       ansible.builtin.include_role:
-        name: wordpress-kubernetes
+        name: wordpress
+        tasks_from: kubernetes
       vars:
         wordpress_fqdn: "{{ hostvars['localhost'].wordpress_fqdn }}"
         k8s_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"

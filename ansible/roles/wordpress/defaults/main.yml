@@ -25,3 +25,12 @@ wordpress_cli_argv: >-
      ['docker', 'compose', '--project-directory', wordpress_project_dir,
       'run', '--rm', '--no-deps', 'wordpress-cli'] }}
 wordpress_native_keys: "{{ wordpress_project_dir }}/keys.php"
+
+# Kubernetes method (kubernetes.yml): the instance and config the WP-CLI Job acts on (a
+# restore re-keys its target, not the source), its wp-content claim, administrator Secret
+# and the marker the CLI Job writes once the administrator is set.
+wordpress_k8s_instance: "{{ instance }}"
+wordpress_k8s_config: "{{ app_config }}"
+wordpress_k8s_content_claim: "{{ wordpress_k8s_instance }}-content"
+wordpress_k8s_admin_secret: "{{ wordpress_k8s_instance }}-admin"
+wordpress_k8s_admin_marker: /var/www/html/wp-content/.homelab-infra-admin

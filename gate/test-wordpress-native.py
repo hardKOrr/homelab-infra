@@ -31,13 +31,12 @@ for task in deploy["tasks"]:
     if task["name"] in ("Bootstrap guest", "Deploy WordPress"):
         assert "in ['docker', 'native']" in str(task["when"]), task["name"]
 
-# A successful native plan/restore must reach the final completion assertion too.
-restore_plays = yaml.safe_load((repo / "ansible/playbooks/maintenance/wordpress-restore.yml").read_text())
-completion = next(task for play in restore_plays for task in play.get("tasks", [])
-                  if task["name"] == "Record the completed WordPress plan or restore")
-condition = Environment().compile_expression(completion["when"])
+# Restore App's restore reaches the guest swap on Docker and native, the Job on Kubernetes.
+dispatch = yaml.safe_load((role / "tasks/restore.yml").read_text())
 for method in ("docker", "native", "kubernetes"):
-    assert condition(hostvars={"localhost": {"app_config": {"hosting": {"method": method}}}}) == (method != "kubernetes")
+    taken = [task["ansible.builtin.include_tasks"] for task in dispatch
+             if Environment().compile_expression(task["when"])(app_config={"hosting": {"method": method}})]
+    assert taken == (["restore-kubernetes.yml"] if method == "kubernetes" else ["restore-guest.yml"]), method
 
 # Docker's Compose-only pieces stay out of the native path, and every WP-CLI call goes
 # through one prefix that the method selects.
@@ -68,17 +67,23 @@ assert f"<VirtualHost *:{app['port']}>" in site and "DocumentRoot /var/www/wordp
 assert "REMOTE_ADDR} == 'proxy.example.invalid'" in site
 
 # Backup and restore go through the shared operations with the method's runtime.
-backup = (role / "tasks/backup.yml").read_text()
+backup = (role / "tasks/backup-native.yml").read_text()
 assert "tasks/backup/pbs-client-backup.yml" in backup and "pbs_client_runtime: native" in backup
 assert "database.pxar" in backup and "content.pxar" in backup
 assert "tasks/database/dump.yml" in (role / "tasks/backup-quiesced.yml").read_text()
 schedule = (role / "tasks/recovery-schedule.yml").read_text()
 assert "'native' if wordpress_native" in schedule and "ansible.builtin.cron" in schedule
 assert "recovery-schedule.yml" in main and "recovery-docker" not in main
-guest = (role / "tasks/resolve-native-guest.yml").read_text()
-assert "tasks/proxmox/resolve-instance-guest.yml" in guest and "lab_managed" in guest
-assert "instance in hostvars" not in guest, "an untagged same-name guest is never accepted"
-restore = (role / "tasks/restore.yml").read_text()
+# Day-2 actions reach a native guest through the shared resolver, which takes only the
+# instance's own _+lab guest; an untagged same-name guest is never accepted.
+target = yaml.safe_load((repo / "ansible/tasks/maintenance/resolve-app-target.yml").read_text())
+owned = next(t for t in target if t.get("name") == "Resolve app target | Resolve the native instance's owned guest")
+assert owned["ansible.builtin.include_tasks"].endswith("proxmox/resolve-instance-guest.yml")
+check = next(t for t in target if t.get("name") == "Resolve app target | Require exactly one owned native guest")
+assert "groups['lab_managed']" in str(check["ansible.builtin.assert"]["that"])
+select = next(t for t in target if t.get("name") == "Resolve app target | Select the native guest")
+assert select["ansible.builtin.set_fact"]["_rat_host"] == "{{ resolve_guest_hosts[0] }}"
+restore = (role / "tasks/restore-guest.yml").read_text()
 assert "wordpress_native | bool" in restore and "tasks/recovery/restore-swap.yml" in restore
 
 print("wordpress native pins one release, renders its config and site and uses the shared backup and restore")

@@ -1,0 +1,29 @@
+---
+# Restore BookStack's named database and /config PVC on Kubernetes through the shared
+# recovery Job. Run by restore.yml from playbooks/maintenance/restore-app.yml, which
+# resolves the cluster, the target and its config.
+- name: BookStack Kubernetes restore | Describe the external database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: BookStack Kubernetes restore | Run the shared recovery operation
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: BookStack
+      archives:
+        - name: storage
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1000) }}:{{ restore_target_config.app.pgid | default(1000) }}"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ k8s_database_step.describe }} and {{ restore_target }}'s /config volume
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in as the BookStack
+          administrator, and confirm the restored books, pages and uploaded images.

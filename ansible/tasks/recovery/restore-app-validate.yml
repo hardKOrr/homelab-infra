@@ -212,3 +212,17 @@
     recovery_source_storage_key: "{{ _ra_source_storage_key }}"
     recovery_target_storage_key: "{{ _ra_target_storage_key }}"
     recovery_affected_scope: "{{ app_config.recovery.affected_scope | default([instance]) }}"
+
+# The shared Kubernetes recovery Job does not check the safety point the way the guest
+# swap's PBS client does: require it here, a recent point of the target's own group.
+- name: Require a recent pre-restore point of the Kubernetes target
+  ansible.builtin.include_tasks: require-recent-pre-restore-point.yml
+  vars:
+    recovery_pre_restore_backup_id: >-
+      {{ restore_target_config.backup.backup_id | default('', true) or _ra_target }}
+    restore_pre_restore_point: "{{ _ra_pre_restore_point }}"
+    restore_snapshot: "{{ _ra_recovery_point }}"
+  when:
+    - _ra_kind == 'kubernetes'
+    - _ra_overwrite | bool
+    - recovery_destination_resolved == 'existing'

@@ -157,7 +157,8 @@
   tasks:
     - name: Deploy BookStack into its Kubernetes namespace
       ansible.builtin.include_role:
-        name: bookstack-kubernetes
+        name: bookstack
+        tasks_from: kubernetes
       vars:
         bookstack_fqdn: "{{ hostvars['localhost'].bookstack_fqdn }}"
         bookstack_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"

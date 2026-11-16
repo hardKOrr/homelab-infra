@@ -45,10 +45,8 @@
 #   recovery_swap_health_url     optional URL that answers recovery_swap_health_status
 #                                (a code or list, default 200) once the restored
 #                                application serves; recovery_swap_health_retries (default
-#                                60) and recovery_swap_health_delay (default 5) pace it, and
-#                                recovery_swap_health_follow_redirects (default safe) and
-#                                recovery_swap_health_headers (default none) are passed to
-#                                the uri module
+#                                60), _delay (default 5), _follow_redirects (default safe)
+#                                and _headers (default none) pace and shape the uri check
 #
 # Optional inputs:
 #   recovery_swap_staging_parent  where staging is created; default the first non-mount
@@ -63,6 +61,8 @@
 #                                pbs-client-restore.yml as its group ids
 #   recovery_swap_database       the application's named database, restored with its paths:
 #     config   the app's `app.database` mapping (ansible/tasks/database/)
+#     instance its owning instance, default `instance`; a restore into another instance
+#              passes the target, since `instance` is then the source
 #     dump     the archived dump inside staging, such as database/immich.dump; it must not
 #              lie inside a path's source
 #     Step 3 refuses a missing, empty or unloadable dump or a database another
@@ -365,7 +365,7 @@
         - name: Restore swap | Check the database dump loads
           ansible.builtin.include_tasks: ../database/verify-dump.yml
           vars:
-            database_app_instance: "{{ instance }}"
+            database_app_instance: "{{ recovery_swap_database.instance | default(instance) }}"
             database_app_config: "{{ _swap_database.config }}"
             database_restore_file: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
 
@@ -374,7 +374,7 @@
         - name: Restore swap | Check the database belongs to this application
           ansible.builtin.include_tasks: ../database/guard-app-database.yml
           vars:
-            database_app_instance: "{{ instance }}"
+            database_app_instance: "{{ recovery_swap_database.instance | default(instance) }}"
 
     - name: Restore swap | Validate the staged data
       ansible.builtin.include_tasks: "{{ recovery_swap_staged_hook }}"
@@ -402,7 +402,7 @@
         - name: Restore swap | Dump the live database for rollback
           ansible.builtin.include_tasks: ../database/dump.yml
           vars:
-            database_app_instance: "{{ instance }}"
+            database_app_instance: "{{ recovery_swap_database.instance | default(instance) }}"
             database_app_config: "{{ _swap_database.config }}"
             database_dump_file: "{{ _swap_rollback_dump }}"
           when: _swap_database | length > 0
@@ -442,7 +442,7 @@
         - name: Restore swap | Restore the named database
           ansible.builtin.include_tasks: ../database/restore.yml
           vars:
-            database_app_instance: "{{ instance }}"
+            database_app_instance: "{{ recovery_swap_database.instance | default(instance) }}"
             database_app_config: "{{ _swap_database.config }}"
             database_restore_file: "{{ recovery_swap_stage }}/{{ _swap_database.dump }}"
           when: _swap_database | length > 0
@@ -525,7 +525,7 @@
             - name: Restore swap | Load the live database's dump
               ansible.builtin.include_tasks: ../database/restore.yml
               vars:
-                database_app_instance: "{{ instance }}"
+                database_app_instance: "{{ recovery_swap_database.instance | default(instance) }}"
                 database_app_config: "{{ _swap_database.config }}"
                 database_restore_file: "{{ _swap_rollback_dump }}"
           rescue:

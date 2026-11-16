@@ -1,0 +1,37 @@
+---
+# Restore WordPress's named database and wp-content PVC on Kubernetes through the shared
+# recovery Job, then re-key the site to the target (restore-kubernetes-rekey.yml). Run by
+# restore.yml from playbooks/maintenance/restore-app.yml, which resolves the cluster, the
+# target and its config, and requires the target's recent safety point; app_config is
+# the source instance's.
+- name: WordPress Kubernetes restore | Name the target's published name for the re-key
+  ansible.builtin.set_fact:
+    wordpress_fqdn: "{{ restore_target_fqdn }}"
+
+- name: WordPress Kubernetes restore | Describe the target database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: WordPress Kubernetes restore | Restore through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: WordPress
+      archives:
+        - name: content
+          claim: "{{ restore_target }}-content"
+          owner: "33:33"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      after_restore_tasks: "{{ role_path }}/tasks/restore-kubernetes-rekey.yml"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the wp-content volume containing WordPress
+        uploads, themes and plugins
+      verify:
+        - >-
+          Open https://{{ restore_target_fqdn }}/, sign in as the WordPress administrator,
+          and check the restored post, uploaded media and site tagline.

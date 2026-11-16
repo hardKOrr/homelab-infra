@@ -1,12 +1,12 @@
 {% set labels %}
-app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/instance: {{ wordpress_k8s_instance }}
 app.kubernetes.io/managed-by: homelab-infra
 app.kubernetes.io/component: wordpress-cli
 {% endset %}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ instance }}-wordpress-{{ wordpress_k8s_cli_mode }}
+  name: {{ wordpress_k8s_instance }}-wordpress-{{ wordpress_k8s_cli_mode }}
   labels:
 {{ labels | trim | indent(4, true) }}
 spec:
@@ -27,14 +27,14 @@ spec:
         # image's installer entry point to prepare the same core and wp-config in this
         # Job's emptyDir, while mounting the instance's durable wp-content claim.
         - name: prepare-wordpress-core
-          image: {{ app_config.app.image }}
+          image: {{ wordpress_k8s_config.app.image }}
           imagePullPolicy: IfNotPresent
           command: [/usr/local/bin/docker-ensure-installed.sh]
           args: [/bin/true]
           workingDir: /var/www/html
           envFrom:
             - secretRef:
-                name: {{ instance }}-env
+                name: {{ wordpress_k8s_instance }}-env
           volumeMounts:
             - name: core
               mountPath: /var/www/html
@@ -44,7 +44,7 @@ spec:
             runAsUser: 0
       containers:
         - name: wp-cli
-          image: {{ app_config.app.cli_image }}
+          image: {{ wordpress_k8s_config.app.cli_image }}
           imagePullPolicy: IfNotPresent
           command: [/bin/sh, -c]
           args:
@@ -156,22 +156,22 @@ spec:
           workingDir: /var/www/html
           envFrom:
             - secretRef:
-                name: {{ instance }}-env
+                name: {{ wordpress_k8s_instance }}-env
 {% if wordpress_k8s_cli_mode != 'detect' %}
             - secretRef:
                 name: {{ wordpress_k8s_admin_secret }}
 {% endif %}
           env:
             - name: WORDPRESS_ADMIN_USER
-              value: {{ app_config.app.admin_user | to_json }}
+              value: {{ wordpress_k8s_config.app.admin_user | to_json }}
             - name: WORDPRESS_ADMIN_EMAIL
-              value: {{ app_config.app.admin_email | to_json }}
+              value: {{ wordpress_k8s_config.app.admin_email | to_json }}
             - name: WORDPRESS_ADMIN_NAME
-              value: {{ app_config.app.admin_name | to_json }}
+              value: {{ wordpress_k8s_config.app.admin_name | to_json }}
             - name: WORDPRESS_DEFAULT_THEME
-              value: {{ app_config.app.default_theme | to_json }}
+              value: {{ wordpress_k8s_config.app.default_theme | to_json }}
             - name: WORDPRESS_SITE_TITLE
-              value: {{ app_config.app.site_title | to_json }}
+              value: {{ wordpress_k8s_config.app.site_title | to_json }}
             - name: WORDPRESS_SITE_URL
               value: {{ ('https://' ~ wordpress_fqdn) | to_json }}
             - name: HOME

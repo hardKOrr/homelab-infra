@@ -32,3 +32,10 @@ jobs:
   # Retired 2026-10: the Prove Recovery drill dispatcher was removed. Backup and Restore
   # jobs are unchanged. Deleting this UUID also deletes its execution history.
   88bfce90-6e10-49b9-aa21-14d6dbfe8e44: Prove Recovery
+  # Retired 2026-11-15: BookStack and WordPress moved onto the shared Backup App and
+  # Restore App, whose per-application Backup and Restore jobs replace these. Deleting
+  # each UUID also deletes its execution history.
+  4c068a0e-87dd-5c72-881a-53bd1ea9bf82: Backup BookStack
+  6ab544f3-f46b-52db-a91e-104a80d964de: Restore BookStack
+  5a9ed4e6-0779-5139-88c7-ecc41a6ee9a8: Backup WordPress
+  ff2a6775-cba5-5955-b5fe-bc1aa2bfa9ce: Restore WordPress

@@ -25,10 +25,7 @@ from restore_swap_inputs import run_hook, swap_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/wordpress/files/wordpress-recovery"
-RESTORE_PLAYBOOK = yaml.safe_load(
-    (ROOT / "ansible/playbooks/maintenance/wordpress-restore.yml").read_text()
-)
-RUNDECK_RESTORE = yaml.safe_load((ROOT / "rundeck/jobs/wordpress-restore.yaml").read_text())[0]
+RESTORE_APP = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/restore-app.yml").read_text())
 WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/main.yml").read_text())
 WORDPRESS_COMPOSE = (ROOT / "ansible/roles/wordpress/templates/docker-compose.yml.j2").read_text()
 
@@ -75,42 +72,36 @@ def write_executable(path, content):
 
 
 def check_playbook_contract():
-    assert any(
-        "pre_restore_point" in str(task.get("ansible.builtin.assert", {}).get("that", []))
-        and "length > 0" in str(task.get("ansible.builtin.assert", {}).get("that", []))
-        for task in RESTORE_PLAYBOOK[0]["pre_tasks"]
-    )
-    resolve = RESTORE_PLAYBOOK[0]
-    merge = next(task for task in resolve["pre_tasks"] if "app_config" in task.get("ansible.builtin.set_fact", {}))
-    assert "homelabinfra_vault.apps" in merge["ansible.builtin.set_fact"]["app_config"], \
-        "the restore repairs the administrator with its Vaultwarden credential"
-    names = [task.get("name") for task in resolve["tasks"]]
-    assert names.index("Resolve the estate this app belongs to") < names.index("Derive the published hostname")
-    run = next(task for task in RESTORE_PLAYBOOK[1]["tasks"]
-               if task.get("name") == "Plan or perform the WordPress restore")
-    assert run["ansible.builtin.include_role"] == {"name": "wordpress", "tasks_from": "restore"}
-    for name in ("app_config", "homelabinfra_infra", "homelabinfra_vault", "wordpress_restore_backup_id",
-                 "wordpress_fqdn"):
-        assert run["vars"][name] == "{{ hostvars['localhost'].%s }}" % name, name
-    group = next(task for task in resolve["tasks"] if task.get("name") == "Resolve the source backup group")
-    expression = group["ansible.builtin.set_fact"]["wordpress_restore_backup_id"]
-    for variables, expected in [
-        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": ""}}}, "wordpress"),
-        ({"instance": "wordpress", "app_config": {"backup": {"backup_id": "wp-group"}}}, "wp-group"),
-        ({"instance": "wordpress", "source_instance": "blog", "app_config": {"backup": {}}}, "blog"),
-        ({"instance": "wordpress", "source_backup_id": "old", "app_config": {"backup": {}}}, "old"),
-    ]:
-        assert render_fact(expression, variables) == expected, (variables, expected)
-    notify_play = next(play for play in RESTORE_PLAYBOOK
-                       if play.get("name") == "WordPress Restore | Notify")
-    check = next(task for task in notify_play["tasks"]
-                 if task.get("name") == "Fail if WordPress restore did not complete")
-    assert "wordpress_restore_complete" in str(check["ansible.builtin.assert"]["that"])
-    assert "homelab-infra-wordpress-recovery" not in str(RESTORE_PLAYBOOK), "the guest helper only backs up"
-    assert any(option["name"] == "pre_restore_point" for option in RUNDECK_RESTORE["options"])
-    assert 'pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}' in str(RUNDECK_RESTORE["sequence"])
+    """Restore App runs the role's restore on the guest; the role takes the point's group and
+    the target's published name from Restore App's generic inputs."""
+    run = next(play for play in RESTORE_APP
+               if play["name"].startswith("Restore App | Restore Docker"))["tasks"][0]
+    assert run["vars"]["restore_backup_id"] == "{{ hostvars['localhost']._ra_backup_id }}"
+    assert run["vars"]["restore_target_fqdn"] == \
+        "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
+    guest = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore-guest.yml").read_text())
+    identity = guest[0]["ansible.builtin.set_fact"]
+    # `instance` is the source (an extra var): target paths come from restore_target and
+    # the rebased data_path, never from `instance`.
+    assert identity["_wordpress_restore_target_backup_id"].endswith("or restore_target }}")
+    assert identity["wordpress_project_dir"] == "/opt/{{ restore_target }}"
+    rebase = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore-config.yml").read_text())[0]
+    assert rebase["ansible.builtin.include_tasks"].endswith("tasks/recovery/rebase-target-path.yml")
+    assert rebase["vars"] == {"restore_rebase_key": "data_path", "restore_rebase_instance": True}
+    assert identity["wordpress_restore_backup_id"] == "{{ restore_backup_id }}", \
+        "a point from another WordPress instance"
+    assert identity["wordpress_fqdn"] == "{{ restore_target_fqdn | default('') }}"
+    assert "homelab-infra-wordpress-recovery" not in str(guest), "the guest helper only backs up"
+    inputs = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore-inputs.yml").read_text())
+    assert inputs[0]["ansible.builtin.include_tasks"].endswith("tasks/resolve-estate.yml"), \
+        "the estate's domain is resolved before the name is derived"
+    expression = inputs[1]["ansible.builtin.set_fact"]["restore_target_fqdn"]
+    for routing, expected in [({}, "blog.lab.test"), ({"subdomain": "www"}, "www.lab.test")]:
+        variables = {"_ra_target": "blog", "restore_target_config": {"routing": routing},
+                     "homelabinfra_infra": {"domain": "lab.test"}}
+        assert render_fact(expression, variables) == expected, (routing, expected)
 
-    swap = swap_inputs("wordpress")
+    swap = swap_inputs("wordpress", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "content.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ wordpress_content_path }}", "source": "content", "owner": 33, "group": 33,
@@ -120,11 +111,15 @@ def check_playbook_contract():
     assert swap["recovery_swap_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
     assert swap["recovery_swap_staging_parent"] == "{{ wordpress_project_dir }}"
     assert swap["recovery_swap_database"] == {
-        "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}
-    restore = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/restore.yml").read_text())
-    age = next(task for task in restore if "require-recent-pre-restore-point" in
+        "config": "{{ app_config.app.database }}", "dump": "database/database.sql",
+        "instance": "{{ restore_target }}"}, "the target's database identity, not the source's"
+    shared = (ROOT / "ansible/tasks/recovery/restore-swap.yml").read_text()
+    assert shared.count("database_app_instance: \"{{ recovery_swap_database.instance | default(instance) }}\"") == 5
+    assert "database_app_instance: \"{{ instance }}\"" not in shared
+    age = next(task for task in guest if "require-recent-pre-restore-point" in
                str(task.get("ansible.builtin.include_tasks", "")))
-    assert age["when"] == "restore_overwrite | bool"
+    assert age["when"] == ["restore_overwrite | bool", "restore_destination == 'existing'"], \
+        "a new target has no earlier backup to require"
     assert age["vars"]["recovery_pre_restore_backup_id"] == "{{ _wordpress_restore_target_backup_id }}"
 
 
@@ -219,7 +214,7 @@ def check_wordpress_health_redirects():
     assert "$$status" in WORDPRESS_COMPOSE
     assert "$$http_response_header" in WORDPRESS_COMPOSE
     assert "[23][0-9]{2}" in WORDPRESS_COMPOSE
-    swap = swap_inputs("wordpress")
+    swap = swap_inputs("wordpress", "restore-guest.yml")
     assert swap["recovery_swap_health_follow_redirects"] == "none"
     assert swap["recovery_swap_health_status"] == accepted_statuses
     assert swap["recovery_swap_health_url"].endswith("/wp-login.php")

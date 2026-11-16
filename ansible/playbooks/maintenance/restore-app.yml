@@ -244,6 +244,8 @@
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
+        # Set by a role's restore-inputs.yml when the restore rewrites the published name.
+        restore_target_fqdn: "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
       when: app_target_kind | default('native') in ['docker', 'native']
 
     - name: Notify application restore
