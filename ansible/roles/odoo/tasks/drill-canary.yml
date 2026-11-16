@@ -53,7 +53,7 @@
     _odoo_auth: "{{ [_odoo_db, _odoo_login.json.result | int, _odoo_password] }}"
   no_log: true
 
-- name: Odoo drill canary | Read the contact, its attachment and the parameter
+- name: Odoo drill canary | Look for the contact
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/jsonrpc"
     method: POST
@@ -62,15 +62,14 @@
     body:
       jsonrpc: "2.0"
       method: call
-      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
-  register: _odoo_read
+      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + _odoo_reads[0] }}"}
+  register: _odoo_probe
   changed_when: false
-  failed_when: _odoo_read.json.error is defined
+  failed_when: _odoo_probe.json.error is defined
   no_log: true
-  loop: "{{ _odoo_reads }}"
 
 - name: Odoo drill canary | Write the contact, its attachment and the parameter
-  when: drill_canary_action == 'create' and _odoo_read.results[0].json.result | length == 0
+  when: drill_canary_action == 'create' and _odoo_probe.json.result | length == 0
   block:
     - name: Odoo drill canary | Create the contact
       ansible.builtin.uri:
@@ -109,21 +108,21 @@
               'res_id': _odoo_partner.json.result | int, 'datas': _odoo_canary_bytes | b64encode}]] }}"
         - [ir.config_parameter, set_param, [web.base.url.freeze, "True"]]
 
-    - name: Odoo drill canary | Read the contact, its attachment and the parameter again
-      ansible.builtin.uri:
-        url: "{{ drill_app_url }}/jsonrpc"
-        method: POST
-        headers: "{{ drill_app_headers }}"
-        body_format: json
-        body:
-          jsonrpc: "2.0"
-          method: call
-          params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
-      register: _odoo_read
-      changed_when: false
-      failed_when: _odoo_read.json.error is defined
-      no_log: true
-      loop: "{{ _odoo_reads }}"
+- name: Odoo drill canary | Read the contact, its attachment and the parameter
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/jsonrpc"
+    method: POST
+    headers: "{{ drill_app_headers }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: call
+      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
+  register: _odoo_read
+  changed_when: false
+  failed_when: (_odoo_read.json | default({})).error is defined
+  no_log: true
+  loop: "{{ _odoo_reads }}"
 
 - name: Odoo drill canary | Keep what the instance holds
   ansible.builtin.set_fact:
