@@ -1,0 +1,232 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Navidrome's native
+# and Subsonic APIs, as test(navidrome) #449 defined it:
+#   data           private playlist p2-canary-navidrome-<id> and non-admin user
+#                  p2-canary-navidrome-<id>
+#   configuration  that user's player p2-canary-navidrome-<id> with scrobbling turned off
+#                  (a player is created on during its first Subsonic call; scrobbling is
+#                  on by default)
+# Deploy provisions no login, so a create on a first-run instance makes the lab-only owner
+# in Vaultwarden item homelab-infra/apps/<instance>-drill-owner (kept when it exists), and
+# a fresh instance is one still on first run: it holds no users, so no canary. The canary
+# user's password derives from the owner's, so nothing else is stored.
+# The final verify (drill_final) deletes the playlist and the user with its player.
+- name: Navidrome drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Navidrome drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _nd_canary: "p2-canary-navidrome-{{ drill_canary_id }}"
+    _nd_owner_item: "{{ instance }}-drill-owner"
+    _nd_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+- name: Navidrome drill canary | Read whether the instance is on first run
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/app/"
+    headers: "{{ drill_app_headers }}"
+    return_content: true
+  register: _nd_canary_app
+  changed_when: false
+
+- name: Navidrome drill canary | Keep the first-run state
+  ansible.builtin.set_fact:
+    _nd_first_run: "{{ _nd_canary_app.content is search('firstTime[^a-z]*:\\s*true') }}"
+
+- name: Navidrome drill canary | Require a first-run instance when fresh
+  ansible.builtin.assert:
+    that: _nd_first_run | bool
+    fail_msg: "{{ instance }} already has users on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Navidrome drill canary | Make the drill owner on a first-run instance
+  when: drill_canary_action == 'create' and _nd_first_run | bool
+  block:
+    - name: Navidrome drill canary | Store a new drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _nd_owner_item }}"
+        vault_item_fields:
+          username: drill-owner
+          password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+        vault_item_secret_fields: [password]
+      when: _nd_owner.password | default('') | length == 0
+
+    - name: Navidrome drill canary | Keep the drill owner
+      ansible.builtin.set_fact:
+        _nd_owner: "{{ homelabinfra_vault.apps[_nd_owner_item] }}"
+      no_log: true
+
+    - name: Navidrome drill canary | Create the owner through first run
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/auth/createAdmin"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body: {username: "{{ _nd_owner.username }}", password: "{{ _nd_owner.password }}"}
+      changed_when: true
+      no_log: true
+
+- name: Navidrome drill canary | Read and check the canaries
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: Navidrome drill canary | Sign in as the owner and as the canary user
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/auth/login"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body: "{{ item }}"
+        # 401 for the canary user before the create makes it.
+        status_code: [200, 401]
+      register: _nd_canary_login
+      changed_when: false
+      no_log: true
+      loop:
+        - {username: "{{ _nd_owner.username | default('') }}", password: "{{ _nd_owner.password | default('') }}"}
+        - {username: "{{ _nd_canary }}", password: "{{ _nd_canary_password }}"}
+      vars:
+        _nd_canary_password: "{{ (_nd_owner.password | default('') ~ _nd_canary) | hash('sha256') }}"
+
+    - name: Navidrome drill canary | Require the owner's login
+      ansible.builtin.assert:
+        that: _nd_canary_login.results[0].status == 200
+        fail_msg: >-
+          {{ instance }} refused the drill owner from homelab-infra/apps/{{ _nd_owner_item }}
+          (HTTP {{ _nd_canary_login.results[0].status }}).
+
+    - name: Navidrome drill canary | Keep the sessions
+      ansible.builtin.set_fact:
+        _nd_owner_headers: >-
+          {{ drill_app_headers | combine({'x-nd-authorization':
+               'Bearer ' ~ _nd_canary_login.results[0].json.token}) }}
+        _nd_canary_password: "{{ (_nd_owner.password ~ _nd_canary) | hash('sha256') }}"
+      no_log: true
+
+    - name: Navidrome drill canary | Write the user, the playlist and the player
+      when: drill_canary_action == 'create'
+      block:
+        - name: Navidrome drill canary | Create the non-admin user
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/user"
+            method: POST
+            headers: "{{ _nd_owner_headers }}"
+            body_format: json
+            body:
+              userName: "{{ _nd_canary }}"
+              name: "{{ _nd_canary }}"
+              password: "{{ _nd_canary_password }}"
+              isAdmin: false
+          changed_when: true
+          no_log: true
+          when: _nd_canary_login.results[1].status != 200
+
+        - name: Navidrome drill canary | Read the owner's playlists
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/playlist"
+            headers: "{{ _nd_owner_headers }}"
+          register: _nd_canary_lists
+          changed_when: false
+          no_log: true
+
+        - name: Navidrome drill canary | Create the private playlist
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/playlist"
+            method: POST
+            headers: "{{ _nd_owner_headers }}"
+            body_format: json
+            body: {name: "{{ _nd_canary }}", public: false}
+          changed_when: true
+          no_log: true
+          when: _nd_canary_lists.json | selectattr('name', 'equalto', _nd_canary) | list | length == 0
+
+        - name: Navidrome drill canary | Register the canary user's player
+          ansible.builtin.uri:
+            url: >-
+              {{ drill_app_url }}/rest/ping?f=json&v=1.16.1&c={{ _nd_canary }}&u={{ _nd_canary }}&s={{
+                 (drill_canary_id | hash('md5'))[:12] }}&t={{
+                 (_nd_canary_password ~ ((drill_canary_id | hash('md5'))[:12]))
+                 | hash('md5') }}
+            headers: "{{ drill_app_headers }}"
+          changed_when: true
+          no_log: true
+
+        - name: Navidrome drill canary | Sign in as the canary user
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/auth/login"
+            method: POST
+            headers: "{{ drill_app_headers }}"
+            body_format: json
+            body: {username: "{{ _nd_canary }}", password: "{{ _nd_canary_password }}"}
+          register: _nd_canary_user_login
+          changed_when: false
+          no_log: true
+
+        - name: Navidrome drill canary | Read the canary user's players
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/player"
+            headers: >-
+              {{ drill_app_headers | combine({'x-nd-authorization':
+                   'Bearer ' ~ _nd_canary_user_login.json.token}) }}
+          register: _nd_canary_own_players
+          changed_when: false
+          no_log: true
+
+        - name: Navidrome drill canary | Turn scrobbling off on the player
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/player/{{ _player.id }}"
+            method: PUT
+            headers: >-
+              {{ drill_app_headers | combine({'x-nd-authorization':
+                   'Bearer ' ~ _nd_canary_user_login.json.token}) }}
+            body_format: json
+            body: "{{ _player | combine({'scrobbleEnabled': false}) }}"
+          vars:
+            _player: >-
+              {{ _nd_canary_own_players.json | selectattr('client', 'equalto', _nd_canary) | first }}
+          changed_when: true
+          no_log: true
+
+    - name: Navidrome drill canary | Read the users, playlists and players
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/{{ item }}"
+        headers: "{{ _nd_owner_headers }}"
+      register: _nd_canary_read
+      changed_when: false
+      no_log: true
+      loop: [user, playlist, player]
+
+    - name: Navidrome drill canary | Keep what the instance holds
+      ansible.builtin.set_fact:
+        _nd_canary_users: "{{ _nd_canary_read.results[0].json | selectattr('userName', 'equalto', _nd_canary) | list }}"
+        _nd_canary_lists: "{{ _nd_canary_read.results[1].json | selectattr('name', 'equalto', _nd_canary) | list }}"
+        _nd_canary_players: "{{ _nd_canary_read.results[2].json | selectattr('client', 'equalto', _nd_canary) | list }}"
+      no_log: true
+
+    - name: Navidrome drill canary | Require the user, the playlist and the setting
+      ansible.builtin.assert:
+        that:
+          - _nd_canary_users | length == 1
+          - not _nd_canary_users[0].isAdmin
+          - _nd_canary_lists | length == 1
+          - not _nd_canary_lists[0].public
+          - _nd_canary_players | length == 1
+          - _nd_canary_players[0].userId == _nd_canary_users[0].id
+          - not _nd_canary_players[0].scrobbleEnabled
+        fail_msg: >-
+          {{ instance }} holds {{ _nd_canary_users | length }} canary user(s),
+          {{ _nd_canary_lists | length }} playlist(s) and players
+          {{ _nd_canary_players | map(attribute='scrobbleEnabled') | list }} (scrobbling).
+
+- name: Navidrome drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    method: DELETE
+    headers: "{{ _nd_owner_headers }}"
+  changed_when: true
+  no_log: true
+  loop:
+    - "playlist/{{ _nd_canary_lists[0].id }}"
+    - "player/{{ _nd_canary_players[0].id }}"
+    - "user/{{ _nd_canary_users[0].id }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
