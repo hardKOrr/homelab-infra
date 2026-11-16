@@ -1,10 +1,18 @@
 ---
 # Drill canary for a database backend instance (roles/<backend>/tasks/drill-canary.yml):
-# one drill-owned row, written and read through the server's own client, so the drill
-# proves the restored server serves the data, not only that files came back.
+# drill-owned data and configuration, written and read through the server's own client, so
+# the drill proves the restored server serves them, not only that files came back. The
+# test(<backend>) issues (#459, #460, #472, #473) define both canaries:
 #
-#   PostgreSQL, MariaDB, MySQL  database lab_drill_canary, table canary(id, epoch)
-#   Redis                       key lab-drill-canary holding "<id>:<epoch>"
+#                   data                                   configuration
+#   PostgreSQL      database lab_drill_canary,             role lab_drill_canary with SELECT
+#                   table canary(id, epoch)                 on canary
+#   MariaDB, MySQL  the same database and table            user lab_drill_canary@localhost
+#                                                           (locked) with SELECT on it
+#   Redis           key lab-drill-canary = "<id>:<epoch>"  ACL user lab-drill-canary (off)
+#                                                           allowed only GET on that key
+#
+# Each script prints `count:` lines (fresh), `canary:` rows and one `grant:` line.
 #
 # A guest backend (native or Docker) is reached through its host socket on _rat_host, as
 # drop.yml does. A Kubernetes backend runs the client in its server pod: backend-psql.yml,
@@ -30,18 +38,27 @@
     _dbc_expected: "canary:{{ drill_canary_id }}:{{ drill_canary_epoch | int }}"
     _dbc_script: "{{ _dbc_scripts[drill_database_engine][drill_canary_action] }}"
     _dbc_drop: "{{ _dbc_scripts[drill_database_engine].drop }}"
+    _dbc_grant_expected: >-
+      {{ 'grant:lab-drill-canary:OK' if drill_database_engine == 'redis'
+         else 'grant:lab_drill_canary:SELECT' }}
   vars:
     _dbc_scripts:
       postgresql:
-        fresh: "SELECT 'count:' || count(*) FROM pg_database WHERE datname = 'lab_drill_canary';"
+        fresh: |
+          SELECT 'count:' || count(*) FROM pg_database WHERE datname = 'lab_drill_canary';
+          SELECT 'count:' || count(*) FROM pg_roles WHERE rolname = 'lab_drill_canary';
         create: |
           SELECT 'CREATE DATABASE lab_drill_canary' WHERE NOT EXISTS
             (SELECT 1 FROM pg_database WHERE datname = 'lab_drill_canary')\gexec
+          SELECT 'CREATE ROLE lab_drill_canary NOLOGIN' WHERE NOT EXISTS
+            (SELECT 1 FROM pg_roles WHERE rolname = 'lab_drill_canary')\gexec
           \connect lab_drill_canary
           CREATE TABLE IF NOT EXISTS canary (id text PRIMARY KEY, epoch bigint NOT NULL);
           INSERT INTO canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }})
             ON CONFLICT (id) DO UPDATE SET epoch = EXCLUDED.epoch;
+          GRANT SELECT ON canary TO lab_drill_canary;
           SELECT 'canary:' || id || ':' || epoch FROM canary;
+          {{ _dbc_pg_grant }}
         # A missing canary reads as no row, so the assert below names the failure.
         verify: |
           SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'lab_drill_canary')
@@ -49,18 +66,25 @@
           \if :dbc_present
           \connect lab_drill_canary
           SELECT 'canary:' || id || ':' || epoch FROM canary;
+          {{ _dbc_pg_grant }}
           \endif
-        drop: "DROP DATABASE IF EXISTS lab_drill_canary WITH (FORCE);"
+        drop: |
+          DROP DATABASE IF EXISTS lab_drill_canary WITH (FORCE);
+          DROP ROLE IF EXISTS lab_drill_canary;
       mysql:
-        fresh: >-
+        fresh: |
           SELECT CONCAT('count:', COUNT(*)) FROM information_schema.schemata
-          WHERE schema_name = 'lab_drill_canary';
+            WHERE schema_name = 'lab_drill_canary';
+          SELECT CONCAT('count:', COUNT(*)) FROM mysql.user WHERE User = 'lab_drill_canary';
         create: |
           CREATE DATABASE IF NOT EXISTS lab_drill_canary;
           CREATE TABLE IF NOT EXISTS lab_drill_canary.canary
             (id varchar(40) PRIMARY KEY, epoch bigint NOT NULL);
           REPLACE INTO lab_drill_canary.canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }});
+          CREATE USER IF NOT EXISTS 'lab_drill_canary'@'localhost' ACCOUNT LOCK;
+          GRANT SELECT ON lab_drill_canary.* TO 'lab_drill_canary'@'localhost';
           SELECT CONCAT('canary:', id, ':', epoch) FROM lab_drill_canary.canary;
+          {{ _dbc_sql_grant }}
         verify: |
           SET @dbc_query = IF((SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'lab_drill_canary' AND table_name = 'canary') = 1,
@@ -69,17 +93,41 @@
           PREPARE dbc_read FROM @dbc_query;
           EXECUTE dbc_read;
           DEALLOCATE PREPARE dbc_read;
-        drop: "DROP DATABASE IF EXISTS lab_drill_canary;"
-      # redis-cli echoes replies line by line; the canary lines carry their own prefix.
+          {{ _dbc_sql_grant }}
+        drop: |
+          DROP DATABASE IF EXISTS lab_drill_canary;
+          DROP USER IF EXISTS 'lab_drill_canary'@'localhost';
+      # redis-cli prints each reply on its own line: an ECHO labels the reply after it.
+      # ACL SAVE writes the user to the aclfile the backup carries.
       redis:
         fresh: |
           ECHO count:
           EXISTS lab-drill-canary
+          {{ _dbc_redis_grant }}
         create: |
           SET lab-drill-canary canary:{{ drill_canary_id }}:{{ drill_canary_epoch | int }}
+          ACL SETUSER lab-drill-canary reset off ~lab-drill-canary +get
+          ACL SAVE
           GET lab-drill-canary
-        verify: GET lab-drill-canary
-        drop: DEL lab-drill-canary
+          {{ _dbc_redis_grant }}
+        verify: |
+          GET lab-drill-canary
+          {{ _dbc_redis_grant }}
+        drop: |
+          DEL lab-drill-canary
+          ACL DELUSER lab-drill-canary
+          ACL SAVE
+    # The configuration canary's read, one `grant:` line (an absent role reads as none).
+    _dbc_pg_grant: >-
+      SELECT 'grant:' || grantee || ':' || privilege_type FROM information_schema.table_privileges
+      WHERE grantee = 'lab_drill_canary' AND table_name = 'canary';
+    _dbc_sql_grant: >-
+      SELECT CONCAT('grant:', User, ':', IF(Select_priv = 'Y', 'SELECT', 'none'))
+      FROM mysql.db WHERE User = 'lab_drill_canary' AND Db = 'lab_drill_canary';
+    # DRYRUN answers OK when the user may run GET on its key; it errors for no user.
+    _dbc_redis_grant: |-
+      ECHO grant:lab-drill-canary:
+      ACL DRYRUN lab-drill-canary GET lab-drill-canary
 
 # Redis takes AUTH as the first stdin line, so the password never reaches an argv.
 - name: Database canary | Resolve the Redis password
@@ -93,26 +141,38 @@
   ansible.builtin.include_tasks: drill-canary-run.yml
   vars:
     _dbc_run_script: "{{ _dbc_script }}"
+    _dbc_run_changes: "{{ drill_canary_action == 'create' }}"
 
 - name: Database canary | Read the result
   ansible.builtin.set_fact:
-    _dbc_count: "{{ (_dbc_stdout | regex_findall('count:\\s*(\\d+)') + ['missing'])[0] }}"
+    _dbc_counts: "{{ _dbc_stdout | regex_findall('count:\\s*(\\d+)') | map('int') | list }}"
     _dbc_rows: "{{ _dbc_stdout | regex_findall('canary:[A-Za-z0-9-]+:\\d+') }}"
+    _dbc_grants: >-
+      {{ _dbc_stdout | regex_findall('grant:[a-z_-]+:[ \t]*\n?[ \t]*\S*')
+         | map('regex_replace', '\s+', '') | list }}
 
 - name: Database canary | Require none on a fresh instance
   ansible.builtin.assert:
-    that: _dbc_count == '0'
+    that:
+      - _dbc_counts | length > 0
+      - _dbc_counts | sum == 0
+      - _dbc_grant_expected not in _dbc_grants
     fail_msg: "{{ instance }} already has the drill canary on a fresh install: data survived Remove."
   when: drill_canary_action == 'fresh'
 
-- name: Database canary | Require exactly the written row
+- name: Database canary | Require exactly the written row and grant
   ansible.builtin.assert:
-    that: _dbc_rows == [_dbc_expected]
-    fail_msg: "{{ instance }} holds {{ _dbc_rows }}, not {{ _dbc_expected }}."
+    that:
+      - _dbc_rows == [_dbc_expected]
+      - _dbc_grants == [_dbc_grant_expected]
+    fail_msg: >-
+      {{ instance }} holds {{ _dbc_rows }} and {{ _dbc_grants }}, not {{ _dbc_expected }}
+      and {{ _dbc_grant_expected }}.
   when: drill_canary_action in ['create', 'verify']
 
 - name: Database canary | Delete the canary after the final verify
   ansible.builtin.include_tasks: drill-canary-run.yml
   vars:
     _dbc_run_script: "{{ _dbc_drop }}"
+    _dbc_run_changes: true
   when: drill_canary_action == 'verify' and drill_final | default(false) | bool

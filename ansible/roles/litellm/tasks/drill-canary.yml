@@ -11,8 +11,9 @@
   ansible.builtin.set_fact:
     _llm_canary: "p2-canary-litellm-{{ drill_canary_id }}"
     _llm_canary_budget: 7.5
-    _llm_canary_auth:
-      Authorization: "Bearer {{ homelabinfra_vault.apps[instance].master_key }}"
+    _llm_canary_auth: >-
+      {{ drill_app_headers
+         | combine({'Authorization': 'Bearer ' ~ homelabinfra_vault.apps[instance].master_key}) }}
   no_log: true
 
 - name: LiteLLM drill canary | Read the teams and the key

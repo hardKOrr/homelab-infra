@@ -20,6 +20,7 @@
     - name: ComfyUI drill canary | Save the workflow
       ansible.builtin.uri:
         url: "{{ _comfy_canary_file }}?overwrite=true"
+        headers: "{{ drill_app_headers }}"
         method: POST
         body_format: json
         body:
@@ -36,6 +37,7 @@
     - name: ComfyUI drill canary | Save the setting
       ansible.builtin.uri:
         url: "{{ _comfy_canary_setting }}"
+        headers: "{{ drill_app_headers }}"
         method: POST
         body_format: json
         body: "{{ _comfy_canary_size }}"
@@ -44,6 +46,7 @@
 - name: ComfyUI drill canary | Read the workflow and the setting
   ansible.builtin.uri:
     url: "{{ item }}"
+    headers: "{{ drill_app_headers }}"
     status_code: [200, 404]
     return_content: true
   register: _comfy_canary_read
@@ -72,6 +75,7 @@
 - name: ComfyUI drill canary | Delete the canary after the final verify
   ansible.builtin.uri:
     url: "{{ item.url }}"
+    headers: "{{ drill_app_headers }}"
     method: "{{ item.method }}"
     body_format: json
     body: "{{ item.body }}"
