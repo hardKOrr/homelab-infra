@@ -72,8 +72,17 @@
           firstName: Drill
           lastName: Owner
           password: "{{ _n8n_owner.password }}"
+        status_code: [200, 400]
+      register: _n8n_setup
       changed_when: true
       no_log: true
+
+    - name: n8n drill canary | Require the owner set up
+      ansible.builtin.assert:
+        that: _n8n_setup.status == 200
+        fail_msg: >-
+          {{ instance }} refused the drill owner from homelab-infra/apps/{{ _n8n_owner_item }}:
+          {{ _n8n_setup.json.message | default('HTTP ' ~ _n8n_setup.status) }}
 
 - name: n8n drill canary | Read and check the canaries
   when: drill_canary_action in ['create', 'verify']
