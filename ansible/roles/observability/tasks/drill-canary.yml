@@ -1,0 +1,116 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Grafana's API, as
+# test(observability) #445 defined it, in one drill-owned folder:
+#   data           dashboard p2-canary-observability-<id>
+#   configuration  alert rule p2-canary-observability-<id>, an expression (0 > 1) that never
+#                  fires and needs no datasource
+# Grafana caps a uid at 40 characters, so the uids carry a hash of the drill id. The final
+# verify (drill_final) deletes the folder, which deletes the dashboard and the rule.
+- name: Observability drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Observability drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _obs_canary: "p2-canary-observability-{{ drill_canary_id }}"
+    _obs_canary_uid: "p2c-{{ (drill_canary_id | hash('sha1'))[:16] }}"
+    _obs_canary_auth:
+      Authorization: >-
+        Basic {{ ((app_config.app.admin_user | default('admin')) ~ ':'
+                  ~ homelabinfra_infra.metrics.admin_password) | b64encode }}
+  no_log: true
+
+- name: Observability drill canary | Read the folder, dashboard and alert rule
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    headers: "{{ _obs_canary_auth }}"
+    status_code: [200, 404]
+  register: _obs_canary_read
+  changed_when: false
+  loop: &obs_canary_reads
+    - "folders/{{ _obs_canary_uid }}"
+    - "dashboards/uid/{{ _obs_canary_uid }}"
+    - "v1/provisioning/alert-rules/{{ _obs_canary_uid }}"
+
+- name: Observability drill canary | Write the folder, dashboard and alert rule
+  when: drill_canary_action == 'create'
+  block:
+    - name: Observability drill canary | Create the folder
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/folders"
+        method: POST
+        headers: "{{ _obs_canary_auth }}"
+        body_format: json
+        body: {uid: "{{ _obs_canary_uid }}", title: "{{ _obs_canary }}"}
+      changed_when: true
+      when: _obs_canary_read.results[0].status == 404
+
+    - name: Observability drill canary | Save the dashboard
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/dashboards/db"
+        method: POST
+        headers: "{{ _obs_canary_auth }}"
+        body_format: json
+        body:
+          folderUid: "{{ _obs_canary_uid }}"
+          overwrite: false
+          dashboard: {uid: "{{ _obs_canary_uid }}", title: "{{ _obs_canary }}", panels: []}
+      changed_when: true
+      when: _obs_canary_read.results[1].status == 404
+
+    - name: Observability drill canary | Save the alert rule
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/provisioning/alert-rules"
+        method: POST
+        headers: "{{ _obs_canary_auth }}"
+        body_format: json
+        body:
+          uid: "{{ _obs_canary_uid }}"
+          title: "{{ _obs_canary }}"
+          folderUID: "{{ _obs_canary_uid }}"
+          ruleGroup: "{{ _obs_canary_uid }}"
+          condition: A
+          for: 5m
+          noDataState: OK
+          execErrState: OK
+          data:
+            - refId: A
+              datasourceUid: __expr__
+              relativeTimeRange: {from: 0, to: 0}
+              model: {refId: A, type: math, expression: "0 > 1"}
+        status_code: 201
+      changed_when: true
+      when: _obs_canary_read.results[2].status == 404
+
+    - name: Observability drill canary | Read what was written
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/{{ item }}"
+        headers: "{{ _obs_canary_auth }}"
+        status_code: [200, 404]
+      register: _obs_canary_read
+      changed_when: false
+      loop: *obs_canary_reads
+
+- name: Observability drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that: _obs_canary_read.results | map(attribute='status') | list == [404, 404, 404]
+    fail_msg: "{{ instance }} already has {{ _obs_canary }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Observability drill canary | Require the dashboard and the alert rule
+  ansible.builtin.assert:
+    that:
+      - _obs_canary_read.results | map(attribute='status') | list == [200, 200, 200]
+      - _obs_canary_read.results[1].json.dashboard.title == _obs_canary
+      - _obs_canary_read.results[1].json.meta.folderUid == _obs_canary_uid
+      - _obs_canary_read.results[2].json.title == _obs_canary
+      - _obs_canary_read.results[2].json.data[0].model.expression == '0 > 1'
+    fail_msg: "{{ instance }} does not hold {{ _obs_canary }}'s dashboard and alert rule."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Observability drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/folders/{{ _obs_canary_uid }}?forceDeleteRules=true"
+    method: DELETE
+    headers: "{{ _obs_canary_auth }}"
+  changed_when: true
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
