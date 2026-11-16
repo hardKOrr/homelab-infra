@@ -1,0 +1,118 @@
+---
+# Drill canary for a database backend instance (roles/<backend>/tasks/drill-canary.yml):
+# one drill-owned row, written and read through the server's own client, so the drill
+# proves the restored server serves the data, not only that files came back.
+#
+#   PostgreSQL, MariaDB, MySQL  database lab_drill_canary, table canary(id, epoch)
+#   Redis                       key lab-drill-canary holding "<id>:<epoch>"
+#
+# A guest backend (native or Docker) is reached through its host socket on _rat_host, as
+# drop.yml does. A Kubernetes backend runs the client in its server pod: backend-psql.yml,
+# backend-sql.yml, or redis-cli here. The final verify (drill_final) deletes the canary.
+#
+# Inputs:
+#   drill_database_engine  postgresql, mysql (MariaDB or MySQL) or redis
+#   drill_canary_action    create, fresh or verify; drill_canary_id, drill_canary_epoch
+#   instance, app_config, _rat_kind, _rat_host  from playbooks/maintenance/drill-canary.yml
+- name: Database canary | Validate inputs and ownership
+  ansible.builtin.assert:
+    that:
+      - drill_database_engine in ['postgresql', 'mysql', 'redis']
+      - drill_canary_action in ['create', 'fresh', 'verify']
+      - drill_canary_id is match('^[A-Za-z0-9-]{1,40}$')
+      - drill_canary_epoch | int > 0
+      - _rat_kind in ['native', 'docker', 'kubernetes']
+      - _rat_kind == 'kubernetes' or _rat_host in groups['lab_managed']
+    fail_msg: The database canary needs its engine, a drill action and a _+lab target.
+
+- name: Database canary | Resolve the expected value and statements
+  ansible.builtin.set_fact:
+    _dbc_expected: "canary:{{ drill_canary_id }}:{{ drill_canary_epoch | int }}"
+    _dbc_script: "{{ _dbc_scripts[drill_database_engine][drill_canary_action] }}"
+    _dbc_drop: "{{ _dbc_scripts[drill_database_engine].drop }}"
+  vars:
+    _dbc_scripts:
+      postgresql:
+        fresh: "SELECT 'count:' || count(*) FROM pg_database WHERE datname = 'lab_drill_canary';"
+        create: |
+          SELECT 'CREATE DATABASE lab_drill_canary' WHERE NOT EXISTS
+            (SELECT 1 FROM pg_database WHERE datname = 'lab_drill_canary')\gexec
+          \connect lab_drill_canary
+          CREATE TABLE IF NOT EXISTS canary (id text PRIMARY KEY, epoch bigint NOT NULL);
+          INSERT INTO canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }})
+            ON CONFLICT (id) DO UPDATE SET epoch = EXCLUDED.epoch;
+          SELECT 'canary:' || id || ':' || epoch FROM canary;
+        # A missing canary reads as no row, so the assert below names the failure.
+        verify: |
+          SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'lab_drill_canary')
+            AS dbc_present \gset
+          \if :dbc_present
+          \connect lab_drill_canary
+          SELECT 'canary:' || id || ':' || epoch FROM canary;
+          \endif
+        drop: "DROP DATABASE IF EXISTS lab_drill_canary WITH (FORCE);"
+      mysql:
+        fresh: >-
+          SELECT CONCAT('count:', COUNT(*)) FROM information_schema.schemata
+          WHERE schema_name = 'lab_drill_canary';
+        create: |
+          CREATE DATABASE IF NOT EXISTS lab_drill_canary;
+          CREATE TABLE IF NOT EXISTS lab_drill_canary.canary
+            (id varchar(40) PRIMARY KEY, epoch bigint NOT NULL);
+          REPLACE INTO lab_drill_canary.canary VALUES ('{{ drill_canary_id }}', {{ drill_canary_epoch | int }});
+          SELECT CONCAT('canary:', id, ':', epoch) FROM lab_drill_canary.canary;
+        verify: |
+          SET @dbc_query = IF((SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'lab_drill_canary' AND table_name = 'canary') = 1,
+            'SELECT CONCAT(''canary:'', id, '':'', epoch) FROM lab_drill_canary.canary',
+            'SELECT ''missing''');
+          PREPARE dbc_read FROM @dbc_query;
+          EXECUTE dbc_read;
+          DEALLOCATE PREPARE dbc_read;
+        drop: "DROP DATABASE IF EXISTS lab_drill_canary;"
+      # redis-cli echoes replies line by line; the canary lines carry their own prefix.
+      redis:
+        fresh: |
+          ECHO count:
+          EXISTS lab-drill-canary
+        create: |
+          SET lab-drill-canary canary:{{ drill_canary_id }}:{{ drill_canary_epoch | int }}
+          GET lab-drill-canary
+        verify: GET lab-drill-canary
+        drop: DEL lab-drill-canary
+
+# Redis takes AUTH as the first stdin line, so the password never reaches an argv.
+- name: Database canary | Resolve the Redis password
+  ansible.builtin.set_fact:
+    _dbc_auth: >-
+      AUTH {{ (homelabinfra_vault.apps | default({})).get(instance, {}).get('password', '') }}
+  no_log: true
+  when: drill_database_engine == 'redis'
+
+- name: Database canary | Run the action
+  ansible.builtin.include_tasks: drill-canary-run.yml
+  vars:
+    _dbc_run_script: "{{ _dbc_script }}"
+
+- name: Database canary | Read the result
+  ansible.builtin.set_fact:
+    _dbc_count: "{{ (_dbc_stdout | regex_findall('count:\\s*(\\d+)') + ['missing'])[0] }}"
+    _dbc_rows: "{{ _dbc_stdout | regex_findall('canary:[A-Za-z0-9-]+:\\d+') }}"
+
+- name: Database canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that: _dbc_count == '0'
+    fail_msg: "{{ instance }} already has the drill canary on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Database canary | Require exactly the written row
+  ansible.builtin.assert:
+    that: _dbc_rows == [_dbc_expected]
+    fail_msg: "{{ instance }} holds {{ _dbc_rows }}, not {{ _dbc_expected }}."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Database canary | Delete the canary after the final verify
+  ansible.builtin.include_tasks: drill-canary-run.yml
+  vars:
+    _dbc_run_script: "{{ _dbc_drop }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

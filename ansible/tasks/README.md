@@ -11,7 +11,7 @@ role must use for each common operation.
 | `bitwarden/` | Vaultwarden session checks and item reads and upserts |
 | `bootstrap/` | One-time platform setup: PBS, its second copy, unattended upgrades, generated facts |
 | `config/` | Config Doctor run and writing user config files |
-| `database/` | Database backends, per-app provisioning, dump, restore and drop (`database/scripts/`) |
+| `database/` | Database backends, per-app provisioning, dump, restore, drop and the drill canary (`database/scripts/`) |
 | `decommission/` | Whole-lab decommission phases |
 | `firewall/` | OPNsense base rules, per-app access and the k3s node alias |
 | `hosting/` | Hosting-method validation against an app's declared support |
