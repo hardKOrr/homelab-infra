@@ -47,6 +47,17 @@
                                       chars=['ascii_letters', 'digits'])} }}
       no_log: true
 
+    # Stored before signup, so a run that fails after it never loses the password.
+    - name: Karakeep drill canary | Store a new drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _kk_owner_item }}"
+        vault_item_fields:
+          email: "{{ _kk_owner.email }}"
+          password: "{{ _kk_owner.password }}"
+        vault_item_secret_fields: [password]
+      when: (homelabinfra_vault.apps | default({})).get(_kk_owner_item, {}).password | default('') | length == 0
+
     - name: Karakeep drill canary | Exchange the owner's password for an API key
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/api/trpc/apiKeys.exchange"
@@ -106,15 +117,14 @@
       no_log: true
       when: _kk_exchange.status == 401
 
-    - name: Karakeep drill canary | Store the owner and its API key
+    - name: Karakeep drill canary | Store the owner's API key
       ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
       vars:
         vault_item_name: "homelab-infra/apps/{{ _kk_owner_item }}"
+        vault_item_merge: true
         vault_item_fields:
-          email: "{{ _kk_owner.email }}"
-          password: "{{ _kk_owner.password }}"
           api_key: "{{ (_kk_exchange_new if _kk_exchange.status == 401 else _kk_exchange).json.result.data.json.key }}"
-        vault_item_secret_fields: [password, api_key]
+        vault_item_secret_fields: [api_key]
 
     - name: Karakeep drill canary | Keep the API key
       ansible.builtin.set_fact:
