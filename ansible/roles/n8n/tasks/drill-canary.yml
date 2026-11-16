@@ -87,7 +87,8 @@
         body:
           emailOrLdapLoginId: "{{ _n8n_owner.username | default('') }}"
           password: "{{ _n8n_owner.password | default('') }}"
-        status_code: [200, 401]
+        # 400 or 401 when the item is missing or n8n refuses it; the assert names the item.
+        status_code: [200, 400, 401]
       register: _n8n_login
       changed_when: false
       no_log: true
