@@ -1,0 +1,10 @@
+---
+# Supply the native service list to the shared Remove operation: the web, queue and
+# scheduler units and the nginx site in front of them (no unit is named after the
+# instance).
+- name: Hi.Events remove | Load role defaults
+  ansible.builtin.include_vars: ../defaults/main.yml
+
+- name: Hi.Events remove | Select every native service
+  ansible.builtin.set_fact:
+    _rm_service_names: "{{ hi_events_native_app_services }}"

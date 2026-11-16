@@ -1,0 +1,15 @@
+---
+# Remove App hook, run on a native guest after the services stop. The install script keeps
+# Karakeep's SQLite database and assets and the Meilisearch index under /var/lib, not in
+# app.data_path, so delete_data removes those (Backup archives the same two paths).
+- name: Karakeep remove | Load role defaults
+  ansible.builtin.include_vars: ../defaults/main.yml
+
+- name: Karakeep remove | Delete the data and the search index
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ karakeep_data_path }}"
+    - "{{ karakeep_meilisearch_data_path | trim }}"
+  when: _rm_delete_data | bool

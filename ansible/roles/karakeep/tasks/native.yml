@@ -106,6 +106,19 @@
   no_log: true
   notify: Restart Karakeep
 
+# The install script creates these once; Remove with delete_data deletes them
+# (remove-native-data.yml) while the installed release stays.
+- name: Karakeep native | Ensure the data and search index directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "0750"
+  loop:
+    - {path: "{{ karakeep_data_path }}", owner: karakeep}
+    - {path: "{{ karakeep_meilisearch_data_path | trim }}", owner: meilisearch}
+
 - name: Karakeep native | Render the Meilisearch configuration
   ansible.builtin.template:
     src: meilisearch.toml.j2

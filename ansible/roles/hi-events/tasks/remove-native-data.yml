@@ -1,0 +1,13 @@
+---
+# Remove App hook, run on a native guest after the services stop. Uploaded event and
+# ticket files live in the storage directory (data.pxar in Backup), which defaults to
+# /opt/<instance>/storage when app.data_path is empty, so delete_data removes it here.
+# Deploy recreates it empty.
+- name: Hi.Events remove | Load role defaults
+  ansible.builtin.include_vars: ../defaults/main.yml
+
+- name: Hi.Events remove | Delete the storage directory
+  ansible.builtin.file:
+    path: "{{ hi_events_data_path }}"
+    state: absent
+  when: _rm_delete_data | bool
