@@ -185,6 +185,7 @@ the shared files, so its allowlists are empty.
 | Operation | Owner | A role supplies |
 | --- | --- | --- |
 | Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
+| The reverse proxy's source addresses, for trusting `X-Forwarded-Proto` | `tasks/wiring/proxy-sources.yml` | nothing; reads `wiring_proxy_sources` |
 | Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |
 | Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
 | Kubernetes external media NFS volumes | `tasks/kubernetes/prepare-media-volumes.yml` ([README](tasks/kubernetes/README.md)) | `k8s_media_shares` entries (`name`, `server`, `path`, `mount_path`, boolean `read_only`); returns `k8s_media_volumes` and `k8s_media_volume_mounts` for workload templates |

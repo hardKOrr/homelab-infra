@@ -1,0 +1,179 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Odoo's external
+# JSON-RPC API as the admin user with the instance's admin_password (Deploy sets it), as
+# test(odoo) #416 defined it:
+#   data           contact p2-canary-odoo-<id> with one attached file, stored in the
+#                  filestore, so the restore must bring the files back with the database
+#   configuration  system parameter web.base.url.freeze set to True (unset by default)
+# The final verify (drill_final) deletes the attachment, the contact and the parameter.
+- name: Odoo drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Odoo drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _odoo_canary: "p2-canary-odoo-{{ drill_canary_id }}"
+    _odoo_canary_bytes: "p2-canary-odoo-{{ drill_canary_id }} attachment\n"
+    _odoo_db: "{{ app_config.app.database.name }}"
+    _odoo_password: "{{ homelabinfra_vault.apps[instance].admin_password }}"
+  no_log: true
+
+- name: Odoo drill canary | List the reads
+  ansible.builtin.set_fact:
+    _odoo_reads:
+      - "{{ ['res.partner', 'search_read', [[['name', '=', _odoo_canary]]], {'fields': ['id']}] }}"
+      - "{{ ['ir.attachment', 'search_read', [[['name', '=', _odoo_canary ~ '.txt']]],
+            {'fields': ['id', 'res_model', 'res_id', 'datas', 'store_fname']}] }}"
+      - [ir.config_parameter, get_param, [web.base.url.freeze]]
+  no_log: true
+
+- name: Odoo drill canary | Sign in as the admin user
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/jsonrpc"
+    method: POST
+    headers: "{{ drill_app_headers }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: call
+      params:
+        service: common
+        method: login
+        args: ["{{ _odoo_db }}", "{{ app_config.app.admin_user }}", "{{ _odoo_password }}"]
+  register: _odoo_login
+  changed_when: false
+  no_log: true
+
+- name: Odoo drill canary | Require the admin login
+  ansible.builtin.assert:
+    that: _odoo_login.json.result | default(false) | type_debug == 'int'
+    fail_msg: "{{ instance }} refused {{ app_config.app.admin_user }} with the instance's admin_password."
+
+- name: Odoo drill canary | Keep the session
+  ansible.builtin.set_fact:
+    _odoo_auth: "{{ [_odoo_db, _odoo_login.json.result | int, _odoo_password] }}"
+  no_log: true
+
+- name: Odoo drill canary | Look for the contact
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/jsonrpc"
+    method: POST
+    headers: "{{ drill_app_headers }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: call
+      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + _odoo_reads[0] }}"}
+  register: _odoo_probe
+  changed_when: false
+  failed_when: _odoo_probe.json.error is defined
+  no_log: true
+
+- name: Odoo drill canary | Write the contact, its attachment and the parameter
+  when: drill_canary_action == 'create' and _odoo_probe.json.result | length == 0
+  block:
+    - name: Odoo drill canary | Create the contact
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/jsonrpc"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: call
+          params:
+            service: object
+            method: execute_kw
+            args: "{{ _odoo_auth + ['res.partner', 'create', [{'name': _odoo_canary}]] }}"
+      register: _odoo_partner
+      changed_when: true
+      failed_when: _odoo_partner.json.error is defined
+      no_log: true
+
+    - name: Odoo drill canary | Attach the file and set the parameter
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/jsonrpc"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: call
+          params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
+      register: _odoo_write
+      changed_when: true
+      failed_when: _odoo_write.json.error is defined
+      no_log: true
+      loop:
+        - "{{ ['ir.attachment', 'create', [{'name': _odoo_canary ~ '.txt', 'res_model': 'res.partner',
+              'res_id': _odoo_partner.json.result | int, 'datas': _odoo_canary_bytes | b64encode}]] }}"
+        - [ir.config_parameter, set_param, [web.base.url.freeze, "True"]]
+
+- name: Odoo drill canary | Read the contact, its attachment and the parameter
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/jsonrpc"
+    method: POST
+    headers: "{{ drill_app_headers }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: call
+      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
+  register: _odoo_read
+  changed_when: false
+  failed_when: (_odoo_read.json | default({})).error is defined
+  no_log: true
+  loop: "{{ _odoo_reads }}"
+
+- name: Odoo drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _odoo_partners: "{{ _odoo_read.results[0].json.result | map(attribute='id') | list }}"
+    _odoo_files: "{{ _odoo_read.results[1].json.result }}"
+    _odoo_freeze: "{{ _odoo_read.results[2].json.result }}"
+  no_log: true
+
+- name: Odoo drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _odoo_partners | length == 0
+      - _odoo_files | length == 0
+      - _odoo_freeze | string != 'True'
+    fail_msg: "{{ instance }} already has {{ _odoo_canary }} or its parameter on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Odoo drill canary | Require the contact, the attachment's bytes and the parameter
+  ansible.builtin.assert:
+    that:
+      - _odoo_partners | length == 1
+      - _odoo_files | length == 1
+      - _odoo_files[0].res_model == 'res.partner'
+      - _odoo_files[0].res_id == _odoo_partners[0]
+      - _odoo_files[0].store_fname | default(false, true)
+      - (_odoo_files[0].datas | default('', true) | b64decode) == _odoo_canary_bytes
+      - _odoo_freeze | string == 'True'
+    fail_msg: >-
+      {{ instance }} holds {{ _odoo_partners | length }} canary contact(s),
+      {{ _odoo_files | length }} attachment(s) (bytes
+      {{ 'as written' if _odoo_files | length == 1
+         and (_odoo_files[0].datas | default('', true) | b64decode) == _odoo_canary_bytes
+         else 'missing or changed' }}) and web.base.url.freeze {{ _odoo_freeze }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Odoo drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/jsonrpc"
+    method: POST
+    headers: "{{ drill_app_headers }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: call
+      params: {service: object, method: execute_kw, args: "{{ _odoo_auth + item }}"}
+  register: _odoo_delete
+  changed_when: true
+  failed_when: _odoo_delete.json.error is defined
+  no_log: true
+  loop:
+    - "{{ ['ir.attachment', 'unlink', [_odoo_files | map(attribute='id') | list]] }}"
+    - "{{ ['res.partner', 'unlink', [_odoo_partners]] }}"
+    - [ir.config_parameter, set_param, [web.base.url.freeze, false]]
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

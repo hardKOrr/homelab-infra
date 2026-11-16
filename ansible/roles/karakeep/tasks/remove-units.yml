@@ -1,0 +1,6 @@
+---
+# Supply the native service list to the shared Remove operation: the install script's
+# web, workers, browser and Meilisearch units (no unit is named after the instance).
+- name: Karakeep remove | Select every native service
+  ansible.builtin.set_fact:
+    _rm_service_names: [karakeep-web, karakeep-workers, karakeep-browser, meilisearch]

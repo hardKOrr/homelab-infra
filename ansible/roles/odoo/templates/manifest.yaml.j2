@@ -65,6 +65,10 @@ spec:
                   --init="$ODOO_MODULES" --without-demo=all --stop-after-init
                 printf '%s\n' "$ODOO_MODULES" > /var/lib/odoo/.crm-modules
               fi
+              odoo shell --config=/etc/odoo/odoo.conf --database="$ODOO_DATABASE" \
+                --no-http --log-level=warn <<'PY'
+{{ lookup('ansible.builtin.file', role_path ~ '/files/admin-login.py') | indent(14, true) }}
+              PY
           env:
             - name: ODOO_MODULES
               value: {{ _odoo_modules | to_json }}

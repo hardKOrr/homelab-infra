@@ -37,7 +37,8 @@ class HTTPSRedirect(BaseHTTPRequestHandler):
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
-    render = []
+    # The shared task resolves the proxy's source addresses the Apache site trusts.
+    render = [{"ansible.builtin.include_tasks": str(repo / "ansible/tasks/wiring/proxy-sources.yml")}]
     for src, dest in [("mautic-apache.conf.j2", "site"), ("mautic-worker.service.j2", "worker"),
                       ("mautic-cron.service.j2", "cron"), ("mautic-cron.sh.j2", "cron.sh")]:
         render.append({"ansible.builtin.template": {"src": str(role / "templates" / src), "dest": str(root / dest)}})
@@ -53,7 +54,9 @@ with tempfile.TemporaryDirectory() as directory:
     playbook.write_text(yaml.safe_dump([{
         "hosts": "localhost", "gather_facts": False,
         "vars": {"ansible_managed": "generated", "instance": "mautic", "mautic_native_root": "/var/www/mautic",
-                 "homelabinfra_infra": {"reverse_proxy": {"host": "http://192.0.2.10"}},
+                 # Caddy on Kubernetes: its address is not where its requests come from.
+                 "homelabinfra_infra": {"reverse_proxy": {"host": "http://192.0.2.10",
+                                                          "source_addresses": ["192.0.2.21", "192.0.2.22"]}},
                  "app_config": {"app": {"port": app["port"]}}},
         "tasks": render}]))
     result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
@@ -64,7 +67,7 @@ with tempfile.TemporaryDirectory() as directory:
     site, worker, cron, script = [(root / name).read_text() for name in ("site", "worker", "cron", "cron.sh")]
 assert f"<VirtualHost *:{app['port']}>" in site and "DocumentRoot /var/www/mautic" in site
 assert "AllowOverride All" in site and "FollowSymLinks" in site
-assert "SetEnvIfExpr" in site and "%{REMOTE_ADDR} == '192.0.2.10'" in site
+assert "SetEnvIfExpr" in site and "%{REMOTE_ADDR} in { '192.0.2.21', '192.0.2.22' }" in site
 assert "req('X-Forwarded-Proto') == 'https'" in site and "HTTPS=on" in site
 assert "messenger:consume email hit failed" in worker and "User=www-data" in worker
 assert "ExecStart=/usr/local/bin/mautic-cron" in cron

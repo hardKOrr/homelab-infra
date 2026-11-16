@@ -52,7 +52,9 @@ with tempfile.TemporaryDirectory() as directory:
                  "app_config": {"app": {**app, "database_host": "db.example.invalid", "database_port": 3306,
                                         "database_user": "wp", "database_password": "pa'ss\\word"}}}
     play = root / "render.yml"
+    # A registry from before source_addresses existed: the shared task falls back to host.
     play.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": [
+        {"ansible.builtin.include_tasks": str(repo / "ansible/tasks/wiring/proxy-sources.yml")}] + [
         {"ansible.builtin.template": {"src": str(role / f"templates/{name}.j2"), "dest": str(root / name)}}
         for name in ("wp-config.php", "wordpress-apache.conf")]}]))
     result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(play)],
@@ -64,7 +66,7 @@ assert "define( 'DB_PASSWORD', 'pa\\'ss\\\\word' );" in config, config
 assert "define( 'DB_HOST', 'db.example.invalid:3306' );" in config
 assert "require_once '/opt/wordpress/keys.php';" in config and "wp-settings.php" in config
 assert f"<VirtualHost *:{app['port']}>" in site and "DocumentRoot /var/www/wordpress" in site
-assert "REMOTE_ADDR} == 'proxy.example.invalid'" in site
+assert "REMOTE_ADDR} in { 'proxy.example.invalid' }" in site
 
 # Backup and restore go through the shared operations with the method's runtime.
 backup = (role / "tasks/backup-native.yml").read_text()

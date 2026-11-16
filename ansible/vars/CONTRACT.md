@@ -50,7 +50,7 @@ is the non-HTTP exception: it is a bare SSH and database address paired with `po
 ```yaml
 # config/.generated/facts.yml topology, overlaid in memory with Vaultwarden fields
 domain: homelab.example.com          # copied from infrastructure.yml
-reverse_proxy: { provider, instance, host, port, internal_cidrs }
+reverse_proxy: { provider, instance, host, port, internal_cidrs, source_addresses }
 sso:           { provider, instance, host, admin_user }
 notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumers build {{ host }}/{{ topic }}
 monitoring:    { provider, instance, host, admin_user, notification_id }

@@ -39,3 +39,10 @@ verified before the DNS record task proceeds. Remove that extra var from subsequ
 Changing API credentials leaves existing Unbound records in place. A failed Vaultwarden
 write stops before record wiring. If the one-time secret was lost with that failed write,
 rerun with the explicit rotation input to recover; existing DNS records stay in place.
+
+## Reverse proxy source addresses
+
+An app that trusts `X-Forwarded-Proto` only from the platform proxy includes
+[`proxy-sources.yml`](proxy-sources.yml) before rendering its web server configuration and
+reads `wiring_proxy_sources`, from the `source_addresses` Caddy's Deploy records in the
+`reverse_proxy` registry entry.

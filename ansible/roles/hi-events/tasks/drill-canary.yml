@@ -1,0 +1,262 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Hi.Events' API as the
+# drill owner, as test(hi-events) #452 defined it:
+#   data           event p2-canary-hi-events-<id> with one free ticket type, Canary Ticket
+#   configuration  its organizer, of the same name, keeps currency GBP (an account's
+#                  default is USD)
+# Deploy provisions no login, so a create registers the lab-only owner kept in Vaultwarden
+# item homelab-infra/apps/<instance>-drill-owner (kept when it exists); on a fresh instance
+# that owner cannot sign in. The owner also keeps a standing organizer, Drill Owner, because
+# Hi.Events never deletes an account's last one. The final verify (drill_final) deletes the
+# event and the canary organizer.
+- name: Hi.Events drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Hi.Events drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _he_canary: "p2-canary-hi-events-{{ drill_canary_id }}"
+    _he_api: "{{ drill_app_url }}/api"
+    _he_owner_item: "{{ instance }}-drill-owner"
+    _he_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+- name: Hi.Events drill canary | Sign in as the drill owner
+  ansible.builtin.uri:
+    url: "{{ _he_api }}/auth/login"
+    method: POST
+    headers: "{{ drill_app_headers | combine({'Accept': 'application/json'}) }}"
+    body_format: json
+    body:
+      email: "{{ _he_owner.email | default(_he_owner.username | default('drill-owner@' ~ instance ~ '.invalid')) }}"
+      password: "{{ _he_owner.password | default('not-a-password') }}"
+    status_code: [200, 401, 422]
+  register: _he_login
+  changed_when: false
+  no_log: true
+
+- name: Hi.Events drill canary | Require the owner unknown on a fresh instance
+  ansible.builtin.assert:
+    that: _he_login.status != 200
+    fail_msg: "{{ instance }} accepts the drill owner on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Hi.Events drill canary | Register the drill owner
+  when: drill_canary_action == 'create' and _he_login.status != 200
+  block:
+    - name: Hi.Events drill canary | Store a new drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _he_owner_item }}"
+        vault_item_fields:
+          email: "drill-owner@{{ instance }}.invalid"
+          password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+        vault_item_secret_fields: [password]
+      when: _he_owner.password | default('') | length == 0
+
+    - name: Hi.Events drill canary | Keep the drill owner
+      ansible.builtin.set_fact:
+        _he_owner: "{{ homelabinfra_vault.apps[_he_owner_item] }}"
+      no_log: true
+
+    - name: Hi.Events drill canary | Create the owner's account
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/auth/register"
+        method: POST
+        headers: "{{ drill_app_headers | combine({'Accept': 'application/json'}) }}"
+        body_format: json
+        body:
+          first_name: Drill
+          last_name: Owner
+          email: "{{ _he_owner.email | default(_he_owner.username) }}"
+          password: "{{ _he_owner.password }}"
+          password_confirmation: "{{ _he_owner.password }}"
+          timezone: UTC
+          currency_code: USD
+        status_code: [200, 201]
+      changed_when: true
+      no_log: true
+
+    - name: Hi.Events drill canary | Sign in as the new owner
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/auth/login"
+        method: POST
+        headers: "{{ drill_app_headers | combine({'Accept': 'application/json'}) }}"
+        body_format: json
+        body:
+          email: "{{ _he_owner.email | default(_he_owner.username) }}"
+          password: "{{ _he_owner.password }}"
+      register: _he_login_new
+      changed_when: false
+      no_log: true
+
+    - name: Hi.Events drill canary | Keep the new owner's session
+      ansible.builtin.set_fact:
+        _he_login: "{{ _he_login_new }}"
+      no_log: true
+
+- name: Hi.Events drill canary | Read and check the canaries
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: Hi.Events drill canary | Require the drill owner's login
+      ansible.builtin.assert:
+        that: _he_login.status == 200
+        fail_msg: >-
+          {{ instance }} refused the drill owner from homelab-infra/apps/{{ _he_owner_item }}
+          (HTTP {{ _he_login.status }}).
+
+    - name: Hi.Events drill canary | Keep the session
+      ansible.builtin.set_fact:
+        _he_headers: >-
+          {{ drill_app_headers | combine({'Accept': 'application/json',
+               'Authorization': 'Bearer ' ~ _he_login.json.token}) }}
+      no_log: true
+
+    - name: Hi.Events drill canary | Read the organizers
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/organizers?per_page=100"
+        headers: "{{ _he_headers }}"
+      register: _he_list
+      changed_when: false
+      no_log: true
+
+    - name: Hi.Events drill canary | Keep the canary organizer
+      ansible.builtin.set_fact:
+        _he_organizers: "{{ _he_list.json.data | selectattr('name', 'equalto', _he_canary) | list }}"
+
+    # Hi.Events refuses to delete an account's last organizer, so the owner keeps its own.
+    - name: Hi.Events drill canary | Give the drill owner its standing organizer
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/organizers"
+        method: POST
+        headers: "{{ _he_headers }}"
+        body_format: json
+        body:
+          name: Drill Owner
+          email: "{{ _he_owner.email | default(_he_owner.username) }}"
+          timezone: UTC
+          currency: USD
+        status_code: [200, 201]
+      changed_when: true
+      no_log: true
+      when: >-
+        drill_canary_action == 'create'
+        and _he_list.json.data | selectattr('name', 'equalto', 'Drill Owner') | list | length == 0
+
+    - name: Hi.Events drill canary | Write the organizer, the event and its ticket
+      when: drill_canary_action == 'create' and _he_organizers | length == 0
+      block:
+        - name: Hi.Events drill canary | Create the organizer in GBP
+          ansible.builtin.uri:
+            url: "{{ _he_api }}/organizers"
+            method: POST
+            headers: "{{ _he_headers }}"
+            body_format: json
+            body:
+              name: "{{ _he_canary }}"
+              email: "{{ _he_owner.email | default(_he_owner.username) }}"
+              timezone: UTC
+              currency: GBP
+            status_code: [200, 201]
+          register: _he_new_organizer
+          changed_when: true
+          no_log: true
+
+        - name: Hi.Events drill canary | Create the event
+          ansible.builtin.uri:
+            url: "{{ _he_api }}/events"
+            method: POST
+            headers: "{{ _he_headers }}"
+            body_format: json
+            body:
+              title: "{{ _he_canary }}"
+              organizer_id: "{{ _he_new_organizer.json.data.id }}"
+              start_date: "{{ '%Y-%m-%d 18:00' | strftime(drill_canary_epoch | int + 30 * 86400) }}"
+              timezone: UTC
+              currency: GBP
+            status_code: [200, 201]
+          register: _he_new_event
+          changed_when: true
+          no_log: true
+
+        - name: Hi.Events drill canary | Read the event's ticket category
+          ansible.builtin.uri:
+            url: "{{ _he_api }}/events/{{ _he_new_event.json.data.id }}/product-categories"
+            headers: "{{ _he_headers }}"
+          register: _he_categories
+          changed_when: false
+          no_log: true
+
+        - name: Hi.Events drill canary | Create the free ticket type
+          ansible.builtin.uri:
+            url: "{{ _he_api }}/events/{{ _he_new_event.json.data.id }}/products"
+            method: POST
+            headers: "{{ _he_headers }}"
+            body_format: json
+            body:
+              title: Canary Ticket
+              type: FREE
+              product_type: TICKET
+              prices: [{price: 0}]
+              product_category_id: "{{ _he_categories.json.data[0].id }}"
+            status_code: [200, 201]
+          changed_when: true
+          no_log: true
+
+        - name: Hi.Events drill canary | Keep the new organizer
+          ansible.builtin.set_fact:
+            _he_organizers: "{{ [_he_new_organizer.json.data] }}"
+
+    - name: Hi.Events drill canary | Require one canary organizer
+      ansible.builtin.assert:
+        that: _he_organizers | length == 1
+        fail_msg: "{{ instance }} holds {{ _he_organizers | length }} organizer(s) named {{ _he_canary }}."
+
+    - name: Hi.Events drill canary | Read the organizer and its events
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/organizers/{{ _he_organizers[0].id }}{{ item }}"
+        headers: "{{ _he_headers }}"
+      register: _he_read
+      changed_when: false
+      no_log: true
+      loop: ['', '/events?per_page=100']
+
+    - name: Hi.Events drill canary | Keep the canary event
+      ansible.builtin.set_fact:
+        _he_events: "{{ _he_read.results[1].json.data | selectattr('title', 'equalto', _he_canary) | list }}"
+
+    # Its categories carry the products; this release's own product listing fails.
+    - name: Hi.Events drill canary | Read the event's ticket categories
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/events/{{ _he_events[0].id }}/product-categories"
+        headers: "{{ _he_headers }}"
+      register: _he_categories
+      changed_when: false
+      no_log: true
+      when: _he_events | length == 1
+
+    - name: Hi.Events drill canary | Require the event, its ticket and the organizer's currency
+      ansible.builtin.assert:
+        that:
+          - _he_events | length == 1
+          - _he_read.results[0].json.data.currency == 'GBP'
+          - _he_tickets == ['Canary Ticket']
+        fail_msg: >-
+          {{ instance }}'s canary organizer holds {{ _he_events | length }} canary event(s) with
+          tickets {{ _he_tickets }}, in currency {{ _he_read.results[0].json.data.currency | default('?') }}.
+      vars:
+        _he_tickets: >-
+          {{ (_he_categories.json | default({})).data | default([])
+             | map(attribute='products') | flatten | map(attribute='title') | list }}
+
+    - name: Hi.Events drill canary | Delete the canary after the final verify
+      ansible.builtin.uri:
+        url: "{{ _he_api }}/{{ item }}"
+        method: DELETE
+        headers: "{{ _he_headers }}"
+        status_code: [200, 202, 204]
+      changed_when: true
+      no_log: true
+      loop:
+        - "events/{{ _he_events[0].id }}"
+        - "organizers/{{ _he_organizers[0].id }}"
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool

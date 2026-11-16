@@ -1,0 +1,14 @@
+---
+# Resolve the addresses the platform reverse proxy's requests come from, for an app that
+# trusts X-Forwarded-Proto only from its proxy: reverse_proxy.source_addresses, which
+# Caddy's Deploy records (its guest, or every cluster node when it runs on Kubernetes,
+# where requests leave from the node running the pod, not from Caddy's own address).
+# A registry written before that field existed falls back to reverse_proxy.host.
+# Sets: wiring_proxy_sources, a list of IP addresses (empty without a reverse proxy).
+- name: Proxy sources | Resolve the reverse proxy's source addresses
+  ansible.builtin.set_fact:
+    wiring_proxy_sources: >-
+      {{ _wps.source_addresses | default([], true)
+         or ([_wps.host | urlsplit('hostname')] if _wps.host | default('', true) | length > 0 else []) }}
+  vars:
+    _wps: "{{ homelabinfra_infra.reverse_proxy | default({}) }}"
