@@ -188,6 +188,9 @@
     mode: "0644"
   notify: Restart WordPress
 
+- name: WordPress native | Resolve the reverse proxy's source addresses
+  ansible.builtin.include_tasks: ../../../tasks/wiring/proxy-sources.yml
+
 - name: WordPress native | Render the Apache site
   ansible.builtin.template:
     src: wordpress-apache.conf.j2

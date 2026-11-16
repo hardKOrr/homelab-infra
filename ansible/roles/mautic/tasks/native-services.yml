@@ -11,6 +11,9 @@
     mode: "0644"
   notify: Restart mautic
 
+- name: Mautic native | Resolve the reverse proxy's source addresses
+  ansible.builtin.include_tasks: ../../../tasks/wiring/proxy-sources.yml
+
 - name: Mautic native | Render the Apache site
   ansible.builtin.template:
     src: mautic-apache.conf.j2
