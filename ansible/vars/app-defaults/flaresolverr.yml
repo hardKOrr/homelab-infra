@@ -69,6 +69,7 @@ flaresolverr_defaults:
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
+    service_name: flaresolverr   # native systemd unit — Remove stops it whatever the instance is named
     # Docker and Kubernetes run the same exact upstream release as the native install,
     # FlareSolverr's pre-compiled Linux x64 binary
     # (https://github.com/FlareSolverr/FlareSolverr#precompiled-binaries).

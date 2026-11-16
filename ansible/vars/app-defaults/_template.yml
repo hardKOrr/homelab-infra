@@ -47,7 +47,8 @@ APP_NAME_defaults:
     data_path: "/opt/{{ instance }}/data"
     config_path: "/opt/{{ instance }}/config"
     # NATIVE LXC apps: the systemd unit playbooks/apps/remove.yml stops. Set it
-    # whenever the unit name differs from the instance name.
+    # whenever the unit is not named {{ instance }}, and have the role read it, so
+    # a renamed instance (APP_NAME-2) still stops the right unit.
     # service_name: APP_NAME
 
   # ── Native LXC update checking ──────────────────────────────────────────────

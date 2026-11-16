@@ -37,6 +37,7 @@ slskd_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: slskd   # native systemd unit — Remove stops it whatever the instance is named
     # The key ansible/vars/media-wiring.yml is looked up by. It is already
     # declared there as a download client that speaks the `slskd` protocol.
     media_kind: slskd

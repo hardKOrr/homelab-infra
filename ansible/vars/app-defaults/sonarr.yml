@@ -36,6 +36,7 @@ sonarr_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: sonarr   # native systemd unit — Remove stops it whatever the instance is named
     # media_kind is load-bearing, not a label: it is the key slice 504's
     # ansible/vars/media-wiring.yml looks this app up by, and it is what makes the
     # deployed instance discoverable to wire-media-stack.yml.

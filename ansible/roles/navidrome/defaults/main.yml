@@ -7,5 +7,5 @@ navidrome_http_delay: 5
 # match media_storage.owner so it can read the music library) under the package's unit.
 navidrome_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
 navidrome_native_user: navidrome
-navidrome_native_service: navidrome
+navidrome_native_service: "{{ app_config.app.service_name }}"
 navidrome_native_config: /etc/navidrome/navidrome.toml

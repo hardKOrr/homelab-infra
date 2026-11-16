@@ -33,6 +33,7 @@ uptime_kuma_defaults:
   stack: monitoring
 
   app:
+    service_name: uptime-kuma   # native systemd unit — Remove stops it whatever the instance is named
     port: 3001
     data_path: "/opt/{{ instance }}/data"
     # Used by the Kubernetes backend; the cluster's default StorageClass is selected.

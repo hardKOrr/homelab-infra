@@ -29,6 +29,7 @@ sabnzbd_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: sabnzbd   # native systemd unit — Remove stops it whatever the instance is named
     # The key ansible/vars/media-wiring.yml is looked up by. It decides which
     # *arr apps this client is registered in (every one that speaks `usenet`)
     # and which download-client implementation they are told to use.

@@ -25,6 +25,7 @@ n8n_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: n8n   # native systemd unit — Remove stops it whatever the instance is named
     image: docker.n8n.io/n8nio/n8n:1.104.2
     # Native: the same release from the npm package, on a pinned Node.js
     # (https://docs.n8n.io/hosting/installation/npm/).

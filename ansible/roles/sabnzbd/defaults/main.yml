@@ -8,7 +8,7 @@ sabnzbd_project_dir: "/opt/{{ instance }}"
 # Native: the systemd unit and account, the unpacked release and its virtualenv
 # (tasks/main/native*.yml).
 sabnzbd_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
-sabnzbd_service: sabnzbd
+sabnzbd_service: "{{ app_config.app.service_name }}"
 sabnzbd_native_dir: "{{ sabnzbd_project_dir }}/app"
 sabnzbd_native_venv: "{{ sabnzbd_project_dir }}/venv"
 

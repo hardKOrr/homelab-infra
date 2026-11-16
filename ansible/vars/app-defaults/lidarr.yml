@@ -33,6 +33,7 @@ lidarr_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: lidarr   # native systemd unit — Remove stops it whatever the instance is named
     media_kind: lidarr
 
     # Nightly, because Deemix and Slskd reach Lidarr as plugin download clients and

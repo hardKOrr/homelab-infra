@@ -25,6 +25,7 @@ odoo_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: odoo   # native systemd unit — Remove stops it whatever the instance is named
     image: docker.io/odoo:18.0
     # Native: Odoo's nightly Debian repository for the same 18.0 series
     # (https://www.odoo.com/documentation/18.0/administration/on_premise/packages.html).

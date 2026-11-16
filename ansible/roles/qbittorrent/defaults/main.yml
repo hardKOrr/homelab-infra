@@ -7,7 +7,7 @@ qbittorrent_project_dir: "/opt/{{ instance }}"
 
 # Native: the systemd unit and the account it runs as (tasks/main/native.yml).
 qbittorrent_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
-qbittorrent_service: qbittorrent
+qbittorrent_service: "{{ app_config.app.service_name }}"
 
 # Keep outgoing peer sockets above Linux's default ephemeral range (32768-60999)
 # so OPNsense can distinguish qBittorrent peers from other apps on the stack host.
