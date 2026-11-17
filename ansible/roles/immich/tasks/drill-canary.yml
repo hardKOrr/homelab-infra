@@ -116,34 +116,60 @@
     - name: Immich drill canary | Write the image, the album and the setting
       when: drill_canary_action == 'create'
       block:
+        # uri's form-multipart rewrites binary bytes, so curl uploads the image from the
+        # requesting host; the headers travel on stdin, keeping the token out of argv.
+        - name: Immich drill canary | Put the image on the requesting host
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.copy:
+            src: drill-canary.png
+            dest: "/tmp/{{ _im_canary }}.png"
+            mode: "0600"
+
         # Immich deduplicates by checksum, so a repeat upload answers with the existing asset.
         - name: Immich drill canary | Upload the image
           delegate_to: "{{ drill_app_delegate }}"
-          ansible.builtin.uri:
-            url: "{{ drill_app_url }}/api/assets"
-            method: POST
-            headers: "{{ _im_headers }}"
-            body_format: form-multipart
-            body:
-              assetData:
-                # Read on the controller and sent from the requesting host.
-                filename: "{{ role_path }}/files/drill-canary.png"
-                mime_type: image/png
-              deviceAssetId: "{{ _im_canary }}"
-              deviceId: homelab-infra-drill
-              fileCreatedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
-              fileModifiedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
-            status_code: [200, 201, 400, 401, 403, 413, 500]
-          register: _im_upload
-          changed_when: _im_upload.status == 201
+          ansible.builtin.command:
+            argv:
+              - curl
+              - -sS
+              - -H
+              - "@-"
+              - -F
+              - "assetData=@/tmp/{{ _im_canary }}.png;type=image/png"
+              - -F
+              - "deviceAssetId={{ _im_canary }}"
+              - -F
+              - deviceId=homelab-infra-drill
+              - -F
+              - "fileCreatedAt={{ _im_time }}"
+              - -F
+              - "fileModifiedAt={{ _im_time }}"
+              - -w
+              - "\n%{http_code}"
+              - "{{ drill_app_url }}/api/assets"
+            stdin: "{{ _im_headers.items() | map('join', ': ') | join('\n') }}"
+          vars:
+            _im_time: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
+          register: _im_curl
+          changed_when: _im_curl.stdout_lines[-1] == '201'
           no_log: true
+
+        - name: Immich drill canary | Remove the image from the requesting host
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.file:
+            path: "/tmp/{{ _im_canary }}.png"
+            state: absent
 
         - name: Immich drill canary | Require the upload
           ansible.builtin.assert:
-            that: _im_upload.status in [200, 201]
+            that: _im_curl.stdout_lines[-1] in ['200', '201']
             fail_msg: >-
-              {{ instance }} refused the canary image (HTTP {{ _im_upload.status }}):
-              {{ _im_upload.json.message | default(_im_upload.msg | default('')) }}
+              {{ instance }} refused the canary image (HTTP {{ _im_curl.stdout_lines[-1] | default('none') }}):
+              {{ _im_curl.stdout_lines[:-1] | join(' ') | truncate(200) }}
+
+        - name: Immich drill canary | Keep the uploaded image
+          ansible.builtin.set_fact:
+            _im_upload: {json: "{{ _im_curl.stdout_lines[:-1] | join('\n') | from_json }}"}
 
         - name: Immich drill canary | Create the album holding the image
           delegate_to: "{{ drill_app_delegate }}"
