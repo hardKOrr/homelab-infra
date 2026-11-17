@@ -6,7 +6,7 @@
 #   configuration  rules-handler cron "0 3 * * *" (default "0 0-23/8 * * *"; Deploy never
 #                  sets it)
 # A rule group needs a library from a connected media server. On create, an instance with
-# no Plex connection gets the lab Plex at its HTTPS route (plex.<domain>, no SSO) with the
+# no Plex connection gets the lab Plex at its HTTPS route (its routed name, no SSO) with the
 # token Plex's Deploy records in homelab-infra/media/<plex>. The API has no login of its
 # own; app-url.yml reaches it without the SSO on the public route.
 # The final verify (drill_final) deletes the rule group and sets the cron back.
@@ -53,6 +53,25 @@
 - name: Maintainerr drill canary | Write the rule group and the cron
   when: drill_canary_action == 'create'
   block:
+    # The selected Plex instance's own routed name: its merged routing, on its estate's domain.
+    - name: Maintainerr drill canary | Resolve the Plex instance's routed name
+      ansible.builtin.set_fact:
+        _mtc_plex_fqdn: >-
+          {{ (_routing.subdomain | default(_mtc_plex, true)) ~ '.'
+             ~ (_domains[_routing.estate].domain if _routing.estate | default('', true) | length > 0
+                else _infra.domain | default((_domains | dict2items | selectattr('value.default', 'defined')
+                                              | selectattr('value.default') | map(attribute='value.domain')
+                                              | first) | default(''), true)) }}
+      vars:
+        _infra: "{{ homelabinfra_config.infrastructure | default({}) }}"
+        _domains: "{{ _infra.domains | default({}) }}"
+        _instance_file: "{{ playbook_dir ~ '/../../../config/apps/' ~ _mtc_plex ~ '.yml' }}"
+        _routing: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/app-defaults/plex.yml') | from_yaml).plex_defaults.routing
+             | combine(((lookup('ansible.builtin.file', _instance_file, errors='ignore') | default('', true) | from_yaml)
+                        | default({}, true)).routing | default({}), recursive=True) }}
+      when: _mtc_plex_host | length == 0
+
     # Maintainerr saves the Plex server only once it holds a Plex token, and the token
     # only through its own route.
     - name: Maintainerr drill canary | Connect the lab Plex
@@ -64,8 +83,6 @@
         body_format: json
         body: "{{ item.body }}"
         status_code: [200, 201, 400, 500]
-      vars:
-        _plex_routing: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/app-defaults/plex.yml') | from_yaml).plex_defaults.routing }}"
       register: _mtc_connect
       changed_when: true
       no_log: true  # the first item carries the Plex token
@@ -78,7 +95,7 @@
           body:
             media_server_type: plex
             plex_name: "{{ _mtc_plex }}"
-            plex_hostname: "{{ (_plex_routing.subdomain | default(_mtc_plex, true)) ~ '.' ~ homelabinfra_infra.domain }}"
+            plex_hostname: "{{ _mtc_plex_fqdn }}"
             plex_port: 443
             plex_ssl: 1
             plex_manual_mode: 1

@@ -25,7 +25,12 @@ module.exports = async ({ page, step, url, secrets }) => {
     check(!(result && result.error), `${name} failed: ${JSON.stringify(result && result.error)}`);
     return result;
   };
-  const remote = async () => ((await send('get-remote-files')) || []).filter(f => f.name === budget && !f.deleted);
+  // Actual answers null when it cannot reach its server; only a listing proves absence.
+  const remote = async () => {
+    const files = await send('get-remote-files');
+    check(Array.isArray(files), 'the client could not list the budgets on the server');
+    return files.filter(f => f.name === budget && !f.deleted);
+  };
 
   await step('sign in with the server password', async () => {
     await page.goto(base);
