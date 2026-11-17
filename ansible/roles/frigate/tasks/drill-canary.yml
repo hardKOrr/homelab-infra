@@ -23,6 +23,10 @@
       vars:
         drill_exec_argv: [curl, -fsS, "{{ _fg_api }}/users"]
 
+    - name: Frigate drill canary | Keep the user names
+      ansible.builtin.set_fact:
+        _fg_before: "{{ drill_exec_result.stdout | from_json | map(attribute='username') | list }}"
+
     # The canary user is lab-only and deleted after the drill, so its password is
     # generated and never stored.
     - name: Frigate drill canary | Add the viewer user
@@ -46,14 +50,15 @@
                                  chars=['ascii_letters', 'digits'])} | to_json }}
         drill_exec_secret: true
         drill_exec_changes: true
-      when: _fg_canary not in (drill_exec_result.stdout | from_json | map(attribute='username') | list)
+      when: _fg_canary not in _fg_before
 
     - name: Frigate drill canary | Require the new user
       ansible.builtin.assert:
-        that: drill_exec_result.stdout_lines[-1] | default('') in ['', '200', '201']
+        that: drill_exec_result.stdout_lines[-1] in ['200', '201']
         fail_msg: >-
           {{ instance }} refused the canary user (HTTP {{ drill_exec_result.stdout_lines[-1] }}):
           {{ drill_exec_result.stdout_lines[:-1] | join(' ') | truncate(300) }}
+      when: _fg_canary not in _fg_before
 
     - name: Frigate drill canary | Save the setting
       ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
