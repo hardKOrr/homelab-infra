@@ -5,6 +5,7 @@
 #   data           library p2-canary-plex-<id> on the media share's p2-canary-plex folder
 #                  (its one test video, read-only to Plex), the item marked watched
 #   configuration  the server's friendly name, set to p2-canary-plex-<id>
+# _pxc_folder must hold exactly one short video; create checks it before the library.
 # The library uses the Personal Media agent with the Plex Movie scanner, so the scan reads
 # only the file. Requests run on the stack host, whose firewall admits only the proxy to
 # the app port.
@@ -66,6 +67,25 @@
 - name: Plex drill canary | Write the library, the watched state and the name
   when: drill_canary_action == 'create'
   block:
+    # The media share belongs to the operator and Plex mounts it read-only, so the drill
+    # never writes the canary video; it requires it.
+    - name: Plex drill canary | Find the canary video on the media share
+      delegate_to: "{{ _rat_host }}"
+      become: true
+      ansible.builtin.find:
+        paths: "{{ _pxc_folder }}"
+        patterns: ["*.mkv", "*.mp4", "*.avi", "*.m4v"]
+      register: _pxc_media
+
+    - name: Plex drill canary | Require exactly one canary video
+      ansible.builtin.assert:
+        that: _pxc_media.matched | default(0) == 1
+        fail_msg: >-
+          {{ _pxc_folder }} on {{ _rat_host }} holds {{ _pxc_media.matched | default(0) }} video(s)
+          {{ '(' ~ _pxc_media.msg ~ ')' if _pxc_media.msg is defined and _pxc_media.matched | default(0) == 0 else '' }}.
+          The drill needs exactly one short video there, on the media share the operator
+          provides (media_storage in config/infrastructure.yml).
+
     - name: Plex drill canary | Create the library
       delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
