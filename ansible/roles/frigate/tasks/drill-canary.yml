@@ -26,7 +26,9 @@
       vars:
         drill_exec_argv:
           - curl
-          - -fsS
+          - -sS
+          - -w
+          - "\n%{http_code}"
           - -X
           - POST
           - -H
@@ -41,6 +43,13 @@
         drill_exec_secret: true
         drill_exec_changes: true
       when: _fg_canary not in (drill_exec_result.stdout | from_json | map(attribute='username') | list)
+
+    - name: Frigate drill canary | Require the new user
+      ansible.builtin.assert:
+        that: drill_exec_result.stdout_lines[-1] | default('') in ['', '200', '201']
+        fail_msg: >-
+          {{ instance }} refused the canary user (HTTP {{ drill_exec_result.stdout_lines[-1] }}):
+          {{ drill_exec_result.stdout_lines[:-1] | join(' ') | truncate(300) }}
 
     - name: Frigate drill canary | Save the setting
       ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
