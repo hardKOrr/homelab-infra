@@ -26,9 +26,18 @@
     url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}&superuser_full_list=true"
     method: GET
     headers: "{{ _ak_headers }}"
-    status_code: 200
   register: _ak_app_list
+  # The assert below prints the status, or the connection error, of a failed lookup.
+  failed_when: false
   no_log: true
+
+- name: Wire Authentik | Require the application list
+  ansible.builtin.assert:
+    that: _ak_app_list.status | default(-1) == 200
+    fail_msg: >-
+      Authentik at {{ _ak_api }} refused the application lookup for {{ wiring_app_name }}
+      (HTTP {{ _ak_app_list.status | default(-1) }}): {{ _ak_app_list.content
+      | default(_ak_app_list.msg | default('')) | truncate(300) }}
 
 - name: Wire Authentik | Select existing application and build payload
   ansible.builtin.set_fact:

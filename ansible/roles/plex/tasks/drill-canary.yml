@@ -1,0 +1,229 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Plex's API with the
+# server token Deploy records in homelab-infra/media/<instance>, as test(plex) #352
+# defined it:
+#   data           library p2-canary-plex-<id> on the media share's p2-canary-plex folder
+#                  (its one test video, read-only to Plex), the item marked watched
+#   configuration  the server's friendly name, set to p2-canary-plex-<id>
+# _pxc_folder must hold exactly one short video; create checks it before the library.
+# The library uses the Personal Media agent with the Plex Movie scanner, so the scan reads
+# only the file. Requests run on the stack host, whose firewall admits only the proxy to
+# the app port.
+# The final verify (drill_final) deletes the library and clears the friendly name, which
+# Plex then takes from the host name again; the media files stay untouched.
+- name: Plex drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Plex drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _pxc_canary: "p2-canary-plex-{{ drill_canary_id }}"
+    _pxc_folder: >-
+      {{ (homelabinfra_config.infrastructure.media_storage | default({})).library
+         | default('/mnt/media', true) }}/p2-canary-plex
+    _pxc_headers: >-
+      {{ drill_app_headers | combine({'X-Plex-Token': homelabinfra_vault.media[instance].token,
+                                      'Accept': 'application/json'}) }}
+  no_log: true
+
+- name: Plex drill canary | Read the libraries and the settings
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item }}"
+    headers: "{{ _pxc_headers }}"
+    status_code: [200, 401]
+  register: _pxc_read
+  changed_when: false
+  no_log: true
+  loop: [library/sections, ":/prefs"]
+
+- name: Plex drill canary | Require the server token
+  ansible.builtin.assert:
+    that: _pxc_read.results | map(attribute='status') | unique == [200]
+    fail_msg: >-
+      {{ instance }} refused the token in homelab-infra/media/{{ instance }} (HTTP
+      {{ _pxc_read.results | map(attribute='status') | list }}): Deploy has not claimed it.
+
+- name: Plex drill canary | Keep what the server holds
+  ansible.builtin.set_fact:
+    _pxc_sections: >-
+      {{ _pxc_read.results[0].json.MediaContainer.Directory | default([])
+         | selectattr('title', 'equalto', _pxc_canary) | list }}
+    _pxc_name: >-
+      {{ (_pxc_read.results[1].json.MediaContainer.Setting
+          | selectattr('id', 'equalto', 'FriendlyName') | first).value }}
+
+- name: Plex drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _pxc_sections | length == 0
+      - _pxc_name != _pxc_canary
+    fail_msg: >-
+      {{ instance }} has {{ _pxc_sections | length }} canary library(ies) and friendly name
+      "{{ _pxc_name }}" on a fresh install: data survived Remove.
+  when: drill_canary_action == 'fresh'
+
+- name: Plex drill canary | Write the library, the watched state and the name
+  when: drill_canary_action == 'create'
+  block:
+    # The media share belongs to the operator and Plex mounts it read-only, so the drill
+    # never writes the canary video; it requires it.
+    - name: Plex drill canary | Find the canary video on the media share
+      delegate_to: "{{ _rat_host }}"
+      become: true
+      ansible.builtin.find:
+        paths: "{{ _pxc_folder }}"
+        patterns: ["*.mkv", "*.mp4", "*.avi", "*.m4v"]
+      register: _pxc_media
+
+    - name: Plex drill canary | Require exactly one canary video
+      ansible.builtin.assert:
+        that: _pxc_media.matched | default(0) == 1
+        fail_msg: >-
+          {{ _pxc_folder }} on {{ _rat_host }} holds {{ _pxc_media.matched | default(0) }} video(s)
+          {{ '(' ~ _pxc_media.msg ~ ')' if _pxc_media.msg is defined and _pxc_media.matched | default(0) == 0 else '' }}.
+          The drill needs exactly one short video there, on the media share the operator
+          provides (media_storage in config/infrastructure.yml).
+
+    - name: Plex drill canary | Create the library
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: >-
+          {{ drill_app_url }}/library/sections?name={{ _pxc_canary | urlencode }}&type=movie&agent=tv.plex.agents.none&scanner={{ 'Plex Movie' | urlencode }}&language=xn&location={{ _pxc_folder | urlencode }}
+        method: POST
+        headers: "{{ _pxc_headers }}"
+        status_code: [200, 201, 400, 500]
+      register: _pxc_created
+      changed_when: true
+      no_log: true
+      when: _pxc_sections | length == 0
+
+    - name: Plex drill canary | Require the library
+      ansible.builtin.assert:
+        that: _pxc_created.status in [200, 201]
+        fail_msg: >-
+          {{ instance }} refused library {{ _pxc_canary }} on {{ _pxc_folder }} (HTTP
+          {{ _pxc_created.status }}): {{ _pxc_created.msg | default('') }}
+      when: _pxc_created is not skipped
+
+    - name: Plex drill canary | Find the library
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/library/sections"
+        headers: "{{ _pxc_headers }}"
+      register: _pxc_listed
+      changed_when: false
+      no_log: true
+
+    # The scan starts when the library is created; it finds the one test video.
+    - name: Plex drill canary | Wait for the scan to find the item
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/library/sections/{{ _key }}/all"
+        headers: "{{ _pxc_headers }}"
+      vars:
+        _key: >-
+          {{ (_pxc_listed.json.MediaContainer.Directory | selectattr('title', 'equalto', _pxc_canary) | first).key }}
+      register: _pxc_items
+      until: _pxc_items.json.MediaContainer.size | default(0) | int > 0
+      retries: 24
+      delay: 5
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Plex drill canary | Require the item
+      ansible.builtin.assert:
+        that: _pxc_items.json.MediaContainer.size | default(0) | int == 1
+        fail_msg: >-
+          {{ instance }}'s library {{ _pxc_canary }} holds
+          {{ _pxc_items.json.MediaContainer.size | default('no answer') }} item(s) after 2 minutes;
+          {{ _pxc_folder }} should hold exactly one test video.
+
+    - name: Plex drill canary | Mark the item watched and set the name
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ _pxc_headers }}"
+      register: _pxc_written
+      changed_when: true
+      no_log: true
+      loop:
+        - path: ":/scrobble?identifier=com.plexapp.plugins.library&key={{ _pxc_items.json.MediaContainer.Metadata[0].ratingKey }}"
+          method: GET
+        - {path: ":/prefs?FriendlyName={{ _pxc_canary | urlencode }}", method: PUT}
+      loop_control:
+        label: "{{ item.method }} {{ item.path }}"
+
+- name: Plex drill canary | Read back the libraries and the settings
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item }}"
+    headers: "{{ _pxc_headers }}"
+  register: _pxc_now
+  changed_when: false
+  no_log: true
+  loop: [library/sections, ":/prefs"]
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Plex drill canary | Keep what the server holds now
+  ansible.builtin.set_fact:
+    _pxc_sections: >-
+      {{ _pxc_now.results[0].json.MediaContainer.Directory | default([])
+         | selectattr('title', 'equalto', _pxc_canary) | list }}
+    _pxc_name: >-
+      {{ (_pxc_now.results[1].json.MediaContainer.Setting
+          | selectattr('id', 'equalto', 'FriendlyName') | first).value }}
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Plex drill canary | Read the library's items
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/library/sections/{{ _pxc_sections[0].key }}/all"
+    headers: "{{ _pxc_headers }}"
+  register: _pxc_check
+  changed_when: false
+  no_log: true
+  when: drill_canary_action in ['create', 'verify'] and _pxc_sections | length == 1
+
+- name: Plex drill canary | Require the library, its watched item and the name
+  ansible.builtin.assert:
+    that:
+      - _pxc_sections | length == 1
+      - _items | length == 1
+      - _items[0].viewCount | default(0) | int > 0
+      - _pxc_name == _pxc_canary
+    fail_msg: >-
+      {{ instance }} holds {{ _pxc_sections | length }} canary library(ies) with
+      {{ _items | length }} item(s), view counts {{ _items | map(attribute='viewCount', default=0) | list }},
+      and friendly name "{{ _pxc_name }}".
+  vars:
+    _items: "{{ (_pxc_check.json | default({})).MediaContainer.Metadata | default([]) if _pxc_check is not skipped else [] }}"
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Plex drill canary | Delete the library and clear the name after the final verify
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item.path }}"
+    method: "{{ item.method }}"
+    headers: "{{ _pxc_headers }}"
+    status_code: [200, 204, 400, 401, 404, 500]
+  register: _pxc_deleted
+  changed_when: true
+  no_log: true
+  loop:
+    - {path: "library/sections/{{ _pxc_sections[0].key }}", method: DELETE}
+    - {path: ":/prefs?FriendlyName=", method: PUT}
+  loop_control:
+    label: "{{ item.method }} {{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+- name: Plex drill canary | Require every delete
+  ansible.builtin.assert:
+    that: _pxc_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+    fail_msg: >-
+      {{ instance }} refused a canary delete: HTTP statuses
+      {{ _pxc_deleted.results | map(attribute='status') | list }} for the library, then the name.
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

@@ -1,0 +1,224 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Maintainerr's API, as
+# test(maintainerr) #380 defined it:
+#   data           inactive rule group p2-canary-maintainerr-<id> on a lab Plex library: no
+#                  rules and the action "do nothing", so nothing is ever deleted
+#   configuration  rules-handler cron "0 3 * * *" (default "0 0-23/8 * * *"; Deploy never
+#                  sets it)
+# A rule group needs a library from a connected media server. On create, an instance with
+# no Plex connection gets the lab Plex at its HTTPS route (its routed name, no SSO) with the
+# token Plex's Deploy records in homelab-infra/media/<plex>. The API has no login of its
+# own; app-url.yml reaches it without the SSO on the public route.
+# The final verify (drill_final) deletes the rule group and sets the cron back.
+- name: Maintainerr drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Maintainerr drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _mtc_canary: "p2-canary-maintainerr-{{ drill_canary_id }}"
+    _mtc_cron: "0 3 * * *"
+    _mtc_default_cron: "0 0-23/8 * * *"
+    _mtc_plex: "{{ app_config.app.plex_instance | default('plex', true) }}"
+
+- name: Maintainerr drill canary | Read the settings and the rule groups
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    headers: "{{ drill_app_headers }}"
+  register: _mtc_read
+  changed_when: false
+  no_log: true  # the settings carry the Plex token and the API key
+  loop: [settings, rules]
+
+- name: Maintainerr drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _mtc_groups: "{{ _mtc_read.results[1].json | selectattr('name', 'equalto', _mtc_canary) | list }}"
+    _mtc_cron_now: "{{ _mtc_read.results[0].json.rules_handler_job_cron }}"
+    _mtc_plex_host: "{{ _mtc_read.results[0].json.plex_hostname | default('', true) }}"
+
+- name: Maintainerr drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _mtc_groups | length == 0
+      - _mtc_cron_now != _mtc_cron
+      - _mtc_plex_host | length == 0
+    fail_msg: >-
+      {{ instance }} has {{ _mtc_groups | length }} canary rule group(s), rules cron
+      "{{ _mtc_cron_now }}" and Plex host "{{ _mtc_plex_host }}" on a fresh install: data
+      survived Remove.
+  when: drill_canary_action == 'fresh'
+
+- name: Maintainerr drill canary | Write the rule group and the cron
+  when: drill_canary_action == 'create'
+  block:
+    # The selected Plex instance's own routed name: its merged routing, on its estate's domain.
+    - name: Maintainerr drill canary | Resolve the Plex instance's routed name
+      ansible.builtin.set_fact:
+        _mtc_plex_fqdn: >-
+          {{ (_routing.subdomain | default(_mtc_plex, true)) ~ '.'
+             ~ (_domains[_routing.estate].domain if _routing.estate | default('', true) | length > 0
+                else _infra.domain | default((_domains | dict2items | selectattr('value.default', 'defined')
+                                              | selectattr('value.default') | map(attribute='value.domain')
+                                              | first) | default(''), true)) }}
+      vars:
+        _infra: "{{ homelabinfra_config.infrastructure | default({}) }}"
+        _domains: "{{ _infra.domains | default({}) }}"
+        _instance_file: "{{ playbook_dir ~ '/../../../config/apps/' ~ _mtc_plex ~ '.yml' }}"
+        _routing: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/app-defaults/plex.yml') | from_yaml).plex_defaults.routing
+             | combine(((lookup('ansible.builtin.file', _instance_file, errors='ignore') | default('', true) | from_yaml)
+                        | default({}, true)).routing | default({}), recursive=True) }}
+      when: _mtc_plex_host | length == 0
+
+    # Maintainerr saves the Plex server only once it holds a Plex token, and the token
+    # only through its own route.
+    - name: Maintainerr drill canary | Connect the lab Plex
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body: "{{ item.body }}"
+        status_code: [200, 201, 400, 500]
+      register: _mtc_connect
+      changed_when: true
+      no_log: true  # the first item carries the Plex token
+      loop:
+        - path: settings/plex/token
+          method: POST
+          body: {plex_auth_token: "{{ homelabinfra_vault.media[_mtc_plex].token }}"}
+        - path: settings
+          method: PATCH
+          body:
+            media_server_type: plex
+            plex_name: "{{ _mtc_plex }}"
+            plex_hostname: "{{ _mtc_plex_fqdn }}"
+            plex_port: 443
+            plex_ssl: 1
+            plex_manual_mode: 1
+      when: _mtc_plex_host | length == 0
+
+    - name: Maintainerr drill canary | Require the Plex connection saved
+      ansible.builtin.assert:
+        that: _mtc_connect.results | rejectattr('json.code', 'defined') | list | length == 0
+              and _mtc_connect.results | map(attribute='json.code') | unique == [1]
+        fail_msg: >-
+          {{ instance }} refused the Plex connection: HTTP
+          {{ _mtc_connect.results | map(attribute='status') | list }}
+          {{ _mtc_connect.results | map(attribute='json', default={}) | map(attribute='message', default='') | list }}
+          for the token, then the server.
+      when: _mtc_connect is not skipped
+
+    - name: Maintainerr drill canary | Read the Plex libraries
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/media-server/libraries"
+        headers: "{{ drill_app_headers }}"
+        status_code: [200, 500, 502, 503]
+      register: _mtc_libraries
+      changed_when: false
+
+    - name: Maintainerr drill canary | Require a Plex library
+      ansible.builtin.assert:
+        that: _mtc_libraries.status == 200 and _mtc_libraries.json | length > 0
+        fail_msg: >-
+          {{ instance }} lists no library from {{ _mtc_plex }} (HTTP {{ _mtc_libraries.status }}):
+          {{ _mtc_libraries.json | default(_mtc_libraries.msg | default('')) }}. The lab Plex needs one
+          library; its own drill canary makes one.
+
+    - name: Maintainerr drill canary | Create the rule group
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/rules"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          name: "{{ _mtc_canary }}"
+          description: recovery drill canary; inactive, no rules, does nothing
+          libraryId: "{{ _library.id | string }}"
+          dataType: "{{ 'movie' if _library.type == 'movie' else 'show' }}"
+          isActive: false
+          useRules: false
+          arrAction: 4
+          rules: []
+        status_code: [200, 201, 400, 500, 502, 503]
+      vars:
+        _library: "{{ (_mtc_libraries.json | selectattr('type', 'equalto', 'movie') | list + _mtc_libraries.json) | first }}"
+      register: _mtc_group
+      changed_when: true
+      when: _mtc_groups | length == 0
+
+    - name: Maintainerr drill canary | Require the rule group
+      ansible.builtin.assert:
+        that: _mtc_group.status in [200, 201] and (_mtc_group.json.code | default(1)) == 1
+        fail_msg: >-
+          {{ instance }} refused the rule group (HTTP {{ _mtc_group.status }}):
+          {{ (_mtc_group.json | default({})).message | default(_mtc_group.msg | default('')) }}
+      when: _mtc_group is not skipped
+
+    - name: Maintainerr drill canary | Save the cron
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/settings"
+        method: PATCH
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body: {rules_handler_job_cron: "{{ _mtc_cron }}"}
+      changed_when: true
+
+- name: Maintainerr drill canary | Read back the settings and the rule groups
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item }}"
+    headers: "{{ drill_app_headers }}"
+  register: _mtc_now
+  changed_when: false
+  no_log: true  # the settings carry the Plex token and the API key
+  loop: [settings, rules]
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Maintainerr drill canary | Require the inactive do-nothing rule group and the cron
+  ansible.builtin.assert:
+    that:
+      - _groups | length == 1
+      - not (_groups[0].isActive | bool)
+      - _groups[0].collection.arrAction | default(_groups[0].arrAction | default(-1)) | int == 4
+      - _cron == _mtc_cron
+    fail_msg: >-
+      {{ instance }} holds {{ _groups | length }} canary rule group(s)
+      {{ _groups | map(attribute='isActive') | list }} and rules cron "{{ _cron }}".
+  vars:
+    _groups: "{{ _mtc_now.results[1].json | selectattr('name', 'equalto', _mtc_canary) | list }}"
+    _cron: "{{ _mtc_now.results[0].json.rules_handler_job_cron }}"
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Maintainerr drill canary | Delete the rule group and reset the cron after the final verify
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/{{ item.path }}"
+    method: "{{ item.method }}"
+    headers: "{{ drill_app_headers }}"
+    body_format: "{{ 'json' if item.body is defined else omit }}"
+    body: "{{ item.body | default(omit) }}"
+    status_code: [200, 204, 400, 404, 500]
+  register: _mtc_deleted
+  changed_when: true
+  loop:
+    - path: "rules/{{ (_mtc_now.results[1].json | selectattr('name', 'equalto', _mtc_canary) | first).id }}"
+      method: DELETE
+    - {path: settings, method: PATCH, body: {rules_handler_job_cron: "{{ _mtc_default_cron }}"}}
+  loop_control:
+    label: "{{ item.method }} {{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+- name: Maintainerr drill canary | Require every delete
+  ansible.builtin.assert:
+    that: _mtc_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+    fail_msg: >-
+      {{ instance }} refused a canary delete: HTTP statuses
+      {{ _mtc_deleted.results | map(attribute='status') | list }} for the rule group, then the cron.
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
