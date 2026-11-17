@@ -173,7 +173,10 @@
            else {'sso_application': -1, 'sso_provider': -1}) }}
   vars:
     _cw_apps: "{{ _cw_ak.results[0].json.results | default([]) }}"
+    # Authentik's proxy provider is a kind of OAuth2 provider, so the OAuth2 list also
+    # returns it: count each pk once.
     _cw_providers: >-
-      {{ (_cw_ak.results[1].json.results | default([]))
-         + (_cw_ak.results[2].json.results | default([])) }}
+      {{ ((_cw_ak.results[1].json.results | default([]))
+          + (_cw_ak.results[2].json.results | default([])))
+         | unique(attribute='pk') }}
   when: _cw_sso == 'authentik'

@@ -24,10 +24,12 @@
   ansible.builtin.include_tasks: "{{ item }}"
   vars:
     k8s_namespace_for: "{{ instance }}"
-  loop:
-    - ../kubernetes/resolve-cluster.yml
-    - ../kubernetes/derive-namespace.yml
-  when: _rat_kind == 'kubernetes' and k8s_api_host is not defined
+  # resolve-app-target.yml resolves the cluster but not the namespace, so look up each one
+  # that is missing.
+  loop: >-
+    {{ ([] if k8s_api_host is defined else ['../kubernetes/resolve-cluster.yml'])
+       + ([] if k8s_namespace is defined else ['../kubernetes/derive-namespace.yml']) }}
+  when: _rat_kind == 'kubernetes'
 
 - name: Drill exec | Build the command for the hosting method
   ansible.builtin.set_fact:

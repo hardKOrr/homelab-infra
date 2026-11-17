@@ -36,6 +36,11 @@ slskd_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
 
+  # Drill canary: a marker file in config_path, the directory the backup archives. slskd is
+  # transient and Deploy writes all of its settings, so a marker is the whole canary.
+  drill:
+    canary_path: config_path
+
   app:
     service_name: slskd   # native systemd unit — Remove stops it whatever the instance is named
     # The key ansible/vars/media-wiring.yml is looked up by. It is already

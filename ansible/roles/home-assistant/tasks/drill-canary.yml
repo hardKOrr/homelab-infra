@@ -1,0 +1,81 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Home Assistant's
+# WebSocket API from files/drill-canary.py in the app's own Python (tasks/drill/app-exec.yml),
+# as test(home-assistant) #407 defined it:
+#   data           input_boolean helper p2-canary-ha-<id>
+#   configuration  core location_name set to the canary name (default Home)
+# Deploy provisions no login, so a create on an instance that has not finished onboarding's
+# user step makes the lab-only owner kept in Vaultwarden item
+# homelab-infra/apps/<instance>-drill-owner (kept when it exists), and a fresh instance is
+# one still at that step: it has no users, so no canary.
+# The final verify (drill_final) deletes the helper and sets location_name back to Home.
+- name: Home Assistant drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _hac_canary: "p2-canary-ha-{{ drill_canary_id }}"
+    _hac_owner_item: "{{ instance }}-drill-owner"
+    _hac_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+# Reads the vault, not _hac_owner: a block's condition is checked again before each of its
+# tasks, and the first task sets _hac_owner's password.
+- name: Home Assistant drill canary | Store a new drill owner
+  when: >-
+    drill_canary_action == 'create'
+    and (homelabinfra_vault.apps | default({})).get(_hac_owner_item, {}).password | default('') | length == 0
+  block:
+    - name: Home Assistant drill canary | Choose the drill owner
+      ansible.builtin.set_fact:
+        _hac_owner:
+          username: drill-owner
+          password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    # Stored before onboarding, so a run that fails after it never loses the password.
+    - name: Home Assistant drill canary | Store the drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _hac_owner_item }}"
+        vault_item_fields:
+          username: "{{ _hac_owner.username }}"
+          password: "{{ _hac_owner.password }}"
+        vault_item_secret_fields: [password]
+
+- name: Home Assistant drill canary | Run the client in Home Assistant's runtime
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv:
+      - "{{ (home_assistant_native_venv ~ '/bin/python') if _rat_kind == 'native' else 'python3' }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', 'drill-canary.py') }}"
+    drill_exec_stdin: >-
+      {{ {'action': drill_canary_action, 'final': drill_final | default(false) | bool,
+          'canary': _hac_canary, 'username': _hac_owner.username | default(''),
+          'password': _hac_owner.password | default('')} | to_json }}
+    drill_exec_container: "{{ instance }}-home-assistant"
+    drill_exec_secret: true
+    drill_exec_changes: "{{ drill_canary_action == 'create' or drill_final | default(false) | bool }}"
+
+- name: Home Assistant drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _hac_state: "{{ drill_exec_result.stdout_lines[-1] | from_json }}"
+
+- name: Home Assistant drill canary | Require the client to finish
+  ansible.builtin.assert:
+    that: _hac_state.error is not defined
+    fail_msg: "{{ instance }}: {{ _hac_state.error | default('') }}"
+
+- name: Home Assistant drill canary | Require an instance with no users when fresh
+  ansible.builtin.assert:
+    that: not (_hac_state.onboarded | bool)
+    fail_msg: "{{ instance }} already has users on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Home Assistant drill canary | Require the helper and the setting
+  ansible.builtin.assert:
+    that:
+      - _hac_state.helpers == [_hac_canary]
+      - _hac_state.location == _hac_canary
+    fail_msg: >-
+      {{ instance }} holds helpers {{ _hac_state.helpers }} and location_name
+      '{{ _hac_state.location }}'.
+  when: drill_canary_action in ['create', 'verify']

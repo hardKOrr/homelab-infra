@@ -27,7 +27,8 @@ it authorizes Remove with delete_data=true and overwrite Restore on this instanc
 
 The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
 (modes create, fresh, verify), else a task hook roles/<role>/tasks/drill-canary.yml or a
-marker file in the app-defaults' drill.canary_path, both through
+marker file in the app-defaults' drill.canary_path (one path, or one per hosting
+method), both through
 playbooks/maintenance/drill-canary.yml. With none, the drill runs and its result says
 canary=none. The marker proves the backup transport, not that the app reads its data.
 
@@ -209,9 +210,13 @@ class Drill:
         if method and not self.method:
             self.method = method.group(1)
             self.say(f"METHOD {self.method}")
-            if self.tier == "marker" and self.method == "kubernetes":
+            # A canary_path mapping names a path per hosting method; a plain path is a
+            # guest path, so it has no meaning inside a pod.
+            path = (self.canary.get(self.method, "") if isinstance(self.canary, dict)
+                    else "" if self.method == "kubernetes" else self.canary)
+            if self.tier == "marker" and not path:
                 self.tier, self.canary = "none", ""
-                self.say("CANARY none: a marker file needs a Docker or native guest")
+                self.say(f"CANARY none: no marker path for a {self.method} guest")
 
     def remove(self, **extra):
         self.playbook("remove", "playbooks/apps/remove.yml", **extra)

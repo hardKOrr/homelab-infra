@@ -1,7 +1,8 @@
 #!/bin/bash
 # Lint gate. Run from anywhere: bash gate/lint.sh
 # ansible-lint over ansible/{playbooks,roles,tasks,vars}, Jinja parsing, repository links,
-# fixture secrets, GitHub workflow policy and repository structure. Arguments are ignored.
+# fixture secrets, GitHub workflow policy, repository structure and duplicate YAML keys.
+# Arguments are ignored.
 set -euo pipefail
 
 # Stdin is closed on purpose: ansible-lint executes scripts it finds under roles/*/files/
@@ -47,3 +48,8 @@ cd "$repo"
 "$py" gate/check-fixture-secrets.py
 "$py" gate/check-workflow-policy.py
 "$py" gate/check-structure.py
+# A duplicate key silently replaces the first block, and the min profile above only warns.
+mapfile -t yaml_files < <(git ls-files '*.yml' '*.yaml')
+"$HOME/.venvs/homelab-ansible/bin/yamllint" -f parsable \
+    -d '{rules: {key-duplicates: enable}}' "${yaml_files[@]}"
+echo "check-yaml-keys: ${#yaml_files[@]} YAML file(s), 0 duplicate key(s)"

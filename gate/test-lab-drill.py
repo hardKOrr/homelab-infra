@@ -35,6 +35,9 @@ if "expect=absent" not in out.split("wiring-remove", 1)[-1].splitlines()[0]:
 if "delete_data=true" not in out or "pre_restore_point=<backup-pre-restore-point>" not in out:
     failures.append("Remove deletes data and Restore passes the pre-restore point")
 
+if "canary=marker {'native': '/etc/wireguard'" not in plan("wireguard"):
+    failures.append("WireGuard's drill.canary_path maps each hosting method to a marker path")
+
 if "canary=hook" not in plan("influxdb"):
     failures.append("roles/influxdb/tasks/drill-canary.yml selects the hook canary")
 

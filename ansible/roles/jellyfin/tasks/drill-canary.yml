@@ -1,0 +1,180 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Jellyfin's API as the
+# admin Deploy records in homelab-infra/media/<instance>, as test(jellyfin) #447 defined it:
+#   data           library p2-canary-jellyfin-<id> (no folders, so nothing scans) and
+#                  non-admin user p2-canary-jellyfin-<id>
+#   configuration  server setting LogFileRetentionDays 9 (default 3; Deploy never sets it)
+# Requests run on the stack host, whose firewall admits only the proxy to the app port.
+# The final verify (drill_final) deletes the library and the user and sets the setting back.
+- name: Jellyfin drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Jellyfin drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _jfc_canary: "p2-canary-jellyfin-{{ drill_canary_id }}"
+    _jfc_days: 9
+
+- name: Jellyfin drill canary | Sign in as the admin
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/Users/AuthenticateByName"
+    method: POST
+    headers: "{{ drill_app_headers | combine(_mb_client) }}"
+    body_format: json
+    body:
+      Username: "{{ app_config.app.admin_user | default('admin') }}"
+      Pw: "{{ homelabinfra_vault.media[instance].password }}"
+    status_code: [200, 400, 401, 403, 500]
+  register: _jfc_auth
+  vars:
+    _mb_client:
+      Authorization: >-
+        MediaBrowser Client="homelab-infra-drill", Device="lab-drill",
+        DeviceId="lab-drill-{{ instance }}", Version="1.0.0"
+  changed_when: false
+  no_log: true
+
+- name: Jellyfin drill canary | Require the admin sign-in
+  ansible.builtin.assert:
+    that: _jfc_auth.status == 200
+    fail_msg: >-
+      {{ instance }} refused the admin login in homelab-infra/media/{{ instance }}
+      (HTTP {{ _jfc_auth.status }}): {{ _jfc_auth.content | default(_jfc_auth.msg | default('')) | truncate(200) }}
+
+- name: Jellyfin drill canary | Keep the session
+  ansible.builtin.set_fact:
+    _jfc_headers: >-
+      {{ drill_app_headers | combine({'Authorization': 'MediaBrowser Token="'
+         ~ _jfc_auth.json.AccessToken ~ '"'}) }}
+  no_log: true
+
+- name: Jellyfin drill canary | Read the libraries, users and configuration
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item }}"
+    headers: "{{ _jfc_headers }}"
+  register: _jfc_read
+  changed_when: false
+  no_log: true
+  loop: [Library/VirtualFolders, Users, System/Configuration]
+
+- name: Jellyfin drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _jfc_libraries: "{{ _jfc_read.results[0].json | map(attribute='Name') | select('equalto', _jfc_canary) | list }}"
+    _jfc_users: "{{ _jfc_read.results[1].json | selectattr('Name', 'equalto', _jfc_canary) | list }}"
+    _jfc_config: "{{ _jfc_read.results[2].json }}"
+
+- name: Jellyfin drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _jfc_libraries | length == 0
+      - _jfc_users | length == 0
+      - _jfc_config.LogFileRetentionDays | int != _jfc_days
+    fail_msg: >-
+      {{ instance }} has {{ _jfc_libraries | length }} canary library(ies), {{ _jfc_users | length }}
+      canary user(s) and LogFileRetentionDays {{ _jfc_config.LogFileRetentionDays }} on a fresh
+      install: data survived Remove.
+  when: drill_canary_action == 'fresh'
+
+- name: Jellyfin drill canary | Write the library, the user and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: Jellyfin drill canary | Create the library
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/Library/VirtualFolders?name={{ _jfc_canary | urlencode }}&collectionType=movies&refreshLibrary=false"
+        method: POST
+        headers: "{{ _jfc_headers }}"
+        body_format: json
+        body: {LibraryOptions: {}}
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      when: _jfc_libraries | length == 0
+
+    - name: Jellyfin drill canary | Create the user
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/Users/New"
+        method: POST
+        headers: "{{ _jfc_headers }}"
+        body_format: json
+        body:
+          Name: "{{ _jfc_canary }}"
+          Password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      changed_when: true
+      no_log: true
+      when: _jfc_users | length == 0
+
+    - name: Jellyfin drill canary | Save the setting
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/System/Configuration"
+        method: POST
+        headers: "{{ _jfc_headers }}"
+        body_format: json
+        body: "{{ _jfc_config | combine({'LogFileRetentionDays': _jfc_days}) }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+
+    - name: Jellyfin drill canary | Read back after the write
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/{{ item }}"
+        headers: "{{ _jfc_headers }}"
+      register: _jfc_reread
+      changed_when: false
+      no_log: true
+      loop: [Library/VirtualFolders, Users, System/Configuration]
+
+    - name: Jellyfin drill canary | Keep what the instance holds after the write
+      ansible.builtin.set_fact:
+        _jfc_libraries: "{{ _jfc_reread.results[0].json | map(attribute='Name') | select('equalto', _jfc_canary) | list }}"
+        _jfc_users: "{{ _jfc_reread.results[1].json | selectattr('Name', 'equalto', _jfc_canary) | list }}"
+        _jfc_config: "{{ _jfc_reread.results[2].json }}"
+
+- name: Jellyfin drill canary | Require the library, the non-admin user and the setting
+  ansible.builtin.assert:
+    that:
+      - _jfc_libraries == [_jfc_canary]
+      - _jfc_users | length == 1
+      - not (_jfc_users[0].Policy.IsAdministrator | bool)
+      - _jfc_config.LogFileRetentionDays | int == _jfc_days
+    fail_msg: >-
+      {{ instance }} holds libraries {{ _jfc_libraries }}, {{ _jfc_users | length }} canary
+      user(s) and LogFileRetentionDays {{ _jfc_config.LogFileRetentionDays }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Jellyfin drill canary | Delete the canary after the final verify
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/{{ item.path }}"
+    method: "{{ item.method }}"
+    headers: "{{ _jfc_headers }}"
+    # A delete has no body; a JSON content type without one is refused.
+    body_format: "{{ 'json' if item.body is defined else omit }}"
+    body: "{{ item.body | default(omit) }}"
+    status_code: [200, 204, 400, 401, 403, 404, 405, 500]
+  register: _jfc_deleted
+  changed_when: true
+  no_log: true
+  loop:
+    - {path: "Library/VirtualFolders?name={{ _jfc_canary | urlencode }}&refreshLibrary=false", method: DELETE}
+    - {path: "Users/{{ _jfc_users[0].Id }}", method: DELETE}
+    - path: System/Configuration
+      method: POST
+      body: "{{ _jfc_config | combine({'LogFileRetentionDays': 3}) }}"
+  loop_control:
+    label: "{{ item.method }} {{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+- name: Jellyfin drill canary | Require every delete
+  ansible.builtin.assert:
+    that: _jfc_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+    fail_msg: >-
+      {{ instance }} refused a canary delete: HTTP statuses
+      {{ _jfc_deleted.results | map(attribute='status') | list }} for the steps in order.
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

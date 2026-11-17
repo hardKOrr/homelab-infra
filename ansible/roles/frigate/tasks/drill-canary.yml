@@ -1,0 +1,120 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Frigate's internal API
+# (127.0.0.1:5000 in the app's runtime, unauthenticated by design) with tasks/drill/app-exec.yml,
+# as test(frigate) #446 defined it:
+#   data           viewer user p2_canary_frigate_<id> in Frigate's database
+#   configuration  ui.time_format 24hour in config.yml (Deploy seeds config.yml once and
+#                  then leaves settings saved through the API in place)
+# The final verify (drill_final) deletes the user and the setting.
+- name: Frigate drill canary | Name the canary
+  ansible.builtin.set_fact:
+    # Frigate usernames allow letters, digits, dots and underscores only.
+    _fg_canary: "p2_canary_frigate_{{ drill_canary_id | replace('-', '_') }}"
+    _fg_api: http://127.0.0.1:5000/api
+    # config/set takes a JSON body; an empty value removes the key.
+    _fg_config_set: [curl, -fsS, -X, PUT, -H, "Content-Type: application/json", --data-binary, "@-",
+                     "http://127.0.0.1:5000/api/config/set"]
+
+- name: Frigate drill canary | Write the user and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: Frigate drill canary | Read the users
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: [curl, -fsS, "{{ _fg_api }}/users"]
+
+    - name: Frigate drill canary | Keep the user names
+      ansible.builtin.set_fact:
+        _fg_before: "{{ drill_exec_result.stdout | from_json | map(attribute='username') | list }}"
+
+    # The canary user is lab-only and deleted after the drill, so its password is
+    # generated and never stored.
+    - name: Frigate drill canary | Add the viewer user
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv:
+          - curl
+          - -sS
+          - -w
+          - "\n%{http_code}"
+          - -X
+          - POST
+          - -H
+          - "Content-Type: application/json"
+          - --data-binary
+          - "@-"
+          - "{{ _fg_api }}/users"
+        drill_exec_stdin: >-
+          {{ {'username': _fg_canary, 'role': 'viewer',
+              'password': lookup('ansible.builtin.password', '/dev/null', length=24,
+                                 chars=['ascii_letters', 'digits'])} | to_json }}
+        drill_exec_secret: true
+        drill_exec_changes: true
+      when: _fg_canary not in _fg_before
+
+    - name: Frigate drill canary | Require the new user
+      ansible.builtin.assert:
+        that: drill_exec_result.stdout_lines[-1] in ['200', '201']
+        fail_msg: >-
+          {{ instance }} refused the canary user (HTTP {{ drill_exec_result.stdout_lines[-1] }}):
+          {{ drill_exec_result.stdout_lines[:-1] | join(' ') | truncate(300) }}
+      when: _fg_canary not in _fg_before
+
+    - name: Frigate drill canary | Save the setting
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: "{{ _fg_config_set }}"
+        drill_exec_stdin: "{{ {'config_data': {'ui': {'time_format': '24hour'}}, 'requires_restart': 0} | to_json }}"
+        drill_exec_changes: true
+
+- name: Frigate drill canary | Read the users
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [curl, -fsS, "{{ _fg_api }}/users"]
+
+- name: Frigate drill canary | Keep the canary user
+  ansible.builtin.set_fact:
+    _fg_users: "{{ drill_exec_result.stdout | from_json | selectattr('username', 'equalto', _fg_canary) | list }}"
+
+- name: Frigate drill canary | Read the saved config
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [curl, -fsS, "{{ _fg_api }}/config/raw"]
+
+# config/raw answers with the file as a JSON string.
+- name: Frigate drill canary | Keep the saved time format
+  ansible.builtin.set_fact:
+    _fg_time_format: >-
+      {{ ((drill_exec_result.stdout | from_json if drill_exec_result.stdout is match('\s*"')
+           else drill_exec_result.stdout) | from_yaml).ui.time_format | default('') }}
+
+- name: Frigate drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _fg_users | length == 0
+      - _fg_time_format != '24hour'
+    fail_msg: "{{ instance }} already has {{ _fg_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Frigate drill canary | Require the viewer user and the setting
+  ansible.builtin.assert:
+    that:
+      - _fg_users | length == 1
+      - _fg_users[0].role | default('viewer') == 'viewer'
+      - _fg_time_format == '24hour'
+    fail_msg: >-
+      {{ instance }} holds {{ _fg_users | length }} canary user(s) and ui.time_format
+      '{{ _fg_time_format }}'.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Frigate drill canary | Delete the canary after the final verify
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: "{{ item.argv }}"
+    drill_exec_stdin: "{{ item.stdin | default(omit) }}"
+    drill_exec_changes: true
+  loop:
+    - argv: [curl, -fsS, -X, DELETE, "{{ _fg_api }}/users/{{ _fg_canary }}"]
+    - argv: "{{ _fg_config_set }}"
+      stdin: "{{ {'config_data': {'ui': {'time_format': ''}}, 'requires_restart': 0} | to_json }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

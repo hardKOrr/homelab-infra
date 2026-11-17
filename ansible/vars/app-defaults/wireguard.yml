@@ -48,6 +48,12 @@ wireguard_defaults:
   # playbooks/maintenance/check-wiring.yml: Deploy wires a DNS record and a monitor, no route.
   drill:
     wiring: [dns, monitor]
+    # A marker beside the tunnel keys, in the directory the backup archives (Docker) or the
+    # guest backup holds (native).
+    canary_path:
+      native: /etc/wireguard
+      docker: "/opt/{{ instance }}/config"
+      kubernetes: /config         # inside the pod: the config volume
   routing:
     proxy: none
     identity: none

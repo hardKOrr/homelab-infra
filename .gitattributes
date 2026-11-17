@@ -5,5 +5,7 @@ gate/*.sh text eol=lf
 ansible/scripts/*.sh text eol=lf
 # Role files/ ship verbatim to Linux guests (lab-* scripts etc.) — force LF.
 ansible/roles/*/files/* text eol=lf
+# Images under files/ are binary; the rule above would rewrite their bytes.
+ansible/roles/*/files/*.png binary
 # Rundeck bootstrap runs on a Proxmox node — force LF so the shebang never breaks.
 rundeck/*.sh text eol=lf
