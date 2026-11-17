@@ -1,0 +1,24 @@
+---
+# Remove hook (playbooks/apps/remove.yml, Play 1 on localhost): an estate's Authentik
+# removed with delete_data=true takes its credentials item, homelab-infra/estates/<estate>/sso,
+# with it, when that item names this instance. Left behind, the item still points every
+# later app on the estate at an Authentik that is gone (its address may by then belong to
+# another guest), and that app's Deploy fails in its SSO wiring. Without delete_data the
+# item stays: a redeploy over the kept database needs those credentials. The default
+# estate's homelab-infra/sso is a platform item every run reads, so it is never deleted here.
+- name: Authentik remove | Resolve the estate's SSO item
+  ansible.builtin.set_fact:
+    _ak_rm_estate: "{{ app_config.routing.estate | default('', true) }}"
+    _ak_rm_recorded: >-
+      {{ ((homelabinfra_vault.estates | default({}))[app_config.routing.estate | default('', true)]
+          | default({})).sso | default({}) }}
+  no_log: true  # the recorded item carries the estate's Authentik token and passwords
+
+- name: Authentik remove | Withdraw the estate's SSO credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/delete-item.yml
+  vars:
+    vault_item_name: "homelab-infra/estates/{{ _ak_rm_estate }}/sso"
+  when:
+    - delete_data | default(false) | bool
+    - _ak_rm_estate | length > 0
+    - _ak_rm_recorded.instance | default('') == instance

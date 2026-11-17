@@ -8,7 +8,7 @@ role must use for each common operation.
 | --- | --- |
 | `app-wiring/` | App-to-app integration: download clients, *arr registrations, Open WebUI upstreams |
 | `backup/` | PBS target resolution and the PBS client (`backup/scripts/pbs-client.sh`) |
-| `bitwarden/` | Vaultwarden session checks and item reads and upserts |
+| `bitwarden/` | Vaultwarden session checks and item reads, upserts and deletes |
 | `bootstrap/` | One-time platform setup: PBS, its second copy, unattended upgrades, generated facts |
 | `config/` | Config Doctor run and writing user config files |
 | `database/` | Database backends, per-app provisioning, dump, restore, drop and the drill canary (`database/scripts/`) |
