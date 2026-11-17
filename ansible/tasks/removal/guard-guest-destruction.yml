@@ -1,8 +1,11 @@
 ---
 # Remove App, Play 1 (localhost): classify the hosting kind (_rm_kind) and, only for
-# destroy_guest=true, prove the native guest is owned (_+lab), carries exactly its
-# _<instance> tag and is not shared, or that a registered database backend is already
-# absent from Proxmox. Runs before any unwiring so a refusal changes nothing.
+# destroy_guest=true, prove the guest is owned (_+lab) and no other app uses it, or that
+# a registered database backend is already absent from Proxmox. The guest is the
+# instance's own native or Docker VM/LXC, found by exact name, or the app's Docker stack
+# host when this app is the last one on it. A guest an earlier Remove already untagged
+# carries no app tag at all and still qualifies, so an unused guest can be destroyed
+# without a redeploy. Runs before any unwiring so a refusal changes nothing.
 # Results: _rm_kind, _rm_destroy_guest_* and _rm_database_backend_missing_guest.
 
 - name: Classify app hosting before any guest destruction request
@@ -19,9 +22,27 @@
   ansible.builtin.meta: refresh_inventory
   when: destroy_guest | default(false) | bool
 
+- name: Classify the guest selected for explicit destruction
+  ansible.builtin.set_fact:
+    _rm_destroy_guest_owner_tag: >-
+      {{ ('_.stack+' ~ _rm_stack_id)
+         if _rm_kind == 'docker' and app_config.stack | default('') | length > 0 else '' }}
+  when: destroy_guest | default(false) | bool
+
+- name: Resolve the stack host selected for explicit destruction
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "{{ _rm_destroy_guest_owner_tag | default('') }}"
+  when:
+    - destroy_guest | default(false) | bool
+    - _rm_destroy_guest_owner_tag | default('') | length > 0
+
 - name: Resolve the exact guest selected for explicit destruction
   ansible.builtin.set_fact:
-    _rm_destroy_guest_host: "{{ instance if instance in (groups['all'] | default([])) else '' }}"
+    _rm_destroy_guest_host: >-
+      {{ ((groups[tag_group_name] | default([]) | first) if (groups[tag_group_name] | default([]) | length) == 1 else '')
+         if _rm_destroy_guest_owner_tag | default('') | length > 0
+         else (instance if instance in (groups['all'] | default([])) else '') }}
   when: destroy_guest | default(false) | bool
 
 - name: Identify a registered database backend missing from the inventory
@@ -92,40 +113,46 @@
   ansible.builtin.assert:
     that:
       - delete_data | default(false) | bool
-      - _rm_kind == 'native'
+      - _rm_kind in ['native', 'docker']
       - >-
         (_rm_destroy_guest_host | length > 0)
         or (_rm_database_backend_missing_guest | default(false) | bool)
-      - _rm_destroy_guest_host | length == 0 or _rm_destroy_guest_host == instance
+      - >-
+        _rm_destroy_guest_host | length == 0 or _rm_destroy_guest_host == instance
+        or _rm_destroy_guest_owner_tag | default('') | length > 0
     fail_msg: >-
-      destroy_guest=true requires delete_data=true and a native app instance that
-      resolves to its matching inventory guest, or an already absent registered
-      database backend for registry cleanup; Docker stack hosts, appliances and
-      Kubernetes nodes cannot be destroyed through Remove App.
+      destroy_guest=true requires delete_data=true and either a native or Docker app
+      whose own guest is named after the instance, a Docker app whose stack resolves to
+      exactly one host, or an already absent registered database backend for registry
+      cleanup; appliances and Kubernetes nodes cannot be destroyed through Remove App.
   when: destroy_guest | default(false) | bool
 
+# The sibling check is what makes a stack host destroyable: once this app's tag is
+# set aside, no other app may remain on the guest. A stack host may be `_.shared`, since
+# with no app left nothing crosses an estate through it.
 - name: Verify ownership and non-shared tags before unwiring
   ansible.builtin.assert:
     that:
       - hostvars[_rm_destroy_guest_host].proxmox_vmtype | default('') in ['lxc', 'qemu']
       - hostvars[_rm_destroy_guest_host].proxmox_vmid | default(0) | int > 0
-      - hostvars[_rm_destroy_guest_host].proxmox_name | default(_rm_destroy_guest_host, true) == instance
-      - "'_+lab' in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
-      - "('_' ~ instance) in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
-      - "'_.shared' not in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
       - >-
-        (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
-         | select('match', '^_[.]stack[+]') | list | length) == 0
+        _rm_destroy_guest_owner_tag | default('') | length > 0
+        or hostvars[_rm_destroy_guest_host].proxmox_name | default(_rm_destroy_guest_host, true) == instance
+      - "'_+lab' in _rm_guard_tags"
+      - "'_.shared' not in _rm_guard_tags or _rm_destroy_guest_owner_tag | default('') | length > 0"
       - >-
-        (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
-         | select('match', '^_[.]cluster[+]') | list | length) == 0
+        (_rm_guard_tags | select('match', '^_[.]stack[+]') | list)
+        == ([_rm_destroy_guest_owner_tag | default('')] if _rm_destroy_guest_owner_tag | default('') | length > 0 else [])
+      - (_rm_guard_tags | select('match', '^_[.]cluster[+]') | list | length) == 0
       - >-
-        (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
-         | select('match', '^_[A-Za-z0-9]')
+        (_rm_guard_tags | select('match', '^_[A-Za-z0-9]')
          | reject('equalto', '_' ~ instance) | list | length) == 0
     fail_msg: >-
-      Refusing destroy_guest=true because the native instance does not resolve to its
-      own LXC or VM with the _+lab ownership tag and exact instance tag.
+      Refusing destroy_guest=true because {{ _rm_destroy_guest_host }} is not an owned
+      _+lab guest used only by {{ instance }}: it lacks _+lab, belongs to another stack
+      or cluster, or still carries another application's tag.
+  vars:
+    _rm_guard_tags: "{{ hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]) }}"
   when:
     - destroy_guest | default(false) | bool
     - _rm_destroy_guest_host | length > 0

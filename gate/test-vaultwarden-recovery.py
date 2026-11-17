@@ -161,7 +161,7 @@ def check_contract_and_dispatch():
     )
     validate_checks = str(validate_destroy["ansible.builtin.assert"]["that"])
     assert "_rm_database_backend_missing_guest" in validate_checks
-    assert "delete_data" in validate_checks and "_rm_kind == 'native'" in validate_checks
+    assert "delete_data" in validate_checks and "_rm_kind in ['native', 'docker']" in validate_checks
     ownership = task_named(remove_pre_tasks, "Verify ownership and non-shared tags before unwiring")
     assert "_rm_destroy_guest_host | length > 0" in str(ownership["when"])
 

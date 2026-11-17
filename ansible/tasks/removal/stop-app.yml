@@ -1,8 +1,9 @@
 ---
 # Remove App, Play 2 (the app's host): bring a Compose project down or stop a native
 # service, run the remove.yml, remove-devices.yml and remove-native-data.yml hooks in
-# place, delete data only with delete_data=true, and destroy an explicitly selected
-# native guest after the final ownership check in tasks/proxmox/destroy-owned-*.yml.
+# place, delete data only with delete_data=true, and destroy an explicitly selected guest
+# (the app's own guest, or its emptied Docker stack host) after the final ownership check
+# in tasks/proxmox/destroy-owned-*.yml.
 # Inputs: remove_kind and remove_guest_* from Play 1's add_host, _rm_* play vars.
 
 # ── Docker app on a shared stack host ──────────────────────────────────────
@@ -142,7 +143,30 @@
         - _rm_delete_data | bool
         - item | length > 0
 
-- name: Destroy the explicitly selected native LXC
+# A Docker guest is destroyed only when its Compose projects are all gone: a container
+# no app tag accounts for is still something the guest runs.
+- name: List the containers left on a Docker guest selected for destruction
+  ansible.builtin.command:
+    argv: [docker, ps, --all, --quiet]
+  register: _rm_remaining_containers
+  changed_when: false
+  when:
+    - _rm_destroy_guest | bool
+    - _rm_delete_data | bool
+    - remove_kind == 'docker'
+
+- name: Refuse to destroy a Docker guest that still runs containers
+  ansible.builtin.assert:
+    that: _rm_remaining_containers.stdout | trim | length == 0
+    fail_msg: >-
+      Refusing to destroy {{ remove_guest_name }}: Docker still lists containers on it
+      after {{ instance }} was removed. Remove the app that owns them first.
+  when:
+    - _rm_destroy_guest | bool
+    - _rm_delete_data | bool
+    - remove_kind == 'docker'
+
+- name: Destroy the explicitly selected LXC
   ansible.builtin.include_tasks: ../proxmox/destroy-owned-lxc.yml
   vars:
     destroy_lxc_instance: "{{ instance }}"
@@ -150,13 +174,14 @@
     destroy_lxc_node: "{{ remove_guest_node }}"
     destroy_lxc_vmid: "{{ remove_guest_vmid }}"
     destroy_lxc_original_tags: "{{ remove_guest_original_tags }}"
+    destroy_lxc_owner_tag: "{{ remove_guest_owner_tag | default('') }}"
   when:
     - _rm_destroy_guest | bool
     - _rm_delete_data | bool
-    - remove_kind == 'native'
+    - remove_kind in ['native', 'docker']
     - proxmox_vmtype == 'lxc'
 
-- name: Destroy the explicitly selected native VM
+- name: Destroy the explicitly selected VM
   ansible.builtin.include_tasks: ../proxmox/destroy-owned-vm.yml
   vars:
     destroy_vm_instance: "{{ instance }}"
@@ -164,8 +189,9 @@
     destroy_vm_node: "{{ remove_guest_node }}"
     destroy_vm_vmid: "{{ remove_guest_vmid }}"
     destroy_vm_original_tags: "{{ remove_guest_original_tags }}"
+    destroy_vm_owner_tag: "{{ remove_guest_owner_tag | default('') }}"
   when:
     - _rm_destroy_guest | bool
     - _rm_delete_data | bool
-    - remove_kind == 'native'
+    - remove_kind in ['native', 'docker']
     - proxmox_vmtype == 'qemu'

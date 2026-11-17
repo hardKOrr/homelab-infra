@@ -74,6 +74,12 @@ def main():
             "args = sys.argv[1:]\n"
             "if args[:2] == ['get', '/nodes/test-node/lxc/123/config']:\n"
             "    print(json.dumps({'hostname': 'postgresql', 'tags': '_+lab;_postgresql'}))\n"
+            "elif args[:2] == ['get', '/nodes/test-node/lxc/124/config']:\n"
+            "    print(json.dumps({'hostname': 'n8n-2', 'tags': '_+lab;_-debian'}))\n"
+            "elif args[:2] == ['get', '/nodes/test-node/lxc/125/config']:\n"
+            "    print(json.dumps({'hostname': 'stack-media', 'tags': '_+lab;_-docker;_.stack+media'}))\n"
+            "elif args[:2] == ['get', '/nodes/test-node/lxc/126/config']:\n"
+            "    print(json.dumps({'hostname': 'stack-busy', 'tags': '_+lab;_-docker;_.stack+busy;_sonarr'}))\n"
             "elif args[:2] == ['get', '/nodes/test-node/qemu/456/config']:\n"
             "    print(json.dumps({'name': 'influxdb', 'tags': '_+lab;_influxdb'}))\n"
             "elif args[:2] == ['get', '/cluster/ha/resources']:\n"
@@ -240,10 +246,71 @@ def main():
             "/api2/json/cluster/backup",
         ] * 2
         assert api_requests == expected_api_reads, api_requests
+
+        # Unused guests: one an earlier Remove already untagged, and a stack host whose
+        # last app was withdrawn. A stack host another app still uses is refused.
+        def destroy_lxc(name, vmid, original_tags, owner_tag=""):
+            calls.unlink(missing_ok=True)
+            play = root / f"destroy-{vmid}.yml"
+            play_vars = {
+                "homelabinfra_config": {
+                    "proxmox": {
+                        "node": "test-node",
+                        "api_host": "127.0.0.1",
+                        "api_port": api_server.server_port,
+                        "api_user": "test-user",
+                        "api_token_id": "test-token",
+                        "api_token_secret": "test-secret",
+                        "nodes": {"test-node": "127.0.0.1"},
+                    },
+                    "ansible": {"ssh_user": "root"},
+                },
+                "destroy_lxc_instance": "n8n-2" if not owner_tag else "sonarr",
+                "destroy_lxc_name": name,
+                "destroy_lxc_node": "test-node",
+                "destroy_lxc_vmid": vmid,
+                "destroy_lxc_original_tags": original_tags,
+                "destroy_lxc_owner_tag": owner_tag,
+            }
+            play.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": play_vars,
+                "environment": {"PATH": str(bindir) + os.pathsep + os.environ["PATH"]},
+                "tasks": [{"ansible.builtin.include_tasks": str(destroy_tasks)}],
+            }]))
+            run = subprocess.run(
+                [str(ansible), "-i", str(inventory), str(play)],
+                cwd=repo, env=env, text=True, capture_output=True, check=False,
+            )
+            made = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            return run, [request[1:3] for request in made if request[0] == "pct"]
+
+        run, pct_calls = destroy_lxc("n8n-2", 124, ["_+lab", "_-debian"])
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert ["destroy", "124"] in pct_calls, pct_calls
+
+        run, pct_calls = destroy_lxc(
+            "stack-media", 125, ["_+lab", "_-docker", "_.stack+media", "_sonarr"], "_.stack+media")
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert ["destroy", "125"] in pct_calls, pct_calls
+
+        run, pct_calls = destroy_lxc(
+            "stack-media", 125, ["_+lab", "_-docker", "_.stack+media", "_sonarr", "_radarr"],
+            "_.stack+media")
+        assert run.returncode != 0 and pct_calls == [], run.stdout
+
+        run, pct_calls = destroy_lxc(
+            "stack-busy", 126, ["_+lab", "_-docker", "_.stack+busy", "_sonarr"], "_.stack+busy")
+        assert run.returncode != 0 and pct_calls == [], run.stdout
+        assert "Refusing to destroy the guest" in run.stdout, run.stdout
+
+        run, pct_calls = destroy_lxc("stack-media", 125, ["_+lab", "_-docker", "_.stack+media"])
+        assert run.returncode != 0 and pct_calls == [], run.stdout
         api_server.shutdown()
         api_server.server_close()
         api_thread.join(timeout=5)
-    print("Owned LXC and VM destruction: registered-node delegation and ownership checks passed")
+    print("Owned LXC and VM destruction: delegation, ownership, unused-guest and stack-host checks passed")
 
 
 if __name__ == "__main__":

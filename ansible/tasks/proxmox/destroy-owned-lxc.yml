@@ -1,8 +1,9 @@
 ---
-# Destroy one dedicated native LXC only after Remove App has stopped its service and
-# withdrawn its instance row/tag. The caller proves the original target identity before
-# unwiring; this task rechecks the live PVE config and refuses to destroy a newly shared
-# guest.
+# Destroy one LXC only after Remove App has stopped its app and withdrawn its instance
+# row/tag: the instance's own guest, or its Docker stack host when the caller passes
+# destroy_lxc_owner_tag `_.stack+<id>`. The caller proves the original target identity
+# before unwiring; this task rechecks the live PVE config and refuses to destroy a guest
+# that another app now uses.
 - name: Register Proxmox nodes before native LXC destruction
   ansible.builtin.import_tasks: register-nodes.yml
 
@@ -16,7 +17,11 @@
       - destroy_lxc_original_tags is sequence
       - destroy_lxc_original_tags is not string
       - "'_+lab' in destroy_lxc_original_tags"
-      - "('_' ~ destroy_lxc_instance) in destroy_lxc_original_tags"
+      - destroy_lxc_owner_tag | default('') is match('^(_[.]stack[+].+)?$')
+      - destroy_lxc_owner_tag | default('') in (destroy_lxc_original_tags + [''])
+      - >-
+        (destroy_lxc_original_tags | select('match', '^_[A-Za-z0-9]')
+         | reject('equalto', '_' ~ destroy_lxc_instance) | list | length) == 0
     fail_msg: >-
       Refusing to destroy the native guest because its original lab ownership or instance
       identity was not verified.
@@ -55,17 +60,21 @@
     that:
       - _destroy_lxc_live_config.hostname | default('') == destroy_lxc_name
       - "'_+lab' in _destroy_lxc_live_tags"
-      - "'_.shared' not in _destroy_lxc_live_tags"
+      - "'_.shared' not in _destroy_lxc_live_tags or destroy_lxc_owner_tag | default('') | length > 0"
       - >-
-        (_destroy_lxc_live_tags | select('match', '^_[.]stack[+]') | list | length) == 0
+        (_destroy_lxc_live_tags | select('match', '^_[.]stack[+]') | list)
+        == ([destroy_lxc_owner_tag] if destroy_lxc_owner_tag | default('') else [])
       - >-
         (_destroy_lxc_live_tags | select('match', '^_[.]cluster[+]') | list | length) == 0
       - >-
         (_destroy_lxc_live_tags | select('match', '^_[A-Za-z0-9]')
          | reject('equalto', '_' ~ destroy_lxc_instance) | list | length) == 0
+      - >-
+        destroy_lxc_owner_tag | default('') | length == 0
+        or (_destroy_lxc_live_tags | select('match', '^_[A-Za-z0-9]') | list | length) == 0
     fail_msg: >-
-      Refusing to destroy the native guest: it changed identity, lost the _+lab ownership
-      tag, or now carries another application's managed tag.
+      Refusing to destroy the guest: it changed identity, lost the _+lab ownership or
+      stack tag, or now carries another application's managed tag.
 
 - name: Destroy owned LXC | Read the guest state
   ansible.builtin.command:

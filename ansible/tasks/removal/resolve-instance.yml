@@ -3,7 +3,7 @@
 # effective stack, run the roles/<app>/tasks/remove-inputs.yml hook, check a named
 # database's ownership before anything is unwired, and resolve the estate.
 # Inputs: instance, optional app and delete_data; _rm_hooks from the play.
-# Results: app_config, _rm_drops_database and the hook's declared flags.
+# Results: app_config, _rm_stack_id, _rm_drops_database and the hook's declared flags.
 
 - name: Load platform vars
   ansible.builtin.import_tasks: ../load-user-vars.yml
@@ -59,6 +59,35 @@
     app_config: >-
       {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
          if app_config.stack is defined else app_config }}
+
+# The stack host an estate-scoped app runs on carries its estate, exactly as the
+# deploy resolved it: `media` is `stack-media-foxglove` in a lab with two estates and
+# plain `stack-media` in a lab with one. A stack that declares `shared: true` is the
+# single lab-wide host for every estate and takes no suffix.
+- name: Load stack sizing defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+    name: _rm_stack_defaults_file
+
+- name: Resolve the stack identity this app was placed on
+  ansible.builtin.set_fact:
+    _rm_stack_id: >-
+      {{ (app_config.stack | default(''))
+         if (_rm_stack_sizing.shared | default(false) | bool) or _rm_estates | length < 2
+         else (app_config.stack | default('')) ~ '-' ~ _rm_estate }}
+  vars:
+    _rm_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+    _rm_stack_sizing: >-
+      {{ ((_rm_stack_defaults_file.stack_defaults | default({}))[app_config.stack | default('')] | default({}))
+         | combine(((homelabinfra_config.infrastructure | default({})).stacks | default({}))[app_config.stack | default('')]
+                   | default({}), recursive=True) }}
+    _rm_default_estate: >-
+      {{ ((_rm_estates | dict2items
+           | selectattr('value.default', 'defined') | selectattr('value.default')
+           | map(attribute='key') | list) | first)
+         | default(_rm_estates | list | first | default(''), true) }}
+    _rm_estate: >-
+      {{ ((app_config.routing | default({})).estate | default('', true)) or _rm_default_estate }}
 
 # Per-app removal inputs, before anything is unwired: roles/<app>/tasks/remove-inputs.yml
 # validates what delete_data will remove and declares facts the later plays read.
