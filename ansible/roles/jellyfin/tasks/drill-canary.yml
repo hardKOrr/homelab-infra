@@ -4,9 +4,12 @@
 #   data           library p2-canary-jellyfin-<id> (no folders, so nothing scans) and
 #                  non-admin user p2-canary-jellyfin-<id>
 #   configuration  server setting LogFileRetentionDays 9 (default 3; Deploy never sets it)
+# Requests run on the stack host, whose firewall admits only the proxy to the app port.
 # The final verify (drill_final) deletes the library and the user and sets the setting back.
 - name: Jellyfin drill canary | Resolve the instance's URL
   ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
 
 - name: Jellyfin drill canary | Name the canary
   ansible.builtin.set_fact:
@@ -14,6 +17,7 @@
     _jfc_days: 9
 
 - name: Jellyfin drill canary | Sign in as the admin
+  delegate_to: "{{ drill_app_delegate }}"
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/Users/AuthenticateByName"
     method: POST
@@ -36,6 +40,7 @@
   no_log: true
 
 - name: Jellyfin drill canary | Read the libraries, users and configuration
+  delegate_to: "{{ drill_app_delegate }}"
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/{{ item }}"
     headers: "{{ _jfc_headers }}"
@@ -63,6 +68,7 @@
   when: drill_canary_action == 'create'
   block:
     - name: Jellyfin drill canary | Create the library
+      delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/Library/VirtualFolders?name={{ _jfc_canary | urlencode }}&collectionType=movies&refreshLibrary=false"
         method: POST
@@ -75,6 +81,7 @@
       when: _jfc_libraries | length == 0
 
     - name: Jellyfin drill canary | Create the user
+      delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/Users/New"
         method: POST
@@ -88,6 +95,7 @@
       when: _jfc_users | length == 0
 
     - name: Jellyfin drill canary | Save the setting
+      delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/System/Configuration"
         method: POST
@@ -99,6 +107,7 @@
       no_log: true
 
     - name: Jellyfin drill canary | Read back after the write
+      delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/{{ item }}"
         headers: "{{ _jfc_headers }}"
@@ -126,6 +135,7 @@
   when: drill_canary_action in ['create', 'verify']
 
 - name: Jellyfin drill canary | Delete the canary after the final verify
+  delegate_to: "{{ drill_app_delegate }}"
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/{{ item.path }}"
     method: "{{ item.method }}"
