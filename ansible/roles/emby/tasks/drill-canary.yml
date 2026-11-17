@@ -22,15 +22,18 @@
   ansible.builtin.uri:
     url: "{{ _ebc_api }}/Users/AuthenticateByName"
     method: POST
-    headers: >-
-      {{ drill_app_headers | combine({'X-Emby-Authorization': 'MediaBrowser Client="homelab-infra-drill",
-         Device="lab-drill", DeviceId="lab-drill-' ~ instance ~ '", Version="1.0.0"'}) }}
+    headers: "{{ drill_app_headers | combine(_mb_client) }}"
     body_format: json
     body:
       Username: "{{ homelabinfra_vault.media[instance].username | default(app_config.app.admin_user | default('admin'), true) }}"
       Pw: "{{ homelabinfra_vault.media[instance].password }}"
     status_code: [200, 400, 401, 403, 500]
   register: _ebc_auth
+  vars:
+    _mb_client:
+      X-Emby-Authorization: >-
+        MediaBrowser Client="homelab-infra-drill", Device="lab-drill",
+        DeviceId="lab-drill-{{ instance }}", Version="1.0.0"
   changed_when: false
   no_log: true
 
