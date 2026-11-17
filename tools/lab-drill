@@ -26,9 +26,9 @@ monitor's, else the route's that check-wiring reports) must answer over HTTPS. R
 it authorizes Remove with delete_data=true and overwrite Restore on this instance only.
 
 The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
-(modes create, fresh, verify), else a task hook roles/<role>/tasks/drill-canary.yml or a
-marker file in the app-defaults' drill.canary_path (one path, or one per hosting
-method), both through
+(URL query drill=create|fresh|verify, id=<drill id>, final=1 on the last verify), else a
+task hook roles/<role>/tasks/drill-canary.yml or a marker file in the app-defaults'
+drill.canary_path (one path, or one per hosting method), both through
 playbooks/maintenance/drill-canary.yml. With none, the drill runs and its result says
 canary=none. The marker proves the backup transport, not that the app reads its data.
 
@@ -263,7 +263,8 @@ class Drill:
             with open(log, "wb") as out:
                 rc = subprocess.run(
                     [os.path.join(REPO, "tools", "lab-browser"), "--ref", self.ref, item,
-                     f"{self.url}/?drill={mode}&scope={self.instance}", self.canary],
+                     f"{self.url}/?drill={mode}&scope={self.instance}&id={self.id}"
+                     + ("&final=1" if step == "final" else ""), self.canary],
                     stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT).returncode
             self.say(f"STEP {label} {'PASS' if rc == 0 else 'FAIL'} log={log}")
             if expect_fail:
