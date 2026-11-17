@@ -32,6 +32,7 @@ caddy_defaults:
     canary_path:
       native: /etc/caddy
       docker: "/opt/{{ instance }}/config"
+      kubernetes: /config         # inside the pod: the config volume
 
   backup:
     enabled: true

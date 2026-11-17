@@ -53,6 +53,7 @@ wireguard_defaults:
     canary_path:
       native: /etc/wireguard
       docker: "/opt/{{ instance }}/config"
+      kubernetes: /config         # inside the pod: the config volume
   routing:
     proxy: none
     identity: none

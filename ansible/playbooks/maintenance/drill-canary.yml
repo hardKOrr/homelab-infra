@@ -20,9 +20,10 @@
 # tasks/maintenance/resolve-app-target.yml resolved). Otherwise an app that declares
 # `drill.canary_path` in its app-defaults (a path, the name of an `app` key holding one, or
 # a mapping of hosting method to either) gets a marker file there: a path the role's backup
-# archives, on a Docker or native guest.
-# That proves the backup and restore transport, not that the application reads the data. A browser canary
-# (roles/<role>/browser/*recovery.js) runs from tools/lab-drill instead of this playbook.
+# archives, on the Docker or native guest, or inside the pod for a `kubernetes:` entry
+# (tasks/drill/pod-marker.yml). That proves the backup and restore transport, not that the
+# application reads the data. A browser canary (roles/<role>/browser/*recovery.js) runs
+# from tools/lab-drill instead of this playbook.
 
 - name: "Drill Canary | {{ instance | default('(no instance)') }}"
   hosts: localhost
@@ -70,11 +71,11 @@
       ansible.builtin.assert:
         that: >-
           _dc_hook.stat.exists
-          or (_dc_marker_dir | length > 0 and _rat_kind in ['docker', 'native'])
+          or _dc_marker_dir | length > 0
         fail_msg: >-
-          {{ instance }} has no drill canary: add roles/{{ _dc_role }}/tasks/drill-canary.yml,
-          a browser recovery spec, or drill.canary_path in its app-defaults (Docker or
-          native only).
+          {{ instance }} has no drill canary for {{ _rat_kind }}: add
+          roles/{{ _dc_role }}/tasks/drill-canary.yml, a browser recovery spec, or a
+          drill.canary_path for this hosting method in its app-defaults.
 
     # The marker play writes on the resolved host, which the resolver takes from
     # inventory by name; only a guest homelab-infra owns may be changed.
@@ -84,7 +85,11 @@
         fail_msg: >-
           {{ _rat_host }} does not carry _+lab; the drill writes its marker only on a guest
           homelab-infra owns.
-      when: not _dc_hook.stat.exists
+      when: not _dc_hook.stat.exists and _rat_kind != 'kubernetes'
+
+    - name: Write or check the marker inside the pod
+      ansible.builtin.include_tasks: ../../tasks/drill/pod-marker.yml
+      when: not _dc_hook.stat.exists and _rat_kind == 'kubernetes'
 
     - name: Run the role's canary hook
       ansible.builtin.include_role:
@@ -105,7 +110,7 @@
     _dc_file: "{{ _dc._dc_marker_dir }}/.lab-drill-canary"
   tasks:
     - name: Marker canary
-      when: not _dc._dc_hook.stat.exists
+      when: not _dc._dc_hook.stat.exists and _dc._rat_kind != 'kubernetes'
       block:
         - name: Require the marker directory
           ansible.builtin.stat:

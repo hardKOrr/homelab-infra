@@ -210,10 +210,11 @@ class Drill:
         if method and not self.method:
             self.method = method.group(1)
             self.say(f"METHOD {self.method}")
-            # A canary_path mapping names a path per hosting method.
+            # A canary_path mapping names a path per hosting method; a plain path is a
+            # guest path, so it has no meaning inside a pod.
             path = (self.canary.get(self.method, "") if isinstance(self.canary, dict)
-                    else self.canary)
-            if self.tier == "marker" and (self.method == "kubernetes" or not path):
+                    else "" if self.method == "kubernetes" else self.canary)
+            if self.tier == "marker" and not path:
                 self.tier, self.canary = "none", ""
                 self.say(f"CANARY none: no marker path for a {self.method} guest")
 

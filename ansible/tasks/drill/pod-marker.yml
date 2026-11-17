@@ -1,0 +1,45 @@
+---
+# Marker canary inside a Kubernetes pod, for playbooks/maintenance/drill-canary.yml: the
+# marker goes in _dc_marker_dir as the pod sees it (a volume the shared Kubernetes backup
+# archives), through tasks/drill/app-exec.yml. The Docker and native marker is written on
+# the guest by that playbook's second play.
+#
+# Inputs: instance, drill_action, drill_id, drill_final, _dc_marker_dir and the target
+# from tasks/maintenance/resolve-app-target.yml.
+- name: Pod marker | Name the marker
+  ansible.builtin.set_fact:
+    _pm_file: "{{ _dc_marker_dir }}/.lab-drill-canary"
+
+- name: Pod marker | Write the marker
+  ansible.builtin.include_tasks: app-exec.yml
+  vars:
+    drill_exec_argv: [sh, -c, 'printf "%s\n" "$1" > "$2"', marker, "{{ drill_id }}", "{{ _pm_file }}"]
+    drill_exec_changes: true
+  when: drill_action == 'create'
+
+- name: Pod marker | Look for the marker
+  ansible.builtin.include_tasks: app-exec.yml
+  vars:
+    drill_exec_argv: [sh, -c, 'if [ -e "$1" ]; then cat "$1"; else echo "(absent)"; fi', marker, "{{ _pm_file }}"]
+  when: drill_action != 'create'
+
+- name: Pod marker | Require the marker absent on a fresh instance
+  ansible.builtin.assert:
+    that: drill_exec_result.stdout | trim == '(absent)'
+    fail_msg: "{{ _pm_file }} exists in a fresh {{ instance }} pod: data survived Remove."
+  when: drill_action == 'fresh'
+
+- name: Pod marker | Require the restored marker
+  ansible.builtin.assert:
+    that: drill_exec_result.stdout | trim == drill_id
+    fail_msg: >-
+      {{ _pm_file }} in the {{ instance }} pod holds '{{ drill_exec_result.stdout | trim }}',
+      not {{ drill_id }}, after Restore.
+  when: drill_action == 'verify'
+
+- name: Pod marker | Delete the marker after the last verify
+  ansible.builtin.include_tasks: app-exec.yml
+  vars:
+    drill_exec_argv: [rm, -f, "{{ _pm_file }}"]
+    drill_exec_changes: true
+  when: drill_action == 'verify' and drill_final | default(false) | bool
