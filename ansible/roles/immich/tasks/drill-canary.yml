@@ -123,6 +123,23 @@
             dest: "/tmp/{{ _im_canary }}.png"
             mode: "0600"
 
+        - name: DEBUG probe
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/assets"
+            method: POST
+            body_format: form-multipart
+            body:
+              assetData:
+                filename: "/tmp/{{ _im_canary }}.png"
+                mime_type: image/png
+              deviceAssetId: "{{ _im_canary }}"
+              deviceId: homelab-infra-drill
+              fileCreatedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
+              fileModifiedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
+            status_code: [200, 201, 400, 401, 403]
+          ignore_errors: true
+
         # Immich deduplicates by checksum, so a repeat upload answers with the existing asset.
         - name: Immich drill canary | Upload the image
           delegate_to: "{{ drill_app_delegate }}"
