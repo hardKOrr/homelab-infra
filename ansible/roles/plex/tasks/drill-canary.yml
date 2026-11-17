@@ -5,8 +5,9 @@
 #   data           library p2-canary-plex-<id> on the media share's p2-canary-plex folder
 #                  (its one test video, read-only to Plex), the item marked watched
 #   configuration  the server's friendly name, set to p2-canary-plex-<id>
-# The library uses the Personal Media agent, so the scan reads only the file. Requests run
-# on the stack host, whose firewall admits only the proxy to the app port.
+# The library uses the Personal Media agent with the Plex Movie scanner, so the scan reads
+# only the file. Requests run on the stack host, whose firewall admits only the proxy to
+# the app port.
 # The final verify (drill_final) deletes the library and clears the friendly name, which
 # Plex then takes from the host name again; the media files stay untouched.
 - name: Plex drill canary | Resolve the instance's URL
@@ -69,7 +70,7 @@
       delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
         url: >-
-          {{ drill_app_url }}/library/sections?name={{ _pxc_canary | urlencode }}&type=movie&agent=tv.plex.agents.none&scanner={{ 'Plex Video Files Scanner' | urlencode }}&language=xn&location={{ _pxc_folder | urlencode }}
+          {{ drill_app_url }}/library/sections?name={{ _pxc_canary | urlencode }}&type=movie&agent=tv.plex.agents.none&scanner={{ 'Plex Movie' | urlencode }}&language=xn&location={{ _pxc_folder | urlencode }}
         method: POST
         headers: "{{ _pxc_headers }}"
         status_code: [200, 201, 400, 500]
