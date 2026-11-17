@@ -53,35 +53,46 @@
 - name: Maintainerr drill canary | Write the rule group and the cron
   when: drill_canary_action == 'create'
   block:
+    # Maintainerr saves the Plex server only once it holds a Plex token, and the token
+    # only through its own route.
     - name: Maintainerr drill canary | Connect the lab Plex
       delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
-        url: "{{ drill_app_url }}/api/settings"
-        method: PATCH
+        url: "{{ drill_app_url }}/api/{{ item.path }}"
+        method: "{{ item.method }}"
         headers: "{{ drill_app_headers }}"
         body_format: json
-        body:
-          media_server_type: plex
-          plex_name: "{{ _mtc_plex }}"
-          plex_hostname: "{{ (_plex_routing.subdomain | default(_mtc_plex, true)) ~ '.' ~ homelabinfra_infra.domain }}"
-          plex_port: 443
-          plex_ssl: 1
-          plex_manual_mode: 1
-          plex_auth_token: "{{ homelabinfra_vault.media[_mtc_plex].token }}"
+        body: "{{ item.body }}"
         status_code: [200, 201, 400, 500]
       vars:
         _plex_routing: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/app-defaults/plex.yml') | from_yaml).plex_defaults.routing }}"
       register: _mtc_connect
       changed_when: true
-      no_log: true
+      no_log: true  # the first item carries the Plex token
+      loop:
+        - path: settings/plex/token
+          method: POST
+          body: {plex_auth_token: "{{ homelabinfra_vault.media[_mtc_plex].token }}"}
+        - path: settings
+          method: PATCH
+          body:
+            media_server_type: plex
+            plex_name: "{{ _mtc_plex }}"
+            plex_hostname: "{{ (_plex_routing.subdomain | default(_mtc_plex, true)) ~ '.' ~ homelabinfra_infra.domain }}"
+            plex_port: 443
+            plex_ssl: 1
+            plex_manual_mode: 1
       when: _mtc_plex_host | length == 0
 
     - name: Maintainerr drill canary | Require the Plex connection saved
       ansible.builtin.assert:
-        that: _mtc_connect.status in [200, 201] and (_mtc_connect.json.code | default(1)) == 1
+        that: _mtc_connect.results | rejectattr('json.code', 'defined') | list | length == 0
+              and _mtc_connect.results | map(attribute='json.code') | unique == [1]
         fail_msg: >-
-          {{ instance }} refused the Plex connection (HTTP {{ _mtc_connect.status }}):
-          {{ (_mtc_connect.json | default({})).message | default(_mtc_connect.msg | default('')) }}
+          {{ instance }} refused the Plex connection: HTTP
+          {{ _mtc_connect.results | map(attribute='status') | list }}
+          {{ _mtc_connect.results | map(attribute='json', default={}) | map(attribute='message', default='') | list }}
+          for the token, then the server.
       when: _mtc_connect is not skipped
 
     - name: Maintainerr drill canary | Read the Plex libraries
