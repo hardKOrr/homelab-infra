@@ -252,7 +252,8 @@
         headers: "{{ _im_headers }}"
         body_format: json
         body: "{{ item.body | default(omit) }}"
-        status_code: [200, 204]
+        status_code: [200, 204, 400, 401, 403, 404, 405, 500]
+      register: _im_deleted
       changed_when: true
       no_log: true
       loop:
@@ -265,4 +266,12 @@
           body: "{{ _im_read.results[1].json | combine({'server': {'loginPageMessage': ''}}, recursive=True) }}"
       loop_control:
         label: "{{ item.method }} {{ item.path }}"
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+    - name: Immich drill canary | Require every delete
+      ansible.builtin.assert:
+        that: _im_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+        fail_msg: >-
+          {{ instance }} refused a canary delete: HTTP statuses
+          {{ _im_deleted.results | map(attribute='status') | list }} for the steps in order.
       when: drill_canary_action == 'verify' and drill_final | default(false) | bool

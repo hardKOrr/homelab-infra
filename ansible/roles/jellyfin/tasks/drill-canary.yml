@@ -156,7 +156,8 @@
     headers: "{{ _jfc_headers }}"
     body_format: json
     body: "{{ item.body | default(omit) }}"
-    status_code: [200, 204]
+    status_code: [200, 204, 400, 401, 403, 404, 405, 500]
+  register: _jfc_deleted
   changed_when: true
   no_log: true
   loop:
@@ -167,4 +168,12 @@
       body: "{{ _jfc_config | combine({'LogFileRetentionDays': 3}) }}"
   loop_control:
     label: "{{ item.method }} {{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+- name: Jellyfin drill canary | Require every delete
+  ansible.builtin.assert:
+    that: _jfc_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+    fail_msg: >-
+      {{ instance }} refused a canary delete: HTTP statuses
+      {{ _jfc_deleted.results | map(attribute='status') | list }} for the steps in order.
   when: drill_canary_action == 'verify' and drill_final | default(false) | bool
