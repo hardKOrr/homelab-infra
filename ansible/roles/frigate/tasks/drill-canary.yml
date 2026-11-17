@@ -11,6 +11,9 @@
     # Frigate usernames allow letters, digits, dots and underscores only.
     _fg_canary: "p2_canary_frigate_{{ drill_canary_id | replace('-', '_') }}"
     _fg_api: http://127.0.0.1:5000/api
+    # config/set takes a JSON body; an empty value removes the key.
+    _fg_config_set: [curl, -fsS, -X, PUT, -H, "Content-Type: application/json", --data-binary, "@-",
+                     "http://127.0.0.1:5000/api/config/set"]
 
 - name: Frigate drill canary | Write the user and the setting
   when: drill_canary_action == 'create'
@@ -55,7 +58,8 @@
     - name: Frigate drill canary | Save the setting
       ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
       vars:
-        drill_exec_argv: [curl, -fsS, -X, PUT, "{{ _fg_api }}/config/set?ui.time_format=24hour"]
+        drill_exec_argv: "{{ _fg_config_set }}"
+        drill_exec_stdin: '{"config_data": {"ui": {"time_format": "24hour"}}, "requires_restart": 0}'
         drill_exec_changes: true
 
 - name: Frigate drill canary | Read the users
@@ -101,9 +105,11 @@
 - name: Frigate drill canary | Delete the canary after the final verify
   ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
   vars:
-    drill_exec_argv: "{{ item }}"
+    drill_exec_argv: "{{ item.argv }}"
+    drill_exec_stdin: "{{ item.stdin | default(omit) }}"
     drill_exec_changes: true
   loop:
-    - [curl, -fsS, -X, DELETE, "{{ _fg_api }}/users/{{ _fg_canary }}"]
-    - [curl, -fsS, -X, PUT, "{{ _fg_api }}/config/set?ui.time_format="]
+    - argv: [curl, -fsS, -X, DELETE, "{{ _fg_api }}/users/{{ _fg_canary }}"]
+    - argv: "{{ _fg_config_set }}"
+      stdin: '{"config_data": {"ui": {"time_format": ""}}, "requires_restart": 0}'
   when: drill_canary_action == 'verify' and drill_final | default(false) | bool
