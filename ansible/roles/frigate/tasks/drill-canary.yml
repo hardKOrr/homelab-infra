@@ -2,13 +2,14 @@
 # Drill canary hook (playbooks/maintenance/drill-canary.yml), through Frigate's internal API
 # (127.0.0.1:5000 in the app's runtime, unauthenticated by design) with tasks/drill/app-exec.yml,
 # as test(frigate) #446 defined it:
-#   data           viewer user p2-canary-frigate-<id> in Frigate's database
+#   data           viewer user p2_canary_frigate_<id> in Frigate's database
 #   configuration  ui.time_format 24hour in config.yml (Deploy seeds config.yml once and
 #                  then leaves settings saved through the API in place)
 # The final verify (drill_final) deletes the user and the setting.
 - name: Frigate drill canary | Name the canary
   ansible.builtin.set_fact:
-    _fg_canary: "p2-canary-frigate-{{ drill_canary_id }}"
+    # Frigate usernames allow letters, digits, dots and underscores only.
+    _fg_canary: "p2_canary_frigate_{{ drill_canary_id | replace('-', '_') }}"
     _fg_api: http://127.0.0.1:5000/api
 
 - name: Frigate drill canary | Write the user and the setting
