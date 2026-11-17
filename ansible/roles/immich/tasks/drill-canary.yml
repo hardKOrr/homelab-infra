@@ -1,0 +1,238 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Immich's API, as
+# test(immich) #406 defined it:
+#   data           album p2-canary-immich-<id> holding files/drill-canary.png, compared by
+#                  Immich's own checksum (base64 SHA-1 of the file)
+#   configuration  server.loginPageMessage set to the canary name (default empty; Deploy
+#                  never sets the system config)
+# Deploy provisions no login, so a create on an uninitialized instance signs up the lab-only
+# admin kept in Vaultwarden item homelab-infra/apps/<instance>-drill-owner (kept when it
+# exists), and a fresh instance is one with no admin: it holds no users, so no canary.
+# Requests run on the stack host, whose firewall admits only the proxy to the app port.
+# The final verify (drill_final) deletes the album and the image and clears the message.
+- name: Immich drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Immich drill canary | Name the canary and the owner
+  ansible.builtin.set_fact:
+    _im_canary: "p2-canary-immich-{{ drill_canary_id }}"
+    _im_checksum: 2+qAj1cwi2cbMEb7Zu7yL8AEhL4=
+    _im_owner_item: "{{ instance }}-drill-owner"
+    _im_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
+  no_log: true
+
+- name: Immich drill canary | Read whether the instance has an admin
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/server/config"
+    headers: "{{ drill_app_headers }}"
+  register: _im_server
+  changed_when: false
+
+- name: Immich drill canary | Require an instance with no admin when fresh
+  ansible.builtin.assert:
+    that: not (_im_server.json.isInitialized | bool)
+    fail_msg: "{{ instance }} already has an admin on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Immich drill canary | Sign up the drill owner on an instance with no admin
+  when: drill_canary_action == 'create' and not (_im_server.json.isInitialized | bool)
+  block:
+    - name: Immich drill canary | Choose the drill owner
+      ansible.builtin.set_fact:
+        _im_owner: >-
+          {{ _im_owner if _im_owner.password | default('') | length > 0
+             else {'email': 'drill-owner@' ~ instance ~ '.invalid',
+                   'password': lookup('ansible.builtin.password', '/dev/null', length=32,
+                                      chars=['ascii_letters', 'digits'])} }}
+      no_log: true
+
+    # Stored before signup, so a run that fails after it never loses the password.
+    - name: Immich drill canary | Store a new drill owner
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ _im_owner_item }}"
+        vault_item_fields:
+          email: "{{ _im_owner.email }}"
+          password: "{{ _im_owner.password }}"
+        vault_item_secret_fields: [password]
+      when: (homelabinfra_vault.apps | default({})).get(_im_owner_item, {}).password | default('') | length == 0
+
+    - name: Immich drill canary | Sign up the drill owner
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/auth/admin-sign-up"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          name: Drill Owner
+          email: "{{ _im_owner.email }}"
+          password: "{{ _im_owner.password }}"
+        status_code: [200, 201]
+      changed_when: true
+      no_log: true
+
+- name: Immich drill canary | Read and check the canaries
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: Immich drill canary | Sign in as the drill owner
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/auth/login"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          email: "{{ _im_owner.email | default('') }}"
+          password: "{{ _im_owner.password | default('') }}"
+        status_code: [200, 201, 400, 401]
+      register: _im_login
+      changed_when: false
+      no_log: true
+
+    - name: Immich drill canary | Require the drill owner's login
+      ansible.builtin.assert:
+        that: _im_login.status in [200, 201]
+        fail_msg: "{{ instance }} refused the login in homelab-infra/apps/{{ _im_owner_item }} (HTTP {{ _im_login.status }})."
+
+    - name: Immich drill canary | Keep the session
+      ansible.builtin.set_fact:
+        _im_headers: "{{ drill_app_headers | combine({'Authorization': 'Bearer ' ~ _im_login.json.accessToken}) }}"
+      no_log: true
+
+    - name: Immich drill canary | Read the albums and the system config
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/{{ item }}"
+        headers: "{{ _im_headers }}"
+      register: _im_read
+      changed_when: false
+      no_log: true
+      loop: [albums, system-config]
+
+    - name: Immich drill canary | Write the image, the album and the setting
+      when: drill_canary_action == 'create'
+      block:
+        - name: Immich drill canary | Put the image on the requesting host
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.copy:
+            src: drill-canary.png
+            dest: "/tmp/{{ _im_canary }}.png"
+            mode: "0600"
+
+        # Immich deduplicates by checksum, so a repeat upload answers with the existing asset.
+        - name: Immich drill canary | Upload the image
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/assets"
+            method: POST
+            headers: "{{ _im_headers }}"
+            body_format: form-multipart
+            body:
+              assetData:
+                filename: "/tmp/{{ _im_canary }}.png"
+                mime_type: image/png
+              deviceAssetId: "{{ _im_canary }}"
+              deviceId: homelab-infra-drill
+              fileCreatedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
+              fileModifiedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
+            status_code: [200, 201]
+          register: _im_upload
+          changed_when: _im_upload.status == 201
+          no_log: true
+
+        - name: Immich drill canary | Remove the image from the requesting host
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.file:
+            path: "/tmp/{{ _im_canary }}.png"
+            state: absent
+
+        - name: Immich drill canary | Create the album holding the image
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/albums"
+            method: POST
+            headers: "{{ _im_headers }}"
+            body_format: json
+            body:
+              albumName: "{{ _im_canary }}"
+              assetIds: ["{{ _im_upload.json.id }}"]
+            status_code: [200, 201]
+          changed_when: true
+          no_log: true
+          when: _im_read.results[0].json | selectattr('albumName', 'equalto', _im_canary) | list | length == 0
+
+        - name: Immich drill canary | Save the setting
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/system-config"
+            method: PUT
+            headers: "{{ _im_headers }}"
+            body_format: json
+            body: >-
+              {{ _im_read.results[1].json | combine({'server': {'loginPageMessage': _im_canary}}, recursive=True) }}
+          changed_when: true
+          no_log: true
+
+        - name: Immich drill canary | Read back after the write
+          delegate_to: "{{ drill_app_delegate }}"
+          ansible.builtin.uri:
+            url: "{{ drill_app_url }}/api/{{ item }}"
+            headers: "{{ _im_headers }}"
+          register: _im_read
+          changed_when: false
+          no_log: true
+          loop: [albums, system-config]
+
+    - name: Immich drill canary | Keep the canary album
+      ansible.builtin.set_fact:
+        _im_albums: "{{ _im_read.results[0].json | selectattr('albumName', 'equalto', _im_canary) | list }}"
+        _im_message: "{{ _im_read.results[1].json.server.loginPageMessage | default('') }}"
+
+    - name: Immich drill canary | Read the album's images
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/albums/{{ _im_albums[0].id }}"
+        headers: "{{ _im_headers }}"
+      register: _im_album
+      changed_when: false
+      no_log: true
+      when: _im_albums | length == 1
+
+    - name: Immich drill canary | Require the album, its image and the setting
+      ansible.builtin.assert:
+        that:
+          - _im_albums | length == 1
+          - _im_sums == [_im_checksum]
+          - _im_message == _im_canary
+        fail_msg: >-
+          {{ instance }} holds {{ _im_albums | length }} canary album(s) with image checksums
+          {{ _im_sums }} and login page message '{{ _im_message }}'.
+      vars:
+        _im_sums: "{{ (_im_album.json | default({})).assets | default([]) | map(attribute='checksum') | list }}"
+
+    - name: Immich drill canary | Delete the canary after the final verify
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ _im_headers }}"
+        body_format: json
+        body: "{{ item.body | default(omit) }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      loop:
+        - {path: "albums/{{ _im_albums[0].id }}", method: DELETE}
+        - path: assets
+          method: DELETE
+          body: {ids: "{{ _im_album.json.assets | map(attribute='id') | list }}", force: true}
+        - path: system-config
+          method: PUT
+          body: "{{ _im_read.results[1].json | combine({'server': {'loginPageMessage': ''}}, recursive=True) }}"
+      loop_control:
+        label: "{{ item.method }} {{ item.path }}"
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
