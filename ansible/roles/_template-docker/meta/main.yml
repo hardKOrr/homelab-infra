@@ -4,5 +4,6 @@ galaxy_info:
   description: "Deploys APP_NAME as a Docker container on a homelab-infra stack host"
   min_ansible_version: "2.15"
 
-dependencies:
-  - role: docker   # ensures Docker Engine is installed on the target host
+# The deploy playbook installs Docker on the stack host before this role. A role
+# dependency would also run it wherever a hook is included, such as the runner.
+dependencies: []
