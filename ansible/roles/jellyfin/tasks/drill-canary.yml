@@ -72,7 +72,10 @@
       - _jfc_libraries | length == 0
       - _jfc_users | length == 0
       - _jfc_config.LogFileRetentionDays | int != _jfc_days
-    fail_msg: "{{ instance }} already has {{ _jfc_canary }} or its setting on a fresh install: data survived Remove."
+    fail_msg: >-
+      {{ instance }} has {{ _jfc_libraries | length }} canary library(ies), {{ _jfc_users | length }}
+      canary user(s) and LogFileRetentionDays {{ _jfc_config.LogFileRetentionDays }} on a fresh
+      install: data survived Remove.
   when: drill_canary_action == 'fresh'
 
 - name: Jellyfin drill canary | Write the library, the user and the setting

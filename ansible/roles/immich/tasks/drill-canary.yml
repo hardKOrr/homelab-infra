@@ -139,10 +139,17 @@
               deviceId: homelab-infra-drill
               fileCreatedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
               fileModifiedAt: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(drill_canary_epoch | int, utc=True) }}"
-            status_code: [200, 201]
+            status_code: [200, 201, 400, 401, 403, 413, 500]
           register: _im_upload
           changed_when: _im_upload.status == 201
           no_log: true
+
+        - name: Immich drill canary | Require the upload
+          ansible.builtin.assert:
+            that: _im_upload.status in [200, 201]
+            fail_msg: >-
+              {{ instance }} refused the canary image (HTTP {{ _im_upload.status }}):
+              {{ _im_upload.json.message | default(_im_upload.msg | default('')) }}
 
         - name: Immich drill canary | Remove the image from the requesting host
           delegate_to: "{{ drill_app_delegate }}"

@@ -71,7 +71,10 @@
       - _ebc_libraries | length == 0
       - _ebc_users | length == 0
       - _ebc_config.LogFileRetentionDays | int != _ebc_days
-    fail_msg: "{{ instance }} already has {{ _ebc_canary }} or its setting on a fresh install: data survived Remove."
+    fail_msg: >-
+      {{ instance }} has {{ _ebc_libraries | length }} canary library(ies), {{ _ebc_users | length }}
+      canary user(s) and LogFileRetentionDays {{ _ebc_config.LogFileRetentionDays }} on a fresh
+      install: data survived Remove.
   when: drill_canary_action == 'fresh'
 
 - name: Emby drill canary | Write the library, the user and the setting
