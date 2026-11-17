@@ -64,7 +64,7 @@
       ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
       vars:
         drill_exec_argv: "{{ _fg_config_set }}"
-        drill_exec_stdin: '{"config_data": {"ui": {"time_format": "24hour"}}, "requires_restart": 0}'
+        drill_exec_stdin: "{{ {'config_data': {'ui': {'time_format': '24hour'}}, 'requires_restart': 0} | to_json }}"
         drill_exec_changes: true
 
 - name: Frigate drill canary | Read the users
@@ -116,5 +116,5 @@
   loop:
     - argv: [curl, -fsS, -X, DELETE, "{{ _fg_api }}/users/{{ _fg_canary }}"]
     - argv: "{{ _fg_config_set }}"
-      stdin: '{"config_data": {"ui": {"time_format": ""}}, "requires_restart": 0}'
+      stdin: "{{ {'config_data': {'ui': {'time_format': ''}}, 'requires_restart': 0} | to_json }}"
   when: drill_canary_action == 'verify' and drill_final | default(false) | bool
