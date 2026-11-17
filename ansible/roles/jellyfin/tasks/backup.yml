@@ -27,7 +27,6 @@
   register: _jellyfin_backup_databases
   changed_when: false
   when: _jellyfin_backup_config.stat.isdir | default(false)
-  no_log: true
 
 - name: Jellyfin backup | Require the application database before backup
   ansible.builtin.assert:

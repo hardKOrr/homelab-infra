@@ -74,7 +74,6 @@
   loop: "{{ app_config.app.cameras | default({}) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
-  no_log: true
 
 - name: Frigate | Assert MQTT credentials are present when MQTT authentication is configured
   ansible.builtin.assert:
@@ -83,7 +82,6 @@
       Frigate MQTT authentication is configured for {{ instance }}, but hidden Vaultwarden
       field mqtt_password is empty.
   when: app_config.app.mqtt.username | default('') | length > 0
-  no_log: true
 
 - name: Frigate | Resolve camera URLs without logging credentials
   ansible.builtin.set_fact:

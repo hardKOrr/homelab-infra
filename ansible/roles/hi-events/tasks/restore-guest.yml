@@ -35,7 +35,6 @@
     fail_msg: >-
       Hi.Events restore needs a target, its named PostgreSQL backend, the source and target
       application keys, a non-root storage path, and a snapshot when overwrite=true.
-  no_log: true
 
 - name: Hi.Events restore | Require a separate target database for a new destination
   ansible.builtin.assert:
@@ -53,7 +52,6 @@
       A new Hi.Events restore must use a target database name or PostgreSQL backend distinct
       from the source. Never let an isolated instance overwrite the source's database.
   when: restore_destination == 'new'
-  no_log: true
 
 - name: Hi.Events restore | Preview or replace the storage directory and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml

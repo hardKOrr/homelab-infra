@@ -129,7 +129,7 @@ def check_login_api():
     login = task("Sign in to Deezer with the stored ARL")
     require_login = task("Require Deemix to authenticate the stored ARL")
     assert login.get("no_log") is True
-    assert require_login.get("no_log") is True
+    assert require_login.get("no_log") is not True
     assert login["ansible.builtin.uri"]["method"] == "POST"
     assert "/api/loginArl" in login["ansible.builtin.uri"]["url"]
     assert "_dmx_arl" in login["ansible.builtin.uri"]["body"]["arl"]

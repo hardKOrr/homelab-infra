@@ -44,7 +44,6 @@
       {{ instance }} is not claimed. Store a fresh Plex claim token as hidden field
       claim_token in Vaultwarden item homelab-infra/apps/{{ instance }}, then rerun.
   when: not _plex_claimed
-  no_log: true
 
 - name: Create Plex project and persistent directories
   ansible.builtin.file:

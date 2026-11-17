@@ -7,7 +7,6 @@
   ansible.builtin.stat:
     path: "{{ app_config.app.config_path }}/config.json"
   register: _dmx_settings_file
-  no_log: true
 
 - name: Require Deemix to have created its settings file
   ansible.builtin.assert:
@@ -29,7 +28,6 @@
   ansible.builtin.assert:
     that: _dmx_settings is mapping
     fail_msg: "Deemix config.json must contain a JSON object."
-  no_log: true
 
 - name: Enable the folder structure required by Lidarr
   ansible.builtin.copy:
@@ -82,7 +80,6 @@
       - _dmx_login.json.user is not none
     fail_msg: "Deemix could not sign in with the stored Deezer ARL. Verify the ARL and retry Deploy."
   when: _dmx_arl | length > 0
-  no_log: true
 
 - name: Report that Deemix signed in to Deezer
   ansible.builtin.debug:

@@ -121,7 +121,6 @@
     port: 22
     state: started
     timeout: 600
-  no_log: true
   when:
     - _pbs_disk_restart_required | bool
     - "'status: running' in _pbs_disk_status_before_restart.stdout"

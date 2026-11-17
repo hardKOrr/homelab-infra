@@ -24,6 +24,5 @@
       - app_config.media_storage.owner.gid | default(0) | int > 0
     fail_msg: >-
       Refusing to remove Immich data without exactly one safe, owned durable media mount.
-  no_log: true
   when:
     - delete_data | default(false) | bool

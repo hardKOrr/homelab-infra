@@ -48,7 +48,6 @@
       unavailable. Store runner_api_token for a user-scoped runner or admin_api_token
       for a global runner in homelab-infra/apps/{{ runner_remove_forgejo_instance }};
       do not add either token to config/apps or generated facts.
-  no_log: true
 
 - name: Forgejo Runner removal | List registered runners
   ansible.builtin.uri:

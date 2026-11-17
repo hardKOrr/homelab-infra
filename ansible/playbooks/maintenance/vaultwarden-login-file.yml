@@ -33,7 +33,6 @@
           Run this in Vault mode with the automation login supplied, and give the Ansible
           Vault password as the job's ansible_vault_password option (or
           ANSIBLE_VAULT_PASSWORD_FILE outside Rundeck).
-      no_log: true
 
     - name: Write and read back config/vaultwarden.yml
       ansible.builtin.command:

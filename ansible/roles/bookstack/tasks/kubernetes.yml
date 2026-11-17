@@ -103,7 +103,6 @@
       from Vaultwarden item homelab-infra/apps/{{ instance }}, or app.admin_user no longer
       matches the initial administrator recorded in /config/.homelab-infra-admin.
   when: _bookstack_k8s_admin_marker.rc == 0
-  no_log: true
 
 - name: BookStack Kubernetes | Initialize the administrator
   ansible.builtin.command:

@@ -61,4 +61,3 @@
       cutover). A configured mail provider that cannot authenticate is a failure by
       contract, not a silent no-op.
   when: wiring_mail.enabled
-  no_log: true

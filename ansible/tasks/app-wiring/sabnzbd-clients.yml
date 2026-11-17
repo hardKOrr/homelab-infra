@@ -18,7 +18,6 @@
       - (_sab_categories.json | default({})).categories is defined
       - _sab_categories.json.categories is sequence
       - _sab_categories.json.categories is not string
-  no_log: true
 
 - name: SABnzbd clients | Create missing consumer categories
   ansible.builtin.uri:

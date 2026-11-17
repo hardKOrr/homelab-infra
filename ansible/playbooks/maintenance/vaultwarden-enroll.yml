@@ -53,7 +53,6 @@
         fail_msg: >-
           Enrollment needs an HTTPS BW_SERVER, a distinct owner and automation
           email, and the Vaultwarden admin token.
-      no_log: true
 
   tasks:
     - name: Authenticate to the Vaultwarden admin facility
@@ -114,7 +113,6 @@
           {{ _vault_accounts_file }} is missing or incomplete. Re-run bootstrap-rundeck.sh on
           the Proxmox node: it generates the master passwords, records the owner's for you,
           and stages them for this job.
-      no_log: true
 
     - name: Register accounts, create the organization, and confirm the automation Admin
       ansible.builtin.command:
@@ -143,7 +141,6 @@
         fail_msg: >-
           Accounts are enrolled, but RUNDECK_URL or the Rundeck API token is missing, so the
           automation credentials cannot be staged in Key Storage. Re-run Vaultwarden Enrollment.
-      no_log: true
 
     - name: Check which automation credentials are already staged
       ansible.builtin.uri:

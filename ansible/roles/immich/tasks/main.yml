@@ -32,7 +32,6 @@
       Immich requires the named PostgreSQL instance {{ app_config.app.database.instance }}
       and Redis instance {{ app_config.app.redis.instance }}. Deploy both backends first;
       credentials must come from Vaultwarden, not config/apps/{{ instance }}.yml.
-  no_log: true
 
 - name: Immich | Assert the durable media mount is visible
   ansible.builtin.stat:

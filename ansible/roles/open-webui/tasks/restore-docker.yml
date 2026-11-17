@@ -36,7 +36,6 @@
       - _open_webui_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
       - _open_webui_target_backup_id is match('^[A-Za-z0-9_.-]+$')
     fail_msg: Open WebUI recovery requires safe source and target PBS backup IDs.
-  no_log: true
 
 - name: Open WebUI restore | Require the source and target application keys
   ansible.builtin.assert:
@@ -46,7 +45,6 @@
     fail_msg: >-
       The source or target Open WebUI application key is missing or unreadable in
       Vaultwarden. Restore that canonical key before retrying; no target data was replaced.
-  no_log: true
   when: restore_overwrite | bool
 
 - name: Open WebUI restore | Require the target environment file
@@ -81,7 +79,6 @@
       The selected A point must belong to the source backup group; an existing target also
       requires a different, exact-target B point from its own backup group. No target data
       was replaced.
-  no_log: true
   when: restore_overwrite | bool
 
 - name: Open WebUI restore | Ensure the lock directory exists

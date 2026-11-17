@@ -327,7 +327,6 @@
   loop: "{{ _emby_libraries }}"
   loop_control:
     label: "{{ item.name }}"
-  no_log: true
 
 - name: Export Emby's endpoint for platform wiring
   ansible.builtin.set_fact:

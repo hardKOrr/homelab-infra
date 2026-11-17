@@ -12,7 +12,6 @@
       - hostvars['localhost'].app_config.media_storage.owner.uid | default(0) | int > 0
       - hostvars['localhost'].app_config.media_storage.owner.gid | default(0) | int > 0
     fail_msg: "Refusing to remove Immich data without its validated mount and owner."
-  no_log: true
 
 - name: Immich remove | Require the declared media path to be an exact mount point
   ansible.builtin.command:
@@ -33,7 +32,6 @@
       - _rm_immich_media_mountpoint.rc == 0
       - _rm_immich_media_mountpoint.stdout | trim == hostvars['localhost']._rm_immich_media_path
     fail_msg: "Refusing to clear Immich data because its declared media path is not mounted here."
-  no_log: true
 
 - name: Immich remove | Find existing media contents as the declared owner
   ansible.builtin.command:

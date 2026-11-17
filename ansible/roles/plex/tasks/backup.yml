@@ -52,14 +52,12 @@
     - Preferences.xml
     - Plug-in Support/Databases
   register: _plex_backup_checks
-  no_log: true
 
 - name: Plex backup | Refuse an incomplete recovery unit
   ansible.builtin.assert:
     that: item.stat.exists
     fail_msg: "Plex identity or library databases are missing; refusing an incomplete backup."
   loop: "{{ _plex_backup_checks.results }}"
-  no_log: true
 
 - name: Plex backup | Stop only Plex and archive the quiesced data directory to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml

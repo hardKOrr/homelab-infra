@@ -40,7 +40,6 @@
     fail_msg: >-
       InfluxDB restore cannot authenticate the restored state because the source
       credentials are missing from homelab-infra/apps/{{ _influxdb_restore_source_instance }}.
-  no_log: true
 
 - name: InfluxDB restore | Require target credentials for rollback
   ansible.builtin.assert:
@@ -54,7 +53,6 @@
       InfluxDB restore cannot protect the target because its current credentials are
       missing from homelab-infra/apps/{{ instance }}.
   when: restore_overwrite | bool
-  no_log: true
 
 - name: InfluxDB restore | Require an independent existing-target point
   ansible.builtin.assert:

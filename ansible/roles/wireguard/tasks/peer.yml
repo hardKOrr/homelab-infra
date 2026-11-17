@@ -7,7 +7,6 @@
       - _wg_peer.vpn_address is defined
       - (_wg_peer.vpn_address | ansible.utils.ipaddr) is string
     fail_msg: Each WireGuard peer needs a lowercase name and a valid vpn_address.
-  no_log: true
 
 - name: WireGuard | Generate peer private key once
   ansible.builtin.command:

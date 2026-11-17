@@ -29,7 +29,6 @@
     fail_msg: >-
       WordPress restore repairs the target administrator, so its Vaultwarden item needs
       admin_password. Deploy the target first.
-  no_log: true
   when: restore_overwrite | bool
 
 - name: WordPress restore | Require a fresh, distinct pre-restore point

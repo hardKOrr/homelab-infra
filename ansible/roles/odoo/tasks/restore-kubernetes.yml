@@ -20,7 +20,6 @@
       {{ (homelabinfra_infra.databases | default({})).get(
            restore_target_config.app.database.instance, {}) }}
   when: restore_destination == 'new'
-  no_log: true
 
 - name: Odoo restore | Require a recent target safety point
   ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml

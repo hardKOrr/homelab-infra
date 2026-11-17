@@ -61,7 +61,6 @@
       vars:
         _dc_endpoint: "{{ _dc_forgejo_endpoint if item == 'forgejo' else homelabinfra_infra.get(item, {}).host | default('') }}"
       loop: ['reverse_proxy', 'sso', 'monitoring', 'dns', 'firewall', 'forgejo']
-      no_log: true
 
     - name: Decommission | Derive planned Kubernetes namespace through the owning seam
       ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml

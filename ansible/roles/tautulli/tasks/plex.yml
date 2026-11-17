@@ -17,7 +17,6 @@
     that: _tautulli_plex_token | length > 0
     fail_msg: >-
       Plex instance {{ _tautulli_plex_instance }} has no server token in Vaultwarden. Deploy or converge that Plex instance first, then rerun {{ instance }}.
-  no_log: true
 
 - name: Resolve a reachable endpoint for the selected Plex instance
   ansible.builtin.include_tasks: plex-endpoint.yml

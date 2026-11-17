@@ -22,7 +22,6 @@
         fail_msg: >-
           Cutover seed material is incomplete. No files are removed and no marker
           is written; restore the explicit recovery inputs and retry.
-      no_log: true
 
     - name: Assert the Caddy DNS-01 credential is present
       ansible.builtin.assert:
@@ -34,7 +33,6 @@
       when: >-
         homelabinfra_config.infrastructure.reverse_proxy.dns_challenge.provider
         | default('') == 'cloudflare'
-      no_log: true
 
   tasks:
     - name: Read the enrollment-generated master passwords
@@ -307,14 +305,12 @@
         - "{{ _cutover_ssh_file }}"
       register: _cutover_seed_removal
       failed_when: false
-      no_log: true
 
     - name: Confirm which seed files survived removal
       ansible.builtin.stat:
         path: "{{ item.item }}"
       loop: "{{ _cutover_seed_removal.results }}"
       register: _cutover_seed_survivors
-      no_log: true
 
     # Fatal. The cutover's purpose is that seed secrets stop living on the runner's disk;
     # if they survive, the job did not achieve the one thing it exists for. Reporting it

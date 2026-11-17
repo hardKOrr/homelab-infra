@@ -10,7 +10,6 @@
     fail_msg: >-
       {{ database_provision_app_instance }}'s database password must use only letters,
       digits, '.', '_' and '-' to be set on a MariaDB or MySQL backend that runs on Kubernetes.
-  no_log: true
 
 - name: Database | Read what already exists on the Kubernetes backend
   ansible.builtin.include_tasks: backend-sql.yml

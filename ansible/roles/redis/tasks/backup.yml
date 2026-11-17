@@ -16,7 +16,6 @@
   ansible.builtin.assert:
     that: _redis_backup_password | length > 0
     fail_msg: Redis backup needs the backend password stored in Vaultwarden.
-  no_log: true
 
 - name: Redis backup | Assert the application recovery contract
   ansible.builtin.assert:

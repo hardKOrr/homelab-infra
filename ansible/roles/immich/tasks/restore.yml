@@ -45,7 +45,6 @@
     fail_msg: >-
       Immich restore needs a deployed target, a named PostgreSQL backend, its Vaultwarden
       credential, and a snapshot when overwrite=true.
-  no_log: true
 
 - name: Immich restore | Preview or replace the media and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml

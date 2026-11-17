@@ -9,7 +9,6 @@
       - instance is match('^[A-Za-z0-9_.-]+$')
       - "'_+lab' in app_config.proxmox.tags"
     fail_msg: Refusing to reuse an InfluxDB guest without its exact planned identity and ownership tags.
-  no_log: true
 
 - name: Find an exact lab-owned InfluxDB guest in the refreshed inventory
   ansible.builtin.set_fact:
@@ -50,4 +49,3 @@
     fail_msg: >-
       Multiple lab-owned guests match the removed InfluxDB instance identity;
       refusing to choose one for redeployment.
-  no_log: true

@@ -20,7 +20,6 @@
       Plane's application-consistent recovery helper is not configured with a readable
       root-only PBS/backend credential file. Re-deploy Plane with backup enabled and PBS
       available; no partial or guest-only point is treated as healthy.
-  no_log: true
 
 - name: Plane backup | Capture one complete recovery point
   ansible.builtin.command:

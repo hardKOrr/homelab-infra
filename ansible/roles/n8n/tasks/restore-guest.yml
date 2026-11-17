@@ -47,7 +47,6 @@
       n8n restore needs a target, named PostgreSQL backend, target database credential,
       source and target encryption keys, non-root data path, and a snapshot when
       overwrite=true.
-  no_log: true
 
 - name: n8n restore | Require a separate target database for a new destination
   ansible.builtin.assert:
@@ -67,7 +66,6 @@
       A new n8n restore must use a target database name or PostgreSQL backend distinct from
       the source. Never let an isolated instance overwrite the source's named database.
   when: restore_destination == 'new'
-  no_log: true
 
 - name: n8n restore | Preview or replace the data directory and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml

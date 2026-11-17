@@ -100,7 +100,6 @@
   register: _navidrome_nfs_source_tcp_probe
   changed_when: false
   failed_when: false
-  no_log: true
 
 - name: Report NFS service reachability from the existing media mount host
   ansible.builtin.debug:

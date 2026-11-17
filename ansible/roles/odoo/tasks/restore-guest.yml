@@ -40,7 +40,6 @@
     fail_msg: >-
       Odoo restore needs a target, named PostgreSQL backend, target database credential,
       non-root filestore path, and a snapshot when overwrite=true.
-  no_log: true
 
 - name: Odoo restore | Require a separate target database for a new destination
   ansible.builtin.assert:
@@ -60,7 +59,6 @@
       A new Odoo restore must use a target database name or PostgreSQL backend distinct from
       the source. Never let an isolated instance overwrite the source's named database.
   when: restore_destination == 'new'
-  no_log: true
 
 - name: Odoo restore | Preview or replace the data_dir and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml

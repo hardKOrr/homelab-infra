@@ -24,7 +24,6 @@
     fail_msg: >-
       InfluxDB restore needs the operator tokens of the source and the target in
       homelab-infra/apps/<instance>; the restored state is verified with the source's.
-  no_log: true
 
 - name: InfluxDB restore | Describe the target's server step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml

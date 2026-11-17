@@ -41,7 +41,6 @@
     fail_msg: >-
       Immich's application-consistent backup needs its named PostgreSQL backend, its
       Vaultwarden credential, and a configured PBS target.
-  no_log: true
 
 - name: Immich backup | Check the durable media directory
   ansible.builtin.stat:

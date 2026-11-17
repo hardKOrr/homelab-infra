@@ -10,7 +10,6 @@
       - restore_source_encryption_key | default('') | length > 0
     fail_msg: >-
       n8n Kubernetes restore needs the source instance's encryption key.
-  no_log: true
 
 - name: n8n restore | Describe the target's database step
   ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml

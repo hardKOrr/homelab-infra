@@ -30,7 +30,6 @@
   loop: "{{ _unpackerr_arrs }}"
   loop_control:
     label: "{{ item.key }}"
-  no_log: true
 - name: Verify every Arr accepts its registered API key
   ansible.builtin.uri:
     url: "{{ item.value.host }}/api/{{ media_wiring.kinds[item.value.app].api }}/system/status"

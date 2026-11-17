@@ -91,7 +91,6 @@
       Cannot reconcile {{ instance }} registration: Forgejo 16 or newer requires a
       scoped runner_api_token for a user runner or admin_api_token for a global runner
       on the named Forgejo Vaultwarden item.
-  no_log: true
 
 - name: Forgejo Runner | Read the saved registration files
   ansible.builtin.include_tasks:
@@ -141,7 +140,7 @@
       Cannot safely reconcile {{ instance }} registration: Forgejo returned a runner
       list without a valid X-Total-Count pagination header.
   loop: "{{ _forgejo_runner_registration_lists.results }}"
-  no_log: true
+  no_log: true  # loop items carry the registration token
 
 - name: Forgejo Runner | Normalize first page of registration results
   ansible.builtin.set_fact:
@@ -165,7 +164,7 @@
       Cannot safely reconcile {{ instance }} registration: Forgejo returned an
       incomplete first page for a nonempty runner scope.
   loop: "{{ _forgejo_runner_registration_first_pages | default([]) }}"
-  no_log: true
+  no_log: true  # loop items carry the registration token
 
 - name: Forgejo Runner | Build remaining registration API page requests
   ansible.builtin.set_fact:
@@ -271,7 +270,7 @@
       {{ item.runners | length }} across its pages.
   loop: "{{ _forgejo_runner_api_scopes_with_runners | default([]) }}"
   when: _forgejo_runner_server_major | int >= 16
-  no_log: true
+  no_log: true  # loop items carry the registration token
 
 - name: Forgejo Runner | Determine whether the saved runner is known
   ansible.builtin.set_fact:

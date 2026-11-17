@@ -6,7 +6,6 @@
       - app_config.app.database_host | default('') | length > 0
       - app_config.app.database_password | default('') | length > 0
     fail_msg: Authentik Kubernetes requires its registered PostgreSQL backend.
-  no_log: true
 
 - name: Authentik Kubernetes | Resolve the cluster
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml

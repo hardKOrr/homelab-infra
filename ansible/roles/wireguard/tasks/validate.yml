@@ -8,4 +8,3 @@
     fail_msg: >-
       WireGuard requires inbound.public_endpoint, the address clients dial. It is a UDP
       forward (firewall.inbound, opened by Deploy), never a proxy route.
-  no_log: true

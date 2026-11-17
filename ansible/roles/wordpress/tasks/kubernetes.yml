@@ -15,7 +15,6 @@
     fail_msg: >-
       WordPress Kubernetes needs a safe administrator login, valid email, table prefix,
       and the provisioned MariaDB connection.
-  no_log: true
 
 - name: WordPress Kubernetes | Resolve the cluster and its API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
@@ -101,7 +100,6 @@
           WordPress {{ instance }} already has an initialized database but no matching
           administrator login and canonical password. Restore the WordPress Vaultwarden
           item and source content before deploying this instance.
-      no_log: true
 
 - name: WordPress Kubernetes | Reuse or generate its initial administrator credential
   ansible.builtin.set_fact:

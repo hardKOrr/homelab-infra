@@ -15,7 +15,6 @@
       Runner token for {{ instance }} is unavailable. Create a token for the named
       runner in Forgejo and store it as runner_token in Vaultwarden item
       homelab-infra/apps/{{ instance }}; do not add it to tracked configuration.
-  no_log: true
 
 - name: Forgejo Runner | Reconcile the saved registration against Forgejo
   ansible.builtin.include_tasks: reconcile-registration.yml

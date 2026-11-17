@@ -19,7 +19,6 @@
       - vault_item_fields is mapping
       - vault_item_fields | length > 0
     fail_msg: "Vault item upsert requires a canonical item name and non-empty field mapping."
-  no_log: true
 
 - name: Vault | Verify the execution session
   # This file can be included beneath a provider path resolved from host facts. Keep
@@ -563,7 +562,6 @@
               | map(attribute='name')
               | zip((_vault_readback.stdout | from_json).fields | default([])
                     | map(attribute='value'))) }}
-  no_log: true
 
 # lab-run constructs HOMELABINFRA_VAULT_JSON before Ansible starts, but bootstrap writes
 # new canonical items while that same Ansible process is still running. Publish the exact

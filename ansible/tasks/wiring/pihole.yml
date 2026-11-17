@@ -199,7 +199,6 @@
               Pi-hole still has a custom DNS entry for this application's previous Caddy
               hostname. An entry with a different target was left untouched.
           loop: "{{ _ph_prior_domains }}"
-          no_log: true
       always:
         - name: Wire Pihole | Close API session
           ansible.builtin.uri:

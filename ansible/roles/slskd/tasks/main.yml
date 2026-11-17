@@ -88,7 +88,6 @@
       slsk_password in Vaultwarden item homelab-infra/apps/{{ instance }},
       then rerun. This platform never creates a Soulseek account — the same
       stance roles/deemix takes on the Deezer ARL.
-  no_log: true
 
 # ── API key continuity ──────────────────────────────────────────────────────
 # There is no file to read this back from (see the role header): Vaultwarden

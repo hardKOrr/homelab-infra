@@ -41,7 +41,6 @@
     fail_msg: >-
       Mautic backup needs its named MariaDB backend, application database credential,
       non-root data path and a configured PBS target.
-  no_log: true
 
 - name: Mautic backup | Inspect persistent file state
   ansible.builtin.stat:

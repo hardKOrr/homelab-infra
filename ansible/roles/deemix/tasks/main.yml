@@ -173,7 +173,6 @@
     get_checksum: false
     get_mime: false
   register: _dmx_arl_file
-  no_log: true
 
 - name: Read the preserved Deezer ARL
   ansible.builtin.slurp:

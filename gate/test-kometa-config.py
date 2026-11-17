@@ -44,7 +44,7 @@ def test_collection_file_is_optional_and_validated():
         tasks, "Kometa | Require a collection mapping when a collection file is stored"
     )
     assert require["when"] == "_kometa_collections_yml | length > 0"
-    assert require["no_log"] is True
+    assert require.get("no_log") is not True
 
     parse = task_named(tasks, "Kometa | Validate the optional collection file as YAML")
     expression = parse["ansible.builtin.set_fact"]["_kometa_collections_document"]
