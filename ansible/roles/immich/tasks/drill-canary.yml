@@ -250,7 +250,8 @@
         url: "{{ drill_app_url }}/api/{{ item.path }}"
         method: "{{ item.method }}"
         headers: "{{ _im_headers }}"
-        body_format: json
+        # A delete has no body; a JSON content type without one is refused.
+        body_format: "{{ 'json' if item.body is defined else omit }}"
         body: "{{ item.body | default(omit) }}"
         status_code: [200, 204, 400, 401, 403, 404, 405, 500]
       register: _im_deleted
