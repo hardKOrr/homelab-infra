@@ -13,6 +13,17 @@
     _jfc_canary: "p2-canary-jellyfin-{{ drill_canary_id }}"
     _jfc_days: 9
 
+- name: DEBUG probe
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/System/Info/Public"
+    headers: "{{ drill_app_headers }}"
+    status_code: [200, -1, 401, 403, 404, 502]
+  register: _dbg
+  ignore_errors: true
+- name: DEBUG show
+  ansible.builtin.debug:
+    msg: "url={{ drill_app_url | regex_replace('\\d+\\.\\d+\\.\\d+\\.', 'IP.') }} status={{ _dbg.status | default('?') }} msg={{ _dbg.msg | default('') | regex_replace('\\d+\\.\\d+\\.\\d+\\.', 'IP.') }} vault={{ (homelabinfra_vault.media | default({})).get(instance, {}).keys() | list }}"
+
 - name: Jellyfin drill canary | Sign in as the admin
   ansible.builtin.uri:
     url: "{{ drill_app_url }}/Users/AuthenticateByName"
