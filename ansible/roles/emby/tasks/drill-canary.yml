@@ -105,9 +105,27 @@
         headers: "{{ _ebc_headers }}"
         body_format: json
         body: {Name: "{{ _ebc_canary }}"}
+      register: _ebc_new
       changed_when: true
       no_log: true
       when: _ebc_users | length == 0
+
+    # Users/New takes no password, so the account cannot sign in at all: Emby's own login
+    # is the only gate on its route.
+    - name: Emby drill canary | Disable sign-in for the canary user
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ _ebc_api }}/Users/{{ _ebc_user.Id }}/Policy"
+        method: POST
+        headers: "{{ _ebc_headers }}"
+        body_format: json
+        body: "{{ _ebc_user.Policy | combine({'IsDisabled': true}) }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      vars:
+        _ebc_user: "{{ _ebc_new.json if _ebc_users | length == 0 else _ebc_users[0] }}"
+      when: not (_ebc_user.Policy.IsDisabled | default(false) | bool)
 
     - name: Emby drill canary | Save the setting
       delegate_to: "{{ drill_app_delegate }}"
@@ -137,17 +155,19 @@
         _ebc_users: "{{ _ebc_reread.results[1].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
         _ebc_config: "{{ _ebc_reread.results[2].json }}"
 
-- name: Emby drill canary | Require the library, the non-admin user and the setting
+- name: Emby drill canary | Require the library, the disabled non-admin user and the setting
   ansible.builtin.assert:
     that:
       - _ebc_libraries | length == 1
       - _ebc_users | length == 1
       - not (_ebc_users[0].Policy.IsAdministrator | default(false) | bool)
+      - _ebc_users[0].Policy.IsDisabled | default(false) | bool
       - _ebc_config.LogFileRetentionDays | int == _ebc_days
     fail_msg: >-
       {{ instance }} holds {{ _ebc_libraries | length }} canary library(ies),
-      {{ _ebc_users | length }} canary user(s) and LogFileRetentionDays
-      {{ _ebc_config.LogFileRetentionDays }}.
+      {{ _ebc_users | length }} canary user(s) (disabled:
+      {{ _ebc_users | map(attribute='Policy.IsDisabled', default=false) | list }}) and
+      LogFileRetentionDays {{ _ebc_config.LogFileRetentionDays }}.
   when: drill_canary_action in ['create', 'verify']
 
 - name: Emby drill canary | Delete the canary after the final verify
