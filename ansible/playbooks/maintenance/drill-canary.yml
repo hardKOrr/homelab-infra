@@ -18,8 +18,9 @@
 # Dispatch: roles/<role>/tasks/drill-canary.yml when the role has it (it gets
 # drill_canary_action, drill_canary_id and drill_canary_epoch, plus the target that
 # tasks/maintenance/resolve-app-target.yml resolved). Otherwise an app that declares
-# `drill.canary_path` in its app-defaults (a path, or the name of an `app` key holding one)
-# gets a marker file there: a path the role's backup archives, on a Docker or native guest.
+# `drill.canary_path` in its app-defaults (a path, the name of an `app` key holding one, or
+# a mapping of hosting method to either) gets a marker file there: a path the role's backup
+# archives, on a Docker or native guest.
 # That proves the backup and restore transport, not that the application reads the data. A browser canary
 # (roles/<role>/browser/*recovery.js) runs from tools/lab-drill instead of this playbook.
 
@@ -55,7 +56,10 @@
           {{ (app_config.app | default({})).get(_dc_path, '')
              if _dc_path | length > 0 and not _dc_path.startswith('/') else _dc_path }}
       vars:
-        _dc_path: "{{ (app_config.drill | default({})).canary_path | default('', true) }}"
+        _dc_declared: "{{ (app_config.drill | default({})).canary_path | default('', true) }}"
+        _dc_path: >-
+          {{ _dc_declared.get(app_config.hosting.method | default('native'), '')
+             if _dc_declared is mapping else _dc_declared }}
 
     - name: Find the role's canary hook
       ansible.builtin.stat:

@@ -25,6 +25,14 @@ caddy_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
 
+  # Drill canary: a marker beside the configuration, which proves backup and restore
+  # transport. Caddy is essential, so lab-drill never Removes it; check the marker around a
+  # manual Restore (see playbooks/maintenance/drill-canary.yml).
+  drill:
+    canary_path:
+      native: /etc/caddy
+      docker: "/opt/{{ instance }}/config"
+
   backup:
     enabled: true
     schedule: "0 3 * * *"
