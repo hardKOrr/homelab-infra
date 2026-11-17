@@ -235,11 +235,8 @@
       loop: "{{ k8s_recovery.stop }}"
       changed_when: true
 
-
-    # Scaling returns when the request is accepted; the pod holds its volume until it
-    # terminates. A retry after a failed restore finds no pods, which is the same answer.
-    # Finished pods are skipped: backup Job pods share the app's labels, never go away
-    # on their own, and no longer hold the volume.
+    # Scaling returns at once; the pod holds its volume until it terminates. A retry finds
+    # no pods, the same answer. Finished backup Job pods share the labels but not the volume.
     - name: k8s restore | Wait for the application pods to go away
       ansible.builtin.command:
         argv:

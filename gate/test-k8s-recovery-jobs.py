@@ -573,14 +573,11 @@ def restore_tasks():
         mark["ansible.builtin.command"]["argv"]
     )
     wait = task_named(tasks, "k8s restore | Wait for the application pods to go away")
-    selector = next(arg for arg in wait["ansible.builtin.command"]["argv"]
-                    if str(arg).startswith("--selector="))
+    selector = next(arg for arg in wait["ansible.builtin.command"]["argv"] if str(arg).startswith("--selector="))
     item = {"stdout": '{"app.kubernetes.io/component":"web","app.kubernetes.io/instance":"t"}'}
     assert render(selector, {"item": item}) == (
         "--selector=app.kubernetes.io/component=web,app.kubernetes.io/instance=t")
-    # Finished backup Job pods share the app's labels and never go away.
-    assert "--field-selector=status.phase!=Succeeded,status.phase!=Failed" in (
-        wait["ansible.builtin.command"]["argv"])
+    assert "--field-selector=status.phase!=Succeeded,status.phase!=Failed" in wait["ansible.builtin.command"]["argv"]
 
     read = task_named(tasks, "k8s restore | Read the restored ConfigMaps from the job's output")
     log = ("[pod/t-restore-run/stage] RECOVERY_CONFIGMAP config config.yaml YWJj\n"
