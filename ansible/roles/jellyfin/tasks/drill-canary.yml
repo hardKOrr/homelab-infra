@@ -28,9 +28,17 @@
     body:
       Username: "{{ app_config.app.admin_user | default('admin') }}"
       Pw: "{{ homelabinfra_vault.media[instance].password }}"
+    status_code: [200, 400, 401, 403, 500]
   register: _jfc_auth
   changed_when: false
   no_log: true
+
+- name: Jellyfin drill canary | Require the admin sign-in
+  ansible.builtin.assert:
+    that: _jfc_auth.status == 200
+    fail_msg: >-
+      {{ instance }} refused the admin login in homelab-infra/media/{{ instance }}
+      (HTTP {{ _jfc_auth.status }}): {{ _jfc_auth.content | default(_jfc_auth.msg | default('')) | truncate(200) }}
 
 - name: Jellyfin drill canary | Keep the session
   ansible.builtin.set_fact:

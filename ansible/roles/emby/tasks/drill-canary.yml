@@ -29,9 +29,17 @@
     body:
       Username: "{{ homelabinfra_vault.media[instance].username | default(app_config.app.admin_user | default('admin'), true) }}"
       Pw: "{{ homelabinfra_vault.media[instance].password }}"
+    status_code: [200, 400, 401, 403, 500]
   register: _ebc_auth
   changed_when: false
   no_log: true
+
+- name: Emby drill canary | Require the admin sign-in
+  ansible.builtin.assert:
+    that: _ebc_auth.status == 200
+    fail_msg: >-
+      {{ instance }} refused the admin login in homelab-infra/media/{{ instance }}
+      (HTTP {{ _ebc_auth.status }}): {{ _ebc_auth.content | default(_ebc_auth.msg | default('')) | truncate(200) }}
 
 - name: Emby drill canary | Keep the session
   ansible.builtin.set_fact:
