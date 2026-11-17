@@ -30,6 +30,7 @@ navidrome_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: navidrome   # native systemd unit — Remove stops it whatever the instance is named
     image: "deluan/navidrome:0.64.2"
     # Native: the same release from its .deb
     # (https://www.navidrome.org/docs/installation/linux/).

@@ -33,6 +33,7 @@ radarr_defaults:
       restore_playbook: restore-app.yml
 
   app:
+    service_name: radarr   # native systemd unit — Remove stops it whatever the instance is named
     media_kind: radarr
 
     # Docker and native run the same exact build.

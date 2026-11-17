@@ -12,7 +12,7 @@ servarr_config_delay: 5
 
 # Native: Lidarr installed from its release tarball under systemd, on its own LXC or VM.
 servarr_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
-servarr_service: "{{ app_config.app.media_kind }}"
+servarr_service: "{{ app_config.app.service_name }}"
 servarr_native_dir: "{{ servarr_project_dir }}/bin"
 # Debian 12 and Ubuntu 24.04: the ICU runtime package the .NET app needs.
 servarr_native_icu:

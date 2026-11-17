@@ -34,6 +34,7 @@ tautulli_defaults:
     canary_path: config_path
 
   app:
+    service_name: tautulli   # native systemd unit — Remove stops it whatever the instance is named
     # Docker and native run the same upstream release. Native clones this tag of
     # https://github.com/Tautulli/Tautulli into /opt/Tautulli (its Linux install,
     # https://github.com/Tautulli/Tautulli/wiki/Installation#linux).

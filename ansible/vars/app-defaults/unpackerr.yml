@@ -21,6 +21,7 @@ unpackerr_defaults:
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
+    service_name: unpackerr   # native systemd unit — Remove stops it whatever the instance is named
     # Docker and native run the same upstream release. Native installs this exact package
     # version from the GoLift APT repository (https://unpackerr.zip/docs/install/linux).
     image: "golift/unpackerr:v1.0.1"

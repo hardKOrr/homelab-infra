@@ -9,4 +9,4 @@ n8n_native_user: n8n
 n8n_native_home: "/var/lib/{{ instance }}"
 # Native: the pinned Node.js release n8n runs on, and the unit it runs as.
 n8n_native_node_root: "/usr/local/lib/nodejs/node-v{{ app_config.app.native_node_version }}-linux-x64"
-n8n_native_service: n8n
+n8n_native_service: "{{ app_config.app.service_name }}"

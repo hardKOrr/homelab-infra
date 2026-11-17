@@ -52,6 +52,7 @@ searxng_defaults:
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
+    service_name: searxng   # native systemd unit — Remove stops it whatever the instance is named
     # Every method runs the same exact upstream release. SearXNG publishes no git tags, so
     # the native install pins the release's commit (the image tag's suffix is its short form).
     image: "searxng/searxng:2026.11.9-57ff753ad"
