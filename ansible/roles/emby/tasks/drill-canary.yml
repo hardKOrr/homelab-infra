@@ -1,0 +1,147 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Emby's API as the
+# admin Deploy records in homelab-infra/media/<instance>, as test(emby) #448 defined it:
+#   data           library p2-canary-emby-<id> (no folders, so nothing scans) and
+#                  non-admin user p2-canary-emby-<id>
+#   configuration  server setting LogFileRetentionDays 9 (default 3; Deploy never sets it)
+# The final verify (drill_final) deletes the library and the user and sets the setting back.
+- name: Emby drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+
+- name: Emby drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _ebc_canary: "p2-canary-emby-{{ drill_canary_id }}"
+    _ebc_api: "{{ drill_app_url }}/emby"
+    _ebc_days: 9
+
+- name: Emby drill canary | Sign in as the admin
+  ansible.builtin.uri:
+    url: "{{ _ebc_api }}/Users/AuthenticateByName"
+    method: POST
+    headers: >-
+      {{ drill_app_headers | combine({'X-Emby-Authorization': 'MediaBrowser Client="homelab-infra-drill",
+         Device="lab-drill", DeviceId="lab-drill-' ~ instance ~ '", Version="1.0.0"'}) }}
+    body_format: json
+    body:
+      Username: "{{ homelabinfra_vault.media[instance].username | default(app_config.app.admin_user | default('admin'), true) }}"
+      Pw: "{{ homelabinfra_vault.media[instance].password }}"
+  register: _ebc_auth
+  changed_when: false
+  no_log: true
+
+- name: Emby drill canary | Keep the session
+  ansible.builtin.set_fact:
+    _ebc_headers: "{{ drill_app_headers | combine({'X-Emby-Token': _ebc_auth.json.AccessToken}) }}"
+  no_log: true
+
+- name: Emby drill canary | Read the libraries, users and configuration
+  ansible.builtin.uri:
+    url: "{{ _ebc_api }}/{{ item }}"
+    headers: "{{ _ebc_headers }}"
+  register: _ebc_read
+  changed_when: false
+  no_log: true
+  loop: [Library/VirtualFolders/Query, Users/Query, System/Configuration]
+
+- name: Emby drill canary | Keep what the instance holds
+  ansible.builtin.set_fact:
+    _ebc_libraries: "{{ _ebc_read.results[0].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+    _ebc_users: "{{ _ebc_read.results[1].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+    _ebc_config: "{{ _ebc_read.results[2].json }}"
+
+- name: Emby drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - _ebc_libraries | length == 0
+      - _ebc_users | length == 0
+      - _ebc_config.LogFileRetentionDays | int != _ebc_days
+    fail_msg: "{{ instance }} already has {{ _ebc_canary }} or its setting on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: Emby drill canary | Write the library, the user and the setting
+  when: drill_canary_action == 'create'
+  block:
+    - name: Emby drill canary | Create the library
+      ansible.builtin.uri:
+        url: "{{ _ebc_api }}/Library/VirtualFolders"
+        method: POST
+        headers: "{{ _ebc_headers }}"
+        body_format: json
+        body:
+          Name: "{{ _ebc_canary }}"
+          CollectionType: movies
+          Paths: []
+          RefreshLibrary: false
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+      when: _ebc_libraries | length == 0
+
+    - name: Emby drill canary | Create the user
+      ansible.builtin.uri:
+        url: "{{ _ebc_api }}/Users/New"
+        method: POST
+        headers: "{{ _ebc_headers }}"
+        body_format: json
+        body: {Name: "{{ _ebc_canary }}"}
+      changed_when: true
+      no_log: true
+      when: _ebc_users | length == 0
+
+    - name: Emby drill canary | Save the setting
+      ansible.builtin.uri:
+        url: "{{ _ebc_api }}/System/Configuration"
+        method: POST
+        headers: "{{ _ebc_headers }}"
+        body_format: json
+        body: "{{ _ebc_config | combine({'LogFileRetentionDays': _ebc_days}) }}"
+        status_code: [200, 204]
+      changed_when: true
+      no_log: true
+
+    - name: Emby drill canary | Read back after the write
+      ansible.builtin.uri:
+        url: "{{ _ebc_api }}/{{ item }}"
+        headers: "{{ _ebc_headers }}"
+      register: _ebc_read
+      changed_when: false
+      no_log: true
+      loop: [Library/VirtualFolders/Query, Users/Query, System/Configuration]
+
+    - name: Emby drill canary | Keep what the instance holds after the write
+      ansible.builtin.set_fact:
+        _ebc_libraries: "{{ _ebc_read.results[0].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+        _ebc_users: "{{ _ebc_read.results[1].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+        _ebc_config: "{{ _ebc_read.results[2].json }}"
+
+- name: Emby drill canary | Require the library, the non-admin user and the setting
+  ansible.builtin.assert:
+    that:
+      - _ebc_libraries | length == 1
+      - _ebc_users | length == 1
+      - not (_ebc_users[0].Policy.IsAdministrator | default(false) | bool)
+      - _ebc_config.LogFileRetentionDays | int == _ebc_days
+    fail_msg: >-
+      {{ instance }} holds {{ _ebc_libraries | length }} canary library(ies),
+      {{ _ebc_users | length }} canary user(s) and LogFileRetentionDays
+      {{ _ebc_config.LogFileRetentionDays }}.
+  when: drill_canary_action in ['create', 'verify']
+
+- name: Emby drill canary | Delete the canary after the final verify
+  ansible.builtin.uri:
+    url: "{{ _ebc_api }}/{{ item.path }}"
+    method: POST
+    headers: "{{ _ebc_headers }}"
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    status_code: [200, 204]
+  changed_when: true
+  no_log: true
+  loop:
+    - {path: "Library/VirtualFolders/Delete?Id={{ _ebc_libraries[0].Id | urlencode }}&RefreshLibrary=false"}
+    - {path: "Users/{{ _ebc_users[0].Id }}/Delete"}
+    - path: System/Configuration
+      body: "{{ _ebc_config | combine({'LogFileRetentionDays': 3}) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool
