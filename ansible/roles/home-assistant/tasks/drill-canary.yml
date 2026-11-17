@@ -16,8 +16,12 @@
     _hac_owner: "{{ (homelabinfra_vault.apps | default({})).get(instance ~ '-drill-owner', {}) }}"
   no_log: true
 
+# Reads the vault, not _hac_owner: a block's condition is checked again before each of its
+# tasks, and the first task sets _hac_owner's password.
 - name: Home Assistant drill canary | Store a new drill owner
-  when: drill_canary_action == 'create' and _hac_owner.password | default('') | length == 0
+  when: >-
+    drill_canary_action == 'create'
+    and (homelabinfra_vault.apps | default({})).get(_hac_owner_item, {}).password | default('') | length == 0
   block:
     - name: Home Assistant drill canary | Choose the drill owner
       ansible.builtin.set_fact:
