@@ -25,15 +25,6 @@ caddy_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
 
-  # Drill canary: a marker beside the configuration, which proves backup and restore
-  # transport. Caddy is essential, so lab-drill never Removes it; check the marker around a
-  # manual Restore (see playbooks/maintenance/drill-canary.yml).
-  drill:
-    canary_path:
-      native: /etc/caddy
-      docker: "/opt/{{ instance }}/config"
-      kubernetes: /config         # inside the pod: the config volume
-
   backup:
     enabled: true
     schedule: "0 3 * * *"
@@ -135,6 +126,13 @@ caddy_defaults:
   # playbooks/maintenance/check-wiring.yml: Deploy wires a DNS record and a monitor, no route.
   drill:
     wiring: [dns, monitor]
+    # Drill canary: a marker beside the configuration, which proves backup and restore
+    # transport. Caddy is essential, so lab-drill never Removes it; check the marker around
+    # a manual Restore (see playbooks/maintenance/drill-canary.yml).
+    canary_path:
+      native: /etc/caddy
+      docker: "/opt/{{ instance }}/config"
+      kubernetes: /config         # inside the pod: the config volume
   routing:
     proxy: none                 # Caddy IS the reverse proxy — never route it through itself
     access: internal            # unused while proxy is none; kept so the key is never absent
