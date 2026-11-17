@@ -63,12 +63,6 @@
         name: _instance_config
       failed_when: false
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
         app_config: >-

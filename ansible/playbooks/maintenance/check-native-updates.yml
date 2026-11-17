@@ -53,12 +53,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     - name: Collect apps with updates available
       ansible.builtin.set_fact:

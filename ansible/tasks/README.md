@@ -6,6 +6,7 @@ role must use for each common operation.
 
 | Directory | What lives there |
 | --- | --- |
+| `apps/` | Loading an app instance's merged config (`load-config.yml`) |
 | `app-wiring/` | App-to-app integration: download clients, *arr registrations, Open WebUI upstreams |
 | `backup/` | PBS target resolution and the PBS client (`backup/scripts/pbs-client.sh`) |
 | `bitwarden/` | Vaultwarden session checks and item reads and upserts |

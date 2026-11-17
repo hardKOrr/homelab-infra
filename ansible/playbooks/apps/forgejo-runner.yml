@@ -14,26 +14,10 @@
       ansible.builtin.assert:
         that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
         fail_msg: "Provide a safe Forgejo Runner instance name: -e instance=forgejo-runner"
-    - name: Load Forgejo Runner defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/forgejo-runner.yml
-        name: _app_defaults
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-    - name: Merge Forgejo Runner config
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.forgejo_runner_defaults
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: forgejo-runner
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -99,11 +83,6 @@
   pre_tasks:
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
   tasks:
     - name: Bootstrap the guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -125,11 +104,6 @@
   become: false
   gather_facts: false
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
   tasks:
     - name: Deploy Forgejo Runner into its Kubernetes namespace
       ansible.builtin.include_role:

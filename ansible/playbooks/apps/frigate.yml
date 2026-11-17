@@ -20,32 +20,13 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=frigate"
 
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/frigate.yml
-        name: _app_defaults
-
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
-    - name: Merge Frigate config and external recording-storage declaration
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.frigate_defaults
-             | combine({
-                 'recording_storage':
-                   homelabinfra_config.infrastructure.frigate_storage | default({})
-               }, recursive=True)
-             | combine(_instance_config | default({}), recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: frigate
+        load_config_layer:
+          recording_storage: "{{ homelabinfra_config.infrastructure.frigate_storage | default({}) }}"
+        load_config_vault_methods: []
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -152,12 +133,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     - name: Bootstrap the Frigate guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -184,11 +159,6 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml

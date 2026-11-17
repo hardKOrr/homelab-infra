@@ -25,32 +25,12 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=navidrome"
 
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: "../../vars/app-defaults/navidrome.yml"
-        name: _app_defaults
-
-    - name: Load instance config (optional — all defaults used if absent)
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
-    - name: Merge app config (instance overrides defaults)
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.navidrome_defaults
-             | combine({'media_storage':
-                        homelabinfra_config.infrastructure.media_storage | default({})},
-                       recursive=True)
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: navidrome
+        load_config_layer:
+          media_storage: "{{ homelabinfra_config.infrastructure.media_storage | default({}) }}"
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -143,12 +123,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -188,11 +162,6 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml

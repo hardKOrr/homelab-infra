@@ -14,26 +14,10 @@
       ansible.builtin.assert:
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=tautulli"
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/tautulli.yml
-        name: _app_defaults
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-    - name: Merge Tautulli config
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.tautulli_defaults
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: tautulli
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -87,11 +71,6 @@
   pre_tasks:
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
   tasks:
     - name: Bootstrap the stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -112,11 +91,6 @@
   become: false
   gather_facts: false
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:

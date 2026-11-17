@@ -130,11 +130,6 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # absent pre-bootstrap — both sections report "not configured"
 
   vars:
     _st_guests: "{{ groups['lab_managed'] | default([]) | sort }}"

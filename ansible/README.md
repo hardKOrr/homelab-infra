@@ -184,6 +184,7 @@ the shared files, so its allowlists are empty.
 
 | Operation | Owner | A role supplies |
 | --- | --- | --- |
+| An app instance's merged `app_config` | `tasks/apps/load-config.yml` | `load_config_app`, optional `load_config_layer`, `load_config_vault_methods`, `load_config_instance_required`, `load_config_fact` |
 | Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
 | The reverse proxy's source addresses, for trusting `X-Forwarded-Proto` | `tasks/wiring/proxy-sources.yml` | nothing; reads `wiring_proxy_sources` |
 | Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |

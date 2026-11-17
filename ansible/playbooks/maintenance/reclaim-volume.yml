@@ -84,12 +84,6 @@
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # absent pre-bootstrap — the cluster assert below then explains
-
   vars:
     _rv_action: "{{ action | default('report') }}"
 

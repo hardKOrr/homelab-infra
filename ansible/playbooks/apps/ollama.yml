@@ -19,29 +19,11 @@
         that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
         fail_msg: "Provide a safe Ollama instance name: -e instance=ollama"
 
-    - name: Load Ollama defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/ollama.yml
-        name: _app_defaults
-
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
-    - name: Merge Ollama config
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.ollama_defaults
-             | combine(_instance_config | default({}), recursive=True) }}
-      no_log: true
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: ollama
+        load_config_vault_methods: []
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -152,12 +134,6 @@
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     - name: Bootstrap the Ollama guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -190,11 +166,6 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
