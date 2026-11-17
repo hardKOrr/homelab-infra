@@ -80,7 +80,10 @@ module.exports = async ({ page, step, url, secrets }) => {
       grant_type: 'password', username: email, password: passwordHash(masterKey()),
       scope: 'api offline_access', client_id: 'web', deviceType: '10',
       deviceIdentifier: 'b1d1d1d1-1ab0-4d1e-9d1e-1ab0d1d1d1d1', deviceName: 'lab-drill' } });
-    if (!response.ok()) return false;
+    // 400 is Bitwarden's invalid-credentials answer; anything else is a failure to report,
+    // never a sign that the owner is absent.
+    if (response.status() === 400) return false;
+    check(response.ok(), `sign-in returned ${response.status()}: ${(await response.text()).slice(0, 200)}`);
     token = (await response.json()).access_token;
     return true;
   };
