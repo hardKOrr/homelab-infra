@@ -5,7 +5,9 @@
 # stdin: {"action": "create|fresh|verify", "final": bool, "canary": str,
 #         "username": str, "password": str}
 # stdout: one JSON line {"onboarded": bool, "helpers": [names], "location": str,
-#         "created_owner": bool}
+#         "created_owner": bool}, or {"error": str}. It always exits 0, because the
+#         caller hides this command's result (stdin holds the password) and reports the
+#         error itself; no error text carries the password.
 import asyncio
 import json
 import sys
@@ -97,4 +99,9 @@ async def main():
     print(json.dumps(out))
 
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except SystemExit as stop:
+    print(json.dumps({"error": str(stop.code)}))
+except Exception as failure:  # reported, not raised: see the header
+    print(json.dumps({"error": "%s: %s" % (type(failure).__name__, failure)}))

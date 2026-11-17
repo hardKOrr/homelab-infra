@@ -55,6 +55,11 @@
   ansible.builtin.set_fact:
     _hac_state: "{{ drill_exec_result.stdout_lines[-1] | from_json }}"
 
+- name: Home Assistant drill canary | Require the client to finish
+  ansible.builtin.assert:
+    that: _hac_state.error is not defined
+    fail_msg: "{{ instance }}: {{ _hac_state.error | default('') }}"
+
 - name: Home Assistant drill canary | Require an instance with no users when fresh
   ansible.builtin.assert:
     that: not (_hac_state.onboarded | bool)
