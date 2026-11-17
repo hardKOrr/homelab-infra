@@ -80,6 +80,8 @@ def main():
             "    print(json.dumps({'hostname': 'stack-media', 'tags': '_+lab;_-docker;_.stack+media'}))\n"
             "elif args[:2] == ['get', '/nodes/test-node/lxc/126/config']:\n"
             "    print(json.dumps({'hostname': 'stack-busy', 'tags': '_+lab;_-docker;_.stack+busy;_sonarr'}))\n"
+            "elif args[:2] == ['get', '/nodes/test-node/qemu/457/config']:\n"
+            "    print(json.dumps({'name': 'stack-ai', 'tags': '_+lab;_-docker;_.stack+ai'}))\n"
             "elif args[:2] == ['get', '/nodes/test-node/qemu/456/config']:\n"
             "    print(json.dumps({'name': 'influxdb', 'tags': '_+lab;_influxdb'}))\n"
             "elif args[:2] == ['get', '/cluster/ha/resources']:\n"
@@ -307,6 +309,26 @@ def main():
 
         run, pct_calls = destroy_lxc("stack-media", 125, ["_+lab", "_-docker", "_.stack+media"])
         assert run.returncode != 0 and pct_calls == [], run.stdout
+
+        # The same emptied-stack rule for a VM stack host.
+        calls.unlink(missing_ok=True)
+        stopped.unlink(missing_ok=True)
+        vm_stack = yaml.safe_load(vm_playbook.read_text())
+        vm_stack[0]["vars"] |= {
+            "destroy_vm_instance": "ollama",
+            "destroy_vm_name": "stack-ai",
+            "destroy_vm_vmid": 457,
+            "destroy_vm_original_tags": ["_+lab", "_-docker", "_.stack+ai", "_ollama"],
+            "destroy_vm_owner_tag": "_.stack+ai",
+        }
+        vm_playbook.write_text(yaml.safe_dump(vm_stack), encoding="utf-8")
+        run = subprocess.run(
+            [str(ansible), "-i", str(inventory), str(vm_playbook)],
+            cwd=repo, env=env, text=True, capture_output=True, check=False,
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+        qm_calls = [json.loads(line)[1:] for line in calls.read_text().splitlines()]
+        assert ["destroy", "457", "--purge", "1"] in qm_calls, qm_calls
         api_server.shutdown()
         api_server.server_close()
         api_thread.join(timeout=5)
