@@ -140,6 +140,12 @@
     app_config: "{{ app_config }}"
     homelabinfra_config: "{{ homelabinfra_config }}"
     remove_kind: "{{ _rm_kind }}"
+    # A stopped native guest that this Remove destroys needs nothing done inside it
+    # first, and SSH could not reach it: Play 2 skips to the destroy (from the node).
+    remove_guest_skip_inside: >-
+      {{ _rm_kind == 'native' and destroy_guest | default(false) | bool
+         and delete_data | default(false) | bool
+         and hostvars[_rm_hosts[0]].proxmox_status | default('') == 'stopped' }}
   when: _rm_hosts | length > 0
   # Inventory bookkeeping, not a lab change — the same reason
   # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without

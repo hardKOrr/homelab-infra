@@ -123,6 +123,7 @@
       ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-units.yml"
       when:
         - remove_kind == 'native'
+        - not remove_guest_skip_inside | bool
         - (_rm_hooks ~ '/remove-units.yml') is file
 
     - name: Resolve the ordinary native removal unit
@@ -131,6 +132,7 @@
           - "{{ app_config.app.service_name | default(instance) }}"
       when:
         - remove_kind == 'native'
+        - not remove_guest_skip_inside | bool
         - not ((_rm_hooks ~ '/remove-units.yml') is file)
 
   tasks:

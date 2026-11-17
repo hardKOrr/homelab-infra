@@ -92,8 +92,15 @@
     - app_config.app.shared_device | default('') | length > 0
 
 # ── Native app on its own LXC ──────────────────────────────────────────────
+- name: Report a stopped guest this Remove destroys
+  ansible.builtin.debug:
+    msg: >-
+      {{ remove_guest_name }} is stopped and is destroyed next; nothing inside it is
+      stopped or deleted first.
+  when: remove_kind == 'native' and remove_guest_skip_inside | bool
+
 - name: Stop the native service
-  when: remove_kind == 'native'
+  when: remove_kind == 'native' and not remove_guest_skip_inside | bool
   block:
     # app.service_name is declared in vars/app-defaults/<app>.yml for every
     # native baseline app, because a unit name does not always match the app
