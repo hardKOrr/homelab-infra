@@ -86,4 +86,3 @@
       - _dmx_k8s_login.json.user is not none
     fail_msg: "Deemix could not sign in with the stored Deezer ARL. Verify the ARL and retry Deploy."
   when: app_config.app.arl | default('', true) | length > 0
-  no_log: true

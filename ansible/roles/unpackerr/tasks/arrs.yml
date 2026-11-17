@@ -23,14 +23,14 @@
 - name: Assert every registered Arr has a usable endpoint and API key
   ansible.builtin.assert:
     that:
-      - item.value.host | default('', true) | length > 0
-      - item.value.api_key | default('', true) | length > 0
+      - _unpackerr_arr.host | default('', true) | length > 0
+      - _unpackerr_arr.api_key | default('', true) | length > 0
     fail_msg: >-
-      Media registry entry {{ item.key }} lacks its endpoint or API key. Rerun that Arr deployment, or store its API key in Vaultwarden item homelab-infra/media/{{ item.key }}, before deploying Unpackerr.
-  loop: "{{ _unpackerr_arrs }}"
-  loop_control:
-    label: "{{ item.key }}"
-  no_log: true
+      Media registry entry {{ item }} lacks its endpoint or API key. Rerun that Arr deployment, or store its API key in Vaultwarden item homelab-infra/media/{{ item }}, before deploying Unpackerr.
+  vars:
+    _unpackerr_arr: "{{ (_unpackerr_arrs | items2dict)[item] }}"
+  # Loop over names only: a failed result prints its whole item, and the entry holds the API key.
+  loop: "{{ _unpackerr_arrs | map(attribute='key') | list }}"
 - name: Verify every Arr accepts its registered API key
   ansible.builtin.uri:
     url: "{{ item.value.host }}/api/{{ media_wiring.kinds[item.value.app].api }}/system/status"

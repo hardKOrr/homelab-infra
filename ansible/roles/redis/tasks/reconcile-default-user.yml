@@ -21,7 +21,6 @@
     that:
       - _redis_default_acl_rules | length <= 1
     fail_msg: "Redis ACL file contains duplicate default users."
-  no_log: true
 
 - name: Redis | Build the default ACL rule with managed credentials and grants
   ansible.builtin.set_fact:

@@ -82,7 +82,6 @@
       - "'--enable 0' in _pve_fw_rollback_action.stdout"
     fail_msg: Refusing to reuse a rollback timer with an unexpected action.
   when: _pve_fw_rollback_timer_status.rc == 0
-  no_log: true
 
 - name: Proxmox host firewall | Refresh a verified rollback timer before retrying changes
   ansible.builtin.command:

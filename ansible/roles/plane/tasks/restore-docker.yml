@@ -94,7 +94,6 @@
       Plane restore needs target-owned PostgreSQL and Redis credentials, the source Plane
       keys, the target's own keys for a rollback, non-root target paths, named source
       dependencies, and a PBS snapshot when overwrite=true. Missing recovery material is not a healthy restore.
-  no_log: true
 
 - name: Plane restore | Require separate PostgreSQL and Redis targets for a new destination
   ansible.builtin.assert:
@@ -115,7 +114,6 @@
       the source. Never let an isolated target overwrite the source database or named Redis
       dataset.
   when: restore_destination == 'new'
-  no_log: true
 
 - name: Plane restore | Resolve the paths and services the swap replaces
   ansible.builtin.set_fact:

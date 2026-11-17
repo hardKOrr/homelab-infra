@@ -120,7 +120,6 @@
               - _opn_hostname_search.json.rows is defined
               - _opn_hostname_search.json.rows | type_debug == 'list'
               - _opn_hostname_search.json.rows | select('mapping') | list | length == _opn_hostname_search.json.rows | length
-          no_log: true
       rescue:
         # Never interpolate msg, exception, URL, headers, body or invocation from
         # the protected result. Only emit fixed categories and a coerced integer.
@@ -227,7 +226,6 @@
         fail_msg: >-
           OPNsense returned an owned Unbound host override without its UUID. No DNS
           records were changed; inspect Services > Unbound DNS > Overrides before rerunning.
-      no_log: true
 
     - name: Wire OPNsense | Reject a foreign override at the current hostname
       ansible.builtin.assert:

@@ -44,7 +44,6 @@
     fail_msg: >-
       Plane Kubernetes restore needs the target's registered Redis credentials, all five
       Plane keys from the selected source, and the existing target keys for rollback.
-  no_log: true
 
 - name: Plane Kubernetes restore | Require a recent target safety point
   ansible.builtin.include_tasks: ../../../tasks/recovery/require-recent-pre-restore-point.yml
@@ -70,7 +69,6 @@
       A new Plane restore must use target-owned PostgreSQL and Redis backends distinct from
       the source. Never let an isolated target overwrite the source database or Redis data.
   when: restore_destination | default('existing') == 'new'
-  no_log: true
 
 - name: Plane Kubernetes restore | Describe the registered database recovery step
   ansible.builtin.include_tasks: kubernetes-database-step.yml

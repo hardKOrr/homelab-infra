@@ -9,7 +9,6 @@
   ansible.builtin.stat:
     path: "{{ wireguard_conf_path }}"
   register: _wg_config
-  no_log: true
 
 - name: WireGuard | Resolve the server and peer credentials
   ansible.builtin.include_tasks: credentials.yml

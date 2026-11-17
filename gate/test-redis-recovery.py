@@ -155,7 +155,7 @@ def check_default_acl_reconciliation():
 
     validate_rules = task_named(tasks, "Redis | Require at most one default ACL rule")
     assert "_redis_default_acl_rules | length <= 1" in str(validate_rules)
-    assert validate_rules.get("no_log") is True
+    assert validate_rules.get("no_log") is not True
 
     build_rule = task_named(tasks, "Redis | Build the default ACL rule with managed credentials and grants")
     assert "reject('match'" in str(build_rule)
@@ -241,7 +241,7 @@ def check_backup():
     require_password = task_named(
         list(tasks_recursive(backup)), "Redis backup | Require the backend password in Vaultwarden"
     )
-    assert require_password.get("no_log") is True
+    assert require_password.get("no_log") is not True
     assert "_redis_backup_password" in str(require_password["ansible.builtin.assert"]["that"])
 
     export_block = task_named(list(tasks_recursive(backup)), "Redis backup | Export and upload the recovery point")

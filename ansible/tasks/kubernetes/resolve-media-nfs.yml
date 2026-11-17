@@ -40,7 +40,6 @@
     fail_msg: >-
       Kubernetes media mounts must each resolve to an existing NFSv4 share on the
       configured Proxmox node.
-  no_log: true
   loop: "{{ _k8s_media_findmnt.results }}"
   loop_control:
     label: "{{ item.item.path }}"
@@ -69,7 +68,6 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   become: true
   changed_when: false
-  no_log: true
   loop: "{{ _k8s_media_getent.results }}"
   loop_control:
     label: NFS server

@@ -28,4 +28,3 @@
     fail_msg: >-
       Required Vaultwarden item {{ vault_required_item }} is absent or incomplete.
       Required fields: {{ vault_required_fields | default([]) | join(', ') }}.
-  no_log: true

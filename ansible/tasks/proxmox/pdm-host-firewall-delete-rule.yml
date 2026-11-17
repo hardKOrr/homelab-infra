@@ -30,7 +30,6 @@
          | selectattr('comment', 'equalto', 'homelab-infra: ' ~ instance ~ ' pdm-proxmox-api')
          | list | length) == 1
     fail_msg: Refusing to delete a Proxmox firewall rule that is no longer PDM-owned.
-  no_log: true
 
 - name: PDM host firewall | Delete owned API rule with current digest
   ansible.builtin.command:

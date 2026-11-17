@@ -57,7 +57,6 @@
   vars:
     _cfg: "{{ _start_guest_config.stdout | from_json }}"
     _start_guest: "{{ _start_guest_matches | first }}"
-  no_log: true
 
 - name: Report the exact planned guest start
   ansible.builtin.debug:

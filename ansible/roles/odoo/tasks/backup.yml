@@ -39,7 +39,6 @@
     fail_msg: >-
       Odoo needs its named PostgreSQL backend, database credential, non-root filestore
       path, and a configured PBS target before an application-consistent backup can run.
-  no_log: true
 
 - name: Odoo backup | Check the instance filestore root
   ansible.builtin.stat:

@@ -38,7 +38,6 @@
       admin_user/admin_email no longer matches the original administrator marker.
       Restore the Vaultwarden item and original administrator settings before rerunning.
   when: _wordpress_admin_marker.stat.exists
-  no_log: true
 
 - name: WordPress | Resolve generated and reused application credentials
   ansible.builtin.set_fact:
@@ -106,7 +105,6 @@
       marker is missing. Restore the Vaultwarden item and the original data path before
       rerunning the deploy; refusing to replace or guess the administrator credential.
   when: not _wordpress_admin_marker.stat.exists
-  no_log: true
 
 - name: WordPress | Initialize the administrator without printing credentials
   ansible.builtin.command:

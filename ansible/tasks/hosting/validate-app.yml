@@ -48,7 +48,6 @@
       {{ _hosting_instance_name }} must select hosting.method docker, kubernetes or native;
       hosting.supported and hosting.impossible are fixed app declarations and cannot be
       changed by an instance config.
-  no_log: true
 
 - name: Hosting | Resolve the requested method and guest shape
   ansible.builtin.set_fact:

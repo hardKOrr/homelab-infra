@@ -128,7 +128,6 @@
   loop: "{{ _repair_configs.results }}"
   loop_control:
     label: "{{ item.item.vmid }}"
-  no_log: true
 
 - name: Report the exact planned stack tag repair
   ansible.builtin.debug:
@@ -210,7 +209,6 @@
       loop_control:
         index_var: repair_index
         label: "{{ item.item.vmid }}"
-      no_log: true
 
     - name: Notify completed stack tag repair
       ansible.builtin.include_tasks: ../../tasks/notify.yml

@@ -11,7 +11,6 @@
     fail_msg: >-
       {{ database_provision_app_instance }}'s database password must use only letters,
       digits, '.', '_' and '-' to be set on a PostgreSQL backend that runs on Kubernetes.
-  no_log: true
 
 - name: Database | Create or update the role and the database
   ansible.builtin.include_tasks: backend-psql.yml

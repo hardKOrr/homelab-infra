@@ -36,7 +36,6 @@
     fail_msg: >-
       Redis credential for {{ app_config.app.redis.instance }} is unavailable. Read it
       from Vaultwarden; do not add it to config/apps/{{ instance }}.yml.
-  no_log: true
 
 - name: Plane Kubernetes | Generate or reuse application and storage secrets
   ansible.builtin.set_fact:

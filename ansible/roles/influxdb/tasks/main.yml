@@ -196,7 +196,6 @@
       homelab-infra/apps/{{ instance }} before re-running; do not rotate an
       unknown operator token through deployment.
   when: not (_influxdb_setup_state.json.allowed | bool)
-  no_log: true
 
 - name: InfluxDB | Store initial administrator credentials before setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml

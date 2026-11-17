@@ -70,7 +70,6 @@
       - _opn_dns_user_search.json.rows | type_debug == 'list'
       - _opn_dns_user_search.json.rows | select('mapping') | list | length == _opn_dns_user_search.json.rows | length
     fail_msg: OPNsense user search returned an unexpected response; no account was changed.
-  no_log: true
 
 - name: OPNsense DNS account | Select exact-name users
   ansible.builtin.set_fact:
@@ -159,7 +158,6 @@
       - _opn_dns_created_user_search.json.rows | select('mapping') | list | length == _opn_dns_created_user_search.json.rows | length
     fail_msg: OPNsense did not return the newly created DNS user; no key was generated.
   when: _opn_dns_user_create is changed
-  no_log: true
 
 - name: OPNsense DNS account | Resolve the live user record
   ansible.builtin.set_fact:
@@ -179,7 +177,6 @@
       - _opn_dns_account_user.uuid | default(_opn_dns_account_user.id | default('')) | length > 0
     fail_msg: >-
       OPNsense did not confirm the owned homelab-infra-dns user. No DNS record was changed.
-  no_log: true
 
 - name: OPNsense DNS account | Check the account's privilege and login scope
   ansible.builtin.set_fact:
@@ -228,7 +225,6 @@
       - _opn_dns_user_repair.json.result | default('') == 'saved'
     fail_msg: OPNsense refused to restrict homelab-infra-dns to its Unbound privilege.
   when: _opn_dns_user_repair is changed
-  no_log: true
 
 - name: OPNsense DNS account | Read back the restricted user
   ansible.builtin.uri:
@@ -256,7 +252,6 @@
       - _opn_dns_repaired_user_search.json.rows | select('mapping') | list | length == _opn_dns_repaired_user_search.json.rows | length
     fail_msg: OPNsense did not return the restricted DNS user after its update.
   when: _opn_dns_user_repair is changed
-  no_log: true
 
 - name: OPNsense DNS account | Record the restricted user readback
   ansible.builtin.set_fact:
@@ -281,7 +276,6 @@
     fail_msg: >-
       OPNsense user homelab-infra-dns does not have exactly the Unbound privilege and a
       disabled shell. Inspect the owned user before deploying DNS records.
-  no_log: true
 
 - name: OPNsense DNS account | Search for the account's API keys
   ansible.builtin.uri:
@@ -307,7 +301,6 @@
       - _opn_dns_key_search.json.rows | select('mapping') | list | length == _opn_dns_key_search.json.rows | length
     fail_msg: OPNsense API-key search returned an unexpected response; no key was rotated.
   when: _opn_dns_user_create is not changed
-  no_log: true
 
 - name: OPNsense DNS account | Select this user's API keys
   ansible.builtin.set_fact:
@@ -354,7 +347,6 @@
   when:
     - _opn_dns_user_create is not changed
     - _opn_dns_saved_key_probe.status | default(0) | int == 200
-  no_log: true
 
 - name: OPNsense DNS account | Refuse to rotate after a transport or server failure
   ansible.builtin.assert:
@@ -406,7 +398,6 @@
       OPNsense did not remove the owned DNS account for explicit rotation; no replacement
       account or key was created.
   when: _opn_dns_rotation_user_delete is changed
-  no_log: true
 
 - name: OPNsense DNS account | Recreate the owned user after explicit rotation
   ansible.builtin.uri:
@@ -442,7 +433,6 @@
       OPNsense did not recreate homelab-infra-dns after rotation; existing DNS records
       remain, but the DNS API account needs repair before Deploy can continue.
   when: _opn_dns_rotation_user_create is changed
-  no_log: true
 
 - name: OPNsense DNS account | Generate a key for a new or explicitly rotated account
   ansible.builtin.uri:
@@ -469,7 +459,6 @@
       - _opn_dns_issued_key.json.secret | default('') | length > 0
     fail_msg: OPNsense did not return a complete API key; no DNS record was changed.
   when: _opn_dns_issued_key is changed
-  no_log: true
 
 - name: OPNsense DNS account | Store a new key in the canonical Vaultwarden item
   ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
@@ -561,7 +550,6 @@
       OPNsense does not show exactly one API key for homelab-infra-dns matching the
       newly stored credential after account creation or rotation.
   when: _opn_dns_issued_key is changed
-  no_log: true
 
 - name: OPNsense DNS account | Verify the stored key is Unbound-only
   ansible.builtin.assert:
@@ -574,7 +562,6 @@
       The newly stored OPNsense DNS key could not read Unbound overrides. No DNS record
       was changed; inspect the owned user's privilege before rerunning.
   when: _opn_dns_issued_key is changed
-  no_log: true
 
 - name: OPNsense DNS account | Verify the DNS key cannot read firewall rules
   ansible.builtin.uri:
@@ -598,4 +585,3 @@
     fail_msg: >-
       OPNsense DNS API key was not denied by the firewall rules API. Review the owned
       user's effective privileges before deploying DNS records.
-  no_log: true

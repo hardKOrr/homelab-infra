@@ -68,7 +68,7 @@
       {{ item.dns_challenge | dict2items
          | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
          | list | items2dict }}
-  no_log: true
+  no_log: true  # loop items carry DNS provider credentials
 
 - name: Collect DNS provider module names
   ansible.builtin.set_fact:

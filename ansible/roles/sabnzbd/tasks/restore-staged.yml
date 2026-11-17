@@ -18,4 +18,3 @@
   ansible.builtin.assert:
     that: _sabnzbd_api_key | length > 0
     fail_msg: The selected SABnzbd point has no API key; the live config has not been replaced.
-  no_log: true

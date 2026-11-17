@@ -15,7 +15,6 @@
       No Kometa config.yml is stored for {{ instance }}. Use Store Secret to write the
       complete YAML to homelab-infra/apps/{{ instance }}, field config_yml, then rerun
       this deployment.
-  no_log: true
 
 - name: Kometa | Validate the configuration is YAML
   ansible.builtin.set_fact:
@@ -27,7 +26,6 @@
     that: _kometa_config_document is mapping
     fail_msg: >-
       homelab-infra/apps/{{ instance }} field config_yml must contain a YAML mapping.
-  no_log: true
 
 - name: Kometa | Read the optional operator-owned collection file
   ansible.builtin.set_fact:
@@ -53,7 +51,6 @@
       homelab-infra/apps/{{ instance }} field collections_yml must contain a non-empty
       Kometa collections or dynamic_collections mapping.
   when: _kometa_collections_yml | length > 0
-  no_log: true
 
 - name: Kometa | Assemble the operator-owned configuration files
   ansible.builtin.set_fact:

@@ -60,7 +60,6 @@
         fail_msg: >-
           The requested VMID and instance name must resolve to the same single, owned,
           non-template LXC. Refusing to repair an ambiguous, unowned or unrelated guest.
-      no_log: true
 
     - name: Read the target LXC configuration
       ansible.builtin.command:
@@ -94,7 +93,6 @@
         fail_msg: >-
           The live LXC hostname, ownership, tag state or configuration revision does not
           match the reviewed target. Refusing to repair it.
-      no_log: true
 
     - name: Resolve current and desired target tags
       ansible.builtin.set_fact:
@@ -181,4 +179,3 @@
               The original configuration remains on the PVE node for recovery.
           vars:
             _repair_after: "{{ _repair_after_read.stdout | from_json }}"
-          no_log: true

@@ -52,7 +52,6 @@
       {{ item.value }} required by LiteLLM environment reference {{ item.key }}. Store the
       provider key with the Store Secret job; it must not be added to config/apps.
   loop: "{{ app_config.app.credentials | default({}) | dict2items }}"
-  no_log: true
 
 - name: LiteLLM | Reject inline provider credentials
   ansible.builtin.assert:
@@ -61,7 +60,7 @@
       Model {{ item.model_name }} contains an inline api_key. Provider credentials must
       use api_key_env and a hidden Vaultwarden field; they are never accepted in config/apps.
   loop: "{{ app_config.app.models | default([]) }}"
-  no_log: true
+  no_log: true  # loop items may hold an inline api_key
 
 - name: LiteLLM | Require model credential references to be declared
   ansible.builtin.assert:

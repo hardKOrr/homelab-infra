@@ -86,7 +86,6 @@
       InfluxDB instance {{ instance }} already has a data volume, but its Vaultwarden
       credentials are unavailable. Restore homelab-infra/apps/{{ instance }} before
       re-running; do not rotate an unknown operator token through deployment.
-  no_log: true
 
 # Stored before the manifest is applied, so a generated credential is never in use without
 # being recorded.

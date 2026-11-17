@@ -134,7 +134,6 @@
           loop_control:
             index_var: repair_index
             label: "{{ item.item.vmid }}"
-          no_log: true
         - name: Notify completed tag repair
           ansible.builtin.include_tasks: ../../tasks/notify.yml
           vars:

@@ -234,6 +234,8 @@ Stage backup sources and restore targets outside `/tmp`, beside the data they re
 
 - Keep playbooks focused on orchestration. Put reusable behavior in a task file or role.
 - Use `no_log` only on tasks that carry secrets; failures print stderr and stdout with secret values scrubbed.
+  An assert, fail, debug, stat, file, wait_for, find or ping task keeps `no_log: true` only with
+  a comment on that line naming the secret (`gate/check-no-log.py`).
 - Preserve sibling keys when updating shared `homelabinfra_*` mappings. Follow
   `vars/CONTRACT.md` for merge and namespace rules.
 - Treat `config/.generated/facts.yml` as generated topology, not a secret store.

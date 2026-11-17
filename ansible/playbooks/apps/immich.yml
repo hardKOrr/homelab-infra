@@ -63,7 +63,6 @@
           Immich needs exactly one explicitly declared media_storage.mounts entry for
           originals/thumbnails plus media_storage.owner. The platform will attach that
           existing host directory and will not adopt global media storage.
-      no_log: true
 
     - name: Resolve the Immich media path
       ansible.builtin.set_fact:

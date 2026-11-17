@@ -42,7 +42,6 @@
     fail_msg: >-
       Each Kubernetes media share needs a safe volume name, NFS server, absolute export
       path, non-root absolute mount path, and boolean read_only value.
-  no_log: true
   loop: "{{ k8s_media_shares }}"
   loop_control:
     label: "{{ item.name | default('unnamed share') }}"

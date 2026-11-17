@@ -58,7 +58,6 @@
           - _kometa_config_document.plex.url | default('', true) | length > 0
           - _kometa_config_document.plex.token | default('', true) | length > 0
         fail_msg: Kometa config.yml must define plex.url and plex.token.
-      no_log: true
 
     - name: Check the configured Plex endpoint from the cluster
       ansible.builtin.uri:

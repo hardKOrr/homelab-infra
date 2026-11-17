@@ -112,7 +112,6 @@
     that: _redis_credentials_known | bool
     fail_msg: "Redis instance {{ instance }} has a managed password but its Vaultwarden credential is unavailable."
   when: "'Managed by homelab-infra' in (_redis_config.content | default('') | b64decode) and not (_redis_credentials_known | bool)"
-  no_log: true
 - name: Redis | Store initial backend password before configuration
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:

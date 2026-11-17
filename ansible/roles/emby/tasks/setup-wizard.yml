@@ -31,7 +31,6 @@
     fail_msg: >-
       Emby did not return the name of its initial administrator from Startup/User.
       Check the app config directory before continuing setup.
-  no_log: true
 
 - name: First run | Use Emby's existing administrator account
   ansible.builtin.set_fact:

@@ -45,7 +45,6 @@
     fail_msg: >-
       Mautic restore needs its target, named MariaDB backend, database credential,
       non-root data path and configured PBS target.
-  no_log: true
 
 - name: Mautic restore | Require a separate database for a new destination
   ansible.builtin.assert:
@@ -65,7 +64,6 @@
       A new Mautic restore must use a database name or MariaDB backend distinct from the
       source. Never restore an isolated instance into the source database.
   when: restore_destination == 'new'
-  no_log: true
 
 - name: Mautic restore | Verify the independent pre-restore point
   when:

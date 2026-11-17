@@ -19,7 +19,6 @@
     fail_msg: >-
       {{ database_app_instance }} has no database_password in its canonical item;
       deploy it before taking a database dump.
-  no_log: true
 
 - name: Database dump | Dump the named database
   ansible.builtin.include_tasks: run-client.yml

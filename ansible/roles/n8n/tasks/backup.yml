@@ -45,7 +45,6 @@
       n8n needs its named PostgreSQL backend, database credential, Vaultwarden encryption
       key, non-root data path, and a configured PBS target before an application-consistent
       backup can run.
-  no_log: true
 
 - name: n8n backup | Check the instance data path
   ansible.builtin.stat:

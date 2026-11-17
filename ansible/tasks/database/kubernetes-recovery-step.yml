@@ -93,7 +93,6 @@
           No root credential, database name or image is recorded for
           {{ k8s_database_step_instance }}'s database. Deploy the instance first; its
           deploy generates and stores that credential.
-      no_log: true
 
     # The client is the server's own image. A MariaDB client cannot authenticate to MySQL
     # 8's default caching_sha2_password plugin, and that failure reads as a wrong password.
@@ -125,7 +124,6 @@
         fail_msg: >-
           No root credential or image is recorded for {{ k8s_database_step_instance }}.
           Deploy the instance first; its deploy generates and stores that credential.
-      no_log: true
 
     # The Service answers inside the namespace on app.port; the superuser's host pattern
     # admits only the pod network, so this is the one path that reaches it over TCP.
@@ -160,7 +158,6 @@
     fail_msg: >-
       No database password is recorded for {{ k8s_database_step_instance }}. Deploy the
       instance first.
-  no_log: true
 
 # The script travels in the Job's credential Secret: the templates already mount it
 # read-only, and it stays the one copy guest roles install from.

@@ -32,7 +32,6 @@
       - _open_webui_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
       - _open_webui_target_backup_id is match('^[A-Za-z0-9_.-]+$')
     fail_msg: Open WebUI Kubernetes recovery requires safe source and target backup IDs.
-  no_log: true
 
 - name: Open WebUI Kubernetes restore | Validate the selected recovery points
   ansible.builtin.assert:
@@ -48,7 +47,6 @@
       The selected recovery point must belong to the source backup group; an existing target
       also needs a different pre-restore point from its own backup group. No target data was
       replaced.
-  no_log: true
   when:
     - restore_overwrite | bool
     - restore_snapshot | default('') | length > 0
@@ -59,7 +57,6 @@
     fail_msg: >-
       The source Open WebUI application key is missing or unreadable in Vaultwarden. Restore
       that canonical key before retrying; no target data was replaced.
-  no_log: true
   when: restore_overwrite | bool
 
 - name: Open WebUI Kubernetes restore | Resolve the cluster and its API host

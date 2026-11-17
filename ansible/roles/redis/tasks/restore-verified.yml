@@ -35,7 +35,6 @@
       _redis_restore_target_auth.rc == 0
       or (_redis_restore_source_auth.rc | default(1)) == 0
     fail_msg: The restored Redis service does not accept its stored source or target password.
-  no_log: true
 
 - name: Redis restore | Select a working login for ACL reconciliation
   ansible.builtin.set_fact:

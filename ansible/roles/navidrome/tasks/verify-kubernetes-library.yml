@@ -48,7 +48,6 @@
       register: _navidrome_nfs_tcp_probe
       changed_when: false
       failed_when: false
-      no_log: true
 
     - name: Report NFS network reachability without private endpoints
       ansible.builtin.debug:
@@ -142,7 +141,6 @@
         state: absent
       become: true
       changed_when: false
-      no_log: true
       when: _navidrome_nfs_probe_dir.path is defined
   delegate_to: "{{ navidrome_k8s_node.name }}"
   become: true

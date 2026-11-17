@@ -10,7 +10,6 @@
     fail_msg: >-
       No unlocked Bitwarden execution session is present. Invoke this play only
       through lab-run's mandatory Vaultwarden preflight.
-  no_log: true
 
 - name: Vault | Verify the CLI session is unlocked
   ansible.builtin.command:

@@ -58,7 +58,7 @@ def main():
     assert source_probe.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
     assert source_probe.get("ansible.builtin.wait_for", {}).get("port") == 2049
     assert source_probe.get("delegate_to") == "{{ homelabinfra_config.proxmox.node }}"
-    assert source_probe.get("no_log") is True
+    assert source_probe.get("no_log") is not True
     assert any(
         task.get("name") == "Report NFS service reachability from the existing media mount host"
         and "NFS TCP/2049 is" in str(task)
@@ -138,7 +138,7 @@ def main():
     assert any(
         task.get("ansible.builtin.wait_for", {}).get("host") == "{{ _navidrome_nfs_server_ip }}"
         and task.get("ansible.builtin.wait_for", {}).get("port") == 2049
-        and task.get("no_log") is True
+        and task.get("no_log") is not True
         for task in nfs_probe[0]["block"]
     )
     assert any(

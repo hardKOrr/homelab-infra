@@ -30,7 +30,8 @@ They close stdin and select a local inventory so no live Proxmox inventory is in
 
 Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jinja,
 checks repository links and fixture secrets ([fixtures](fixtures/README.md)), enforces
-GitHub workflow policy, refuses duplicate YAML keys, and runs `check-structure.py`. That script enforces the structure
+GitHub workflow policy, refuses duplicate YAML keys and `no_log` on a check whose
+failure holds no secret (`check-no-log.py`), and runs `check-structure.py`. That script enforces the structure
 rules in [`AGENTS.md`](../AGENTS.md#keeping-the-repository-small) against the exceptions
 recorded in `structure.yml`. An exception may not grow, and one that no longer applies must
 be deleted. `python gate/check-structure.py --update` prints the current values.

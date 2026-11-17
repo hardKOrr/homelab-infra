@@ -30,7 +30,6 @@
 - name: Bazarr Kubernetes | Assert Bazarr generated an API key
   ansible.builtin.assert:
     that: _bazarr_api_key | length > 0
-  no_log: true
 
 - name: Bazarr Kubernetes | Verify the authenticated settings API
   ansible.builtin.uri:

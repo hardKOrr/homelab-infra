@@ -106,7 +106,6 @@
     - "{{ _redis_backup_stage.path }}/users.acl"
   register: _redis_backup_staged_paths
   changed_when: false
-  no_log: true
 
 - name: Redis backup | Require a non-empty RDB and ACL file
   ansible.builtin.assert:
@@ -119,7 +118,6 @@
   loop: "{{ _redis_backup_staged_paths.results }}"
   loop_control:
     label: "{{ item.item | basename }}"
-  no_log: true
 
 - name: Redis backup | Upload the native export to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml

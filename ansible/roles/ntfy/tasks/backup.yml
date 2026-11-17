@@ -59,7 +59,6 @@
     - "{{ _ntfy_backup_auth_file }}"
   register: _ntfy_backup_auth_database
   changed_when: false
-  no_log: true
 
 - name: Ntfy backup | Require the auth database
   ansible.builtin.assert:
@@ -71,7 +70,6 @@
       Ntfy's auth database is missing; refusing to create an incomplete application
       recovery point. The cache directory itself is still archived when empty.
   loop: "{{ _ntfy_backup_auth_database.results }}"
-  no_log: true
 
 - name: Ntfy backup | Quiesce Ntfy and archive auth and cache state to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml

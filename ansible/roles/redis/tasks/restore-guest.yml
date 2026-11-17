@@ -43,7 +43,6 @@
       Redis restore needs the backend passwords in Vaultwarden for both the source and
       target instance.
   when: restore_overwrite | bool
-  no_log: true
 
 - name: Redis restore | Require an independent existing-target point
   ansible.builtin.assert:
