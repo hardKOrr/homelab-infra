@@ -1,0 +1,187 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through Jellyseerr's API, as
+# test(jellyseerr) #379 defined it:
+#   data           local user p2-canary-jellyseerr-<id> (no media request, so the *arrs
+#                  stay untouched)
+#   configuration  application title "P2 Canary Jellyseerr <id>" (Deploy never sets it)
+# The API key is the one Jellyseerr keeps in its settings.json, read through the app's
+# runtime; it authenticates only once an owner exists. On create, an instance without one
+# gets the lab Plex's owner (the token Plex's Deploy records in homelab-infra/media/<plex>)
+# through Jellyseerr's Plex sign-in. A fresh install has no owner and the default title,
+# read from the unauthenticated public settings.
+# The final verify (drill_final) deletes the user and sets the title back to Seerr's default.
+- name: Jellyseerr drill canary | Resolve the instance's URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Jellyseerr drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _jsc_canary: "p2-canary-jellyseerr-{{ drill_canary_id }}"
+    _jsc_email: "p2-canary-jellyseerr-{{ drill_canary_id }}@example.invalid"
+    _jsc_title: "P2 Canary Jellyseerr {{ drill_canary_id }}"
+    _jsc_default_title: Seerr
+
+- name: Jellyseerr drill canary | Read the public settings
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/api/v1/settings/public"
+    headers: "{{ drill_app_headers }}"
+  register: _jsc_public
+  changed_when: false
+
+- name: Jellyseerr drill canary | Require no owner and the default title on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - not (_jsc_public.json.initialized | bool)
+      - _jsc_public.json.applicationTitle != _jsc_title
+    fail_msg: >-
+      {{ instance }} is {{ 'set up' if _jsc_public.json.initialized else 'not set up' }} with
+      title "{{ _jsc_public.json.applicationTitle }}" on a fresh install: data survived Remove.
+  when: drill_canary_action == 'fresh'
+
+- name: Jellyseerr drill canary | Read, write and check the canary
+  when: drill_canary_action in ['create', 'verify']
+  block:
+    - name: Jellyseerr drill canary | Sign the lab Plex's owner in as Jellyseerr's owner
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/auth/plex"
+        method: POST
+        headers: "{{ drill_app_headers }}"
+        body_format: json
+        body:
+          authToken: "{{ homelabinfra_vault.media[app_config.app.plex_instance | default('plex', true)].token }}"
+        status_code: [200, 401, 403, 500]
+      register: _jsc_owner
+      changed_when: true
+      no_log: true
+      when: drill_canary_action == 'create' and not (_jsc_public.json.initialized | bool)
+
+    - name: Jellyseerr drill canary | Require the Plex sign-in
+      ansible.builtin.assert:
+        that: _jsc_owner.status == 200
+        fail_msg: >-
+          {{ instance }} refused the lab Plex owner's sign-in (HTTP {{ _jsc_owner.status }}):
+          {{ (_jsc_owner.json | default({})).message | default(_jsc_owner.msg | default('')) }}
+      when: _jsc_owner is not skipped
+
+    - name: Jellyseerr drill canary | Read the API key from settings.json
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv:
+          - cat
+          - "{{ app_config.app.config_path if _rat_kind == 'native' else '/app/config' }}/settings.json"
+        drill_exec_secret: true
+
+    - name: Jellyseerr drill canary | Keep the API key
+      ansible.builtin.set_fact:
+        _jsc_headers: >-
+          {{ drill_app_headers | combine({'X-Api-Key': (drill_exec_result.stdout | from_json).main.apiKey}) }}
+      no_log: true
+
+    - name: Jellyseerr drill canary | Read the users and the title
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/{{ item }}"
+        headers: "{{ _jsc_headers }}"
+        status_code: [200, 401, 403]
+      register: _jsc_read
+      changed_when: false
+      no_log: true
+      loop: ["user?take=1000", settings/main]
+
+    - name: Jellyseerr drill canary | Require the API key
+      ansible.builtin.assert:
+        that: _jsc_read.results | map(attribute='status') | unique == [200]
+        fail_msg: >-
+          {{ instance }} refused its own API key (HTTP {{ _jsc_read.results | map(attribute='status') | list }}
+          for users and settings): it has no owner.
+
+    - name: Jellyseerr drill canary | Write the user and the title
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/{{ item.path }}"
+        method: POST
+        headers: "{{ _jsc_headers }}"
+        body_format: json
+        body: "{{ item.body }}"
+        status_code: [200, 201, 400, 409, 500]
+      register: _jsc_write
+      changed_when: true
+      no_log: true  # the user's body carries its generated password
+      loop:
+        - path: user
+          body:
+            email: "{{ _jsc_email }}"
+            username: "{{ _jsc_canary }}"
+            password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+          skip: "{{ _jsc_read.results[0].json.results | selectattr('email', 'equalto', _jsc_email) | list | length > 0 }}"
+        - path: settings/main
+          body: {applicationTitle: "{{ _jsc_title }}"}
+          skip: false
+      when: drill_canary_action == 'create' and not item.skip
+
+    - name: Jellyseerr drill canary | Require each write
+      ansible.builtin.assert:
+        that: _jsc_write.results | rejectattr('skipped', 'defined') | map(attribute='status') | difference([200, 201]) | length == 0
+        fail_msg: >-
+          {{ instance }} refused a canary write: HTTP
+          {{ _jsc_write.results | rejectattr('skipped', 'defined') | map(attribute='status') | list }}
+          {{ _jsc_write.results | rejectattr('skipped', 'defined') | map(attribute='json', default={}) | map(attribute='message', default='') | list }}
+      when: drill_canary_action == 'create'
+
+    - name: Jellyseerr drill canary | Read back the users and the title
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/{{ item }}"
+        headers: "{{ _jsc_headers }}"
+      register: _jsc_now
+      changed_when: false
+      no_log: true
+      loop: ["user?take=1000", settings/main]
+
+    - name: Jellyseerr drill canary | Keep what the instance holds
+      ansible.builtin.set_fact:
+        _jsc_users: >-
+          {{ _jsc_now.results[0].json.results | selectattr('email', 'equalto', _jsc_email)
+             | map(attribute='id') | list }}
+        _jsc_title_now: "{{ _jsc_now.results[1].json.applicationTitle }}"
+        _jsc_names: >-
+          {{ _jsc_now.results[0].json.results | selectattr('email', 'equalto', _jsc_email)
+             | map(attribute='username') | list }}
+
+    - name: Jellyseerr drill canary | Require the user and the title
+      ansible.builtin.assert:
+        that:
+          - _jsc_names == [_jsc_canary]
+          - _jsc_title_now == _jsc_title
+        fail_msg: >-
+          {{ instance }} holds canary user(s) {{ _jsc_names }} and title "{{ _jsc_title_now }}".
+
+    - name: Jellyseerr drill canary | Delete the user and reset the title after the final verify
+      delegate_to: "{{ drill_app_delegate }}"
+      ansible.builtin.uri:
+        url: "{{ drill_app_url }}/api/v1/{{ item.path }}"
+        method: "{{ item.method }}"
+        headers: "{{ _jsc_headers }}"
+        body_format: "{{ 'json' if item.body is defined else omit }}"
+        body: "{{ item.body | default(omit) }}"
+        status_code: [200, 204, 400, 403, 404, 500]
+      register: _jsc_deleted
+      changed_when: true
+      no_log: true
+      loop:
+        - {path: "user/{{ _jsc_users[0] }}", method: DELETE}
+        - {path: settings/main, method: POST, body: {applicationTitle: "{{ _jsc_default_title }}"}}
+      loop_control:
+        label: "{{ item.method }} {{ item.path }}"
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
+
+    - name: Jellyseerr drill canary | Require every delete
+      ansible.builtin.assert:
+        that: _jsc_deleted.results | map(attribute='status') | difference([200, 204]) | length == 0
+        fail_msg: >-
+          {{ instance }} refused a canary delete: HTTP statuses
+          {{ _jsc_deleted.results | map(attribute='status') | list }} for the user, then the title.
+      when: drill_canary_action == 'verify' and drill_final | default(false) | bool
