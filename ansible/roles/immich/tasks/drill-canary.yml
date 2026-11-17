@@ -116,13 +116,6 @@
     - name: Immich drill canary | Write the image, the album and the setting
       when: drill_canary_action == 'create'
       block:
-        - name: Immich drill canary | Put the image on the requesting host
-          delegate_to: "{{ drill_app_delegate }}"
-          ansible.builtin.copy:
-            src: drill-canary.png
-            dest: "/tmp/{{ _im_canary }}.png"
-            mode: "0600"
-
         # Immich deduplicates by checksum, so a repeat upload answers with the existing asset.
         - name: Immich drill canary | Upload the image
           delegate_to: "{{ drill_app_delegate }}"
@@ -133,7 +126,8 @@
             body_format: form-multipart
             body:
               assetData:
-                filename: "/tmp/{{ _im_canary }}.png"
+                # Read on the controller and sent from the requesting host.
+                filename: "{{ role_path }}/files/drill-canary.png"
                 mime_type: image/png
               deviceAssetId: "{{ _im_canary }}"
               deviceId: homelab-infra-drill
@@ -150,12 +144,6 @@
             fail_msg: >-
               {{ instance }} refused the canary image (HTTP {{ _im_upload.status }}):
               {{ _im_upload.json.message | default(_im_upload.msg | default('')) }}
-
-        - name: Immich drill canary | Remove the image from the requesting host
-          delegate_to: "{{ drill_app_delegate }}"
-          ansible.builtin.file:
-            path: "/tmp/{{ _im_canary }}.png"
-            state: absent
 
         - name: Immich drill canary | Create the album holding the image
           delegate_to: "{{ drill_app_delegate }}"
