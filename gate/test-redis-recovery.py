@@ -425,7 +425,7 @@ def check_remove_scope():
     explicit_request = task_named(pre_tasks, "Validate the explicit guest destruction request before unwiring")
     ownership = task_named(pre_tasks, "Verify ownership and non-shared tags before unwiring")
     assert "delete_data" in str(explicit_request["ansible.builtin.assert"]["that"])
-    assert "_rm_kind == 'native'" in str(explicit_request["ansible.builtin.assert"]["that"])
+    assert "_rm_kind in ['native', 'docker']" in str(explicit_request["ansible.builtin.assert"]["that"])
     assert "_rm_destroy_guest_host == instance" in str(explicit_request["ansible.builtin.assert"]["that"])
     assert "_+lab" in str(ownership["ansible.builtin.assert"]["that"])
     assert "in ['lxc', 'qemu']" in str(ownership["ansible.builtin.assert"]["that"])
@@ -433,13 +433,13 @@ def check_remove_scope():
     assert "_.shared" in str(ownership["ansible.builtin.assert"]["that"])
     assert task_named(unwire_play["tasks"], "Unwire reverse proxy") in unwire_play["tasks"]
 
-    destroy = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected native LXC")
+    destroy = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected LXC")
     assert destroy["ansible.builtin.include_tasks"] == "../../tasks/proxmox/destroy-owned-lxc.yml"
     assert "_rm_destroy_guest | bool" in str(destroy["when"])
     assert "_rm_delete_data | bool" in str(destroy["when"])
-    assert "remove_kind == 'native'" in str(destroy["when"])
+    assert "remove_kind in ['native', 'docker']" in str(destroy["when"])
 
-    destroy_vm = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected native VM")
+    destroy_vm = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected VM")
     assert destroy_vm["ansible.builtin.include_tasks"] == "../../tasks/proxmox/destroy-owned-vm.yml"
     assert "proxmox_vmtype == 'qemu'" in str(destroy_vm["when"])
     vm_destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-vm.yml")

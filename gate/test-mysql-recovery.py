@@ -189,11 +189,11 @@ def check_contract():
     ownership_guard = task_named(remove, "Verify ownership and non-shared tags before unwiring")
     assert "_rm_destroy_guest_host | length > 0" in str(ownership_guard["when"])
     assert "_+lab" in str(ownership_guard["ansible.builtin.assert"]["that"])
-    assert task_named(remove, "Destroy the explicitly selected native LXC")
+    assert task_named(remove, "Destroy the explicitly selected LXC")
     destroy = task_tree(ROOT / "ansible/tasks/proxmox/destroy-owned-lxc.yml")
     live_ownership_guard = task_named(destroy, "Destroy owned LXC | Require current lab ownership and an unshared guest")
     assert live_ownership_guard.get("no_log") is not True
-    assert "Refusing to destroy the native guest" in live_ownership_guard["ansible.builtin.assert"]["fail_msg"]
+    assert "Refusing to destroy the guest" in live_ownership_guard["ansible.builtin.assert"]["fail_msg"]
     assert task_named(destroy, "Destroy owned LXC | Verify the guest is absent from the cluster")
 
 

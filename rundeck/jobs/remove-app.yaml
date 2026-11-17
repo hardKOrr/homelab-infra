@@ -19,7 +19,7 @@
 
     - Unwires the reverse proxy, Authentik, Uptime Kuma, and DNS
     - Keeps `config/apps/<instance>.yml` as the restore point
-    - Does **not** destroy the guest
+    - Destroys the guest only when `destroy_guest` is `true`
 
     Run **Deploy %NAME%** to bring the instance back.
   loglevel: INFO
@@ -39,6 +39,14 @@
   - name: delete_data
     description: '**`false` (recommended):** Keep volumes and data paths for redeployment.
       **`true`:** Permanently delete them.'
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+  - name: destroy_guest
+    description: '**`false` (recommended):** Keep the guest. **`true`:** With `delete_data`
+      `true`, destroy the instance''s own guest, or its Docker stack host when this is the
+      last app on it. Works on a guest an earlier Remove already emptied.'
     required: true
     value: 'false'
     values: ['false', 'true']
@@ -63,6 +71,7 @@
           ARGS+=(-e "app=%SLUG%")
           : "${RD_OPTION_DELETE_DATA:?delete_data is required}"
           ARGS+=(-e "delete_data=$RD_OPTION_DELETE_DATA")
+          ARGS+=(-e "destroy_guest=${RD_OPTION_DESTROY_GUEST:-false}")
 
           # lab-run runs config-doctor and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.

@@ -18,35 +18,6 @@
 # on a cluster that outlives it, so `_rm_hosts` is deliberately empty: Play 2, which
 # stops a container or a systemd unit on a guest, has nothing to do and is skipped.
 # The cluster-side removal happens in the unwiring step below.
-# The stack host an estate-scoped app runs on carries its estate, exactly as the
-# deploy resolved it: `media` is `stack-media-foxglove` in a lab with two estates and
-# plain `stack-media` in a lab with one. A stack that declares `shared: true` is the
-# single lab-wide host for every estate and takes no suffix.
-- name: Load stack sizing defaults
-  ansible.builtin.include_vars:
-    file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
-    name: _rm_stack_defaults_file
-
-- name: Resolve the stack identity this app was placed on
-  ansible.builtin.set_fact:
-    _rm_stack_id: >-
-      {{ (app_config.stack | default(''))
-         if (_rm_stack_sizing.shared | default(false) | bool) or _rm_estates | length < 2
-         else (app_config.stack | default('')) ~ '-' ~ _rm_estate }}
-  vars:
-    _rm_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
-    _rm_stack_sizing: >-
-      {{ ((_rm_stack_defaults_file.stack_defaults | default({}))[app_config.stack | default('')] | default({}))
-         | combine(((homelabinfra_config.infrastructure | default({})).stacks | default({}))[app_config.stack | default('')]
-                   | default({}), recursive=True) }}
-    _rm_default_estate: >-
-      {{ ((_rm_estates | dict2items
-           | selectattr('value.default', 'defined') | selectattr('value.default')
-           | map(attribute='key') | list) | first)
-         | default(_rm_estates | list | first | default(''), true) }}
-    _rm_estate: >-
-      {{ ((app_config.routing | default({})).estate | default('', true)) or _rm_default_estate }}
-
 # Removal resolves a shared Docker stack through the SAME estate-aware identity the
 # deploy used. Docker-on-VM apps have no stack tag; their own VM carries _<instance>,
 # so removal never creates a host while trying to empty it.
@@ -66,6 +37,8 @@
     - _rm_kind == 'docker'
     - app_config.stack | default('') | length == 0
 
+# A Docker-on-VM guest that an earlier Remove already untagged is found only by the
+# exact name the destruction guard verified, so destroy_guest=true still reaches it.
 - name: Select the host running the app
   ansible.builtin.set_fact:
     _rm_hosts: >-
@@ -73,7 +46,8 @@
          if _rm_kind in ['kubernetes', 'appliance']
          else (groups[tag_group_name] | default([])
                if _rm_kind == 'docker'
-               else ([instance] if instance in (groups['all'] | default([])) else [])) }}
+               else ([instance] if instance in (groups['all'] | default([])) else []))
+              or ([_rm_destroy_guest_host] if _rm_destroy_guest_host | default('') else []) }}
 
 # A GPU assignment belongs to the stack host. Removing one GPU-backed app may detach
 # it only when no sibling app remains on that host; shared media stacks keep the device
@@ -159,6 +133,7 @@
       {{ _rm_destroy_guest_vmid | default(hostvars[_rm_hosts[0]].proxmox_vmid | default(0), true) }}
     remove_guest_node: >-
       {{ _rm_destroy_guest_node | default(_rm_guest_node, true) }}
+    remove_guest_owner_tag: "{{ _rm_destroy_guest_owner_tag | default('') }}"
     remove_guest_original_tags: >-
       {{ _rm_destroy_guest_tags | default(
            hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([]), true) }}

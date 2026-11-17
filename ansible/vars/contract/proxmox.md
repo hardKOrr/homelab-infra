@@ -95,5 +95,6 @@ Existing type-specific placement keys remain valid and take precedence: LXC
 `proxmox.vm.storage`. Deploy fails before starting or changing a tagged existing guest
 when its Proxmox type differs from `guest_type`; guests are never converted.
 InfluxDB reuses a matching lab-owned LXC or VM left by Remove App. Remove App can also
-destroy either native guest type when `destroy_guest: true` is paired with
-`delete_data: true` and the ownership checks pass.
+destroy the instance's own LXC or VM, or the Docker stack host its last app leaves,
+when `destroy_guest: true` is paired with `delete_data: true` and the ownership checks
+pass.
