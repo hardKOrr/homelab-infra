@@ -125,16 +125,16 @@
       ansible.builtin.uri:
         url: "{{ drill_app_url }}/{{ item }}"
         headers: "{{ _jfc_headers }}"
-      register: _jfc_read
+      register: _jfc_reread
       changed_when: false
       no_log: true
       loop: [Library/VirtualFolders, Users, System/Configuration]
 
     - name: Jellyfin drill canary | Keep what the instance holds after the write
       ansible.builtin.set_fact:
-        _jfc_libraries: "{{ _jfc_read.results[0].json | map(attribute='Name') | select('equalto', _jfc_canary) | list }}"
-        _jfc_users: "{{ _jfc_read.results[1].json | selectattr('Name', 'equalto', _jfc_canary) | list }}"
-        _jfc_config: "{{ _jfc_read.results[2].json }}"
+        _jfc_libraries: "{{ _jfc_reread.results[0].json | map(attribute='Name') | select('equalto', _jfc_canary) | list }}"
+        _jfc_users: "{{ _jfc_reread.results[1].json | selectattr('Name', 'equalto', _jfc_canary) | list }}"
+        _jfc_config: "{{ _jfc_reread.results[2].json }}"
 
 - name: Jellyfin drill canary | Require the library, the non-admin user and the setting
   ansible.builtin.assert:

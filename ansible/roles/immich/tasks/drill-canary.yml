@@ -177,21 +177,30 @@
           ansible.builtin.uri:
             url: "{{ drill_app_url }}/api/{{ item }}"
             headers: "{{ _im_headers }}"
-          register: _im_read
+          register: _im_reread
           changed_when: false
           no_log: true
           loop: [albums, system-config]
+
+        - name: Immich drill canary | Keep the read-back
+          ansible.builtin.set_fact:
+            _im_read: "{{ _im_reread }}"
+          no_log: true
 
     - name: Immich drill canary | Keep the canary album
       ansible.builtin.set_fact:
         _im_albums: "{{ _im_read.results[0].json | selectattr('albumName', 'equalto', _im_canary) | list }}"
         _im_message: "{{ _im_read.results[1].json.server.loginPageMessage | default('') }}"
 
+    # The album read lists no images; metadata search by album does.
     - name: Immich drill canary | Read the album's images
       delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
-        url: "{{ drill_app_url }}/api/albums/{{ _im_albums[0].id }}"
+        url: "{{ drill_app_url }}/api/search/metadata"
+        method: POST
         headers: "{{ _im_headers }}"
+        body_format: json
+        body: {albumIds: ["{{ _im_albums[0].id }}"]}
       register: _im_album
       changed_when: false
       no_log: true
@@ -207,7 +216,7 @@
           {{ instance }} holds {{ _im_albums | length }} canary album(s) with image checksums
           {{ _im_sums }} and login page message '{{ _im_message }}'.
       vars:
-        _im_sums: "{{ (_im_album.json | default({})).assets | default([]) | map(attribute='checksum') | list }}"
+        _im_sums: "{{ ((_im_album.json | default({})).assets | default({}))['items'] | default([]) | map(attribute='checksum') | list }}"
 
     - name: Immich drill canary | Delete the canary after the final verify
       delegate_to: "{{ drill_app_delegate }}"
@@ -224,7 +233,7 @@
         - {path: "albums/{{ _im_albums[0].id }}", method: DELETE}
         - path: assets
           method: DELETE
-          body: {ids: "{{ _im_album.json.assets | map(attribute='id') | list }}", force: true}
+          body: {ids: "{{ _im_album.json.assets['items'] | map(attribute='id') | list }}", force: true}
         - path: system-config
           method: PUT
           body: "{{ _im_read.results[1].json | combine({'server': {'loginPageMessage': ''}}, recursive=True) }}"

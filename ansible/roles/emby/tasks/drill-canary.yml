@@ -126,16 +126,16 @@
       ansible.builtin.uri:
         url: "{{ _ebc_api }}/{{ item }}"
         headers: "{{ _ebc_headers }}"
-      register: _ebc_read
+      register: _ebc_reread
       changed_when: false
       no_log: true
       loop: [Library/VirtualFolders/Query, Users/Query, System/Configuration]
 
     - name: Emby drill canary | Keep what the instance holds after the write
       ansible.builtin.set_fact:
-        _ebc_libraries: "{{ _ebc_read.results[0].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
-        _ebc_users: "{{ _ebc_read.results[1].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
-        _ebc_config: "{{ _ebc_read.results[2].json }}"
+        _ebc_libraries: "{{ _ebc_reread.results[0].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+        _ebc_users: "{{ _ebc_reread.results[1].json.Items | selectattr('Name', 'equalto', _ebc_canary) | list }}"
+        _ebc_config: "{{ _ebc_reread.results[2].json }}"
 
 - name: Emby drill canary | Require the library, the non-admin user and the setting
   ansible.builtin.assert:
