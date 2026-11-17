@@ -16,6 +16,21 @@
     _jfc_canary: "p2-canary-jellyfin-{{ drill_canary_id }}"
     _jfc_days: 9
 
+- name: DEBUG probe
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/Users/AuthenticateByName"
+    method: POST
+    headers: {Authorization: 'MediaBrowser Client="x", Device="x", DeviceId="x", Version="1.0.0"'}
+    body_format: json
+    body: {Username: nobody, Pw: wrong}
+    status_code: [200, 400, 401, 403, 500]
+  register: _dbg
+  ignore_errors: true
+- name: DEBUG show
+  ansible.builtin.debug:
+    msg: "status={{ _dbg.status | default('?') }} msg={{ _dbg.msg | default('') }} url={{ drill_app_url }} vaultpw={{ (homelabinfra_vault.media[instance].password | default('')) | length }} user={{ app_config.app.admin_user | default('admin') }}"
+
 - name: Jellyfin drill canary | Sign in as the admin
   delegate_to: "{{ drill_app_delegate }}"
   ansible.builtin.uri:
