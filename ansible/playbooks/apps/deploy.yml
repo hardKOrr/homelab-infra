@@ -169,6 +169,12 @@
         name: docker
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
+    - name: Publish the hostname on the guest under the names the role reads
+      ansible.builtin.set_fact:
+        "{{ item | replace('-', '_') }}_fqdn": "{{ hostvars['localhost']._deploy_fqdn }}"
+        "{{ item | replace('-', '_') }}_subdomain": "{{ hostvars['localhost']._deploy_subdomain }}"
+      loop: "{{ [app, _deploy_role] | unique }}"
+
     - name: Deploy the app
       ansible.builtin.include_role:
         name: "{{ _deploy_role }}"
