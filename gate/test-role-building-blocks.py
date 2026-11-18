@@ -4,7 +4,8 @@
 - templates/kubernetes/single-container.yaml.j2 renders a minimal and a full `k8s_app`
   into the objects its header promises.
 - tasks/stack/compose-deploy.yml renders the role's Compose file and mounted files; a
-  failed render or write stops before the pull and prints why, with compose_secrets masked.
+  failed render or write stops before the pull and prints why, and a failed health check
+  prints its URL; both mask compose_secrets, even at -vvv for the health check's token.
 - compose-deploy.yml, tasks/apps/restart.yml and tasks/kubernetes/single-container.yml
   refuse bad inputs in their first task, with their message.
 
@@ -207,6 +208,33 @@ def check_compose_render_failure_prints():
         assert "Pull the images" not in output, output
 
 
+def check_health_failure_masks_token():
+    """The health wait alone, against a closed port, with a token in its headers."""
+    wait = next(task for task in yaml.safe_load(COMPOSE.read_text())
+                if task.get("name") == "Compose deploy | Wait for the application")
+    wait["rescue"][0]["ansible.builtin.include_tasks"] = str(COMPOSE.parent.parent / "fail-with-scrubbed-output.yml")
+    wait["vars"] = {
+        "compose_health": {"url": "http://127.0.0.1:9/health", "retries": 0, "delay": 0,
+                           "headers": {"Authorization": "Bearer tok-hunter2"}},
+        "compose_secrets": ["tok-hunter2"],
+    }
+    with tempfile.TemporaryDirectory() as workdir:
+        result = subprocess.run(
+            [str(ANSIBLE), "-vvv", "-i", "localhost,", "-c", "local", str(write_play(workdir, [wait]))],
+            text=True, capture_output=True, check=False, cwd=workdir,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "http://127.0.0.1:9/health did not answer" in output, output
+        assert "tok-hunter2" not in output, output
+
+
+def write_play(workdir, tasks):
+    playbook = Path(workdir) / "play.yml"
+    playbook.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False, "tasks": tasks}]))
+    return playbook
+
+
 def check_inputs_refused():
     cases = [
         (COMPOSE, {"compose_project_dir": "relative/dir"}, "absolute compose_project_dir"),
@@ -229,6 +257,7 @@ def main():
     check_full_manifest()
     check_compose_renders_then_pulls()
     check_compose_render_failure_prints()
+    check_health_failure_masks_token()
     check_inputs_refused()
     print("role building blocks: manifest, Compose render and input checks pass")
 

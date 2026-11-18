@@ -23,7 +23,8 @@
 #                           created when absent and never removed here
 #   compose_pull_policy   — `missing` (default) or `always`
 #   compose_health        — optional `{url, status (default 200), retries (default 30),
-#                           delay (default 5), headers}`, checked from the stack host
+#                           delay (default 5), headers}`, checked from the stack host; a
+#                           header's token belongs in compose_secrets
 #
 # Sets:
 #   compose_deploy_changed — true when a rendered file or the project's containers changed
@@ -133,14 +134,31 @@
 - name: Compose deploy | Apply pending restarts
   ansible.builtin.meta: flush_handlers
 
+# Headers may carry a token: with headers set, the check's output stays hidden and a
+# failure prints through fail-with-scrubbed-output.yml with compose_secrets masked.
 - name: Compose deploy | Wait for the application
-  ansible.builtin.uri:
-    url: "{{ compose_health.url }}"
-    status_code: "{{ compose_health.status | default(200) }}"
-    headers: "{{ compose_health.headers | default(omit) }}"
-  register: _compose_health
-  until: _compose_health.status | default(0) in ([compose_health.status | default(200)] | flatten)
-  retries: "{{ compose_health.retries | default(30) }}"
-  delay: "{{ compose_health.delay | default(5) }}"
-  changed_when: false
   when: compose_health is defined
+  block:
+    - name: Compose deploy | Check the application answers
+      ansible.builtin.uri:
+        url: "{{ compose_health.url }}"
+        status_code: "{{ compose_health.status | default(200) }}"
+        headers: "{{ compose_health.headers | default(omit) }}"
+      register: _compose_health
+      until: _compose_health.status | default(0) in ([compose_health.status | default(200)] | flatten)
+      retries: "{{ compose_health.retries | default(30) }}"
+      delay: "{{ compose_health.delay | default(5) }}"
+      changed_when: false
+      no_log: "{{ compose_health.headers | default({}) | length > 0 }}"
+  rescue:
+    - name: Compose deploy | Report the failed health check
+      ansible.builtin.include_tasks: ../fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_context: >-
+          Compose deploy: {{ compose_health.url }} did not answer
+          {{ compose_health.status | default(200) }} (last status
+          {{ ansible_failed_result.status | default('none') }})
+        scrub_failure_secrets: "{{ compose_secrets | default([]) }}"
+        scrub_failure_result:
+          failed: true
+          msg: "{{ ansible_failed_result.msg | default('no message') }}"
