@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Sonarr's Docker-default and Kubernetes hosting contract (servarr role)."""
+"""Check the Servarr apps' Docker-default and Kubernetes hosting contract (servarr role)."""
 
 from pathlib import Path
 
@@ -17,37 +17,24 @@ def includes(tasks, target):
     return any(target in str(task.get("ansible.builtin.include_tasks", "")) for task in tasks)
 
 
-def main():
-    defaults = read_yaml("ansible/vars/app-defaults/sonarr.yml")["sonarr_defaults"]
+def check(app):
+    defaults = read_yaml(f"ansible/vars/app-defaults/{app}.yml")[f"{app}_defaults"]
     assert defaults["hosting"]["method"] == "docker"
     assert "kubernetes" in defaults["hosting"]["supported"]
     assert defaults["app"]["storage"] == 2
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/sonarr.yml")}
-    # The ingress hostname is derived only after the app's estate is resolved.
-    pre = [str(t) for t in plays["Sonarr | Provision"]["pre_tasks"]]
-    assert next(i for i, t in enumerate(pre) if "resolve-estate.yml" in t) < next(
-        i for i, t in enumerate(pre) if "servarr_fqdn" in t)
-    assert "routing.estate" in pre[next(i for i, t in enumerate(pre) if "resolve-estate.yml" in t)]
-    # Docker stays the default: the stack host is only provisioned for that method.
-    provision = plays["Sonarr | Provision"]["tasks"]
-    assert all(task.get("when") for task in provision if "find-or-create-host" in str(task))
-    [prepare_block] = plays["Sonarr | Prepare Kubernetes"]["tasks"]
-    assert prepare_block["when"] == "app_config.hosting.method == 'kubernetes'"
-    prepare = prepare_block["block"]
-    assert any(t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes-media"
-               for t in prepare)
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
-    kube = plays["Sonarr | Deploy on Kubernetes"]["tasks"]
-    assert any(t.get("ansible.builtin.include_role", {}).get("name") == "servarr"
-               and t.get("when") == "app_config.hosting.method == 'kubernetes'" for t in kube)
-    entry = read_yaml("ansible/roles/servarr/tasks/main.yml")
-    assert any(t.get("ansible.builtin.include_tasks") == "kubernetes.yml"
-               and t.get("when") == "app_config.hosting.method == 'kubernetes'" for t in entry)
-    assert plays["Sonarr | Deploy"]["hosts"].startswith("deploy_")
+    # Each app's playbook is a deploy.yml shim; the servarr role's hooks carry its storage
+    # (deploy-prepare.yml) and its media registry entry (deploy-record.yml).
+    [shim] = read_yaml(f"ansible/playbooks/apps/{app}.yml")
+    assert shim["ansible.builtin.import_playbook"] == "deploy.yml" and shim["vars"]["app"] == app
+    assert defaults["deploy"]["role"] == "servarr"
+    assert defaults["platform_layers"] == ["media_storage"]
+    assert defaults["routing"]["monitor_path"] == "/ping"
 
+
+def roles():
     media = read_yaml("ansible/roles/servarr/tasks/kubernetes-media.yml")
     assert includes(media, "tasks/kubernetes/resolve-media-nfs.yml")
     # The named storage owner may not exist on the node yet: directories use numeric ids.
@@ -55,7 +42,7 @@ def main():
     assert ").uid" in mkdir["owner"] and ").gid" in mkdir["group"]
     assert ".user" not in mkdir["owner"] + mkdir["group"]
 
-    tasks = read_yaml("ansible/roles/servarr/tasks/kubernetes.yml")
+    tasks = read_yaml("ansible/roles/servarr/tasks/kubernetes-workload.yml")
     assert includes(tasks, "tasks/kubernetes/prepare-media-volumes.yml")
     assert includes(tasks, "tasks/kubernetes/apply-manifest.yml")
     assert includes(tasks, "tasks/kubernetes/sync-secret.yml")
@@ -88,9 +75,21 @@ def main():
     endpoint = (REPO / "ansible/roles/servarr/tasks/main/endpoint.yml").read_text()
     assert "ingress_vip" in endpoint and "'Host': servarr_fqdn" in endpoint
 
-    wiring = (REPO / "ansible/playbooks/apps/sonarr.yml").read_text()
-    assert "ingress_vip" in wiring and "not (_sonarr_k8s | bool)" in wiring
+    prepare = read_yaml("ansible/roles/servarr/tasks/deploy-prepare.yml")
+    k8s = next(t for t in prepare if "kubernetes-media.yml" in str(t))
+    assert k8s["when"] == "app_config.hosting.method == 'kubernetes'"
+    mounts = next(t for t in prepare if "deploy_host_mounts" in str(t))
+    assert mounts["when"] == "app_config.hosting.method in ['docker', 'native']"
+    record = read_yaml("ansible/roles/servarr/tasks/deploy-record.yml")[0]
+    assert record["when"] == "app_config.hosting.method in ['docker', 'native']"
+    assert record["vars"]["generated_facts_service"] == "media"
+    entry = read_yaml("ansible/roles/servarr/tasks/main.yml")
+    assert any(t.get("ansible.builtin.include_tasks") == "kubernetes-workload.yml"
+               and t.get("when") == "app_config.hosting.method == 'kubernetes'" for t in entry)
+    assert "main.yml" in str(read_yaml("ansible/roles/servarr/tasks/kubernetes.yml"))
 
 
 if __name__ == "__main__":
-    main()
+    roles()
+    for name in ("sonarr", "radarr", "lidarr", "prowlarr"):
+        check(name)

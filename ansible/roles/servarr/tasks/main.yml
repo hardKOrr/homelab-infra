@@ -2,8 +2,8 @@
 # servarr role — one Servarr application (Sonarr, Radarr, Lidarr, Readarr or
 # Prowlarr) as a Docker container on a stack host, on Kubernetes (kubernetes.yml), or
 # natively on its own guest (native.yml).
-# Called from Play 2 of
-# playbooks/apps/<app>.yml. Target: the media host.
+# Called from playbooks/apps/deploy.yml: Play 2 on the media host, Play 3 (through
+# kubernetes.yml) on localhost.
 #
 # ONE ROLE, FIVE APPS. These five are the same program with a different media
 # type: same image family, same /config layout, same config.xml, same
@@ -21,11 +21,11 @@
 #   instance           — the instance name (e.g. sonarr, sonarr-anime)
 #   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
 #
-# Exports (read by Play 3 to write the `media` registry key):
+# Exports (read by deploy-record.yml to write the `media` registry key):
 #   servarr_media_kind, servarr_media_host, servarr_media_config_path
 
-# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and
-# the playbook's prepare play ran kubernetes-media.yml); every other phase is shared.
+# Kubernetes: the app runs in its own namespace (kubernetes-workload.yml deploys the
+# workload and deploy-prepare.yml ran kubernetes-media.yml); every other phase is shared.
 - name: Resolve the cluster the app deploys to
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
   when: app_config.hosting.method == 'kubernetes'
@@ -57,7 +57,7 @@
   when: app_config.hosting.method == 'native'
 
 - name: Kubernetes workload
-  ansible.builtin.include_tasks: kubernetes.yml
+  ansible.builtin.include_tasks: kubernetes-workload.yml
   when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the app is usable

@@ -6,7 +6,9 @@ step `combine(recursive=True)`:
 
 1. `vars/app-defaults/_base.yml`, key `_base_defaults`: values every app shares.
 1. `vars/app-defaults/<app>.yml`, key `<app>_defaults` (with `-` written as `_`).
-2. Platform values the app reads, such as `media_storage` from `config/infrastructure.yml`.
+2. Platform values the app reads: each `config/infrastructure.yml` key its defaults list in
+   `platform_layers` (such as `media_storage`), under the same key, then any
+   `load_config_layer` its playbook passes.
 3. `config/apps/<instance>.yml`, when present.
 4. The instance's `homelab-infra/apps/<instance>` Vaultwarden item from
    `homelabinfra_vault`, under `app`. Apps whose item holds no config skip this step, and

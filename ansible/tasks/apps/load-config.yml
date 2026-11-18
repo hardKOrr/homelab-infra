@@ -9,7 +9,8 @@
 # item lands under `app`; an instance with no item still gets `app: {}`.
 #
 # Inputs: instance; load_config_app (the app slug); optional load_config_layer (default
-# {}), load_config_vault_methods (the hosting methods that take the Vaultwarden item;
+# {}, merged over the infrastructure.yml keys the defaults name in `platform_layers`),
+# load_config_vault_methods (the hosting methods that take the Vaultwarden item;
 # default the defaults' `vault.methods`, else every method; [] for none),
 # load_config_instance_required
 # (default false), load_config_fact (default app_config).
@@ -35,14 +36,27 @@
     - load_config_instance_required | default(false) | bool
     - _load_config_instance.failed | default(false)
 
+# The platform layer: each infrastructure.yml key the app's defaults name in
+# `platform_layers` (e.g. media_storage), under the same key, then load_config_layer.
 - name: Merge the defaults and the instance config
   ansible.builtin.set_fact:
     "{{ load_config_fact | default('app_config') }}": >-
-      {{ _base_defaults_file._base_defaults
-         | combine(_app_defaults[(load_config_app | replace('-', '_')) ~ '_defaults'],
-                   recursive=True)
+      {{ _load_config_defaults
+         | combine(_load_config_platform, recursive=True)
          | combine(load_config_layer | default({}), recursive=True)
          | combine(_instance_config | default({}), recursive=True) }}
+  vars:
+    _load_config_defaults: >-
+      {{ _base_defaults_file._base_defaults
+         | combine(_app_defaults[(load_config_app | replace('-', '_')) ~ '_defaults'],
+                   recursive=True) }}
+    _load_config_platform: >-
+      {%- set infra = (homelabinfra_config | default({})).infrastructure | default({}) -%}
+      {%- set out = {} -%}
+      {%- for key in _load_config_defaults.platform_layers | default([]) -%}
+      {%- set _ = out.update({key: infra[key] | default({})}) -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: Overlay the instance's Vaultwarden item
   ansible.builtin.set_fact:

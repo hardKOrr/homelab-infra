@@ -1068,6 +1068,7 @@ jellyseerr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1106,6 +1107,7 @@ jellyseerr:
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1242,6 +1244,7 @@ lidarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
@@ -1252,6 +1255,7 @@ lidarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1274,6 +1278,7 @@ lidarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1285,6 +1290,7 @@ lidarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -1296,6 +1302,7 @@ lidarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -1389,6 +1396,7 @@ maintainerr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1427,6 +1435,7 @@ maintainerr:
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2421,6 +2430,7 @@ prowlarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
@@ -2431,6 +2441,7 @@ prowlarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2453,6 +2464,7 @@ prowlarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2464,6 +2476,7 @@ prowlarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -2475,6 +2488,7 @@ prowlarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -2569,6 +2583,7 @@ radarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
@@ -2579,6 +2594,7 @@ radarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2601,6 +2617,7 @@ radarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2612,6 +2629,7 @@ radarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -2623,6 +2641,7 @@ radarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -2902,6 +2921,7 @@ sonarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
@@ -2912,6 +2932,7 @@ sonarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2934,6 +2955,7 @@ sonarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2945,6 +2967,7 @@ sonarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -2956,6 +2979,7 @@ sonarr:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -2973,6 +2997,7 @@ tautulli:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3016,6 +3041,7 @@ tautulli:
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/proxmox/attach-host-mounts.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
