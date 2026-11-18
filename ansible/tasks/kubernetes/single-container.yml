@@ -2,6 +2,8 @@
 # Render templates/kubernetes/single-container.yaml.j2 for one single-container app and apply
 # it through apply-manifest.yml, waiting for the Deployment. Run after resolve-cluster.yml
 # and ensure-namespace.yml; a Secret the env reads comes first from sync-secret.yml.
+# Include it from a role: like recovery-backup.yml, it finds the shared template through
+# `role_path`.
 #
 # Inputs:
 #   k8s_app — the workload:

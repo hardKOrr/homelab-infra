@@ -101,6 +101,11 @@ def check_full_manifest():
     assert rule["host"] == "demo.lab.example"
     assert rule["http"]["paths"][0]["backend"]["service"]["port"]["number"] == 80
 
+    objects, _ = render_manifest({"name": "demo", "image": "x", "port": 80,
+                                  "volumes": [{"name": "data", "mount_path": "/d", "claim": "shared"}]})
+    assert "PersistentVolumeClaim" not in objects, "an existing claim is not created"
+    assert objects["Deployment"]["spec"]["strategy"] == {"type": "Recreate"}, "existing claim, Recreate"
+
     objects, _ = render_manifest({"name": "demo", "image": "x", "port": 53, "probe": {"tcp": True}})
     container = objects["Deployment"]["spec"]["template"]["spec"]["containers"][0]
     assert container["readinessProbe"]["tcpSocket"] == {"port": 53}

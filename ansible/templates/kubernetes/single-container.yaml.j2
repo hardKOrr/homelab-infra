@@ -6,7 +6,7 @@
   Every object carries the instance labels and is namespaced, so the namespace is the
   ownership boundary Remove deletes.
 
-  A Deployment with a PVC uses the Recreate strategy: the volume is ReadWriteOnce on a
+  A Deployment that mounts a PVC (its own or an existing `claim`) uses the Recreate strategy: the volume is ReadWriteOnce on a
   node-pinned StorageClass, so a second pod cannot mount it while the first holds it.
 
   Plain HTTP Ingress to the in-cluster controller on the MetalLB VIP; the platform Caddy
@@ -16,6 +16,7 @@
 {% set container_port = app.container_port | default(app.port) %}
 {% set probe_port = app.probe.port | default(container_port) if app.probe is defined else container_port %}
 {% set claims = app.volumes | default([]) | selectattr('storage', 'defined') | list %}
+{% set pvc_mounts = app.volumes | default([]) | rejectattr('nfs', 'defined') | list %}
 {% set labels %}
     app.kubernetes.io/instance: {{ instance }}
     app.kubernetes.io/managed-by: homelab-infra
@@ -51,7 +52,7 @@ metadata:
 {{ labels }}
 spec:
   replicas: 1
-{% if claims | length > 0 %}
+{% if pvc_mounts | length > 0 %}
   strategy:
     type: Recreate
 {% endif %}
