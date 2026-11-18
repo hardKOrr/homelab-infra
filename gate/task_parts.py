@@ -17,7 +17,10 @@ parts, for tests that search the source.
 `import_playbook`, `roles:`, `include_role`/`import_role` and every `include_tasks`/
 `import_tasks` whose path is static or uses `playbook_dir`/`role_path`. Each leaf carries the
 keywords of every block, role and include above it, minus names and file paths, so a file
-that only moves tasks between files leaves the result unchanged.
+that only moves tasks between files leaves the result unchanged. `resolve(..., trace=True)`
+also gives each leaf `via`, the repo-relative files it was included through (the playbook
+or role file first, the file that holds it last), for suites that ask which files a run
+reaches.
 
 Usage: task_parts.py <repo> <playbook>  prints the resolved tasks as JSON lines.
 """
@@ -35,6 +38,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from remove_plan import rebase  # noqa: E402
 
+LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 IMPORT = "ansible.builtin.import_tasks"
 INCLUDES = ("ansible.builtin.include_tasks", "ansible.builtin.import_tasks",
             "include_tasks", "import_tasks")
@@ -46,7 +50,7 @@ NESTED = ("block", "rescue", "always")
 
 @lru_cache(maxsize=None)
 def _cached(path: Path) -> list:
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=LOADER) or []
 
 
 def load(path: Path) -> list:
@@ -99,11 +103,14 @@ def _target(task) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _find(path: str, here: Path, chain: list[Path], playbook: Path, role: Path | None):
+def _find(path: str, here: Path, chain: list[Path], playbook: Path, role: Path | None,
+          render=None):
     """The file Ansible would load: the including file's directory, then each file above it."""
     path = path.replace("{{ playbook_dir }}", str(playbook.parent))
     if role is not None:
         path = path.replace("{{ role_path }}", str(role))
+    if "{{" in path and render is not None:
+        path = render(path) or path
     if "{{" in path:
         return None
     candidates = [here.parent / path] + [c.parent / path for c in reversed(chain)]
@@ -118,9 +125,18 @@ def _keywords(task: dict, drop: tuple) -> dict:
 
 
 class Resolver:
-    def __init__(self, repo: Path):
+    def __init__(self, repo: Path, trace: bool = False, render=None):
         self.repo = repo.resolve()
         self.roles = self.repo / "ansible/roles"
+        self.trace = trace
+        self.render = render
+
+    @lru_cache(maxsize=None)
+    def relative(self, path) -> str:
+        return str(Path(path).resolve().relative_to(self.repo))
+
+    def via(self, chain: tuple, here: Path) -> list[str]:
+        return list(dict.fromkeys(self.relative(f) for f in [*chain, here]))
 
     def role(self, name: str, tasks_from: str, inherited, chain, playbook, depth):
         file = self.roles / name / "tasks" / tasks_from
@@ -143,7 +159,7 @@ class Resolver:
                 continue
             key, path = _target(task)
             if key is not None:
-                file = _find(str(path), here, chain, playbook, role)
+                file = _find(str(path), here, chain, playbook, role, self.render)
                 if file is not None:
                     value = task[key]
                     extra = {k: v for k, v in value.items() if k != "file"} if isinstance(
@@ -157,13 +173,18 @@ class Resolver:
             if role_key is not None:
                 spec = task[role_key]
                 name = str(spec.get("name", ""))
+                if "{{" in name and self.render is not None:
+                    name = self.render(name) or name
                 if "{{" not in name and (self.roles / name).is_dir():
                     extra = {k: v for k, v in spec.items() if k not in ("name", "tasks_from")}
                     scope = [s for s in inherited + [_keywords(task, ROLES) | extra] if s]
                     yield from self.role(name, str(spec.get("tasks_from", "main")), scope,
                                          chain, playbook, depth + 1)
                     continue
-            yield {"name": task.get("name"), "task": _keywords(task, ()), "scope": inherited}
+            leaf = {"name": task.get("name"), "task": _keywords(task, ()), "scope": inherited}
+            if self.trace:
+                leaf["via"] = self.via(tuple(chain), here)
+            yield leaf
 
     def playbook(self, playbook: Path, depth: int = 0):
         playbook = playbook.resolve()
@@ -191,8 +212,8 @@ class Resolver:
                                           None, depth + 1)
 
 
-def resolve(repo: Path, playbook: Path) -> list[dict]:
-    return list(Resolver(repo).playbook(playbook))
+def resolve(repo: Path, playbook: Path, trace: bool = False) -> list[dict]:
+    return list(Resolver(repo, trace).playbook(playbook))
 
 
 if __name__ == "__main__":

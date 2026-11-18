@@ -193,6 +193,10 @@ header of `playbooks/maintenance/restore-app.yml`.
 
 ## Step 6 — Test
 
+Record the new app's row in the app matrix (see [`gate/README.md`](../../../gate/README.md)):
+`python gate/test-app-matrix.py --update > gate/app-matrix.yml`, and check that the row
+lists the shared operations you meant the app to use.
+
 ```bash
 bash gate/lint.sh
 bash gate/test.sh

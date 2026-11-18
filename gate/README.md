@@ -43,6 +43,12 @@ suite. Both phases run in parallel and replay each item's diagnostics in order. 
 three shards on separate runners. The suites exercise production logic, expressions and
 templates; each suite's docstring (header comment for a shell suite) says what it checks.
 
+`app-matrix.yml` is the app matrix: for every catalog app and hosting method, the shared
+task files its Deploy, Backup and Restore reach. `test-app-matrix.py` recomputes it from the
+tree and fails on any difference; `--update` prints the new table for a change that is
+intended, and that change is named in the PR body. It runs beside the per-app suites; a
+Deploy conversion moves an app's per-app assertions about playbook and task text into it.
+
 When stdout is not a terminal and `CI` is unset (an LLM agent's tool call), the gate runs
 quiet: a passing lint prints one summary line per check, a passing test run prints
 `N of M ok`, and any failure prints its full log. `GATE_QUIET=0` forces the full output;
