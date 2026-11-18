@@ -1,0 +1,187 @@
+{#
+  One single-container app in the namespace its instance owns: its PVCs, one Deployment, a
+  Service and, when the app has a hostname, an Ingress. Rendered and applied by
+  tasks/kubernetes/single-container.yml, whose header lists the `k8s_app` keys.
+
+  Every object carries the instance labels and is namespaced, so the namespace is the
+  ownership boundary Remove deletes.
+
+  A Deployment that mounts a PVC (its own or an existing `claim`) uses Recreate: the
+  volume is ReadWriteOnce on a node-pinned StorageClass, so a second pod cannot mount it
+  while the first holds it.
+
+  Plain HTTP Ingress to the in-cluster controller on the MetalLB VIP; the platform Caddy
+  is the only public TLS edge.
+#}
+{% set app = k8s_app %}
+{% set container_port = app.container_port | default(app.port) %}
+{% set probe_port = app.probe.port | default(container_port) if app.probe is defined else container_port %}
+{% set claims = app.volumes | default([]) | selectattr('storage', 'defined') | list %}
+{% set pvc_mounts = app.volumes | default([]) | rejectattr('nfs', 'defined') | list %}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% macro probe(period, failures) %}
+{%   if app.probe.tcp | default(false) %}
+            tcpSocket: {port: {{ probe_port }}}
+{%   else %}
+            httpGet: {path: {{ app.probe.path | to_json }}, port: {{ probe_port }}}
+{%   endif %}
+            periodSeconds: {{ period }}
+            failureThreshold: {{ failures }}{% endmacro %}
+{% for volume in claims %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-{{ volume.name }}
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ volume.storage | int }}Gi
+{% endfor %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+{% if pvc_mounts | length > 0 %}
+  strategy:
+    type: Recreate
+{% endif %}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+{% if app.pod_annotations | default({}) | length > 0 %}
+      annotations:
+{%   for key, value in app.pod_annotations | dictsort %}
+        {{ key }}: {{ value | string | to_json }}
+{%   endfor %}
+{% endif %}
+    spec:
+      automountServiceAccountToken: false
+{% if app.security_context is defined %}
+      securityContext:
+        runAsUser: {{ app.security_context.run_as_user | int }}
+        runAsGroup: {{ app.security_context.run_as_group | default(app.security_context.run_as_user) | int }}
+        fsGroup: {{ app.security_context.fs_group | default(app.security_context.run_as_group | default(app.security_context.run_as_user)) | int }}
+        fsGroupChangePolicy: OnRootMismatch
+{% endif %}
+      containers:
+        - name: {{ app.name }}
+          image: {{ app.image | to_json }}
+{% if app.image_pull_policy is defined %}
+          imagePullPolicy: {{ app.image_pull_policy }}
+{% endif %}
+{% if app.command is defined %}
+          command: {{ app.command | to_json }}
+{% endif %}
+{% if app.args is defined %}
+          args: {{ app.args | to_json }}
+{% endif %}
+{% if app.env | default([]) | length > 0 %}
+          env:
+{%   for var in app.env %}
+{%     if var.secret is defined %}
+            - name: {{ var.name }}
+              valueFrom:
+                secretKeyRef: {name: {{ app.secret_name | default(instance) }}, key: {{ var.secret | to_json }}}
+{%     else %}
+            - {name: {{ var.name }}, value: {{ var.value | string | to_json }}}
+{%     endif %}
+{%   endfor %}
+{% endif %}
+          ports:
+            - containerPort: {{ container_port }}
+{% if app.volumes | default([]) | length > 0 or app.extra_volume_mounts | default([]) | length > 0 %}
+          volumeMounts:
+{%   for volume in app.volumes | default([]) %}
+            - name: {{ volume.name }}
+              mountPath: {{ volume.mount_path }}
+{%     if volume.read_only | default(false) %}
+              readOnly: true
+{%     endif %}
+{%   endfor %}
+{%   for mount in app.extra_volume_mounts | default([]) %}
+            - {{ mount | to_json }}
+{%   endfor %}
+{% endif %}
+{% if app.probe is defined %}
+          startupProbe:
+{{ probe(10, 30) }}
+          readinessProbe:
+{{ probe(10, 6) }}
+          livenessProbe:
+{{ probe(30, 3) }}
+{% endif %}
+          resources: {{ app.resources | default({'requests': {'cpu': '100m', 'memory': '256Mi'}}) | to_json }}
+{% if app.volumes | default([]) | length > 0 or app.extra_volumes | default([]) | length > 0 %}
+      volumes:
+{%   for volume in app.volumes | default([]) %}
+        - name: {{ volume.name }}
+{%     if volume.nfs is defined %}
+          nfs: {server: {{ volume.nfs.server | to_json }}, path: {{ volume.nfs.path | to_json }}, readOnly: {{ volume.read_only | default(false) | bool | to_json }}}
+{%     else %}
+          persistentVolumeClaim: {claimName: {{ volume.claim | default(instance ~ '-' ~ volume.name) }}}
+{%     endif %}
+{%   endfor %}
+{%   for volume in app.extra_volumes | default([]) %}
+        - {{ volume | to_json }}
+{%   endfor %}
+{% endif %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+{% if app.node_port is defined %}
+  type: NodePort
+{% endif %}
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app.port }}
+      targetPort: {{ container_port }}
+{% if app.node_port is defined %}
+      nodePort: {{ app.node_port | int }}
+{% endif %}
+{% if app.host is defined %}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ app.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app.port }}
+{% endif %}

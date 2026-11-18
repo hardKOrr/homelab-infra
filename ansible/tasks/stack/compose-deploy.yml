@@ -1,0 +1,164 @@
+---
+# Deploy one app's Compose project on its Docker stack host: create the project and data
+# directories, render the Compose file and any files it mounts, pull missing images, bring
+# the project up, apply pending handlers, then wait for the app to answer.
+#
+# Included from a role's `docker.yml` (`../../../tasks/stack/compose-deploy.yml`), so
+# template sources resolve in the calling role's `templates/`.
+#
+# Inputs:
+#   compose_project_dir   — absolute directory of the Compose project (required)
+#   compose_template      — the role's Compose template (default `docker-compose.yml.j2`)
+#   compose_dirs          — optional more directories to create, beside the project
+#                           directory; entries are paths, or `{path, owner, group, mode}`
+#   compose_owner         — owner of the created directories (default `root`)
+#   compose_group         — group of the created directories (default `root`)
+#   compose_files         — optional files the project mounts or reads, each
+#                           `{src, dest}` with optional `mode` (default `0640`), `owner`
+#                           and `group` (default `root`); src is a role template
+#   compose_secrets       — the secret values the Compose file or compose_files hold; when
+#                           set, their render output stays out of the log and a failure
+#                           prints with these values masked (default none)
+#   compose_networks      — optional external Docker networks the project joins; each is
+#                           created when absent and never removed here
+#   compose_pull_policy   — `missing` (default) or `always`
+#   compose_health        — optional `{url, status (default 200), retries (default 30),
+#                           delay (default 5), headers}`, checked from the stack host; a
+#                           header's token belongs in compose_secrets
+#
+# Sets:
+#   compose_deploy_changed — true when a rendered file or the project's containers changed
+#
+# A rendered file that changed recreates the project's containers, because Compose does not
+# see a change inside a mounted file. The calling role's own handlers (a restart notified by
+# a task before this file) run before the health check.
+
+- name: Compose deploy | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - compose_project_dir is defined
+      - compose_project_dir is string
+      - compose_project_dir is match('^/')
+      - compose_dirs | default([]) is sequence
+      - compose_files | default([]) is sequence
+      - compose_files | default([]) | rejectattr('src', 'defined') | list | length == 0
+      - compose_files | default([]) | rejectattr('dest', 'defined') | list | length == 0
+      - compose_networks | default([]) is sequence
+      - compose_pull_policy | default('missing') in ['missing', 'always']
+      - compose_health is not defined or compose_health.url is defined
+    fail_msg: >-
+      compose-deploy.yml needs an absolute compose_project_dir; compose_dirs, compose_files
+      (each with src and dest) and compose_networks must be lists, compose_pull_policy is
+      missing or always, and compose_health needs a url.
+
+- name: Compose deploy | Create the project and data directories
+  ansible.builtin.file:
+    path: "{{ item.path | default(item) }}"
+    state: directory
+    owner: "{{ item.owner | default(compose_owner | default('root')) }}"
+    group: "{{ item.group | default(compose_group | default('root')) }}"
+    mode: "{{ item.mode | default('0750') }}"
+  loop: "{{ [compose_project_dir] + compose_dirs | default([]) }}"
+
+- name: Compose deploy | Ensure the shared Docker networks exist
+  community.docker.docker_network:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ compose_networks | default([]) }}"
+
+# Any render or write failure stops the deploy before the project starts. With
+# compose_secrets set, the render output stays hidden and the failure prints through
+# fail-with-scrubbed-output.yml with those values masked.
+- name: Compose deploy | Render the project's files
+  block:
+    - name: Compose deploy | Render the files the project mounts
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0640') }}"
+      loop: "{{ compose_files | default([]) }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: _compose_files_written
+      no_log: "{{ compose_secrets | default([]) | length > 0 }}"
+
+    - name: Compose deploy | Render the Compose file
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/{{ compose_template | default('docker-compose.yml.j2') }}"
+        dest: "{{ compose_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      register: _compose_file_written
+      no_log: "{{ compose_secrets | default([]) | length > 0 }}"
+  rescue:
+    - name: Compose deploy | Report the failed render
+      ansible.builtin.include_tasks: ../fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_context: "Compose deploy: rendering {{ compose_project_dir }} failed"
+        scrub_failure_secrets: "{{ compose_secrets | default([]) }}"
+        scrub_failure_result:
+          failed: true
+          msg: >-
+            {% for result in ansible_failed_result.results | default([ansible_failed_result])
+               if result.failed | default(false) %}{{ result.item.dest
+               | default(compose_project_dir ~ '/docker-compose.yml') }}: {{ result.msg
+               | default('no message') }}{{ '' if loop.last else '; ' }}{% endfor %}
+
+- name: Compose deploy | Pull the images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ compose_project_dir }}"
+    policy: "{{ compose_pull_policy | default('missing') }}"
+  changed_when: false
+
+- name: Compose deploy | Start the project
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_project_dir }}"
+    state: present
+    remove_orphans: true
+    recreate: "{{ 'always' if _compose_rendered_changed | bool else 'auto' }}"
+  vars:
+    _compose_rendered_changed: >-
+      {{ _compose_file_written.changed | default(false)
+         or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
+  register: _compose_up
+
+- name: Compose deploy | Record whether the project changed
+  ansible.builtin.set_fact:
+    compose_deploy_changed: >-
+      {{ _compose_up.changed | default(false) or _compose_file_written.changed | default(false)
+         or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
+
+- name: Compose deploy | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+# Headers may carry a token: with headers set, the check's output stays hidden and a
+# failure prints through fail-with-scrubbed-output.yml with compose_secrets masked.
+- name: Compose deploy | Wait for the application
+  when: compose_health is defined
+  block:
+    - name: Compose deploy | Check the application answers
+      ansible.builtin.uri:
+        url: "{{ compose_health.url }}"
+        status_code: "{{ compose_health.status | default(200) }}"
+        headers: "{{ compose_health.headers | default(omit) }}"
+      register: _compose_health
+      until: _compose_health.status | default(0) in ([compose_health.status | default(200)] | flatten)
+      retries: "{{ compose_health.retries | default(30) }}"
+      delay: "{{ compose_health.delay | default(5) }}"
+      changed_when: false
+      no_log: "{{ compose_health.headers | default({}) | length > 0 }}"
+  rescue:
+    - name: Compose deploy | Report the failed health check
+      ansible.builtin.include_tasks: ../fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_context: >-
+          Compose deploy: {{ compose_health.url }} did not answer
+          {{ compose_health.status | default(200) }} (last status
+          {{ ansible_failed_result.status | default('none') }})
+        scrub_failure_secrets: "{{ compose_secrets | default([]) }}"
+        scrub_failure_result:
+          failed: true
+          msg: "{{ ansible_failed_result.msg | default('no message') }}"

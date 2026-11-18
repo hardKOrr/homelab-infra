@@ -172,15 +172,17 @@ are the live procedures for one instance; moving PBS with its datastore is in
   controller-side modules.
 - `files/` contains controller-side helper programs installed or called by tasks, grouped
   as `files/decommission/`, `files/pbs/`, `files/proxmox/` and `files/recovery/`.
-- `templates/kubernetes/` holds the shared Kubernetes recovery CronJob and Job.
+- `templates/kubernetes/` holds the shared Kubernetes recovery CronJob and Job and the
+  single-container workload.
 
 ## Shared operations
 
 A role uses the shared file for any operation listed here and supplies its per-app
 behavior through that file's inputs or hook. When the shared file lacks a needed seam, add
 the seam there. [`gate/test-shared-standards.py`](../gate/test-shared-standards.py)
-fails on a copy of a recovery primitive outside its shared file; every role already uses
-the shared files, so its allowlists are empty.
+fails on a copy of a shared primitive outside its shared file. Every role uses the shared
+recovery files; the role building blocks (Compose deploy, restart handler, single-container
+workload) still allowlist the roles that carry their own copy until their Deploy conversion.
 
 | Operation | Owner | A role supplies |
 | --- | --- | --- |
@@ -188,6 +190,9 @@ the shared files, so its allowlists are empty.
 | Proxy, DNS, SSO and monitoring wiring | `tasks/wiring/<provider>.yml`, inverse `tasks/unwiring/` ([README](tasks/wiring/README.md)) | `wiring_app_name`, `wiring_upstream_host`/`_port`/`_scheme`, `wiring_domain`, `wiring_access`, `wiring_identity_mode` |
 | The reverse proxy's source addresses, for trusting `X-Forwarded-Proto` | `tasks/wiring/proxy-sources.yml` | nothing; reads `wiring_proxy_sources` |
 | Firewall access | `tasks/firewall/open-app-access.yml` | `wiring_app_name`, `wiring_upstream_host`, `wiring_firewall`, optional `firewall_sends_mail`, `firewall_inbound_ports` |
+| Compose deploy on a Docker stack host: directories, rendered files, pull, up, health wait | `tasks/stack/compose-deploy.yml` | `compose_project_dir`, optional `compose_template`, `compose_dirs`, `compose_owner`/`_group`, `compose_files` (`src`, `dest`, `mode`), `compose_secrets` (values masked in a failure), `compose_networks`, `compose_pull_policy`, `compose_health` (`url`, `status`, `retries`, `delay`, `headers`) |
+| Restart handler: recreate a Compose project or restart systemd units | `tasks/apps/restart.yml`, included by the role's named handler | `restart_runtime` (`docker` or `native`), `restart_compose_project`, optional `restart_compose_services`, `restart_services` |
+| Single-container Kubernetes workload: PVCs, Deployment, Service, Ingress | `tasks/kubernetes/single-container.yml`, rendering `templates/kubernetes/single-container.yaml.j2` | `k8s_app` (`name`, `image`, `port`, optional `container_port`, `host`, `node_port`, `env`, `volumes`, `extra_volumes`/`_mounts`, `probe`, `security_context`, `resources`, `pod_annotations`, `image_pull_policy`, `command`, `args`), optional `k8s_app_extra_manifest` |
 | Kubernetes workload apply | `tasks/kubernetes/apply-manifest.yml` ([README](tasks/kubernetes/README.md)) | `k8s_manifest`, `k8s_namespace`, `k8s_api_host`, optional `k8s_wait_for` |
 | Kubernetes external media NFS volumes | `tasks/kubernetes/prepare-media-volumes.yml` ([README](tasks/kubernetes/README.md)) | `k8s_media_shares` entries (`name`, `server`, `path`, `mount_path`, boolean `read_only`); returns `k8s_media_volumes` and `k8s_media_volume_mounts` for workload templates |
 | Kubernetes NodePort claim check | `tasks/kubernetes/claim-node-port.yml` | `k8s_node_port`, `k8s_namespace`, `k8s_api_host`; run before every apply of a NodePort Service |
