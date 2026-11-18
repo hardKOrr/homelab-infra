@@ -134,7 +134,6 @@
   hosts: localhost
   become: false
   gather_facts: false
-  pre_tasks:
   tasks:
     - name: Deploy qBittorrent into its Kubernetes namespace
       ansible.builtin.include_role:

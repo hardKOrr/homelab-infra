@@ -258,8 +258,6 @@
   hosts: localhost
   gather_facts: false
 
-  pre_tasks:
-
   vars:
     _rb_host: "{{ (groups['apptarget_' ~ container] | default([]) | first) | default('') }}"
     _rb_old: "{{ hostvars[_rb_host]._rb_old_ref | default('unknown') }}"

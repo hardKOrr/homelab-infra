@@ -33,13 +33,14 @@ assert defaults["second_copy"]["enabled"] is False
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
 
 pbs_record_tasks = playbook[2]["tasks"]
-reload_facts = task(pbs_record_tasks, "Reload infrastructure facts")
+# homelabinfra_infra comes from load-user-vars' set_fact; an include_vars reload of
+# facts.yml under that name is shadowed by it and does nothing.
+assert not any(
+    "generated/facts.yml" in str(item.get("ansible.builtin.include_vars", ""))
+    for item in pbs_record_tasks
+)
 refresh_backup_fingerprints = task(
     pbs_record_tasks, "PBS | Refresh the fingerprint used by Kubernetes backup CronJobs"
-)
-assert (
-    pbs_record_tasks.index(refresh_backup_fingerprints)
-    > pbs_record_tasks.index(reload_facts)
 )
 assert refresh_backup_fingerprints["ansible.builtin.include_tasks"] == (
     "../../tasks/backup/refresh-k8s-pbs-fingerprint.yml"

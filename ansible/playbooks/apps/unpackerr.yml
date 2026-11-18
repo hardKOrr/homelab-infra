@@ -91,7 +91,6 @@
   hosts: localhost
   become: false
   gather_facts: false
-  pre_tasks:
   tasks:
     - name: Deploy Unpackerr into its Kubernetes namespace
       ansible.builtin.include_role:
@@ -105,7 +104,6 @@
   vars:
     _unpackerr_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
     _unpackerr_deploy_host: "{{ {} if _unpackerr_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}"
-  pre_tasks:
   tasks:
     - name: Record the app on its Proxmox guests
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

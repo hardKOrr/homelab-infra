@@ -147,7 +147,6 @@
   hosts: localhost
   become: false
   gather_facts: false
-  pre_tasks:
   tasks:
     - name: Deploy slskd into its Kubernetes namespace
       ansible.builtin.include_role:

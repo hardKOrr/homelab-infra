@@ -39,13 +39,6 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=k3s-cluster"
 
-    - name: Load the app config
-      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
-      vars:
-        load_config_app: k3s-cluster
-        load_config_vault_methods: []
-        load_config_fact: k8s_cluster_config
-
     - name: Refuse Deploy while this cluster's Remove is in progress
       ansible.builtin.assert:
         that:
@@ -53,6 +46,13 @@
         fail_msg: >-
           {{ instance }} is being removed. Finish cluster Remove before deploying it again.
       when: (homelabinfra_infra.kubernetes.instance | default('')) == instance
+
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: k3s-cluster
+        load_config_vault_methods: []
+        load_config_fact: k8s_cluster_config
 
     # The defaults carry no lab topology; storage falls back to the lab-wide pool.
     - name: Validate supported hosting method

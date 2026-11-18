@@ -175,8 +175,6 @@
   hosts: localhost
   gather_facts: false
 
-  pre_tasks:
-
   tasks:
     - name: Notify removal complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml

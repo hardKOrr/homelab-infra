@@ -188,10 +188,13 @@ def validate_deploy_preflight(slug):
         merged_indices = [
             index
             for index, task in enumerate(pre_tasks)
-            if "ansible.builtin.set_fact" in task
-            and any(
-                key in task["ansible.builtin.set_fact"]
-                for key in ("app_config", "k8s_cluster_config", "pdm_config")
+            if task.get("ansible.builtin.include_tasks") == "../../tasks/apps/load-config.yml"
+            or (
+                "ansible.builtin.set_fact" in task
+                and any(
+                    key in task["ansible.builtin.set_fact"]
+                    for key in ("app_config", "k8s_cluster_config", "pdm_config")
+                )
             )
         ]
         prior_merges = [index for index in merged_indices if index < guard_index]
