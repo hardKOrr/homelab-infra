@@ -6,8 +6,9 @@
   Every object carries the instance labels and is namespaced, so the namespace is the
   ownership boundary Remove deletes.
 
-  A Deployment that mounts a PVC (its own or an existing `claim`) uses the Recreate strategy: the volume is ReadWriteOnce on a
-  node-pinned StorageClass, so a second pod cannot mount it while the first holds it.
+  A Deployment that mounts a PVC (its own or an existing `claim`) uses Recreate: the
+  volume is ReadWriteOnce on a node-pinned StorageClass, so a second pod cannot mount it
+  while the first holds it.
 
   Plain HTTP Ingress to the in-cluster controller on the MetalLB VIP; the platform Caddy
   is the only public TLS edge.
