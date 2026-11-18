@@ -5,7 +5,7 @@
 - name: Ensure Docker is available for Tautulli deployment
   ansible.builtin.include_role:
     name: docker
-  when: not (tautulli_native | bool)
+  when: app_config.hosting.method == 'docker'
 
 - name: Resolve the Plex endpoint and credentials
   ansible.builtin.include_tasks: plex.yml
@@ -17,15 +17,15 @@
 
 - name: Native service account and release
   ansible.builtin.include_tasks: native-install.yml
-  when: tautulli_native | bool
+  when: app_config.hosting.method == 'native'
 
 - name: Docker on the stack host
   ansible.builtin.include_tasks: docker.yml
-  when: not (tautulli_native | bool)
+  when: app_config.hosting.method == 'docker'
 
 - name: Native service
   ansible.builtin.include_tasks: native.yml
-  when: tautulli_native | bool
+  when: app_config.hosting.method == 'native'
 
 - name: Verify the Tautulli API and store its key
   ansible.builtin.include_tasks: verify.yml

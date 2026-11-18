@@ -30,14 +30,19 @@
 #
 # Per-app values are app-defaults keys (vars/app-defaults/_base.yml holds the shared
 # ones): routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to
-# the deploy notification) and vault.methods (tasks/apps/load-config.yml). The display
-# name is the catalog entry's `name`.
+# the deploy notification), vault.methods (tasks/apps/load-config.yml) and
+# firewall.methods (the hosting methods whose Deploy opens the app's declared `firewall:`
+# access; default every method). The display name is the catalog entry's `name`.
 
 # ── Play 1: Resolve and provision ──────────────────────────────────────────────
 - name: "Deploy {{ app | default('(no app)') }} | Resolve and provision"
   hosts: localhost
   become: false
   gather_facts: false
+
+  vars:
+    _deploy_firewall_methods: >-
+      {{ (app_config.firewall | default({})).methods | default(['docker', 'kubernetes', 'native']) }}
 
   pre_tasks:
     - name: Load platform vars
@@ -129,6 +134,7 @@
         wiring_firewall: "{{ app_config.firewall | default({}) }}"
       when:
         - app_config.hosting.method in ['docker', 'native']
+        - app_config.hosting.method in _deploy_firewall_methods
         - >-
           (app_config.firewall.egress | default([]) | length > 0)
           or (app_config.firewall.inbound | default([]) | length > 0)
@@ -139,7 +145,9 @@
 
     - name: Open the app's declared cluster network access
       ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
-      when: app_config.hosting.method == 'kubernetes'
+      when:
+        - app_config.hosting.method == 'kubernetes'
+        - app_config.hosting.method in _deploy_firewall_methods
 
 # ── Play 2: Deploy on the guest ────────────────────────────────────────────────
 # Play 1 adds the guest to deploy_<instance> on the Docker and native paths only, so on

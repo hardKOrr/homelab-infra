@@ -617,28 +617,29 @@ def restore_tasks():
     assert names.index(failed["name"]) < names.index(keep["name"])
 
 
-def include_vars(tasks, shared_file):
+def include_vars(tasks, shared_file, key="k8s_recovery"):
     include = next(task for task in tasks
                    if str(task.get("ansible.builtin.include_tasks", "")).endswith(shared_file))
-    return include["vars"]["k8s_recovery"]
+    return include["vars"][key]
 
 
 def app_render(app, spec, steps):
     role_name = spec.get("role", app)
     role = ROOT / "ansible/roles" / role_name
-    manifest = (role / "templates/manifest.yaml.j2").read_text(encoding="utf-8")
-    assert not (role / "templates/backup-cronjob.yaml.j2").exists()
-    assert not (role / "templates/restore-job.yaml.j2").exists()
+    tasks = tasks_of(f"ansible/roles/{role_name}/tasks/{spec['file']}")
+    template = role / "templates/manifest.yaml.j2"  # else the shared workload: <instance>-<name>
+    manifest = template.read_text(encoding="utf-8") if template.exists() else " ".join(
+        "{{ instance }}-" + v["name"]
+        for v in include_vars(tasks, "single-container.yml", "k8s_app")["volumes"])
+    assert not any((role / f"templates/{name}.yaml.j2").exists() for name in ("backup-cronjob", "restore-job"))
     database = steps[spec["engine"]] if spec["engine"] else {}
     variables = {
         "instance": "src", "restore_target": "dst", "k8s_database_step": database,
         "role_path": str(role),
         "playbook_dir": str(ROOT / "ansible/playbooks/apps"),
         "karakeep_fqdn": "src.example.test",
-        "karakeep_data_uid": 1000,
-        "karakeep_data_gid": 1000,
-        "_navidrome_uid": 1000,
-        "_navidrome_gid": 1000,
+        "karakeep_data_uid": 1000, "karakeep_data_gid": 1000,
+        "_navidrome_uid": 1000, "_navidrome_gid": 1000,
         "app_config": {"app": {
             "database": {"name": "db", "provider": "mariadb"},
             "database_host": "database.example.test", "database_port": 3306,
@@ -661,8 +662,7 @@ def app_render(app, spec, steps):
                                   .read_text(encoding="utf-8"))["navidrome_defaults"]
         backup_config = defaults["backup"]
 
-    backup = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['file']}"),
-                                 "recovery-backup.yml"), variables)
+    backup = render(include_vars(tasks, "recovery-backup.yml"), variables)
     restore = render(include_vars(tasks_of(f"ansible/roles/{role_name}/tasks/{spec['restore']}"),
                                   "recovery-restore.yml"), variables)
     if app == "karakeep":

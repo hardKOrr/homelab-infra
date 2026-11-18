@@ -1,6 +1,6 @@
 ---
 # Jellyseerr (Seerr) on a guest: Docker on a stack host (docker.yml) or natively on its own
-# LXC or VM (native.yml). Kubernetes is kubernetes.yml, run from the playbook's localhost play.
+# LXC or VM (native.yml). Kubernetes is kubernetes.yml, run on localhost.
 - name: Jellyseerr | Deploy on Docker
   ansible.builtin.include_tasks: docker.yml
   when: app_config.hosting.method | default('kubernetes') == 'docker'
