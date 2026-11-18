@@ -6,7 +6,7 @@
     hosting_stack_defaults_file: "{{ playbook_dir }}/../../ansible/vars/stack-defaults.yml"
     hosting_default_files: >-
       {{ lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../ansible/vars/app-defaults/*.yml', wantlist=True)
-         | reject('search', '/_template.yml$') | list }}
+         | reject('search', '/_[^/]*[.]yml$') | list }}
   tasks:
     - name: Validate each app's merged defaults
       ansible.builtin.include_tasks: hosting-render-one.yml

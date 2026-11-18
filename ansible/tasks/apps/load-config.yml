@@ -1,5 +1,6 @@
 ---
-# Load one app instance's merged config: the app's defaults, the instance file, and the
+# Load one app instance's merged config: the defaults every app shares
+# (vars/app-defaults/_base.yml), the app's defaults, the instance file, and the
 # instance's Vaultwarden item. Every deploy playbook loads its config here, after
 # tasks/load-user-vars.yml (which supplies _luv_vars_file, _luv_config_dir and
 # homelabinfra_vault).
@@ -9,10 +10,16 @@
 #
 # Inputs: instance; load_config_app (the app slug); optional load_config_layer (default
 # {}), load_config_vault_methods (the hosting methods that take the Vaultwarden item;
-# default every method, [] for none), load_config_instance_required
+# default the defaults' `vault.methods`, else every method; [] for none),
+# load_config_instance_required
 # (default false), load_config_fact (default app_config).
 # Results: the merged config in load_config_fact; _app_defaults and _instance_config as
 # loaded, for steps that need the authored instance values alone.
+
+- name: Load the defaults every app shares
+  ansible.builtin.include_vars:
+    file: "{{ _luv_vars_file | dirname }}/app-defaults/_base.yml"
+    name: _base_defaults_file
 
 - name: Load the app's defaults
   ansible.builtin.include_vars:
@@ -31,7 +38,9 @@
 - name: Merge the defaults and the instance config
   ansible.builtin.set_fact:
     "{{ load_config_fact | default('app_config') }}": >-
-      {{ _app_defaults[(load_config_app | replace('-', '_')) ~ '_defaults']
+      {{ _base_defaults_file._base_defaults
+         | combine(_app_defaults[(load_config_app | replace('-', '_')) ~ '_defaults'],
+                   recursive=True)
          | combine(load_config_layer | default({}), recursive=True)
          | combine(_instance_config | default({}), recursive=True) }}
 
@@ -43,7 +52,10 @@
                    recursive=True) }}
   vars:
     _load_config_merged: "{{ lookup('ansible.builtin.vars', load_config_fact | default('app_config')) }}"
+    _load_config_methods: >-
+      {{ load_config_vault_methods
+         | default((_load_config_merged.vault | default({})).methods | default('every')) }}
   when: >-
-    load_config_vault_methods is not defined
-    or (_load_config_merged.hosting | default({})).method | default('') in load_config_vault_methods
+    _load_config_methods == 'every'
+    or (_load_config_merged.hosting | default({})).method | default('') in _load_config_methods
   no_log: true

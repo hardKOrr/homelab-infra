@@ -17,7 +17,7 @@
     _st_public_dns_app_slugs: >-
       {{ lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../vars/app-defaults/*.yml', wantlist=True)
          | map('basename') | map('regex_replace', '[.]yml$', '')
-         | reject('equalto', '_template') | list }}
+         | reject('match', '_') | list }}
     _st_public_dns_apps: []
   no_log: true
   vars:

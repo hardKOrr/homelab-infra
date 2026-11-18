@@ -19,6 +19,10 @@ On top of the table, RULES must hold for every row, checked on every shared file
 trace, nested ones included: every Deploy loads its config through the shared loader, a
 Kubernetes Deploy applies a manifest and creates no guest, and so on.
 
+The rules hold for `playbooks/apps/deploy.yml` as well, traced for every app as if that
+app's shim imported it. `--preview [app ...]` prints how each app's Deploy row would change
+on that move.
+
 `python gate/test-app-matrix.py --update` prints the table computed from the tree.
 """
 
@@ -38,6 +42,9 @@ import task_parts  # noqa: E402
 
 TABLE = ROOT / "gate/app-matrix.yml"
 FULL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
+# Apps in the table that keep their own Deploy playbook instead of a deploy.yml shim:
+# Caddy's Seed path and edge copy.
+OWN_DEPLOY = {"caddy"}
 ALIASES = yaml.safe_load((ROOT / "gate/structure.yml").read_text())["role_aliases"]
 # The hosting method of the app or of a Restore's target, however it is reached.
 METHOD = re.compile(r"[\w\[\]'\".]*config\.hosting\.method")
@@ -45,6 +52,8 @@ INCLUDE_KEYS = task_parts.INCLUDES + task_parts.ROLES
 ENV = jinja2.Environment(undefined=jinja2.StrictUndefined)
 ENV.filters["bool"] = lambda value: value if isinstance(value, bool) else str(value).lower() in (
     "true", "yes", "1", "on")
+ENV.tests["file"] = lambda path: Path(path).is_file()
+SHARED_DEPLOY = ROOT / "ansible/playbooks/apps/deploy.yml"
 
 
 def apps() -> list[str]:
@@ -92,9 +101,9 @@ class Decider:
     the method alone, is decided too, so `when: not (_app_k8s | bool)` is decided.
     """
 
-    def __init__(self, method: str, steps: list[dict]):
+    def __init__(self, method: str, steps: list[dict], seed: dict | None = None):
         self.method = method
-        self.known: dict = {}
+        self.known: dict = dict(seed or {})
         self.cache: dict = {}
         self.names = None
         candidates = dict(role_vars(steps))
@@ -214,7 +223,7 @@ def templated(steps: list[dict]) -> list[str]:
             if t and "{{" in t]
 
 
-def reached(run, method: str, deep: bool = False) -> list[str]:
+def reached(run, method: str, deep: bool = False, seed: dict | None = None) -> list[str]:
     """The shared task files a run reaches for one method, in first-reached order.
 
     The table lists the shared files the app's own code includes; what a shared file
@@ -226,7 +235,7 @@ def reached(run, method: str, deep: bool = False) -> list[str]:
     after a reached task adds a guest to it.
     """
     steps = run(None)
-    decider = Decider(method, steps)
+    decider = Decider(method, steps, seed)
     if any(decider.render(target) for target in templated(steps)):
         steps = run(decider.render)
     files: list[str] = []
@@ -259,9 +268,25 @@ def reached(run, method: str, deep: bool = False) -> list[str]:
 
 
 @lru_cache(maxsize=None)
-def deploy_steps(app: str, render=None) -> list[dict]:
+def deploy_steps(app: str, render=None, shared: bool = False) -> list[dict]:
     resolver = task_parts.Resolver(ROOT, trace=True, render=render)
-    return list(resolver.playbook(ROOT / f"ansible/playbooks/apps/{app}.yml"))
+    path = SHARED_DEPLOY if shared else ROOT / f"ansible/playbooks/apps/{app}.yml"
+    return list(resolver.playbook(path))
+
+
+def deploy_seed(app: str, steps: list[dict]) -> dict | None:
+    """What playbooks/apps/deploy.yml knows before its tasks run, when the run goes through
+    it: the app, its playbook directory and the role it derives from `deploy.role`."""
+    shared = str(SHARED_DEPLOY.relative_to(ROOT))
+    if not any(shared in (step.get("via") or []) for step in steps):
+        return None
+    return {"app": app, "playbook_dir": str(SHARED_DEPLOY.parent),
+            "_deploy_role": (defaults(app).get("deploy") or {}).get("role", app)}
+
+
+def deploy_reached(app: str, method: str, deep: bool = False, shared: bool = False):
+    seed = deploy_seed(app, deploy_steps(app, None, shared))
+    return reached(lambda r: deploy_steps(app, r, shared), method, deep, seed)
 
 
 @lru_cache(maxsize=None)
@@ -281,13 +306,25 @@ def row(app: str, deep: bool = False) -> dict:
     role = role_of(app)
     entry = {"method": hosting.get("method"), "supported": supported, "deploy": {}}
     for method in methods:
-        entry["deploy"][method] = reached(lambda r: deploy_steps(app, r), method, deep)
+        entry["deploy"][method] = deploy_reached(app, method, deep)
     for hook in ("backup", "restore"):
         if not role or not (ROOT / f"ansible/roles/{role}/tasks/{hook}.yml").is_file():
             continue
         entry[hook] = {method: reached(lambda r: hook_steps(role, hook, r), method, deep)
                        for method in methods if hook == "restore" or method != "kubernetes"}
     return entry
+
+
+def methods_of(app: str) -> list[str]:
+    hosting = defaults(app).get("hosting") or {}
+    return sorted({c.split("-")[0] for c in hosting.get("supported") or []}
+                  | {hosting.get("method")})
+
+
+def shared_deploy(app: str, deep: bool = False) -> dict:
+    """The app's Deploy run through playbooks/apps/deploy.yml, as if its shim imported it."""
+    return {"deploy": {method: deploy_reached(app, method, deep, shared=True)
+                       for method in methods_of(app)}}
 
 
 def table() -> dict:
@@ -385,12 +422,26 @@ def dump(data: dict) -> str:
     return yaml.dump(data, Dumper=Dumper, sort_keys=False, width=100)
 
 
+def preview(names: list[str]) -> int:
+    """How each app's Deploy row would change if its shim imported deploy.yml."""
+    recorded = yaml.safe_load(TABLE.read_text()) or {}
+    for app in names or [a for a in apps() if a not in OWN_DEPLOY]:
+        lines = differences(app, {"deploy": recorded[app]["deploy"]}, shared_deploy(app))
+        print("\n".join(lines) if lines else f"{app}: same Deploy row")
+    return 0
+
+
 def main() -> int:
+    if "--preview" in sys.argv:
+        return preview(sys.argv[sys.argv.index("--preview") + 1:])
     current = table()
     if "--update" in sys.argv:
         print(dump(current), end="")
         return 0
     failures = self_check() + [f for app in current for f in rules(app, row(app, deep=True))]
+    # deploy.yml holds to the rules for every app before any app's shim imports it.
+    failures += [f"playbooks/apps/deploy.yml as {f}" for app in current
+                 if app not in OWN_DEPLOY for f in rules(app, shared_deploy(app, deep=True))]
     recorded = yaml.safe_load(TABLE.read_text()) or {}
     for app in sorted(set(current) | set(recorded)):
         failures += differences(app, recorded.get(app), current.get(app))

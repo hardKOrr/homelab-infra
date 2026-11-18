@@ -11,6 +11,10 @@
 # Application entry. A media stack with no Prowlarr wires nothing.
 
 prowlarr_defaults:
+  # The shared Servarr role deploys every Servarr app (playbooks/apps/deploy.yml).
+  deploy:
+    role: servarr
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]

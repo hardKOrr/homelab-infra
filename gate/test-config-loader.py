@@ -3,12 +3,13 @@
 
 For each `ansible/playbooks/apps/<app>.yml` that loads an app config, the suite takes the
 config-loading tasks of its first play (`tasks/apps/load-config.yml` and its inputs, or
-the hand-written loads it replaced), runs them with Ansible against fixture inputs, and
-compares the result with the merge in `ansible/vars/contract/app-layering.md`: defaults,
-then the platform layer, then the instance file, then the instance's Vaultwarden item
-under `app` (only for the hosting methods the playbook names). Each app runs twice: on its
-default hosting method, and on Kubernetes too where the
-Vaultwarden overlay depends on the method.
+the hand-written loads it replaced; for a shim, those of the playbook it imports), runs
+them with Ansible against fixture inputs, and compares the result with the merge in
+`ansible/vars/contract/app-layering.md`: the shared base defaults, the app's defaults,
+the platform layer, the instance file, then the instance's Vaultwarden item under `app`
+(only for the hosting methods the playbook or the defaults' `vault.methods` name). Each app
+runs twice: on its default hosting method, and on Kubernetes too where the Vaultwarden
+overlay depends on the method.
 
 `--dump FILE` writes every app's merged config as JSON instead of comparing, so a change
 to the loader can be checked by dumping before and after it and diffing the two files.
@@ -30,8 +31,9 @@ from ansible.template import Templar
 
 REPO = Path(__file__).resolve().parents[1]
 APPS = REPO / "ansible/playbooks/apps"
-NOT_DEPLOY = {"remove", "remove-k3s-cluster", "migrate-servarr", "_template"}
+NOT_DEPLOY = {"deploy", "remove", "remove-k3s-cluster", "migrate-servarr", "_template"}
 LOADER = "tasks/apps/load-config.yml"
+BASE = yaml.safe_load((REPO / "ansible/vars/app-defaults/_base.yml").read_text())["_base_defaults"]
 INFRA = {"media_storage": {"library": "/gate/library"},
          "frigate_storage": {"path": "/gate/recordings"}}
 
@@ -52,6 +54,8 @@ def is_load_step(task: dict) -> bool:
 
 def result_fact(steps: list[dict]) -> str:
     for task in steps:
+        if task.get("ansible.builtin.set_fact", {}).keys() == {"app"}:
+            continue
         inputs = task.get("vars") or {}
         if LOADER in json.dumps(task):
             return inputs.get("load_config_fact", "app_config")
@@ -62,8 +66,14 @@ def result_fact(steps: list[dict]) -> str:
 
 
 def loading_steps(path: Path) -> list[dict] | None:
+    """The first play's config-loading steps; a shim's are those of the playbook it imports,
+    run with the shim's vars (`app`) set first."""
     plays = yaml.safe_load(path.read_text())
     first = plays[0]
+    target = first.get("ansible.builtin.import_playbook") or first.get("import_playbook")
+    if target:
+        steps = loading_steps(path.parent / target) or []
+        return [{"ansible.builtin.set_fact": first.get("vars") or {}}, *steps] if steps else None
     steps = [t for t in first.get("pre_tasks") or [] if is_load_step(t)]
     return steps or None
 
@@ -83,11 +93,21 @@ def instance_file(app: str, kubernetes: bool) -> dict:
     return doc
 
 
-def variants(steps: list[dict], dump: str | None) -> tuple[bool, ...]:
-    """Kubernetes as well as the default method, when the vault overlay depends on it."""
+def vault_methods(app: str, steps: list[dict]):
+    """The hosting methods that take the Vaultwarden item; None for every method."""
     loader = next((t for t in steps if LOADER in json.dumps(t)), None)
     methods = ((loader or {}).get("vars") or {}).get("load_config_vault_methods")
-    return (False, True) if dump or methods else (False,)
+    return methods if methods is not None else (defaults_of(app).get("vault") or {}).get("methods")
+
+
+def defaults_of(app: str) -> dict:
+    path = REPO / f"ansible/vars/app-defaults/{app}.yml"
+    return yaml.safe_load(path.read_text())[app.replace("-", "_") + "_defaults"]
+
+
+def variants(app: str, steps: list[dict], dump: str | None) -> tuple[bool, ...]:
+    """Kubernetes as well as the default method, when the vault overlay depends on it."""
+    return (False, True) if dump or vault_methods(app, steps) else (False,)
 
 
 def merge(base, over):
@@ -120,7 +140,7 @@ def main() -> int:
         vault = {"apps": {}}
         runs = []
         for app, steps in targets.items():
-            for kubernetes in variants(steps, dump):
+            for kubernetes in variants(app, steps, dump):
                 instance = f"{app}-k8s" if kubernetes else app
                 (root / f"config/apps/{instance}.yml").write_text(
                     yaml.safe_dump(instance_file(app, kubernetes)))
@@ -163,11 +183,10 @@ def main() -> int:
         templar = Templar(loader=DataLoader(),
                           variables={"homelabinfra_config": {"infrastructure": INFRA}})
         for app, steps in targets.items():
-            defaults_file = REPO / f"ansible/vars/app-defaults/{app}.yml"
-            defaults = yaml.safe_load(defaults_file.read_text())[app.replace("-", "_") + "_defaults"]
+            defaults = merge(BASE, defaults_of(app))
             loader = next((t for t in steps if LOADER in json.dumps(t)), None)
             inputs = (loader or {}).get("vars") or {}
-            for kubernetes in variants(steps, dump):
+            for kubernetes in variants(app, steps, dump):
                 instance = f"{app}-k8s" if kubernetes else app
                 got = json.loads((out / f"{instance}.json").read_text())
                 results[instance] = got
@@ -175,7 +194,7 @@ def main() -> int:
                     continue
                 layer = templar.template(inputs.get("load_config_layer", {}))
                 want = merge(merge(defaults, layer), instance_file(app, kubernetes))
-                methods = inputs.get("load_config_vault_methods")
+                methods = vault_methods(app, steps)
                 method = (want.get("hosting") or {}).get("method", "")
                 if methods is None or method in methods:
                     want = merge(want, {"app": {"gate_vault_key": instance}})
