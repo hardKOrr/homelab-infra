@@ -3,8 +3,8 @@
 
 - templates/kubernetes/single-container.yaml.j2 renders a minimal and a full `k8s_app`
   into the objects its header promises.
-- tasks/stack/compose-deploy.yml renders the role's Compose file and mounted files, and a
-  failed render prints why even with compose_secret_files hiding the content.
+- tasks/stack/compose-deploy.yml renders the role's Compose file and mounted files; a
+  failed render or write stops before the pull and prints why, with compose_secrets masked.
 - compose-deploy.yml, tasks/apps/restart.yml and tasks/kubernetes/single-container.yml
   refuse bad inputs in their first task, with their message.
 
@@ -12,6 +12,7 @@ gate/test-shared-standards.py checks which roles still carry their own copies.
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -158,7 +159,8 @@ def check_compose_renders_then_pulls():
                                "owner": os.getuid(), "group": os.getgid()}],
         }, "services: {}\n", "TOKEN={{ 'secret' }}\n")
         # Files must be owned by root only on a real host; this run is unprivileged.
-        compose = COMPOSE.read_text().replace("owner: root\n    group: root", "owner: \"{{ omit }}\"\n    group: \"{{ omit }}\"")
+        compose = re.sub(r"owner: root\n(\s+)group: root", r'owner: "{{ omit }}"\n\1group: "{{ omit }}"',
+                         COMPOSE.read_text())
         assert compose != COMPOSE.read_text(), "the root-owned Compose file task moved"
         local = Path(workdir) / "compose-deploy.yml"
         local.write_text(compose)
@@ -177,15 +179,32 @@ def check_compose_renders_then_pulls():
 
 def check_compose_render_failure_prints():
     with tempfile.TemporaryDirectory() as workdir:
+        # A failing filter echoes its input, the secret included.
         demo_role(workdir, {
             "compose_project_dir": str(Path(workdir) / "project"),
             "compose_owner": os.getuid(), "compose_group": os.getgid(),
-            "compose_secret_files": True,
-        }, "services: {{ undefined_compose_value }}\n", "")
+            "compose_secrets": ["hunter2-secret"],
+        }, "services: {{ {'password': 'hunter2-secret'} | combine('not-a-mapping') }}\n", "")
         result = run([], workdir, roles=["demo"])
         output = result.stdout + result.stderr
         assert result.returncode != 0, output
-        assert "Rendering failed" in output and "undefined_compose_value" in output, output
+        assert "rendering" in output and "docker-compose.yml" in output, output
+        assert "hunter2-secret" not in output, output
+        assert "Pull the images" not in output, output
+
+    with tempfile.TemporaryDirectory() as workdir:
+        project = Path(workdir) / "project"
+        demo_role(workdir, {
+            "compose_project_dir": str(project),
+            "compose_owner": os.getuid(), "compose_group": os.getgid(),
+            "compose_files": [{"src": "app.env.j2", "dest": str(project / "missing/app.env"),
+                               "owner": os.getuid(), "group": os.getgid()}],
+        }, "services: {}\n", "A=1\n")
+        result = run([], workdir, roles=["demo"])
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "missing/app.env" in output, output
+        assert "Pull the images" not in output, output
 
 
 def check_inputs_refused():

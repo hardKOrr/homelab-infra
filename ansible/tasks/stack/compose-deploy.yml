@@ -16,8 +16,9 @@
 #   compose_files         — optional files the project mounts or reads, each
 #                           `{src, dest}` with optional `mode` (default `0640`), `owner`
 #                           and `group` (default `root`); src is a role template
-#   compose_secret_files  — true when the Compose file or compose_files hold a secret, so
-#                           their content stays out of the log (default false)
+#   compose_secrets       — the secret values the Compose file or compose_files hold; when
+#                           set, their render output stays out of the log and a failure
+#                           prints with these values masked (default none)
 #   compose_networks      — optional external Docker networks the project joins; each is
 #                           created when absent and never removed here
 #   compose_pull_policy   — `missing` (default) or `always`
@@ -64,44 +65,46 @@
     state: present
   loop: "{{ compose_networks | default([]) }}"
 
-# A failed render is reported by the assert below, so a secret-bearing file can stay out of
-# the log without hiding why the deploy stopped.
-- name: Compose deploy | Render the files the project mounts
-  ansible.builtin.template:
-    src: "{{ role_path }}/templates/{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ item.owner | default('root') }}"
-    group: "{{ item.group | default('root') }}"
-    mode: "{{ item.mode | default('0640') }}"
-  loop: "{{ compose_files | default([]) }}"
-  loop_control:
-    label: "{{ item.dest }}"
-  register: _compose_files_written
-  failed_when: false
-  no_log: "{{ compose_secret_files | default(false) | bool }}"
+# Any render or write failure stops the deploy before the project starts. With
+# compose_secrets set, the render output stays hidden and the failure prints through
+# fail-with-scrubbed-output.yml with those values masked.
+- name: Compose deploy | Render the project's files
+  block:
+    - name: Compose deploy | Render the files the project mounts
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0640') }}"
+      loop: "{{ compose_files | default([]) }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: _compose_files_written
+      no_log: "{{ compose_secrets | default([]) | length > 0 }}"
 
-- name: Compose deploy | Render the Compose file
-  ansible.builtin.template:
-    src: "{{ role_path }}/templates/{{ compose_template | default('docker-compose.yml.j2') }}"
-    dest: "{{ compose_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  register: _compose_file_written
-  failed_when: false
-  no_log: "{{ compose_secret_files | default(false) | bool }}"
-
-- name: Compose deploy | Check every file rendered
-  ansible.builtin.assert:
-    that: _compose_render_failures | length == 0
-    fail_msg: "Rendering failed: {{ _compose_render_failures | join('; ') }}"
-    quiet: true
-  vars:
-    # failed_when rewrites `failed`; a rendered file always reports its checksum.
-    _compose_render_failures: >-
-      {{ (_compose_files_written.results | default([]) + [_compose_file_written])
-         | rejectattr('checksum', 'defined')
-         | map(attribute='msg', default='no message') | list }}
+    - name: Compose deploy | Render the Compose file
+      ansible.builtin.template:
+        src: "{{ role_path }}/templates/{{ compose_template | default('docker-compose.yml.j2') }}"
+        dest: "{{ compose_project_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      register: _compose_file_written
+      no_log: "{{ compose_secrets | default([]) | length > 0 }}"
+  rescue:
+    - name: Compose deploy | Report the failed render
+      ansible.builtin.include_tasks: ../fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_context: "Compose deploy: rendering {{ compose_project_dir }} failed"
+        scrub_failure_secrets: "{{ compose_secrets | default([]) }}"
+        scrub_failure_result:
+          failed: true
+          msg: >-
+            {% for result in ansible_failed_result.results | default([ansible_failed_result])
+               if result.failed | default(false) %}{{ result.item.dest
+               | default(compose_project_dir ~ '/docker-compose.yml') }}: {{ result.msg
+               | default('no message') }}{{ '' if loop.last else '; ' }}{% endfor %}
 
 - name: Compose deploy | Pull the images
   community.docker.docker_compose_v2_pull:
