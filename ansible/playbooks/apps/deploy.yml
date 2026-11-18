@@ -12,8 +12,8 @@
 #   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
 #   3. Deploy on the cluster: the role's kubernetes.yml.
 #   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS (only with a route:
-#      routing.proxy is not none), the guest record. Skipped while a restore target is
-#      isolated (recovery_isolated).
+#      routing.proxy is not none; an app without one needs no domain), the guest record.
+#      Skipped while a restore target is isolated (recovery_isolated).
 #   5. Notify, unless the restore target is isolated.
 #
 # Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
@@ -93,8 +93,9 @@
         _deploy_display: "{{ _deploy_catalog.applications[app].name }}"
         _deploy_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
         _deploy_routed: "{{ app_config.routing.proxy | default('internal') != 'none' }}"
-        _deploy_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+        _deploy_fqdn: "{{ [app_config.routing.subdomain | default(instance, true), _deploy_domain] | select | join('.') }}"
       vars:
+        _deploy_domain: "{{ homelabinfra_infra.domain if app_config.routing.proxy | default('internal') != 'none' else homelabinfra_infra.domain | default('') }}"
         _deploy_catalog: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../catalog/applications.yml') | from_yaml }}"
 
     # Roles read the hostname as <app>_fqdn and <app>_subdomain (the Servarr role as

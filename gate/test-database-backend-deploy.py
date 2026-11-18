@@ -62,6 +62,17 @@ def check_deploy_unrouted():
     expression = derive["ansible.builtin.set_fact"]["_deploy_routed"]
     assert render(expression, app_config={"routing": {"proxy": "none"}}) is False
     assert render(expression, app_config={"routing": {}}) is True
+    # An unrouted backend deploys before any domain fact exists: its hostname is the bare
+    # subdomain. A routed app still requires the domain.
+    domain = derive["vars"]["_deploy_domain"]
+    fqdn = derive["ansible.builtin.set_fact"]["_deploy_fqdn"]
+    unrouted = {"app_config": {"routing": {"proxy": "none"}}, "homelabinfra_infra": {}, "instance": "pg"}
+    unrouted["_deploy_domain"] = render(domain, **unrouted)
+    assert render(fqdn, **unrouted) == "pg"
+    routed = {"app_config": {"routing": {}}, "homelabinfra_infra": {"domain": "example.test"},
+              "instance": "app"}
+    routed["_deploy_domain"] = render(domain, **routed)
+    assert render(fqdn, **routed) == "app.example.test"
 
     wire = plays[3]
     block = next(t for t in wire["tasks"] if "block" in t)
