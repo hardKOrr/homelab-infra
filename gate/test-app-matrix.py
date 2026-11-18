@@ -5,18 +5,19 @@ For every catalog app that deploys through `playbooks/apps/<app>.yml` (not the f
 playbooks in FULL), and for each hosting method its defaults support (`docker`,
 `kubernetes`, `native`), the suite resolves the run with `task_parts.resolve`, decides every
 condition on `app_config.hosting.method` (and every play variable or fact computed only
-from it) for that method, and lists the files under `ansible/tasks/` the run reaches, in
-first-reached order. Deploy starts at the app's playbook; Backup and Restore at its role's
-`backup.yml` and `restore.yml` hooks. An include whose path is still templated is listed
-as written. `gate/app-matrix.yml` records, per app, the default method, the supported
-combinations and these lists; the suite fails on any difference, so a change to what an
-app's run reaches shows up as a table diff. The lists depend on the resolved run, not on
-how a playbook is laid out, so moving an app onto a shared Deploy leaves its row unchanged
-unless the run itself changes.
+from it) for that method, and lists the files under `ansible/tasks/` that the app's own
+playbook and role code include, in first-reached order; what a shared file includes in
+turn belongs to that file. Deploy starts at the app's playbook; Backup and Restore at its
+role's `backup.yml` and `restore.yml` hooks. An include whose path is still templated is
+listed as written. `gate/app-matrix.yml` records, per app, the default method, the
+supported combinations and these lists; the suite fails on any difference, so a change to
+what an app's run reaches shows up as a table diff. The lists depend on the resolved run,
+not on how a playbook is laid out, so moving an app onto a shared Deploy leaves its row
+unchanged unless the run itself changes.
 
-On top of the table, RULES must hold for every row (a kubernetes Deploy applies a
-manifest and provisions no guest, every Deploy loads its config through the shared
-loader, and so on).
+On top of the table, RULES must hold for every row, checked on every shared file in the
+trace, nested ones included: every Deploy loads its config through the shared loader, a
+Kubernetes Deploy applies a manifest and creates no guest, and so on.
 
 `python gate/test-app-matrix.py --update` prints the table computed from the tree.
 """
@@ -213,8 +214,12 @@ def templated(steps: list[dict]) -> list[str]:
             if t and "{{" in t]
 
 
-def reached(run, method: str) -> list[str]:
+def reached(run, method: str, deep: bool = False) -> list[str]:
     """The shared task files a run reaches for one method, in first-reached order.
+
+    The table lists the shared files the app's own code includes; what a shared file
+    includes in turn belongs to that file. `deep` lists every shared file in the trace,
+    for the rules, so a guest created inside a shared file still breaks a Kubernetes rule.
 
     `run(render)` resolves the run; it is resolved again with templated includes decided
     for the method when the first pass meets one. A play on the deploy group counts only
@@ -242,9 +247,10 @@ def reached(run, method: str) -> list[str]:
         if ends_play(step, decider):
             skip = True
             continue
-        shared = next((f for f in step["via"] if f.startswith("ansible/tasks/")), None)
-        if shared is not None:
-            add(shared.removeprefix("ansible/"))
+        shared = [f for f in step["via"] if f.startswith("ansible/tasks/")]
+        for name in shared if deep else shared[:1]:
+            add(name.removeprefix("ansible/"))
+        if shared:
             continue
         target = include_target(step["task"])
         if target and "{{" in target:
@@ -265,7 +271,7 @@ def hook_steps(role: str, hook: str, render=None) -> list[dict]:
                               ROOT / "ansible/playbooks/maintenance/x", 0))
 
 
-def row(app: str) -> dict:
+def row(app: str, deep: bool = False) -> dict:
     """Backup is the role's hook, which Backup App runs on a guest; on Kubernetes it runs
     the CronJob Deploy created (`recovery-backup.yml` in the kubernetes Deploy list)."""
     data = defaults(app)
@@ -275,11 +281,11 @@ def row(app: str) -> dict:
     role = role_of(app)
     entry = {"method": hosting.get("method"), "supported": supported, "deploy": {}}
     for method in methods:
-        entry["deploy"][method] = reached(lambda r: deploy_steps(app, r), method)
+        entry["deploy"][method] = reached(lambda r: deploy_steps(app, r), method, deep)
     for hook in ("backup", "restore"):
         if not role or not (ROOT / f"ansible/roles/{role}/tasks/{hook}.yml").is_file():
             continue
-        entry[hook] = {method: reached(lambda r: hook_steps(role, hook, r), method)
+        entry[hook] = {method: reached(lambda r: hook_steps(role, hook, r), method, deep)
                        for method in methods if hook == "restore" or method != "kubernetes"}
     return entry
 
@@ -305,7 +311,8 @@ RULES = {
 
 
 def rules(app: str, entry: dict) -> list[str]:
-    """Properties every row must have; each returned string is one failure."""
+    """Properties every row must have, checked on its deep lists (`row(app, deep=True)`);
+    each returned string is one failure."""
     failures = []
     for operation, by_method in RULES.items():
         for method, files in (entry.get(operation) or {}).items():
@@ -333,6 +340,12 @@ def self_check() -> list[str]:
                                      "tasks/stack/find-or-create-host.yml"]}}
     if len(rules("x", bad)) != 3:
         failures.append("self-check: the rules miss a guest provisioned on Kubernetes")
+    nested = [{"task": {}, "scope": [], "via": [
+        "ansible/playbooks/apps/x.yml", "ansible/tasks/kubernetes/apply-manifest.yml",
+        "ansible/tasks/proxmox/provision-native-guest.yml"]}]
+    if "tasks/proxmox/provision-native-guest.yml" not in reached(
+            lambda r: nested, "kubernetes", deep=True):
+        failures.append("self-check: a guest created inside a shared file is not seen")
     return failures
 
 
@@ -377,7 +390,7 @@ def main() -> int:
     if "--update" in sys.argv:
         print(dump(current), end="")
         return 0
-    failures = self_check() + [f for app, entry in current.items() for f in rules(app, entry)]
+    failures = self_check() + [f for app in current for f in rules(app, row(app, deep=True))]
     recorded = yaml.safe_load(TABLE.read_text()) or {}
     for app in sorted(set(current) | set(recorded)):
         failures += differences(app, recorded.get(app), current.get(app))
