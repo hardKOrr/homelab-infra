@@ -62,12 +62,8 @@ def check_defaults_and_deploy():
         and "facts.yml" in str(task)
         for task in tasks_recursive(redis_play)
     )
-    provision = next(play for play in redis_play if play["name"] == "Redis | Provision")
-    provision_tasks = list(tasks_recursive(provision))
-    placement = task_named(provision_tasks, "Resolve Redis guest placement and check existing type")
-    assert placement["ansible.builtin.include_tasks"] == "../../tasks/database/resolve-backend-placement.yml"
-    provision_guest = task_named(provision_tasks, "Provision a new Redis backend guest")
-    assert provision_guest["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
+    # Guest placement and the Deploy hooks: gate/test-database-backend-placement.py and
+    # gate/test-database-backend-deploy.py.
 
     redis_main = read_yaml("ansible/roles/redis/tasks/main.yml")
     install_repo = task_named(redis_main, "Redis | Install the pinned PBS client when this lab declares app backups")

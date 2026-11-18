@@ -1,0 +1,28 @@
+---
+# Deploy hook body for a database backend (roles/<engine>/tasks/deploy-record.yml,
+# localhost, before wiring, also while a restore target is isolated). Writes the
+# instance-keyed `databases` registry entry the shared database tasks read to reach the
+# backend: provider, host, port and runtime, plus the engine's extra fields.
+#
+# A guest backend is reached at its guest's address. A Kubernetes backend is reached at
+# the cluster's ingress address on app.port, and `kubernetes` names its namespace for the
+# shared database tasks, which run its SQL in the server pod. Facts merge recursively, so a
+# guest backend writes an empty `kubernetes` over a marker an earlier Kubernetes Deploy left.
+#
+# Inputs: instance, app_config (merged), homelabinfra_infra; database_record_fields (the
+# engine's extra fields, default {}).
+- name: Database backend | Record the backend in the databases registry
+  ansible.builtin.include_tasks: ../bootstrap/write-generated-facts.yml
+  vars:
+    _database_record_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: databases
+    generated_facts_data: >-
+      {{ {instance: ({'provider': app,
+                      'host': homelabinfra_infra.kubernetes.ingress_vip if _database_record_k8s | bool
+                              else hostvars[groups['deploy_' ~ instance][0]].ansible_host,
+                      'port': app_config.app.port,
+                      'runtime': app_config.hosting.method,
+                      'kubernetes': {'namespace': 'app-' ~ instance} if _database_record_k8s | bool
+                                    else ''}
+                     | combine(database_record_fields | default({})))} }}

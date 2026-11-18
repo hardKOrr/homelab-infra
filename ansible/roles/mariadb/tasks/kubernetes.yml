@@ -9,6 +9,12 @@
 # the shared database step (kubernetes-recovery-step.yml, namespace-server).
 #
 # Inputs: instance, app_config (merged, with the instance's Vaultwarden item on app).
+# Deploy's Play 1 opened the backend's own declared access; its consumers come next.
+- name: MariaDB Kubernetes | Open the port for the registered consumers
+  ansible.builtin.include_tasks: ../../../tasks/database/open-consumer-access.yml
+  vars:
+    database_consumer_provider: mariadb
+
 - name: MariaDB Kubernetes | Resolve the cluster and its API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 

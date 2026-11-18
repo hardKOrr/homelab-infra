@@ -134,6 +134,8 @@ def check_playbooks_use_it():
     users = []
     for playbook in sorted(APP_PLAYBOOKS.glob("*.yml")):
         text = playbook.read_text(encoding="utf-8")
+        if "import_playbook: deploy.yml" in text:  # a shim: deploy.yml provisions
+            text += (APP_PLAYBOOKS / "deploy.yml").read_text(encoding="utf-8")
         assert not INLINE_LOOKUP.search(text), (
             f"{playbook.relative_to(ROOT)}: select the instance's own guest with "
             "tasks/proxmox/resolve-instance-guest.yml, which also finds a guest Remove kept"

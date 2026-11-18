@@ -3,7 +3,7 @@
 
 Checks: guests stay the default, the pod uses the default StorageClass and a MetalLB
 LoadBalancer on the ingress address (no Ingress), the superuser is limited to the pod
-network, the registry marks a Kubernetes backend, the shared database tasks run psql in
+network, the shared database tasks run psql in
 the server pod for it, and backup and restore go through the shared Kubernetes operations
 and database step.
 """
@@ -41,46 +41,8 @@ assert defaults["kubernetes"]["superuser_cidr"] == "10.42.0.0/16"
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 assert defaults["routing"] == {"proxy": "none", "identity": "none"}
 
-# ── Playbook: Kubernetes is its own branch, the guest methods keep theirs ──────────────
-playbook = load("ansible/playbooks/apps/postgresql.yml")
-text = read("ansible/playbooks/apps/postgresql.yml")
-provision = playbook[0]["tasks"]
-assert any(
-    t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for t in provision
-)
-consumer_access = next(
-    t for t in provision
-    if str(t.get("ansible.builtin.include_tasks", "")).endswith("database/open-consumer-access.yml")
-)
-assert consumer_access["vars"]["database_consumer_provider"] == "postgresql"
-assert any(
-    str(t.get("ansible.builtin.include_tasks", "")).endswith("kubernetes/open-app-access.yml")
-    for t in provision
-)
-assert any(
-    t.get("when") == "app_config.hosting.method == 'native'"
-    and "provision-backend-guest.yml" in str(t.get("ansible.builtin.include_tasks", ""))
-    for t in provision
-)
-# No application route, DNS record, Authentik app or monitor: the routing stays none.
-assert not any(word in text.lower() for word in ("caddy", "authentik", "kuma", "dns"))
-assert "generated_facts_data: \"{{ {instance: {'kubernetes': ''}} }}\"" in text
-registry = next(
-    t["vars"]["generated_facts_data"] for p in playbook for t in p.get("tasks", [])
-    if t.get("vars", {}).get("generated_facts_service") == "databases"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-)
-registered = Environment(undefined=StrictUndefined).compile_expression(registry[3:-3])(
-    instance="postgresql-test",
-    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.10"}},
-    app_config={"app": {"port": 5433, "version": "16"}},
-)
-assert registered == {"postgresql-test": {
-    "provider": "postgresql", "version": "16", "host": "192.0.2.10", "port": 5433,
-    "runtime": "kubernetes", "kubernetes": {"namespace": "app-postgresql-test"},
-}}
+# The Deploy path (shim, hooks, consumer access, registry) is in
+# gate/test-database-backend-deploy.py.
 
 # ── Manifest ────────────────────────────────────────────────────────────────────────────
 context = {

@@ -382,12 +382,33 @@ def check_all_engines_share_placement():
         playbook = yaml.safe_load(
             (ROOT / f"ansible/playbooks/apps/{engine}.yml").read_text(encoding="utf-8")
         )
+        if playbook[0].get("ansible.builtin.import_playbook") == "deploy.yml":
+            # deploy.yml provisions through roles/_template-native; the role's deploy-prepare
+            # hook runs first and marks the guest a database backend.
+            hook = yaml.safe_load(
+                (ROOT / f"ansible/roles/{engine}/tasks/deploy-prepare.yml").read_text()
+            )
+            assert hook[0]["ansible.builtin.include_tasks"].endswith(
+                "tasks/database/deploy-prepare.yml"
+            ), f"{engine} does not prepare its guest as a database backend"
+            continue
         provision_play = playbook[0]
         tasks = list(iter_tasks(provision_play))
         includes = [task.get("ansible.builtin.include_tasks") for task in tasks]
         assert prepare_path in includes, f"{engine} does not use shared placement normalization"
         assert provision_path in includes, f"{engine} does not use shared guest provisioning"
         assert includes.index(prepare_path) < includes.index(provision_path)
+
+    shared = yaml.safe_load(
+        (ROOT / "ansible/tasks/database/deploy-prepare.yml").read_text(encoding="utf-8")
+    )[0]
+    assert shared["when"] == "app_config.hosting.method == 'native'"
+    steps = shared["block"]
+    assert steps[0]["ansible.builtin.include_tasks"] == "../proxmox/resolve-native-type.yml"
+    assert steps[1]["ansible.builtin.set_fact"]["native_guest_database"] is True
+    assert steps[2]["ansible.builtin.include_tasks"] == "resolve-guest-memory.yml"
+    template = (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
+    assert "resolve-native-placement.yml" in template and "provision-native-guest.yml" in template
 
     prepare_text = PREPARE.read_text(encoding="utf-8")
     assert "resolve-native-type.yml" in prepare_text

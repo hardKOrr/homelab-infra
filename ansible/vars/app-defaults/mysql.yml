@@ -41,6 +41,9 @@ mysql_defaults:
     # MySQL account-host patterns allowed to connect to this backend. Keep
     # these within lab networks; `%` would permit any source address.
     client_hosts: ["10.%"]
+  # Kubernetes only: the server's root credential lives in the instance's Vaultwarden item.
+  vault:
+    methods: [kubernetes]
   routing:
     proxy: none
     identity: none

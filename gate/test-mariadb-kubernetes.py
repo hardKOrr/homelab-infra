@@ -2,7 +2,7 @@
 """Guard MariaDB's opt-in Kubernetes workload and its shared database and recovery path.
 
 Checks: guests stay the default, the pod uses the default StorageClass and a MetalLB
-LoadBalancer on the ingress address (no Ingress), the registry marks a Kubernetes backend,
+LoadBalancer on the ingress address (no Ingress),
 the shared database tasks run SQL in the server pod for it, and backup and restore go
 through the shared Kubernetes operations and database step.
 """
@@ -35,42 +35,8 @@ assert defaults["kubernetes"]["root_host"] == "10.42.%"
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 assert defaults["routing"]["proxy"] == "none"
 
-# ── Playbook: Kubernetes is its own branch, the guest methods keep theirs ──────────────
-playbook = load("ansible/playbooks/apps/mariadb.yml")
-text = read("ansible/playbooks/apps/mariadb.yml")
-provision = playbook[0]["tasks"]
-assert any(
-    t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for t in provision
-)
-assert any(
-    str(t.get("ansible.builtin.include_tasks", "")).endswith("database/open-consumer-access.yml")
-    for t in provision
-)
-assert any(
-    t.get("when") == "app_config.hosting.method == 'native'"
-    and "provision-backend-guest.yml" in str(t.get("ansible.builtin.include_tasks", ""))
-    for t in provision
-)
-# The registry marks a Kubernetes backend, and clears the mark when it stops being one.
-assert "homelabinfra_infra.kubernetes.ingress_vip" in text
-assert "generated_facts_data: \"{{ {instance: {'kubernetes': ''}} }}\"" in text
-# Ansible templates mapping values, not keys: evaluate the complete registry mapping.
-registry = next(
-    t["vars"]["generated_facts_data"] for p in playbook for t in p.get("tasks", [])
-    if t.get("vars", {}).get("generated_facts_service") == "databases"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-)
-registered = Environment(undefined=StrictUndefined).compile_expression(registry[3:-3])(
-    instance="mariadb-test",
-    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.10"}},
-    app_config={"app": {"port": 3307, "client_hosts": ["192.0.2.%"]}},
-)
-assert registered == {"mariadb-test": {
-    "provider": "mariadb", "host": "192.0.2.10", "port": 3307,
-    "client_hosts": ["192.0.2.%"], "kubernetes": {"namespace": "app-mariadb-test"},
-}}
+# The Deploy path (shim, hooks, consumer access, registry) is in
+# gate/test-database-backend-deploy.py.
 
 # ── Manifest ────────────────────────────────────────────────────────────────────────────
 context = {
