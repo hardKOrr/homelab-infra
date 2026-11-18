@@ -175,13 +175,6 @@
   hosts: localhost
   gather_facts: false
 
-  pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # absent pre-bootstrap — notify.yml no-ops
-
   tasks:
     - name: Notify removal complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml

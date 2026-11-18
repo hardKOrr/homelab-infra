@@ -1,7 +1,19 @@
 # App-level layering
 
-The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml` → `app_config`)
-runs separately in each play. It is independent of the `homelabinfra_config` merge in [§4](../CONTRACT.md#4-merge-order-low--high-precedence).
+Every deploy playbook builds `app_config` with `tasks/apps/load-config.yml`, after
+`tasks/load-user-vars.yml`. Its header lists the inputs. Merge order, low to high, each
+step `combine(recursive=True)`:
+
+1. `vars/app-defaults/<app>.yml`, key `<app>_defaults` (with `-` written as `_`).
+2. Platform values the app reads, such as `media_storage` from `config/infrastructure.yml`.
+3. `config/apps/<instance>.yml`, when present.
+4. The instance's `homelab-infra/apps/<instance>` Vaultwarden item from
+   `homelabinfra_vault`, under `app`. Apps whose item holds no config skip this step, and
+   the database backends take it only on Kubernetes.
+
+This merge is independent of the `homelabinfra_config` merge in [§4](../CONTRACT.md#4-merge-order-low--high-precedence).
+[`gate/test-config-loader.py`](../../../gate/test-config-loader.py) checks every deploy
+playbook's result against it.
 
 **Native LXC template precedence.** Lowest to highest: the repository fallback at
 `homelabinfra_defaults.proxmox.lxc.ostemplate`, the authored lab value at

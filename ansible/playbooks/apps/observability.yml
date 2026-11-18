@@ -35,29 +35,10 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=observability"
 
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: "../../vars/app-defaults/observability.yml"
-        name: _app_defaults
-
-    - name: Load instance config (optional — all defaults used if absent)
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
-
-    - name: Merge app config (instance overrides defaults)
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.observability_defaults
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: observability
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -130,12 +111,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
@@ -175,11 +150,6 @@
     # Tolerate absence: on a clean checkout / pre-bootstrap
     # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
     # when-condition below falls through its `| default('none')` to a silent no-op.
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     # Shape B `metrics` per ansible/vars/CONTRACT.md §3. host is Grafana (the
     # user-facing piece, and the one this key's consumers would link to);
@@ -196,12 +166,6 @@
           host: "{{ _obs_deploy_host.observability_grafana_url }}"
           prometheus_host: "{{ _obs_deploy_host.observability_prometheus_url }}"
           admin_user: "{{ _obs_deploy_host.observability_admin_username }}"
-
-    - name: Reload infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
     - name: Resolve estate scope

@@ -8,10 +8,13 @@
     - ansible.builtin.assert:
         that: [instance is defined and instance | length > 0]
         fail_msg: Provide instance=proxmox-datacenter-manager
-    - ansible.builtin.include_vars: {file: ../../vars/app-defaults/proxmox-datacenter-manager.yml, name: _pdm_defaults}
-    - ansible.builtin.include_vars: {file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml", name: _pdm_instance}
-    - ansible.builtin.set_fact:
-        pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance | default({}), recursive=True) }}"
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: proxmox-datacenter-manager
+        load_config_vault_methods: []
+        load_config_fact: pdm_config
+        load_config_instance_required: true
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:

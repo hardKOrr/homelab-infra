@@ -7,17 +7,10 @@
     - ansible.builtin.assert:
         that: instance is defined and instance is match('^[a-z0-9][a-z0-9-]*$')
         fail_msg: "Provide a safe WireGuard instance name: -e instance=wireguard"
-    - ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/wireguard.yml
-        name: _app_defaults
-    - ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-    - ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.wireguard_defaults | combine(_instance_config | default({}), recursive=True) | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
-      no_log: true
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: wireguard
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:

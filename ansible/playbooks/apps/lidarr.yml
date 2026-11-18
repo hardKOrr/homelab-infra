@@ -23,32 +23,12 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=lidarr (or lidarr-lossless for a second instance)"
 
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: "../../vars/app-defaults/lidarr.yml"
-        name: _app_defaults
-
-    - name: Load instance config (optional — all defaults used if absent)
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
-
-    - name: Merge app config (instance overrides defaults)
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.lidarr_defaults
-             | combine({'media_storage':
-                        homelabinfra_config.infrastructure.media_storage | default({})},
-                       recursive=True)
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: lidarr
+        load_config_layer:
+          media_storage: "{{ homelabinfra_config.infrastructure.media_storage | default({}) }}"
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -133,12 +113,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
@@ -162,12 +136,6 @@
   hosts: localhost
   become: false
   gather_facts: false
-  pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
   tasks:
     - name: Deploy Lidarr into its Kubernetes namespace
       ansible.builtin.include_role:
@@ -181,11 +149,6 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     # The `media` key is instance-keyed (CONTRACT.md §3). Topology only — the API key
     # lives in homelab-infra/media/<instance>, written by the role.
@@ -201,12 +164,6 @@
           {{ {instance: {'app': _lidarr_deploy_host.servarr_media_kind,
                          'host': _lidarr_deploy_host.servarr_media_host,
                          'config_path': _lidarr_deploy_host.servarr_media_config_path}} }}
-
-    - name: Reload infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
     - name: Resolve estate scope

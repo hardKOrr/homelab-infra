@@ -49,12 +49,6 @@
       ansible.builtin.include_vars:
         file: ../../vars/media-wiring.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # absent pre-bootstrap — discovery still works
-
   tasks:
     # Discovery reads ansible_host out of the Proxmox dynamic inventory; a stale
     # inventory is the common reason a freshly deployed app is not found.
@@ -116,12 +110,6 @@
     - name: Load the media wiring table
       ansible.builtin.include_vars:
         file: ../../vars/media-wiring.yml
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
   vars:
     _mw_entries: "{{ media_registry | default({}) | dict2items | sort(attribute='key') }}"

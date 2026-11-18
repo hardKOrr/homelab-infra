@@ -3,12 +3,18 @@
 This is the authoritative variable-loading contract for the `homelabinfra_*` namespaces and config
 files.
 
-## 1. The three namespaces
+## 1. The four namespaces
 
 - `homelabinfra_config.*` — merged user + defaults, the **input** layer (available at provision time).
 - `homelabinfra_instance.*` — facts **computed at runtime** (IP allocation, vmid, etc.).
 - `homelabinfra_infra.*` — the **service registry**: generated provider topology recursively
   overlaid in memory with Vaultwarden runtime fields.
+- `homelabinfra_vault.*` — the **secrets**: the canonical Vaultwarden items
+  ([secrets](contract/secrets.md)), held in memory only. `lab-run` reads them once per run;
+  `tasks/load-user-vars.yml` builds this mapping from that snapshot plus any item written
+  earlier in the same run. It is the one source of secret fields: `homelabinfra_infra`
+  overlays the platform items, and `tasks/apps/load-config.yml` overlays an instance's
+  `homelab-infra/apps/<instance>` item onto `app_config.app`.
 
 `homelabinfra_config.infrastructure` and `homelabinfra_infra` are **not the same dict**:
 `infrastructure.yml` feeds both — its provider *choices* merge into `homelabinfra_config.infrastructure`
@@ -16,7 +22,7 @@ files.
 (the registry).
 
 `homelabinfra_proxmox_inventory_complete` is a controller inventory boolean, outside
-these three mappings. The supported inventory plugin resets it before parsing and sets
+these four mappings. The supported inventory plugin resets it before parsing and sets
 it true only after successful enumeration, with no offline or unknown nodes.
 `homelabinfra_proxmox_inventory_offline_nodes` lists offline or unknown node names for
 diagnostics. Guest lookup and allocation require
@@ -31,8 +37,8 @@ configuration, a cached fact or a service-registry field; see
 | `vars/homelabinfra-defaults.yml` | `homelabinfra_defaults:` | `homelabinfra_config` (seed, lowest precedence) | unwrapped before merge |
 | `config/proxmox.yml` | none (top-level `proxmox:`, `networks:`, `ansible:`) | `homelabinfra_config` (loader injects those three keys) | optional at load time; callers validate required keys |
 | `config/infrastructure.yml` | none; the whole file is the infrastructure shape | `homelabinfra_config.infrastructure` | optional at load time; callers validate required keys |
-| `vars/app-defaults/<app>.yml` | none | `app_config` (per-play app merge — see [app layering](contract/app-layering.md)) | separate merge, not part of `homelabinfra_config` |
-| `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | whole file merges over `<app>_defaults` via `combine(recursive=True)` — see [app layering](contract/app-layering.md) |
+| `vars/app-defaults/<app>.yml` | `<app>_defaults:` | `app_config`, through `tasks/apps/load-config.yml` (see [app layering](contract/app-layering.md)) | separate merge, not part of `homelabinfra_config` |
+| `config/apps/<instance>.yml` | none | `app_config`, through `tasks/apps/load-config.yml` | optional; the whole file merges over the defaults |
 | `config/.generated/facts.yml` | none | generated base of `homelabinfra_infra`; Vaultwarden runtime fields overlay it recursively | written incrementally by `write-generated-facts.yml` |
 
 The [app hosting contract](contract/hosting.md) declares which hosting forms each app

@@ -7,27 +7,16 @@
     - ansible.builtin.assert:
         that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
         fail_msg: "Provide a safe backend instance name: -e instance=mysql"
-    - ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/mysql.yml
-        name: _app_defaults
-    - ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-    - ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.mysql_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: mysql
+        load_config_vault_methods: [kubernetes]
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: mysql
     # Kubernetes only: the server's root credential lives in the instance's canonical item.
-    - name: Merge the instance's Vaultwarden item for the Kubernetes method
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ app_config | combine({'app': (homelabinfra_vault.apps | default({})).get(instance, {})},
-                                  recursive=True) }}
-      no_log: true
-      when: app_config.hosting.method == 'kubernetes'
   tasks:
     - ansible.builtin.meta: refresh_inventory
       when: app_config.hosting.method == 'native'

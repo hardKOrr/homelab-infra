@@ -40,32 +40,12 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance name: -e instance=emby"
 
-    - name: Load app defaults
-      ansible.builtin.include_vars:
-        file: "../../vars/app-defaults/emby.yml"
-        name: _app_defaults
-
-    - name: Load instance config (optional — all defaults used if absent)
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
-
-    - name: Merge app config (instance overrides defaults)
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.emby_defaults
-             | combine({'media_storage':
-                        homelabinfra_config.infrastructure.media_storage | default({})},
-                       recursive=True)
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: emby
+        load_config_layer:
+          media_storage: "{{ homelabinfra_config.infrastructure.media_storage | default({}) }}"
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -139,12 +119,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
   tasks:
     # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
@@ -181,11 +155,6 @@
     # Tolerate absence: on a clean checkout /
     # pre-bootstrap run there is no facts.yml, homelabinfra_infra stays undefined,
     # and every provider when-condition below falls through to a silent no-op.
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
     # No-op for the default estate and for labs without a `domains:` map.

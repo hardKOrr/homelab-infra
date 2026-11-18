@@ -22,26 +22,10 @@
       ansible.builtin.assert:
         that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
         fail_msg: "Provide a safe WordPress instance name: -e instance=wordpress"
-    - name: Load WordPress defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/wordpress.yml
-        name: _app_defaults
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-    - name: Merge WordPress config
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.wordpress_defaults
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: wordpress
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
@@ -148,11 +132,6 @@
   pre_tasks:
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
   tasks:
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml

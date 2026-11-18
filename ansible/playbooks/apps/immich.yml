@@ -19,31 +19,10 @@
         that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
         fail_msg: "Provide a safe Immich instance name: -e instance=immich"
 
-    - name: Load Immich defaults
-      ansible.builtin.include_vars:
-        file: ../../vars/app-defaults/immich.yml
-        name: _app_defaults
-
-    - name: Load instance config
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
-        name: _instance_config
-      failed_when: false
-
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
-    - name: Merge Immich config without adopting global media storage
-      ansible.builtin.set_fact:
-        app_config: >-
-          {{ _app_defaults.immich_defaults
-             | combine(_instance_config | default({}), recursive=True)
-             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
-        _immich_mounts: "{{ (_app_defaults.immich_defaults.media_storage.mounts | default([])) }}"
-      no_log: true
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: immich
 
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
@@ -141,12 +120,6 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
     - name: Carry the resolved media path into the deployment host
       ansible.builtin.set_fact:
         _immich_media_path: "{{ hostvars['localhost']._immich_media_path }}"
@@ -172,11 +145,6 @@
   become: false
   gather_facts: false
   pre_tasks:
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
 
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml

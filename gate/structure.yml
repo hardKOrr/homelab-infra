@@ -23,16 +23,15 @@ shared: {}
 
 # Files over their line budget, with their ceiling (rule 2).
 size:
-  ansible/playbooks/apps/authentik.yml: 350
-  ansible/playbooks/apps/k3s-cluster.yml: 486
+  ansible/playbooks/apps/authentik.yml: 315
+  ansible/playbooks/apps/k3s-cluster.yml: 464
   ansible/playbooks/apps/migrate-servarr.yml: 395
-  ansible/playbooks/apps/pbs.yml: 667
-  ansible/playbooks/apps/uptime-kuma.yml: 316
+  ansible/playbooks/apps/pbs.yml: 631
   ansible/playbooks/maintenance/guest-maintenance.yml: 393
-  ansible/playbooks/maintenance/reclaim-volume.yml: 441
+  ansible/playbooks/maintenance/reclaim-volume.yml: 435
   ansible/playbooks/maintenance/restore-pdm.yml: 360
-  ansible/playbooks/maintenance/status.yml: 558
-  ansible/playbooks/maintenance/vaultwarden-cutover.yml: 367
+  ansible/playbooks/maintenance/status.yml: 553
+  ansible/playbooks/maintenance/vaultwarden-cutover.yml: 363
   ansible/roles/emby/tasks/main.yml: 334
   ansible/roles/forgejo-runner/tasks/reconcile-registration.yml: 338
   ansible/roles/jellyfin/tasks/main.yml: 383

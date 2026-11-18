@@ -5,12 +5,10 @@
   pre_tasks:
     - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
     - ansible.builtin.assert: {that: "instance is defined and instance is match('^[A-Za-z0-9_.-]+$')", fail_msg: "Provide a safe backend instance name: -e instance=redis"}
-    - ansible.builtin.include_vars: {file: ../../vars/app-defaults/redis.yml, name: _app_defaults}
-    - ansible.builtin.include_vars: {file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml", name: _instance_config}
-      failed_when: false
-    - ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.redis_defaults | combine(_instance_config | default({}), recursive=True) | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}"
-      no_log: true
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: redis
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
