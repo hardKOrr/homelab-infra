@@ -59,8 +59,10 @@ tautulli_defaults:
     # interfere with its Plex sign-in flow.
 
   # The Kubernetes pod reaches Plex's published port through the cluster-node alias; the
-  # role resolves the address before the firewall step. Docker keeps its guest access.
+  # role's deploy-prepare hook resolves the address before the firewall step. A Docker or
+  # native guest already reaches Plex on the lab network, so the rule is Kubernetes only.
   firewall:
+    methods: [kubernetes]
     egress:
       - name: plex
         protocol: TCP

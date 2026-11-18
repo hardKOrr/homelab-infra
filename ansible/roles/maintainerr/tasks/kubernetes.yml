@@ -30,16 +30,21 @@
 - name: Maintainerr | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
-- name: Maintainerr | Render the workload manifest
-  ansible.builtin.set_fact:
-    _js_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-
-- name: Maintainerr | Apply the workload manifest
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+- name: Maintainerr | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
   vars:
-    k8s_manifest: "{{ _js_manifest }}"
-    k8s_wait_for:
-      - "deployment/{{ instance }}"
+    k8s_app:
+      name: maintainerr
+      image: "{{ app_config.app.image }}"
+      port: "{{ app_config.app.port }}"
+      host: "{{ maintainerr_fqdn }}"
+      env:
+        - {name: TZ, value: "{{ homelabinfra_config.timezone | default('UTC') }}"}
+        - {name: UI_PORT, value: "{{ app_config.app.port }}"}
+      volumes:
+        - {name: data, mount_path: /opt/data, storage: "{{ app_config.app.storage }}"}
+      # 200 before the first-run wizard: the process serves, not that it is configured.
+      probe: {path: /api/health/ready}
 
 # ── Application-consistent backup ──────────────────────────────────────────────
 #

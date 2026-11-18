@@ -98,6 +98,16 @@ jellyseerr_defaults:
     # config-doctor rejects it. Author the estate in config/apps/<instance>.yml, where it
     # is that lab's own statement. The renderer enforces this.
 
+  # Deploy (playbooks/apps/deploy.yml): the first-run step the deploy notification names.
+  deploy:
+    notify_note: >-
+      Sign in once to connect it to a Jellyfin or Plex server and to Sonarr/Radarr;
+      that first-run step is not automated (see roles/jellyseerr/tasks/kubernetes.yml).
+
+  # Jellyseerr keeps no credential in Vaultwarden, so no method overlays an item.
+  vault:
+    methods: []
+
   # Application-consistent backup, on the same contract Mixpost proved: a snapshot pushed
   # into the lab's existing PBS datastore, not the crash-consistent image a PBS snapshot of
   # a cluster node would produce.

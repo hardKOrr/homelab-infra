@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard Maintainerr's native method: exact pins, the rendered unit, the playbook wiring."""
+"""Guard Maintainerr's native method: exact pins and the rendered unit."""
 
 import subprocess
 import tempfile
@@ -19,12 +19,6 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "Maintainerr/Maintainerr.git" in install and "native_node_sha256" in install
 assert "workspaces focus --all --production" in install and "native_yarn_version" in install
-
-playbook = (repo / "ansible/playbooks/apps/maintainerr.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] == "Ensure Docker is installed":
-        assert "== 'docker'" in task["when"], "native guests do not get Docker"
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)

@@ -1,6 +1,6 @@
 ---
-# Tautulli on Kubernetes, run from the playbook's localhost play after the Plex endpoint
-# is resolved (plex.yml). Settings and history live on one default-StorageClass PVC. The
+# Tautulli on Kubernetes, run on localhost after deploy-prepare.yml resolved the Plex
+# endpoint (plex.yml). Settings and history live on one default-StorageClass PVC. The
 # Plex token and API key reach the pod through a Secret downstream of Vaultwarden.
 # Tautulli mounts no media shares, so there is no NFS volume to prepare.
 - name: Tautulli Kubernetes | Resolve the cluster and its API host
@@ -29,17 +29,35 @@
       api-key: "{{ _tautulli_api_key }}"
   no_log: true
 
-- name: Tautulli Kubernetes | Render the workload manifest
-  ansible.builtin.set_fact:
-    _tautulli_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-
-- name: Tautulli Kubernetes | Apply the workload manifest
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+- name: Tautulli Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
   vars:
-    k8s_manifest: "{{ _tautulli_manifest }}"
-    k8s_wait_for:
-      - "deployment/{{ instance }}"
     k8s_wait_timeout: 600
+    k8s_app:
+      name: tautulli
+      image: "{{ app_config.app.image }}"
+      image_pull_policy: Always
+      port: "{{ app_config.app.port }}"
+      container_port: "{{ app_config.app.container_port | default(8181) }}"
+      host: "{{ tautulli_fqdn }}"
+      env:
+        - {name: PUID, value: "{{ app_config.app.puid | default(1313) }}"}
+        - {name: PGID, value: "{{ app_config.app.pgid | default(1313) }}"}
+        - {name: TZ, value: "{{ homelabinfra_config.timezone | default('UTC') }}"}
+        - {name: TAUTULLI_PMS_URL, value: "{{ _tautulli_plex_url }}"}
+        - {name: TAUTULLI_PMS_IP, value: "{{ _tautulli_plex_host }}"}
+        - {name: TAUTULLI_PMS_PORT, value: "{{ _tautulli_plex_runtime_port }}"}
+        - {name: TAUTULLI_PMS_IDENTIFIER, value: "{{ _tautulli_plex_identifier }}"}
+        - {name: TAUTULLI_PMS_URL_MANUAL, value: "1"}
+        - {name: TAUTULLI_FIRST_RUN_COMPLETE, value: "1"}
+        - {name: TAUTULLI_PMS_TOKEN, secret: plex-token}
+        - {name: TAUTULLI_API_KEY, secret: api-key}
+      volumes:
+        - {name: config, mount_path: /config, storage: "{{ app_config.app.storage | default(2) }}"}
+      probe: {path: /status}
+      # Env from a Secret is read at start: roll the pod on a credential change.
+      pod_annotations:
+        checksum/credentials: "{{ (_tautulli_plex_token ~ ':' ~ _tautulli_api_key) | hash('sha256') }}"
 
 - name: Tautulli Kubernetes | Schedule the application backup
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml

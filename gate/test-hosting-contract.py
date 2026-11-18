@@ -83,6 +83,9 @@ def defaults_for(path):
 def app_source(slug):
     playbook = APP_PLAYBOOKS / f"{slug}.yml"
     assert playbook.is_file(), f"{slug}: missing deploy playbook {playbook}"
+    # A converted app's shim imports the shared Deploy, which holds its plays.
+    if "import_playbook: deploy.yml" in playbook.read_text():
+        playbook = APP_PLAYBOOKS / "deploy.yml"
     chunks = [playbook.read_text()]
     for role_name in {slug, slug.replace("-", "_")}:
         role_tasks = ROOT / "ansible/roles" / role_name / "tasks"

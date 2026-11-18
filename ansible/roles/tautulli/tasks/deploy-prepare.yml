@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). On Kubernetes the
+# firewall egress to Plex needs the endpoint the pod will call, so it is resolved here,
+# before the cluster firewall step; kubernetes.yml then reuses it. A Docker or native
+# guest resolves Plex itself in main.yml, from the guest.
+- name: Tautulli | Resolve the Plex endpoint the pod calls
+  ansible.builtin.include_tasks: plex.yml
+  when: app_config.hosting.method == 'kubernetes'

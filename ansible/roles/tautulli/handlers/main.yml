@@ -1,15 +1,9 @@
 ---
+# The native service's restart (tasks/native*.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when a rendered file changes.
 - name: Restart tautulli
-  community.docker.docker_compose_v2:
-    project_src: "{{ tautulli_project_dir }}"
-    state: present
-    recreate: always
-  when: not (tautulli_native | bool)
-
-- name: Restart native tautulli
-  ansible.builtin.systemd:
-    name: "{{ tautulli_service }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart tautulli
-  when: tautulli_native | bool
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: "{{ 'native' if tautulli_native | bool else 'docker' }}"
+    restart_compose_project: "{{ tautulli_project_dir }}"
+    restart_services: ["{{ tautulli_service }}"]

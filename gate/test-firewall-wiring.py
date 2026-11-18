@@ -247,6 +247,9 @@ def main():
                          "kometa", "litellm", "maintainerr", "mixpost", "searxng"]
         for app in k8s_playbooks:
             plays = yaml.safe_load((repo / f"ansible/playbooks/apps/{app}.yml").read_text())
+            # A converted app's shim imports the shared Deploy, which opens the access.
+            if any(play.get("ansible.builtin.import_playbook") == "deploy.yml" for play in plays):
+                plays = yaml.safe_load((repo / "ansible/playbooks/apps/deploy.yml").read_text())
             has_firewall_adapter = any(
                 task.get("ansible.builtin.include_tasks")
                 == "../../tasks/kubernetes/open-app-access.yml"

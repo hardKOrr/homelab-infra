@@ -1068,15 +1068,17 @@ jellyseerr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1085,15 +1087,15 @@ jellyseerr:
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
-    - tasks/kubernetes/apply-manifest.yml
+    - tasks/kubernetes/single-container.yml
     - tasks/kubernetes/recovery-backup.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1104,6 +1106,7 @@ jellyseerr:
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -1112,8 +1115,8 @@ jellyseerr:
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -1386,15 +1389,17 @@ maintainerr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1403,15 +1408,15 @@ maintainerr:
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
-    - tasks/kubernetes/apply-manifest.yml
+    - tasks/kubernetes/single-container.yml
     - tasks/kubernetes/recovery-backup.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -1422,6 +1427,7 @@ maintainerr:
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
@@ -1430,8 +1436,8 @@ maintainerr:
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
-    - tasks/notify.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]
@@ -2965,18 +2971,21 @@ tautulli:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
+    - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/stack/resolve-existing-host.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bitwarden/upsert-item.yml
-    - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     kubernetes:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
@@ -2988,7 +2997,7 @@ tautulli:
     - tasks/kubernetes/ensure-namespace.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/kubernetes/sync-secret.yml
-    - tasks/kubernetes/apply-manifest.yml
+    - tasks/kubernetes/single-container.yml
     - tasks/kubernetes/recovery-backup.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -2996,27 +3005,30 @@ tautulli:
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
     native:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
+    - tasks/resolve-estate.yml
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
+    - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/stack/resolve-existing-host.yml
     - tasks/backup/pbs-client-install.yml
     - tasks/bitwarden/upsert-item.yml
-    - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
     native: [tasks/backup/pbs-client-backup.yml]

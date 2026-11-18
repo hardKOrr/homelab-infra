@@ -1,14 +1,9 @@
 ---
-- name: Restart maintainerr
-  community.docker.docker_compose_v2:
-    project_src: "{{ maintainerr_project_dir }}"
-    state: present
-    recreate: always
-  when: not (maintainerr_native | bool)
-
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when a rendered file changes.
 - name: Restart maintainerr service
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  when: maintainerr_native | bool
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: "{{ 'native' if maintainerr_native | bool else 'docker' }}"
+    restart_compose_project: "{{ maintainerr_project_dir }}"
+    restart_services: ["{{ instance }}"]

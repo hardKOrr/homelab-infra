@@ -27,46 +27,37 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/tautulli.yml")}
-    provision = plays["Tautulli | Provision"]["tasks"]
-    # Docker stays the default: the stack host is only provisioned for that method.
-    stack = next(t for t in provision if "find-or-create-host" in str(t))
-    assert stack["when"] == "app_config.hosting.method == 'docker'"
-    block = next(t for t in provision if t.get("block"))
-    assert block["when"] == "app_config.hosting.method == 'kubernetes'"
-    names = [str(t) for t in block["block"]]
-    # Plex's endpoint is resolved before the firewall step that needs it.
-    plex = next(i for i, t in enumerate(names) if "'tasks_from': 'plex'" in t)
-    firewall = next(i for i, t in enumerate(names) if "open-app-access.yml" in t)
-    deploy = next(i for i, t in enumerate(names) if "'tasks_from': 'kubernetes'" in t)
-    assert plex < firewall < deploy
-    assert next(i for i, t in enumerate(names) if "resolve-estate.yml" in t) < next(
-        i for i, t in enumerate(names) if "tautulli_fqdn" in t)
-
-    wiring = (REPO / "ansible/playbooks/apps/tautulli.yml").read_text()
-    assert "ingress_vip" in wiring and "recovery_isolated" in wiring
+    # Kubernetes only: a Docker or native guest reaches Plex on the lab network.
+    assert defaults["firewall"]["methods"] == ["kubernetes"]
+    # Plex's endpoint is resolved in the deploy-prepare hook, which deploy.yml runs before
+    # the cluster firewall step that needs it (gate/app-matrix.yml records that order).
+    prepare = read_yaml(f"{ROLE}/tasks/deploy-prepare.yml")
+    assert prepare[0]["ansible.builtin.include_tasks"] == "plex.yml"
+    assert prepare[0]["when"] == "app_config.hosting.method == 'kubernetes'"
 
     tasks = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
-    assert includes(tasks, "tasks/kubernetes/apply-manifest.yml")
+    assert includes(tasks, "tasks/kubernetes/single-container.yml")
     assert includes(tasks, "tasks/kubernetes/sync-secret.yml")
     # No media shares: Tautulli's Docker stack mounts none.
     assert not includes(tasks, "prepare-media-volumes.yml")
     order = [str(t.get("ansible.builtin.include_tasks")) for t in tasks]
     assert (next(i for i, o in enumerate(order) if "upsert-item" in o)
             < next(i for i, o in enumerate(order) if "sync-secret" in o)
-            < next(i for i, o in enumerate(order) if "apply-manifest" in o))
+            < next(i for i, o in enumerate(order) if "single-container" in o))
     backup = next(t for t in tasks if "recovery-backup.yml" in str(t.get("ansible.builtin.include_tasks")))
     archive = backup["vars"]["k8s_recovery"]["archives"][0]
     assert archive["name"] == "data" and archive["claim"] == "{{ instance }}-config"
 
-    manifest = (REPO / f"{ROLE}/templates/manifest.yaml.j2").read_text()
-    assert "secretKeyRef" in manifest and "kind: Ingress" in manifest
-    assert "storageClassName" not in manifest
-    assert "mountPath: /config" in manifest
+    workload = next(t for t in tasks if "single-container.yml" in str(t.get("ansible.builtin.include_tasks")))
+    app = workload["vars"]["k8s_app"]
+    assert app["host"] == "{{ tautulli_fqdn }}"
+    assert app["volumes"] == [{"name": "config", "mount_path": "/config",
+                               "storage": "{{ app_config.app.storage | default(2) }}"}]
+    secrets = {e["name"]: e["secret"] for e in app["env"] if "secret" in e}
+    assert secrets == {"TAUTULLI_PMS_TOKEN": "plex-token", "TAUTULLI_API_KEY": "api-key"}
     # A rotated credential must roll the pod: env from a Secret is read at start.
-    assert "checksum/credentials" in manifest
-    assert "_tautulli_plex_token" in manifest.split("checksum/credentials")[1].split("\n")[0]
-    assert "_tautulli_api_key" in manifest.split("checksum/credentials")[1].split("\n")[0]
+    checksum = app["pod_annotations"]["checksum/credentials"]
+    assert "_tautulli_plex_token" in checksum and "_tautulli_api_key" in checksum
 
     restore = read_yaml(f"{ROLE}/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")

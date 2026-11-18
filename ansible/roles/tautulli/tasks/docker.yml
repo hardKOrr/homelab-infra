@@ -5,46 +5,20 @@
   ansible.builtin.set_fact:
     _tautulli_media_network: "homelabinfra-{{ app_config.stack }}"
 
-- name: Create Tautulli project and persistent directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ app_config.app.puid | default(1313) }}"
-    group: "{{ app_config.app.pgid | default(1313) }}"
-    mode: "0750"
-  loop:
-    - "{{ tautulli_project_dir }}"
-    - "{{ app_config.app.config_path }}"
-
-- name: Ensure media applications share a Docker network
-  community.docker.docker_network:
-    name: "{{ _tautulli_media_network }}"
-    state: present
-
-- name: Write the Tautulli Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ tautulli_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart tautulli
-  no_log: true
-
-- name: Pull the Tautulli image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ tautulli_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Start Tautulli
-  community.docker.docker_compose_v2:
-    project_src: "{{ tautulli_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending Tautulli restarts
-  ansible.builtin.meta: flush_handlers
+# The Compose file carries the Plex token and API key.
+- name: Deploy the Tautulli Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ tautulli_project_dir }}"
+    compose_owner: "{{ app_config.app.puid | default(1313) }}"
+    compose_group: "{{ app_config.app.pgid | default(1313) }}"
+    compose_dirs:
+      - "{{ app_config.app.config_path }}"
+    compose_networks:
+      - "{{ _tautulli_media_network }}"
+    compose_secrets:
+      - "{{ _tautulli_plex_token }}"
+      - "{{ _tautulli_api_key }}"
 
 - name: Verify Tautulli can reach the selected Plex container
   community.docker.docker_container_exec:

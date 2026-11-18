@@ -1,14 +1,9 @@
 ---
-- name: Restart jellyseerr
-  community.docker.docker_compose_v2:
-    project_src: "{{ jellyseerr_project_dir }}"
-    state: present
-    recreate: always
-  when: not (jellyseerr_native | bool)
-
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when a rendered file changes.
 - name: Restart jellyseerr service
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  when: jellyseerr_native | bool
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: "{{ 'native' if jellyseerr_native | bool else 'docker' }}"
+    restart_compose_project: "{{ jellyseerr_project_dir }}"
+    restart_services: ["{{ instance }}"]
