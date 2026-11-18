@@ -1,0 +1,68 @@
+---
+# Render templates/kubernetes/single-container.yaml.j2 for one single-container app and apply
+# it through apply-manifest.yml, waiting for the Deployment. Run after resolve-cluster.yml
+# and ensure-namespace.yml; a Secret the env reads comes first from sync-secret.yml.
+#
+# Inputs:
+#   k8s_app — the workload:
+#     name                — container name (required)
+#     image               — container image (required)
+#     port                — Service port (required); container_port defaults to it
+#     host                — optional Ingress hostname; no Ingress without it
+#     node_port           — optional NodePort; checked with claim-node-port.yml first
+#     env                 — optional list of `{name, value}` or `{name, secret}`, where
+#                           `secret` is a key of the Secret `secret_name` (default: instance)
+#     volumes             — optional list of `{name, mount_path}` plus one of `storage`
+#                           (Gi; creates PVC `<instance>-<name>`), `claim` (an existing
+#                           PVC) or `nfs: {server, path}`; optional `read_only`
+#     extra_volumes, extra_volume_mounts — optional raw lists, such as
+#                           prepare-media-volumes.yml's k8s_media_volumes and _mounts
+#     probe               — optional `{path}` (HTTP) or `{tcp: true}`, with optional `port`;
+#                           renders startup, readiness and liveness probes
+#     security_context    — optional `{run_as_user, run_as_group, fs_group}`
+#     resources           — optional; default requests cpu 100m, memory 256Mi
+#     pod_annotations     — optional mapping, such as a credentials checksum that rolls
+#                           the pod when a Secret changes
+#     image_pull_policy, command, args — optional
+#   k8s_app_extra_manifest — optional rendered YAML appended to the manifest (a ConfigMap)
+#   k8s_namespace, k8s_api_host — from ensure-namespace.yml and resolve-cluster.yml
+#
+# Sets k8s_apply_changed (from apply-manifest.yml).
+
+- name: k8s single container | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - k8s_app is mapping
+      - k8s_app.name | default('') is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - k8s_app.image | default('') | length > 0
+      - k8s_app.port | default('') | string is match('^[0-9]+$')
+      - k8s_app.env | default([]) is sequence
+      - k8s_app.env | default([]) | rejectattr('name', 'defined') | list | length == 0
+      - k8s_app.volumes | default([]) is sequence
+      - k8s_app.volumes | default([]) | rejectattr('name', 'defined') | list | length == 0
+      - k8s_app.volumes | default([]) | rejectattr('mount_path', 'defined') | list | length == 0
+      - >-
+        k8s_app.volumes | default([])
+        | rejectattr('storage', 'defined') | rejectattr('claim', 'defined')
+        | rejectattr('nfs', 'defined') | list | length == 0
+      - k8s_app.probe is not defined or k8s_app.probe.path is defined or k8s_app.probe.tcp | default(false)
+    fail_msg: >-
+      single-container.yml needs k8s_app with a legal container name, an image and a
+      numeric port; each env entry needs a name, each volume a name, a mount_path and one
+      of storage, claim or nfs, and a probe needs a path or tcp: true.
+
+- name: k8s single container | Check the NodePort is free
+  ansible.builtin.include_tasks: claim-node-port.yml
+  vars:
+    k8s_node_port: "{{ k8s_app.node_port }}"
+  when: k8s_app.node_port is defined
+
+- name: k8s single container | Render and apply the workload
+  ansible.builtin.include_tasks: apply-manifest.yml
+  vars:
+    k8s_manifest: >-
+      {{ lookup('ansible.builtin.template',
+                (role_path | dirname | dirname) ~ '/templates/kubernetes/single-container.yaml.j2')
+         ~ ('\n---\n' ~ k8s_app_extra_manifest if k8s_app_extra_manifest | default('') | length > 0 else '') }}
+    k8s_wait_for:
+      - "deployment/{{ instance }}"

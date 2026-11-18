@@ -1,0 +1,56 @@
+---
+# Restart one app instance on its guest: recreate a Docker app's Compose project, or restart
+# a native app's systemd units. This is the body of a role's restart handler, so the
+# handler keeps the role's own name and the role's tasks notify it as before:
+#
+#   # roles/<role>/handlers/main.yml
+#   - name: Restart <app>
+#     ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+#     vars:
+#       restart_runtime: "{{ 'native' if <role>_native | bool else 'docker' }}"
+#       restart_compose_project: "{{ <role>_project_dir }}"
+#       restart_services: ["{{ instance }}"]
+#
+# Inputs:
+#   restart_runtime          — `docker` or `native` (required)
+#   restart_compose_project  — the Compose project directory (docker)
+#   restart_compose_services — optional Compose services to recreate (default: all)
+#   restart_services         — systemd units to restart, in order (native)
+#
+# A native restart reloads systemd first, so a unit file written in the same run applies.
+
+- name: Restart app | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - restart_runtime | default('') in ['docker', 'native']
+      - >-
+        restart_runtime != 'docker'
+        or (restart_compose_project | default('') is string
+            and restart_compose_project | default('') is match('^/'))
+      - >-
+        restart_runtime != 'native'
+        or (restart_services | default([]) is sequence
+            and restart_services | default([]) is not string
+            and restart_services | default([]) | length > 0)
+    fail_msg: >-
+      restart.yml needs restart_runtime docker with an absolute restart_compose_project,
+      or native with a non-empty restart_services list.
+    quiet: true
+
+- name: Restart app | Recreate the Compose project
+  community.docker.docker_compose_v2:
+    project_src: "{{ restart_compose_project }}"
+    services: "{{ restart_compose_services | default(omit) }}"
+    state: present
+    recreate: always
+  when: restart_runtime == 'docker'
+
+- name: Restart app | Restart the systemd units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: "{{ ansible_loop.first }}"
+  loop: "{{ restart_services }}"
+  loop_control:
+    extended: true
+  when: restart_runtime == 'native'

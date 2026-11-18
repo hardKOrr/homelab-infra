@@ -6,7 +6,7 @@ role must use for each common operation.
 
 | Directory | What lives there |
 | --- | --- |
-| `apps/` | Loading an app instance's merged config (`load-config.yml`) |
+| `apps/` | Loading an app instance's merged config (`load-config.yml`) and the restart handler body (`restart.yml`) |
 | `app-wiring/` | App-to-app integration: download clients, *arr registrations, Open WebUI upstreams |
 | `backup/` | PBS target resolution and the PBS client (`backup/scripts/pbs-client.sh`) |
 | `bitwarden/` | Vaultwarden session checks and item reads and upserts |
@@ -25,7 +25,7 @@ role must use for each common operation.
 | `proxmox/` | Guests, placement, devices, tags and ownership ([README](proxmox/README.md)) |
 | `recovery/` | Restore method, validation, pre-restore point, target path rebasing and restore swap (`recovery/scripts/`); the phases of Restore App (`restore-app-*.yml`) and Restore Guest (`restore-guest-*.yml`) |
 | `removal/` | The phases of Remove App (`playbooks/apps/remove.yml`), in run order from its header |
-| `stack/` | Docker stack host lookup and creation |
+| `stack/` | Docker stack host lookup and creation, and an app's Compose deploy (`compose-deploy.yml`) |
 | `unwiring/` | Inverse of `wiring/`, used by Remove |
 | `vaultwarden/` | The Seed-mode admin token sink |
 | `wiring/` | Proxy, DNS, SSO, monitoring and firewall registration ([README](wiring/README.md)) |

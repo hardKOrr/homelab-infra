@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Check that recovery primitives live only in their shared code or on a shrinking allowlist.
+"""Check that shared primitives live only in their shared code or on a shrinking allowlist.
 
-The test checks *where* a primitive appears, not how a role does the job. Each primitive
+The primitives are the recovery operations and the role building blocks (a Compose deploy,
+a restart handler, a single-container Kubernetes workload). The test checks *where* a
+primitive appears, not how a role does the job. Each primitive
 has the shared files allowed to contain it. Any other file containing it must be on that
 primitive's frozen allowlist below, and an allowlisted file that no longer contains it
 fails too, so the list can only shrink as roles move onto the shared code.
@@ -67,6 +69,27 @@ RESTORE_SWAP_SHARED = (
 )
 
 
+# Pulling a Compose project's images: the deploy sequence tasks/stack/compose-deploy.yml owns.
+COMPOSE_PULL = re.compile(r"\bdocker_compose_v2_pull:", re.MULTILINE)
+# A handler that recreates a Compose project or restarts a systemd unit itself.
+HANDLER_RESTART = re.compile(
+    r"\bdocker_compose_v2:|\bsystemd(?:_service)?:(?:.|\n)*?^\s*state:\s*restarted\b",
+    re.MULTILINE,
+)
+K8S_WORKLOAD = re.compile(r"^kind:\s*[\"']?(?:Deployment|StatefulSet)\b", re.MULTILINE)
+K8S_IMAGE = re.compile(r"^\s+image:", re.MULTILINE)
+
+
+def is_single_container_manifest(path, code):
+    """A role template with one workload, one container image and no init containers."""
+    return (
+        fnmatch(path, "ansible/roles/*/templates/*")
+        and len(K8S_WORKLOAD.findall(code)) == 1
+        and len(K8S_IMAGE.findall(code)) == 1
+        and "initContainers" not in code
+    )
+
+
 def in_restore_code(path):
     return any(fnmatch(path, pattern) for pattern in RESTORE_CODE)
 
@@ -118,9 +141,28 @@ PRIMITIVES = {
         RESTORE_SWAP_SHARED,
         lambda path, code: in_restore_code(path) and bool(RESTORE_OWNERSHIP.search(code)),
     ),
+    "compose-deploy": (
+        "a role's own Compose deploy (pulling the project's images)",
+        ("ansible/tasks/stack/compose-deploy.yml",),
+        lambda path, code: fnmatch(path, "ansible/roles/*/tasks/*")
+        and bool(COMPOSE_PULL.search(code)),
+    ),
+    "restart-handler": (
+        "a handler that recreates a Compose project or restarts a systemd unit itself",
+        ("ansible/tasks/apps/restart.yml",),
+        lambda path, code: fnmatch(path, "ansible/roles/*/handlers/*")
+        and bool(HANDLER_RESTART.search(code)),
+    ),
+    "k8s-single-container": (
+        "a role's own single-container Kubernetes workload template",
+        ("ansible/templates/kubernetes/single-container.yaml.j2",),
+        is_single_container_manifest,
+    ),
 }
 
-# Rows only leave, and every role now uses the shared code: no file may hold a primitive.
+# Rows only leave. Every role uses the shared recovery code. The building blocks came later:
+# each Deploy conversion (phase 4 of todo/prompts/08) moves its roles onto them and deletes
+# their rows here.
 ALLOWLIST = {
     "pbs-client-invocation": set(),
     "pbs-client-install": set(),
@@ -129,6 +171,136 @@ ALLOWLIST = {
     "k8s-node-port-claim": set(),
     "restore-swap": set(),
     "restore-ownership": set(),
+    "compose-deploy": {
+        "ansible/roles/_template-docker/tasks/main.yml",
+        "ansible/roles/actual-budget/tasks/docker.yml",
+        "ansible/roles/authentik/tasks/main/workload.yml",
+        "ansible/roles/bazarr/tasks/docker.yml",
+        "ansible/roles/bookstack/tasks/docker.yml",
+        "ansible/roles/caddy/tasks/main/docker.yml",
+        "ansible/roles/comfyui/tasks/docker.yml",
+        "ansible/roles/deemix/tasks/docker.yml",
+        "ansible/roles/emby/tasks/main.yml",
+        "ansible/roles/flaresolverr/tasks/docker.yml",
+        "ansible/roles/forgejo-runner/tasks/main.yml",
+        "ansible/roles/forgejo/tasks/docker.yml",
+        "ansible/roles/frigate/tasks/docker.yml",
+        "ansible/roles/hi-events/tasks/docker.yml",
+        "ansible/roles/home-assistant/tasks/docker.yml",
+        "ansible/roles/homepage/tasks/docker.yml",
+        "ansible/roles/immich/tasks/main.yml",
+        "ansible/roles/influxdb/tasks/main.yml",
+        "ansible/roles/jellyfin/tasks/main.yml",
+        "ansible/roles/jellyseerr/tasks/docker.yml",
+        "ansible/roles/karakeep/tasks/docker.yml",
+        "ansible/roles/kometa/tasks/docker.yml",
+        "ansible/roles/litellm/tasks/docker.yml",
+        "ansible/roles/maintainerr/tasks/docker.yml",
+        "ansible/roles/mariadb/tasks/docker.yml",
+        "ansible/roles/mautic/tasks/docker.yml",
+        "ansible/roles/mixpost/tasks/docker.yml",
+        "ansible/roles/mysql/tasks/docker.yml",
+        "ansible/roles/n8n/tasks/main.yml",
+        "ansible/roles/navidrome/tasks/main.yml",
+        "ansible/roles/ntfy/tasks/docker.yml",
+        "ansible/roles/observability/tasks/docker.yml",
+        "ansible/roles/odoo/tasks/docker.yml",
+        "ansible/roles/ollama/tasks/main.yml",
+        "ansible/roles/open-webui/tasks/main.yml",
+        "ansible/roles/plane/tasks/docker.yml",
+        "ansible/roles/plex/tasks/main.yml",
+        "ansible/roles/qbittorrent/tasks/main/start.yml",
+        "ansible/roles/redis/tasks/main.yml",
+        "ansible/roles/sabnzbd/tasks/main/compose.yml",
+        "ansible/roles/searxng/tasks/docker.yml",
+        "ansible/roles/servarr/tasks/main/start.yml",
+        "ansible/roles/slskd/tasks/docker.yml",
+        "ansible/roles/tautulli/tasks/docker.yml",
+        "ansible/roles/unpackerr/tasks/docker.yml",
+        "ansible/roles/uptime-kuma/tasks/docker.yml",
+        "ansible/roles/vaultwarden/tasks/docker.yml",
+        "ansible/roles/wordpress/tasks/docker.yml",
+    },
+    "restart-handler": {
+        "ansible/roles/_template-docker/handlers/main.yml",
+        "ansible/roles/_template-native/handlers/main.yml",
+        "ansible/roles/actual-budget/handlers/main.yml",
+        "ansible/roles/authentik/handlers/main.yml",
+        "ansible/roles/bazarr/handlers/main.yml",
+        "ansible/roles/bookstack/handlers/main.yml",
+        "ansible/roles/caddy/handlers/main.yml",
+        "ansible/roles/comfyui/handlers/main.yml",
+        "ansible/roles/deemix/handlers/main.yml",
+        "ansible/roles/docker/handlers/main.yml",
+        "ansible/roles/emby/handlers/main.yml",
+        "ansible/roles/flaresolverr/handlers/main.yml",
+        "ansible/roles/forgejo-runner/handlers/main.yml",
+        "ansible/roles/forgejo/handlers/main.yml",
+        "ansible/roles/frigate/handlers/main.yml",
+        "ansible/roles/hi-events/handlers/main.yml",
+        "ansible/roles/home-assistant/handlers/main.yml",
+        "ansible/roles/homepage/handlers/main.yml",
+        "ansible/roles/immich/handlers/main.yml",
+        "ansible/roles/influxdb/handlers/main.yml",
+        "ansible/roles/jellyfin/handlers/main.yml",
+        "ansible/roles/jellyseerr/handlers/main.yml",
+        "ansible/roles/karakeep/handlers/main.yml",
+        "ansible/roles/kometa/handlers/main.yml",
+        "ansible/roles/litellm/handlers/main.yml",
+        "ansible/roles/maintainerr/handlers/main.yml",
+        "ansible/roles/mariadb/handlers/main.yml",
+        "ansible/roles/mautic/handlers/main.yml",
+        "ansible/roles/mixpost/handlers/main.yml",
+        "ansible/roles/mysql/handlers/main.yml",
+        "ansible/roles/n8n/handlers/main.yml",
+        "ansible/roles/navidrome/handlers/main.yml",
+        "ansible/roles/ntfy/handlers/main.yml",
+        "ansible/roles/observability/handlers/main.yml",
+        "ansible/roles/odoo/handlers/main.yml",
+        "ansible/roles/ollama/handlers/main.yml",
+        "ansible/roles/open-webui/handlers/main.yml",
+        "ansible/roles/pbs/handlers/main.yml",
+        "ansible/roles/plane/handlers/main.yml",
+        "ansible/roles/plex/handlers/main.yml",
+        "ansible/roles/postgresql/handlers/main.yml",
+        "ansible/roles/qbittorrent/handlers/main.yml",
+        "ansible/roles/redis/handlers/main.yml",
+        "ansible/roles/sabnzbd/handlers/main.yml",
+        "ansible/roles/searxng/handlers/main.yml",
+        "ansible/roles/servarr/handlers/main.yml",
+        "ansible/roles/slskd/handlers/main.yml",
+        "ansible/roles/tautulli/handlers/main.yml",
+        "ansible/roles/unpackerr/handlers/main.yml",
+        "ansible/roles/uptime-kuma/handlers/main.yml",
+        "ansible/roles/vaultwarden/handlers/main.yml",
+        "ansible/roles/wireguard/handlers/main.yml",
+        "ansible/roles/wordpress/handlers/main.yml",
+    },
+    "k8s-single-container": {
+        "ansible/roles/actual-budget/templates/manifest.yaml.j2",
+        "ansible/roles/bazarr/templates/manifest.yaml.j2",
+        "ansible/roles/bookstack/templates/manifest.yaml.j2",
+        "ansible/roles/deemix/templates/manifest.yaml.j2",
+        "ansible/roles/flaresolverr/templates/manifest.yaml.j2",
+        "ansible/roles/homepage/templates/manifest.yaml.j2",
+        "ansible/roles/jellyseerr/templates/manifest.yaml.j2",
+        "ansible/roles/litellm/templates/manifest.yaml.j2",
+        "ansible/roles/maintainerr/templates/manifest.yaml.j2",
+        "ansible/roles/mariadb/templates/manifest.yaml.j2",
+        "ansible/roles/mysql/templates/manifest.yaml.j2",
+        "ansible/roles/n8n/templates/manifest.yaml.j2",
+        "ansible/roles/navidrome/templates/manifest.yaml.j2",
+        "ansible/roles/ntfy/templates/manifest.yaml.j2",
+        "ansible/roles/ollama/templates/manifest.yaml.j2",
+        "ansible/roles/open-webui/templates/kubernetes-manifest.yaml.j2",
+        "ansible/roles/postgresql/templates/manifest.yaml.j2",
+        "ansible/roles/servarr/templates/manifest.yaml.j2",
+        "ansible/roles/slskd/templates/manifest.yaml.j2",
+        "ansible/roles/tautulli/templates/manifest.yaml.j2",
+        "ansible/roles/unpackerr/templates/manifest.yaml.j2",
+        "ansible/roles/uptime-kuma/templates/manifest.yaml.j2",
+        "ansible/roles/vaultwarden/templates/manifest.yaml.j2",
+    },
 }
 
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
@@ -203,6 +375,23 @@ def check_restore_matchers():
     assert not in_restore_code("ansible/roles/plex/tasks/main.yml")
 
 
+def check_building_block_matchers():
+    assert COMPOSE_PULL.search("  community.docker.docker_compose_v2_pull:\n")
+    assert not COMPOSE_PULL.search("  community.docker.docker_compose_v2:\n")
+    handler = "- name: R\n  ansible.builtin.systemd:\n    name: x\n    state: restarted\n"
+    assert HANDLER_RESTART.search(handler)
+    assert HANDLER_RESTART.search("  community.docker.docker_compose_v2:\n    recreate: always\n")
+    assert not HANDLER_RESTART.search("  ansible.builtin.systemd:\n    state: started\n")
+    assert not HANDLER_RESTART.search("  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml\n")
+    single = "kind: Deployment\nspec:\n  containers:\n    - name: a\n      image: x\n"
+    assert is_single_container_manifest("ansible/roles/a/templates/manifest.yaml.j2", single)
+    assert not is_single_container_manifest("ansible/roles/a/templates/manifest.yaml.j2",
+                                            single + "      initContainers: []\n")
+    assert not is_single_container_manifest("ansible/roles/a/templates/manifest.yaml.j2",
+                                            single + "    - name: b\n      image: y\n")
+    assert not is_single_container_manifest("ansible/roles/a/tasks/main.yml", single)
+
+
 def check_shared_globs():
     for primitive, (_, shared, _) in PRIMITIVES.items():
         for path in ALLOWLIST[primitive]:
@@ -214,6 +403,7 @@ def check_shared_globs():
 def main():
     check_comment_handling()
     check_restore_matchers()
+    check_building_block_matchers()
     check_shared_globs()
     failures = []
     for primitive, paths in found_primitives().items():
