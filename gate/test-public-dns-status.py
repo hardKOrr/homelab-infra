@@ -271,27 +271,30 @@ integration_playbook = {
         },
     ],
 }
-with tempfile.TemporaryDirectory(prefix="public-dns-status-config-") as config_dir:
-    integration_playbook["vars"]["_luv_config_dir"] = config_dir
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yml",
-        encoding="utf-8",
-        dir=repo / "ansible/playbooks/maintenance",
-    ) as playbook_file:
+# The task file finds app defaults at playbook_dir/../../vars. The playbook sits two
+# levels under a temporary root whose vars/ links to the repository's, so the suite
+# writes nothing into ansible/ (lint running beside it would read a stray playbook).
+with tempfile.TemporaryDirectory(prefix="public-dns-status-") as work_dir:
+    config_dir = Path(work_dir) / "config"
+    config_dir.mkdir()
+    playbook_dir = Path(work_dir) / "playbooks/maintenance"
+    playbook_dir.mkdir(parents=True)
+    (Path(work_dir) / "vars").symlink_to(repo / "ansible/vars")
+    integration_playbook["vars"]["_luv_config_dir"] = str(config_dir)
+    playbook_path = playbook_dir / "public-dns-status.yml"
+    with playbook_path.open("w", encoding="utf-8") as playbook_file:
         yaml.safe_dump([integration_playbook], playbook_file, sort_keys=False)
-        playbook_file.flush()
-        environment = os.environ.copy()
-        environment["ANSIBLE_CONFIG"] = str(repo / "ansible/ansible.cfg")
-        integration = subprocess.run(
-            [ansible_playbook, "-i", "localhost,", playbook_file.name],
-            cwd=repo / "ansible",
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+    environment = os.environ.copy()
+    environment["ANSIBLE_CONFIG"] = str(repo / "ansible/ansible.cfg")
+    integration = subprocess.run(
+        [ansible_playbook, "-i", "localhost,", str(playbook_path)],
+        cwd=repo / "ansible",
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
 if integration.returncode != 0:
     raise AssertionError(
         "Ansible loads the module and assembles disabled estate rows\n"
