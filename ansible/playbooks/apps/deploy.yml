@@ -1,0 +1,274 @@
+---
+# Deploy one app instance on its configured hosting method. Each converted
+# playbooks/apps/<app>.yml is a shim that imports this playbook with `app: <app>`, so its
+# Rundeck job and drill command stay as they are:
+#
+#   - ansible.builtin.import_playbook: deploy.yml
+#     vars:
+#       app: jellyseerr
+#
+# Usage: ansible-playbook -i inventory/ playbooks/apps/<app>.yml -e instance=<name>.
+# An app deploys through this playbook only once its shim exists: the PR that converts
+# it adds the hooks and app-defaults keys its family needs (a platform storage layer, a
+# Kubernetes preparation step), proven by a drill. Until then its own playbook is the
+# entry point. PBS, the k3s cluster, OPNsense, PDM and Caddy's Seed path keep their own
+# playbooks.
+#
+# Plays:
+#   1. Resolve and provision (localhost): config, hosting method, estate, hostname; then
+#      the stack host (docker), the app's own guest (native) or the cluster's firewall
+#      access (kubernetes), and the guest's declared firewall access.
+#   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
+#   3. Deploy on the cluster: the role's kubernetes.yml.
+#   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS, the guest record. Skipped
+#      while a restore target is isolated (recovery_isolated).
+#   5. Notify, unless the restore target is isolated.
+#
+# Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
+# slug) and in this optional hook, run only when the role has it:
+#   deploy-prepare.yml  on localhost after the hostname is known, before provisioning
+#
+# Per-app values are app-defaults keys (vars/app-defaults/_base.yml holds the shared
+# ones): routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to
+# the deploy notification) and vault.methods (tasks/apps/load-config.yml). The display
+# name is the catalog entry's `name`.
+
+# ── Play 1: Resolve and provision ──────────────────────────────────────────────
+- name: "Deploy {{ app | default('(no app)') }} | Resolve and provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert the app and instance names
+      ansible.builtin.assert:
+        that:
+          - app is defined and app is match('^[a-z0-9-]+$')
+          - instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: >-
+          Provide the app and a safe instance name: -e instance=<name>, through
+          playbooks/apps/<app>.yml or with -e app=<app>.
+        quiet: true
+
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: "{{ app }}"
+
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: "{{ app }}"
+
+    - name: Assert the native guest contract
+      when: app_config.hosting.method == 'native'
+      ansible.builtin.assert:
+        that:
+          - (_instance_config | default({})).get('proxmox', {}).get('guest_type', '') in ['lxc', 'vm']
+        fail_msg: >-
+          Native {{ app }} runs on its own guest: set proxmox.guest_type to lxc or vm in
+          config/apps/{{ instance }}.yml.
+        quiet: true
+
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the role, display name and published hostname
+      ansible.builtin.set_fact:
+        _deploy_role: "{{ (app_config.deploy | default({})).role | default(app, true) }}"
+        _deploy_display: "{{ _deploy_catalog.applications[app].name }}"
+        _deploy_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        _deploy_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+      vars:
+        _deploy_catalog: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../catalog/applications.yml')
+             | from_yaml }}
+
+    # Roles read the hostname as <app>_fqdn and <app>_subdomain (the Servarr role as
+    # servarr_fqdn), so both the app's and the role's names are set.
+    - name: Publish the hostname under the names the role reads
+      ansible.builtin.set_fact:
+        "{{ item | replace('-', '_') }}_fqdn": "{{ _deploy_fqdn }}"
+        "{{ item | replace('-', '_') }}_subdomain": "{{ _deploy_subdomain }}"
+      loop: "{{ [app, _deploy_role] | unique }}"
+
+    - name: Run the role's deploy-prepare hook
+      ansible.builtin.include_role:
+        name: "{{ _deploy_role }}"
+        tasks_from: deploy-prepare
+      when: (playbook_dir ~ '/../../roles/' ~ _deploy_role ~ '/tasks/deploy-prepare.yml') is file
+
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: app_config.hosting.method == 'docker'
+
+    - name: Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: "{{ app }}"
+      when: app_config.hosting.method == 'native'
+
+    - name: Open the guest's declared network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        wiring_app_name: "{{ instance }}"
+        wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+        wiring_firewall: "{{ app_config.firewall | default({}) }}"
+      when:
+        - app_config.hosting.method in ['docker', 'native']
+        - >-
+          (app_config.firewall.egress | default([]) | length > 0)
+          or (app_config.firewall.inbound | default([]) | length > 0)
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+      when: app_config.hosting.method == 'kubernetes'
+
+    - name: Open the app's declared cluster network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+      when: app_config.hosting.method == 'kubernetes'
+
+# ── Play 2: Deploy on the guest ────────────────────────────────────────────────
+# Play 1 adds the guest to deploy_<instance> on the Docker and native paths only, so on
+# Kubernetes this play has no hosts.
+- name: "Deploy {{ app | default('(no app)') }} | Deploy on the guest"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    _deploy_role: "{{ hostvars['localhost']._deploy_role }}"
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Bootstrap the guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: hostvars['localhost'].app_config.hosting.method == 'docker'
+
+    - name: Publish the hostname on the guest under the names the role reads
+      ansible.builtin.set_fact:
+        "{{ item | replace('-', '_') }}_fqdn": "{{ hostvars['localhost']._deploy_fqdn }}"
+        "{{ item | replace('-', '_') }}_subdomain": "{{ hostvars['localhost']._deploy_subdomain }}"
+      loop: "{{ [app, _deploy_role] | unique }}"
+
+    - name: Deploy the app
+      ansible.builtin.include_role:
+        name: "{{ _deploy_role }}"
+
+# ── Play 3: Deploy on the cluster ──────────────────────────────────────────────
+- name: "Deploy {{ app | default('(no app)') }} | Deploy on the cluster"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Deploy the app into its namespace
+      ansible.builtin.include_role:
+        name: "{{ _deploy_role }}"
+        tasks_from: kubernetes
+      when: app_config.hosting.method == 'kubernetes'
+
+# ── Play 4: Record and wire ────────────────────────────────────────────────────
+# The upstream of a Kubernetes app is the cluster's ingress VIP, which stays put across
+# rescheduling, node loss and a cluster rebuild. Its guest record goes on every node of the
+# cluster, since the assignment does not follow the scheduler.
+- name: "Deploy {{ app | default('(no app)') }} | Record and wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _deploy_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _deploy_k8s | bool
+         else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
+    wiring_upstream_port: "{{ 80 if _deploy_k8s | bool else app_config.app.port }}"
+    wiring_subdomain: "{{ _deploy_subdomain }}"
+    wiring_domain: "{{ _deploy_fqdn }}"
+    wiring_app_display: "{{ _deploy_display }} ({{ instance }})"
+    wiring_monitor_url: "https://{{ _deploy_fqdn }}{{ app_config.routing.monitor_path }}"
+    wiring_auth_group: "{{ app_config.routing.auth_group }}"
+    wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ app_config.routing.access | default('internal') }}"
+
+  tasks:
+    # New-instance recovery provisions the workload without letting it publish the target
+    # route or contact production peers before its selected artifact verifies.
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: (homelabinfra_infra.reverse_proxy | default({})).provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - (homelabinfra_infra.sso | default({})).provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: (homelabinfra_infra.monitoring | default({})).provider | default('none') != 'none'
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: (homelabinfra_infra.dns | default({})).provider | default('none') != 'none'
+
+    - name: Record the app on its stack host, its own guest or every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list
+             if _deploy_k8s | bool else groups['deploy_' ~ instance] }}
+        record_guest_kind: "{{ app_config.hosting.method }}"
+        record_guest_url: "https://{{ _deploy_fqdn }}"
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"
+
+# ── Play 5: Notify ─────────────────────────────────────────────────────────────
+- name: "Deploy {{ app | default('(no app)') }} | Notify"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ _deploy_display }} deployed"
+        notify_message: >-
+          {{ instance }} is running on {{ {'docker': 'Docker', 'native': 'its own guest',
+          'kubernetes': 'the Kubernetes backend'}[app_config.hosting.method] }} at
+          https://{{ _deploy_fqdn }}. {{ (app_config.deploy | default({})).notify_note | default('') }}
+      when: not (recovery_isolated | default(false) | bool)

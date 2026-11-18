@@ -5,7 +5,7 @@ playbook's header comment lists its inputs; Rundeck options map to the same inpu
 
 | Directory | What lives there |
 | --- | --- |
-| `apps/` | Deploy `<app>.yml` per catalog app, plus Remove (`remove.yml`); [adding an app](apps/README.md) |
+| `apps/` | Deploy `<app>.yml` per catalog app, the shared Deploy those become shims of (`deploy.yml`, header lists its hooks and keys), plus Remove (`remove.yml`); [adding an app](apps/README.md) |
 | `maintenance/` | Day-2 operations: backup, restore, status, schedules, decommission ([README](maintenance/README.md)) |
 | `stacks/` | Cross-app stack operations: media stack wiring, container rollback, Plex troubleshooting |
 | `docker/` | Create a Docker stack host |

@@ -301,7 +301,7 @@ def check_mariadb_vm_instance_override():
 
 
 def main():
-    paths = sorted(path for path in APP_DEFAULTS.glob("*.yml") if path.name != "_template.yml")
+    paths = sorted(path for path in APP_DEFAULTS.glob("*.yml") if not path.name.startswith("_"))
     assert paths, "no application defaults were found"
     expected_by_slug = check_declarations(paths)
     check_rendered_defaults(expected_by_slug)

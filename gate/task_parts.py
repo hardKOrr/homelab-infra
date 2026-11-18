@@ -175,10 +175,14 @@ class Resolver:
                 name = str(spec.get("name", ""))
                 if "{{" in name and self.render is not None:
                     name = self.render(name) or name
-                if "{{" not in name and (self.roles / name).is_dir():
+                tasks_from = str(spec.get("tasks_from", "main"))
+                # An optional hook the role lacks stays a leaf, as a missing include does.
+                if "{{" not in name and (self.roles / name / "tasks" / (
+                        tasks_from if tasks_from.endswith((".yml", ".yaml"))
+                        else tasks_from + ".yml")).is_file():
                     extra = {k: v for k, v in spec.items() if k not in ("name", "tasks_from")}
                     scope = [s for s in inherited + [_keywords(task, ROLES) | extra] if s]
-                    yield from self.role(name, str(spec.get("tasks_from", "main")), scope,
+                    yield from self.role(name, tasks_from, scope,
                                          chain, playbook, depth + 1)
                     continue
             leaf = {"name": task.get("name"), "task": _keywords(task, ()), "scope": inherited}

@@ -8,6 +8,10 @@
 # the playbooks differ. See roles/servarr/tasks/main.yml for why.
 
 sonarr_defaults:
+  # The shared Servarr role deploys every Servarr app (playbooks/apps/deploy.yml).
+  deploy:
+    role: servarr
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]

@@ -1,0 +1,15 @@
+---
+# Defaults every app shares, merged under vars/app-defaults/<app>.yml by
+# tasks/apps/load-config.yml (merge order in vars/contract/app-layering.md). An app's own
+# defaults or its instance file override any of these.
+#
+# Only playbooks/apps/deploy.yml reads these keys today. A value repeated across app
+# defaults moves here once Remove, Restore and the maintenance jobs load their config
+# through tasks/apps/load-config.yml too; until then they would not see it.
+
+_base_defaults:
+  routing:
+    # Authentik group granted the app's application or provider.
+    auth_group: homelab-users
+    # Path the uptime monitor requests on the published hostname.
+    monitor_path: /
