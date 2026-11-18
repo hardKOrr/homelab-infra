@@ -1,0 +1,17 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Docker and
+# native: hand deploy.yml the lab's media mounts this app uses, which it attaches to the
+# guest (an app with no library_subpath, Prowlarr, gets none). Kubernetes: resolve the
+# same mounts as NFS shares and open the cluster nodes' NFS egress before the pod starts.
+- name: Servarr | Resolve the app kind and the storage it uses
+  ansible.builtin.import_tasks: resolve-storage.yml
+
+- name: Servarr | Hand deploy.yml the mounts to attach to the guest
+  ansible.builtin.set_fact:
+    deploy_host_mounts: "{{ _servarr_mounts }}"
+    deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+  when: app_config.hosting.method in ['docker', 'native']
+
+- name: Servarr | Resolve the media shares for Kubernetes
+  ansible.builtin.include_tasks: kubernetes-media.yml
+  when: app_config.hosting.method == 'kubernetes'

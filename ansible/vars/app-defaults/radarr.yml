@@ -8,8 +8,15 @@
 
 radarr_defaults:
   # The shared Servarr role deploys every Servarr app (playbooks/apps/deploy.yml).
+  # A Kubernetes instance has no media registry entry, so Wire Media Stack does not
+  # discover it.
   deploy:
     role: servarr
+    notify_note: >-
+      On Docker or native, run the Wire Media Stack job to connect it to Prowlarr,
+      the download clients and Bazarr.
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
 
   hosting:
     method: docker
@@ -72,6 +79,7 @@ radarr_defaults:
     # Coupled to AuthenticationMethod External — the reverse proxy is the only
     # authentication in front of this UI. See sonarr.yml.
     identity: forward_auth
+    monitor_path: /ping   # Servarr's own unauthenticated liveness endpoint
 
   # One stopped config directory, including the API key, per PBS recovery point.
   backup:

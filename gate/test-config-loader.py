@@ -6,7 +6,8 @@ config-loading tasks of its first play (`tasks/apps/load-config.yml` and its inp
 the hand-written loads it replaced; for a shim, those of the playbook it imports), runs
 them with Ansible against fixture inputs, and compares the result with the merge in
 `ansible/vars/contract/app-layering.md`: the shared base defaults, the app's defaults,
-the platform layer, the instance file, then the instance's Vaultwarden item under `app`
+the platform layer (the `infrastructure.yml` keys the defaults name in `platform_layers`,
+then the loader's `load_config_layer`), the instance file, then the instance's Vaultwarden item under `app`
 (only for the hosting methods the playbook or the defaults' `vault.methods` name). Each app
 runs twice: on its default hosting method, and on Kubernetes too where the Vaultwarden
 overlay depends on the method.
@@ -192,7 +193,8 @@ def main() -> int:
                 results[instance] = got
                 if loader is None:
                     continue
-                layer = templar.template(inputs.get("load_config_layer", {}))
+                platform = {key: INFRA.get(key, {}) for key in defaults.get("platform_layers", [])}
+                layer = merge(platform, templar.template(inputs.get("load_config_layer", {})))
                 want = merge(merge(defaults, layer), instance_file(app, kubernetes))
                 methods = vault_methods(app, steps)
                 method = (want.get("hosting") or {}).get("method", "")

@@ -8,16 +8,14 @@
 #       app: jellyseerr
 #
 # Usage: ansible-playbook -i inventory/ playbooks/apps/<app>.yml -e instance=<name>.
-# An app deploys through this playbook only once its shim exists: the PR that converts
-# it adds the hooks and app-defaults keys its family needs (a platform storage layer, a
-# Kubernetes preparation step), proven by a drill. Until then its own playbook is the
-# entry point. PBS, the k3s cluster, OPNsense, PDM and Caddy's Seed path keep their own
-# playbooks.
+# An app deploys through this playbook only once its shim exists; until then its own
+# playbook is the entry point. PBS, the k3s cluster, OPNsense, PDM and Caddy's Seed path
+# keep their own playbooks.
 #
 # Plays:
 #   1. Resolve and provision (localhost): config, hosting method, estate, hostname; then
 #      the stack host (docker), the app's own guest (native) or the cluster's firewall
-#      access (kubernetes), and the guest's declared firewall access.
+#      access (kubernetes), the guest's storage and its declared firewall access.
 #   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
 #   3. Deploy on the cluster: the role's kubernetes.yml.
 #   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS, the guest record. Skipped
@@ -25,12 +23,16 @@
 #   5. Notify, unless the restore target is isolated.
 #
 # Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
-# slug) and in this optional hook, run only when the role has it:
-#   deploy-prepare.yml  on localhost after the hostname is known, before provisioning
+# slug) and in these optional hooks, run only when the role has them:
+#   deploy-prepare.yml  on localhost after the hostname is known, before provisioning. It
+#                       may set deploy_host_mounts (an attach-host-mounts.yml list) and
+#                       deploy_host_mounts_owner, attached to the Docker or native guest.
+#   deploy-record.yml   on localhost before wiring, also while the restore target is
+#                       isolated: registry entries other jobs read (e.g. `media`).
 #
 # Per-app values are app-defaults keys (vars/app-defaults/_base.yml holds the shared
 # ones): routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to
-# the deploy notification), vault.methods (tasks/apps/load-config.yml) and
+# the deploy notification), vault.methods and platform_layers (tasks/apps/load-config.yml),
 # firewall.methods (the hosting methods whose Deploy opens the app's declared `firewall:`
 # access; default every method). The display name is the catalog entry's `name`.
 
@@ -125,6 +127,16 @@
       vars:
         native_guest_network_app: "{{ app }}"
       when: app_config.hosting.method == 'native'
+
+    - name: Attach the lab's storage the deploy-prepare hook named
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        attach_mounts_list: "{{ deploy_host_mounts }}"
+        attach_mounts_owner: "{{ deploy_host_mounts_owner | default({}) }}"
+      when:
+        - app_config.hosting.method in ['docker', 'native']
+        - deploy_host_mounts | default([]) | length > 0
 
     - name: Open the guest's declared network access
       ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
@@ -225,6 +237,12 @@
     wiring_access: "{{ app_config.routing.access | default('internal') }}"
 
   tasks:
+    - name: Run the role's deploy-record hook
+      ansible.builtin.include_role:
+        name: "{{ _deploy_role }}"
+        tasks_from: deploy-record
+      when: (playbook_dir ~ '/../../roles/' ~ _deploy_role ~ '/tasks/deploy-record.yml') is file
+
     # New-instance recovery provisions the workload without letting it publish the target
     # route or contact production peers before its selected artifact verifies.
     - name: Skip external wiring while the restore target is isolated
