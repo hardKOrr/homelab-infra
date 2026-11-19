@@ -232,8 +232,19 @@ def check_declarations(paths):
             )
 
         expected = current_combination(slug, defaults)
-        _, source = app_source(slug)
-        implemented = implemented_combinations(expected, source)
+        playbook, source = app_source(slug)
+        if playbook.name == "deploy.yml":
+            # deploy.yml holds every method's path, so a shim's methods come from its role:
+            # its Kubernetes adapter, and native handling in its tasks.
+            role = ROOT / "ansible/roles" / ((defaults.get("deploy") or {}).get("role") or slug) / "tasks"
+            role_text = "\n".join(path.read_text() for path in role.rglob("*.yml"))
+            implemented = {expected}
+            if (role / "kubernetes.yml").is_file():
+                implemented.add("kubernetes")
+            if "native" in role_text:
+                implemented |= {"native-lxc", "native-vm"}
+        else:
+            implemented = implemented_combinations(expected, source)
         implemented |= EXTRA_IMPLEMENTED.get(slug, set())
         assert set(supported) == implemented, (
             f"{path}: declared combinations {supported} differ from implemented paths "

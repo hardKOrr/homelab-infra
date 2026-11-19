@@ -2,6 +2,19 @@
 # Immich is a two-service Compose application. Its database and cache are resolved from
 # independently deployed named backends before this role runs; no backend service is
 # allowed to appear in this Compose project.
+- name: Immich | Verify the dedicated iGPU render node exists inside the VM
+  ansible.builtin.stat:
+    path: "{{ app_config.app.gpu_render_node }}"
+  register: _immich_render_node
+
+- name: Immich | Require the VM's render node to be a device
+  ansible.builtin.assert:
+    that: _immich_render_node.stat.ischr | default(false)
+    fail_msg: >-
+      {{ app_config.app.gpu_render_node }} is not a device inside the Immich VM. Check
+      the dedicated PCI resource mapping and guest iGPU driver.
+    quiet: true
+
 - name: Immich | Resolve the configured media path
   ansible.builtin.set_fact:
     _immich_media_path: "{{ (app_config.media_storage.mounts | first).path }}"

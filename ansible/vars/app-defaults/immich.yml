@@ -50,6 +50,7 @@ immich_defaults:
   routing:
     subdomain: immich
     proxy: internal
+    monitor_path: /api/server/ping
     access: internal
     # Mobile clients authenticate to Immich and cannot complete a browser-only proxy
     # challenge. Authentik supplies a catalog tile; Immich remains the auth boundary.
