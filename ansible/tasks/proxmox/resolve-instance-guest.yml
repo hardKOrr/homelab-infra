@@ -9,6 +9,9 @@
 # Inputs:  resolve_guest_instance
 #          resolve_guest_type (optional) — lxc or vm; a same-name guest of the other type
 #                                          is refused instead of reused
+#          resolve_guest_own_only (optional, default false) — skip stack and cluster hosts:
+#                                          a method switch may leave the instance tag on
+#                                          its previous stack, never the app's own guest
 # Outputs: resolve_guest_hosts (zero or one inventory host, or the tagged hosts),
 #          resolve_guest_needs_tag; tag_group_name stays set for the caller
 
@@ -27,6 +30,8 @@
       {{ 'lxc' if resolve_guest_type | default('') == 'lxc'
          else 'qemu' if resolve_guest_type | default('') == 'vm'
          else '' }}
+    tag_group_exclude_tag_pattern: >-
+      {{ '^_[.](stack|cluster)[+]' if resolve_guest_own_only | default(false) | bool else '' }}
 
 - name: Resolve instance guest | Validate an optional guest type
   ansible.builtin.assert:
