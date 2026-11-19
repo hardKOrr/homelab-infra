@@ -1,9 +1,10 @@
 ---
-# Open a Kubernetes app's declared OPNsense access through the alias for every node in
-# its cluster. The ingress VIP remains the inbound NAT target; egress rules use the
-# cluster-node alias as their source, and select the firewall interface from a node
-# address on that same network. NodePort consumers may set k8s_firewall_upstream_host
-# to a registered node address for their inbound NAT target.
+# Open a Kubernetes app's declared OPNsense access, and SMTP egress for an app with
+# firewall.sends_mail, through the alias for every node in its cluster. The ingress VIP
+# remains the inbound NAT target; egress rules use the cluster-node alias as their source,
+# and select the firewall interface from a node address on that same network. NodePort
+# consumers may set k8s_firewall_upstream_host to a registered node address for their
+# inbound NAT target.
 
 - name: k8s firewall | Open declared cluster access
   when:
@@ -12,6 +13,7 @@
     - >-
       (app_config.firewall.egress | default([]) | length > 0)
       or (app_config.firewall.inbound | default([]) | length > 0)
+      or (app_config.firewall.sends_mail | default(false) | bool)
   block:
     - name: k8s firewall | Require the deployed cluster alias
       ansible.builtin.assert:

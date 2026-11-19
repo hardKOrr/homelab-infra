@@ -45,9 +45,15 @@ odoo_defaults:
       role: odoo
     filestore_path: "/opt/odoo/{{ instance }}/filestore"
     admin_user: admin
+  # SMTP egress to the platform relay for its mail, from a Docker or native guest or the
+  # cluster (tasks/firewall/open-app-access.yml).
+  firewall:
+    sends_mail: true
+
   routing:
     subdomain: odoo
     proxy: internal
+    monitor_path: /web/health
     access: internal
     identity: catalog
   backup:

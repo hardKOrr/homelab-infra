@@ -68,6 +68,7 @@ wordpress_defaults:
   routing:
     subdomain: wordpress
     proxy: internal
+    monitor_path: /wp-login.php
     access: public
     identity: catalog
 

@@ -1,0 +1,31 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring). Record the instance's
+# `apps` registry entry that app-to-app consumers read, and the Git SSH port for the deploy
+# notification: SSH is published directly, not routed through the reverse proxy.
+- name: Forgejo | Record the endpoint for app-to-app consumers
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    _forgejo_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    _forgejo_guest_ip: >-
+      {{ '' if _forgejo_k8s | bool else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: apps
+    # An expression, never a literal `"{{ instance }}":` key: Ansible does not template a
+    # mapping key.
+    generated_facts_data: >-
+      {{ {instance: {
+           'provider': 'forgejo',
+           'instance': instance,
+           'host': 'https://' ~ _deploy_fqdn if _forgejo_k8s | bool else 'http://' ~ _forgejo_guest_ip,
+           'port': 443 if _forgejo_k8s | bool else app_config.app.port,
+           'url': ('https://' ~ _deploy_fqdn ~ '/') if _forgejo_k8s | bool
+                  else ('http://' ~ _forgejo_guest_ip ~ ':' ~ (app_config.app.port | string) ~ '/'),
+           'ssh_port': app_config.app.ssh_node_port if _forgejo_k8s | bool else app_config.app.ssh_port
+         }} }}
+
+- name: Forgejo | Note the Git SSH port in the deploy notification
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      Git-over-SSH is published directly at port
+      {{ app_config.app.ssh_node_port if app_config.hosting.method == 'kubernetes' else app_config.app.ssh_port }};
+      it is not routed through Caddy.

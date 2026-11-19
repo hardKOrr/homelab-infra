@@ -23,14 +23,6 @@ install = (role / "tasks/native.yml").read_text()
 assert "https://wordpress.org/wordpress-{{ app_config.app.native_version }}.tar.gz" in install
 assert "native_sha256" in install and "native_cli_sha256" in install
 
-playbook = (repo / "ansible/playbooks/apps/wordpress.yml").read_text()
-assert "tasks_from: provision" in playbook and "in ['docker', 'native']" in playbook
-plays = yaml.safe_load(playbook)
-deploy = next(play for play in plays if play["name"] == "WordPress | Deploy")
-for task in deploy["tasks"]:
-    if task["name"] in ("Bootstrap guest", "Deploy WordPress"):
-        assert "in ['docker', 'native']" in str(task["when"]), task["name"]
-
 # Restore App's restore reaches the guest swap on Docker and native, the Job on Kubernetes.
 dispatch = yaml.safe_load((role / "tasks/restore.yml").read_text())
 for method in ("docker", "native", "kubernetes"):

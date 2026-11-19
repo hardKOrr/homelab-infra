@@ -241,6 +241,9 @@ def reached(run, method: str, deep: bool = False, seed: dict | None = None) -> l
     decider = Decider(method, steps, seed)
     if any(decider.render(target) for target in templated(steps)):
         steps = run(decider.render)
+        # The second pass reaches roles the first could not name (deploy.yml's
+        # `{{ _deploy_role }}`); their defaults decide conditions too.
+        decider = Decider(method, steps, seed)
     files: list[str] = []
     guest = False
     skip = False

@@ -43,7 +43,10 @@ n8n_defaults:
       role: n8n
   # The Kubernetes pod reaches this named backend through the cluster-node firewall
   # alias. Docker deployments keep using their existing guest access path.
+  # The database egress is opened for a native guest and from the cluster; the shared
+  # Docker stack host has its own path.
   firewall:
+    methods: [kubernetes, native]
     egress:
       - name: postgresql
         protocol: TCP
@@ -52,6 +55,7 @@ n8n_defaults:
   routing:
     subdomain: n8n
     proxy: internal
+    monitor_path: /healthz
     access: internal
     identity: catalog
   backup:
