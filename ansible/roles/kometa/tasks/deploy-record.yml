@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring). Kometa has no route;
+# the notification says when it runs.
+- name: Kometa | Say when it runs
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      It runs {{ 'as ' ~ app_config.app.schedule if app_config.hosting.method == 'kubernetes'
+      else 'daily at ' ~ app_config.app.run_times }} in {{ homelabinfra_config.timezone | default('UTC') }}.

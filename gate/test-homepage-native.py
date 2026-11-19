@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard Homepage's native method: exact pins, the rendered unit, the playbook wiring."""
+"""Guard Homepage's native method: exact pins and the rendered unit."""
 
 import subprocess
 import tempfile
@@ -19,12 +19,6 @@ for key in ("native_node_sha256", "native_pnpm_sha256"):
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "git" in install and "--frozen-lockfile" in install and "native_pnpm_sha256" in install
-
-playbook = (repo / "ansible/playbooks/apps/homepage.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] == "Ensure Docker is installed":
-        assert "== 'docker'" in task["when"], "native guests do not get Docker"
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)

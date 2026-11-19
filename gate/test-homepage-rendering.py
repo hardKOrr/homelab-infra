@@ -181,10 +181,13 @@ def homepage_renders_named_services_and_ephemeral_writable_config():
 
 
 def docker_play_resolves_the_estate_after_loading_vars():
-    """The Docker host's own var load drops the forwarded estate overlay (domain), so the
-    role would publish the default domain in HOMEPAGE_ALLOWED_HOSTS unless it re-resolves."""
-    plays = yaml.safe_load((ROOT / "ansible/playbooks/apps/homepage.yml").read_text())
-    play = next(p for p in plays if "Deploy on Docker" in p["name"])
+    """The guest's own var load drops the forwarded estate overlay (domain), so the role
+    would publish the default domain in HOMEPAGE_ALLOWED_HOSTS unless deploy.yml's guest
+    play re-resolves it."""
+    shim = yaml.safe_load((ROOT / "ansible/playbooks/apps/homepage.yml").read_text())
+    assert shim[0]["ansible.builtin.import_playbook"] == "deploy.yml"
+    plays = yaml.safe_load((ROOT / "ansible/playbooks/apps/deploy.yml").read_text())
+    play = next(p for p in plays if "Deploy on the guest" in p["name"])
     pre = [t.get("ansible.builtin.import_tasks") or t.get("ansible.builtin.include_tasks") or "" for t in play["pre_tasks"]]
     loaded = next(i for i, t in enumerate(pre) if t.endswith("load-user-vars.yml"))
     resolved = next(i for i, t in enumerate(pre) if t.endswith("resolve-estate.yml"))

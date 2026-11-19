@@ -4,7 +4,7 @@
   tasks/kubernetes/apply-manifest.yml.
 
   NO DATABASE POD HERE, UNLIKE roles/mixpost. Hi.Events' database is the named PostgreSQL
-  backend resolved by tasks/database/provision.yml in playbooks/apps/hi-events.yml before
+  backend resolved by tasks/database/provision.yml in playbooks/apps/deploy.yml before
   this role runs — see the header comment in vars/app-defaults/hi-events.yml for why. The
   one PersistentVolumeClaim here holds only uploaded event/ticket media.
 

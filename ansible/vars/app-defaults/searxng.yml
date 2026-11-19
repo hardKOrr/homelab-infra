@@ -76,6 +76,7 @@ searxng_defaults:
   routing:
     subdomain: searxng
     proxy: internal
+    monitor_path: /healthz
 
     # Internal by default, and the catalog note's "usually" is doing real work: SearXNG
     # has no login of its own, so a public route would hand an anonymous metasearch proxy

@@ -54,6 +54,9 @@ ENV.filters["bool"] = lambda value: value if isinstance(value, bool) else str(va
     "true", "yes", "1", "on")
 ENV.tests["file"] = lambda path: Path(path).is_file()
 SHARED_DEPLOY = ROOT / "ansible/playbooks/apps/deploy.yml"
+# Task files that hold a phase of deploy.yml, split out for the size budget. Their
+# includes count as deploy.yml's own.
+DEPLOY_PHASES = {"ansible/tasks/apps/deploy-resolve.yml"}
 
 
 def apps() -> list[str]:
@@ -256,7 +259,8 @@ def reached(run, method: str, deep: bool = False, seed: dict | None = None) -> l
         if ends_play(step, decider):
             skip = True
             continue
-        shared = [f for f in step["via"] if f.startswith("ansible/tasks/")]
+        shared = [f for f in step["via"]
+                  if f.startswith("ansible/tasks/") and f not in DEPLOY_PHASES]
         for name in shared if deep else shared[:1]:
             add(name.removeprefix("ansible/"))
         if shared:
@@ -274,14 +278,28 @@ def deploy_steps(app: str, render=None, shared: bool = False) -> list[dict]:
     return list(resolver.playbook(path))
 
 
+def merged(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for key, value in over.items():
+        out[key] = (merged(out[key], value) if isinstance(value, dict)
+                    and isinstance(out.get(key), dict) else value)
+    return out
+
+
 def deploy_seed(app: str, steps: list[dict]) -> dict | None:
     """What playbooks/apps/deploy.yml knows before its tasks run, when the run goes through
-    it: the app, its playbook directory and the role it derives from `deploy.role`."""
+    it: the app, its playbook directory, the role it derives from `deploy.role`, and
+    app_config as the app's defaults give it (over vars/app-defaults/_base.yml), so a step
+    keyed on a default (`app.database`, `routing.proxy`) is decided for the app. Firewall
+    access is left out: an instance file adds rules, so those steps stay undecided."""
     shared = str(SHARED_DEPLOY.relative_to(ROOT))
     if not any(shared in (step.get("via") or []) for step in steps):
         return None
+    base = yaml.safe_load((ROOT / "ansible/vars/app-defaults/_base.yml").read_text())
     return {"app": app, "playbook_dir": str(SHARED_DEPLOY.parent),
-            "_deploy_role": (defaults(app).get("deploy") or {}).get("role", app)}
+            "_deploy_role": (defaults(app).get("deploy") or {}).get("role", app),
+            "app_config": {key: value for key, value in merged(
+                base["_base_defaults"], defaults(app)).items() if key != "firewall"}}
 
 
 def deploy_reached(app: str, method: str, deep: bool = False, shared: bool = False):

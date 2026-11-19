@@ -10,7 +10,7 @@
 #   instance                — the app instance name
 #   app_config               — merged defaults + user config, with the database connection
 #                              already resolved onto app_config.app (see
-#                              playbooks/apps/hi-events.yml, which runs
+#                              playbooks/apps/deploy.yml, which runs
 #                              tasks/database/provision.yml before including this role)
 #   hi_events_fqdn           — the hostname the Ingress answers on
 #

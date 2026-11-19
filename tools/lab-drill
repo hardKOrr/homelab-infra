@@ -53,7 +53,7 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ANSIBLE = os.path.join(REPO, "ansible")
 POINT = re.compile(r"host/[A-Za-z0-9._-]+/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
-MONITOR = re.compile(r"monitor for (\S+) on (https://[^\s/]+)")
+MONITOR = re.compile(r"monitor\s+for\s+(\S+)\s+on\s+(https://[^\s/\x1b]+)([^\s\x1b]*)")
 RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
@@ -121,6 +121,8 @@ def kind_of(app, defaults, backups):
 class Drill:
     def __init__(self, instance, app, ref, url, destroy_guest, plan, seed_wrong_point=False):
         self.instance, self.app, self.ref, self.url = instance, app, ref, url
+        # The monitor's full URL, which the HTTPS check requests; else the route's root.
+        self.probe = ""
         self.destroy_guest, self.plan, self.seeded = destroy_guest, plan, seed_wrong_point
         self.defaults = app_defaults(app)
         self.role = role_of(app, self.defaults)
@@ -188,9 +190,11 @@ class Drill:
         if self.plan:
             self.wiring(name, "present")
             return
-        for instance, url in MONITOR.findall(text):
+        for instance, url, path in MONITOR.findall(text):
             if instance == self.instance and not self.url:
                 self.url = url
+            if instance == self.instance and not self.probe:
+                self.probe = url + (path or "/")
         if repeat and changed:
             self.repeat_changes.append(f"{name}:{changed}")
         self.wiring(name, "present")
@@ -227,17 +231,18 @@ class Drill:
         if self.plan or not self.url:
             return
         deadline, code = time.monotonic() + 420, ""
+        target = self.probe or self.url + "/"
         while time.monotonic() < deadline:
             probe = subprocess.run(
                 [os.path.join(REPO, "tools", "lab-exec"),
-                 f"curl -sk -o /dev/null -w '%{{http_code}}' --max-time 20 {self.url}/"],
+                 f"curl -sk -o /dev/null -w '%{{http_code}}' --max-time 20 {target}"],
                 stdin=subprocess.DEVNULL, capture_output=True, text=True)
             code = probe.stdout.strip()
             if UP_CODES.match(code):
-                self.say(f"CHECK {name} https {self.url} {code}")
+                self.say(f"CHECK {name} https {target} {code}")
                 return
             time.sleep(20)
-        self.fail(f"{name} https", f"{self.url} answered {code or 'nothing'}")
+        self.fail(f"{name} https", f"{target} answered {code or 'nothing'}")
 
     def canary_step(self, step):
         """create, fresh, verify; final verifies again after the final Deploy and absent

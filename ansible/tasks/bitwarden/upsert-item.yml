@@ -351,7 +351,6 @@
   changed_when: false
   delegate_to: localhost
   become: false
-  no_log: true
   when: _vault_grant_write is changed
 
 - name: Vault | Read the grants back
@@ -521,13 +520,14 @@
       {{ (_vault_upsert.stdout | default('') | trim)[:200] }}
   when: _vault_upsert.rc | default(0) != 0
 
+# Visible: neither the command nor its output holds a secret, and a failure (a rate-limited
+# Vaultwarden) must print.
 - name: Vault | Synchronize after write
   ansible.builtin.command:
     argv: [bw, sync]
   changed_when: false
   delegate_to: localhost
   become: false
-  no_log: true
   when: not _vault_item_matches
 
 # The readback and its assert run on every pass, including one that skipped the

@@ -1,0 +1,32 @@
+---
+# Resolve step of playbooks/apps/deploy.yml (localhost, after the app config is loaded and
+# validated): resolve the estate, then derive the role, display name, route and published
+# hostname.
+#
+# Inputs: app, instance, app_config.
+# Results: the estate overlay on homelabinfra_infra (tasks/resolve-estate.yml), _deploy_role,
+# _deploy_display, _deploy_subdomain, _deploy_routed, _deploy_fqdn, and
+# <app>_fqdn / <app>_subdomain under the app's and the role's names.
+- name: Deploy | Resolve the estate this app belongs to
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+- name: Deploy | Derive the role, display name, route and published hostname
+  ansible.builtin.set_fact:
+    _deploy_role: "{{ (app_config.deploy | default({})).role | default(app, true) }}"
+    _deploy_display: "{{ _deploy_catalog.applications[app].name }}"
+    _deploy_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+    _deploy_routed: "{{ app_config.routing.proxy | default('internal') != 'none' }}"
+    _deploy_fqdn: "{{ [app_config.routing.subdomain | default(instance, true), _deploy_domain] | select | join('.') }}"
+  vars:
+    _deploy_domain: "{{ homelabinfra_infra.domain if app_config.routing.proxy | default('internal') != 'none' else homelabinfra_infra.domain | default('') }}"
+    _deploy_catalog: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../catalog/applications.yml') | from_yaml }}"
+
+# Roles read the hostname as <app>_fqdn and <app>_subdomain (the Servarr role as
+# servarr_fqdn), so both the app's and the role's names are set.
+- name: Deploy | Publish the hostname under the names the role reads
+  ansible.builtin.set_fact:
+    "{{ item | replace('-', '_') }}_fqdn": "{{ _deploy_fqdn }}"
+    "{{ item | replace('-', '_') }}_subdomain": "{{ _deploy_subdomain }}"
+  loop: "{{ [app, _deploy_role] | unique }}"

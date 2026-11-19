@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard SearXNG's native method: exact pins, the rendered unit and settings, the playbook wiring."""
+"""Guard SearXNG's native method: exact pins, the rendered unit and settings."""
 
 import subprocess
 import tempfile
@@ -19,12 +19,6 @@ assert len(app["native_commit"]) == 40 and app["native_version"].count(".") == 2
 assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "ansible.builtin.git:" in install and "native_commit" in install and "searxng_venv" in install
-
-playbook = (repo / "ansible/playbooks/apps/searxng.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] == "Ensure Docker is installed":
-        assert "== 'docker'" in task["when"], "native guests do not get Docker"
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
