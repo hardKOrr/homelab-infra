@@ -32,6 +32,7 @@
     state: present
     remove_orphans: true
   no_log: true
+  register: _wordpress_start
 
 - name: WordPress | Apply pending restart
   ansible.builtin.meta: flush_handlers

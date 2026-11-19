@@ -89,6 +89,7 @@
         project_src: "{{ n8n_project_dir }}"
         state: present
         remove_orphans: true
+      register: _n8n_start
 
     - name: n8n | Apply pending restart
       ansible.builtin.meta: flush_handlers

@@ -43,6 +43,7 @@
     project_src: "{{ bookstack_project_dir }}"
     state: present
     remove_orphans: true
+  register: _bookstack_start
   no_log: true
 
 - name: BookStack | Apply pending restart
