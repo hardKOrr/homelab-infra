@@ -79,9 +79,28 @@ def check_restore_swap():
 
         template = repo / "ansible/roles/mautic/templates/php-string.j2"
 
+        converge_tasks = yaml.safe_load(
+            (repo / "ansible/roles/mautic/tasks/converge-local-php.yml").read_text())
+
+        def inline(tasks):
+            # The hook runs alone here: inline the role's converge file with the include's
+            # vars, and resolve mail as disabled instead of reading the platform contract.
+            out = []
+            for task in tasks:
+                if task.get("ansible.builtin.include_tasks") == "mail.yml":
+                    out.append({"ansible.builtin.set_fact": {"wiring_mail": {"enabled": False}}})
+                elif task.get("ansible.builtin.include_tasks") == "converge-local-php.yml":
+                    for inner in yaml.safe_load(yaml.safe_dump(converge_tasks)):
+                        inner["vars"] = {**task.get("vars", {}), **inner.get("vars", {})}
+                        out.append(inner)
+                else:
+                    out.append(task)
+            return out
+
         def stub(tasks):
             # The play runs as root on the Docker host; the fixture writes as the gate user
             # and reads no lab config.
+            tasks = inline(tasks)
             for task in tasks:
                 task.pop("no_log", None)
                 if "ansible.builtin.include_vars" in task:
@@ -102,6 +121,7 @@ def check_restore_swap():
             "_mautic_restore_database_name": "mautic",
             "_mautic_restore_database_user": "mautic",
             "_mautic_restore_database_password": "it's 50% a\\b",
+            "mautic_native": False,
         }
         result = run_hook("mautic", "replaced", hook_variables, stub)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -109,6 +129,7 @@ def check_restore_swap():
         for line in ["'db_host' => 'db.example.invalid',", "'db_port' => '3306',",
                      "'db_password' => 'it\\'s 50%% a\\\\b',",
                      "'site_url' => 'https://crm.example.invalid',",
+                     "'mailer_dsn' => 'smtp://localhost:25',",
                      "'default_timezone' => 'Pacific/Honolulu',"]:
             assert line in config, (line, config)
         assert "source-db" not in config and config.rstrip().endswith(");")
@@ -135,8 +156,8 @@ def static_contract():
     deploy_tasks = list(tasks_recursive(deploy_source))
     seed_config = next(task for task in deploy_tasks
                        if task.get("name") == "Mautic | Seed configuration on first deploy")
-    converge_config = next(task for task in deploy_tasks
-                           if task.get("name") == "Mautic | Converge platform-owned configuration fields")
+    converge_config = yaml.safe_load(
+        (repo / "ansible/roles/mautic/tasks/converge-local-php.yml").read_text())[0]
     for config_task, module in [(seed_config, "ansible.builtin.template"),
                                 (converge_config, "ansible.builtin.lineinfile")]:
         assert config_task[module]["owner"] == "www-data"
@@ -184,17 +205,16 @@ def static_contract():
     assert "mautic_media_files_dir" in str(backup_source)
     assert "mautic_media_images_dir" in str(backup_source)
 
-    [restore_config] = [task for task in replaced_source if "ansible.builtin.lineinfile" in task]
-    deploy_config = next(task for task in deploy_source
-                         if task.get("name") == "Mautic | Converge platform-owned configuration fields")
-    assert restore_config["ansible.builtin.lineinfile"]["line"] == \
-        deploy_config["ansible.builtin.lineinfile"]["line"], "Deploy and restore write local.php alike"
-    assert restore_config["ansible.builtin.lineinfile"]["owner"] == "www-data"
-    assert restore_config["ansible.builtin.lineinfile"]["group"] == "www-data"
+    # Deploy and Restore App write local.php through one task file, so the restored file
+    # gets the same platform-owned keys (mail included) before Mautic starts.
+    [restore_config] = [task for task in replaced_source
+                        if task.get("ansible.builtin.include_tasks") == "converge-local-php.yml"]
+    assert restore_config["vars"]["mautic_converge_installed"] is True
+    assert any(task.get("ansible.builtin.include_tasks") == "mail.yml" for task in replaced_source)
+    assert not any("ansible.builtin.lineinfile" in task for task in replaced_source)
 
     assert any(task.get("name") == "Mautic restore | Preview or replace the file tree and database"
                for task in restore_source)
-    assert restore_config["ansible.builtin.lineinfile"]["mode"] == "0640"
 
 
 def main():

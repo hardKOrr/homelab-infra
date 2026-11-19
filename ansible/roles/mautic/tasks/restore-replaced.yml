@@ -1,6 +1,6 @@
 ---
-# restore-swap.yml replaced hook: the restored local.php names the source's database and
-# URL; point it at the target's MariaDB database and public hostname before Mautic starts.
+# restore-swap.yml replaced hook: the restored local.php names the source's database, URL
+# and mail settings; converge it to the target's before Mautic starts.
 - name: Mautic restore | Load the target domain declaration
   ansible.builtin.include_vars:
     file: "{{ playbook_dir }}/../../../config/infrastructure.yml"
@@ -41,35 +41,23 @@
     fail_msg: >-
       Mautic restore cannot set the target's public URL because its domain is missing.
 
-- name: Mautic restore | Converge the target database connection and URL
-  ansible.builtin.lineinfile:
-    path: "{{ _mautic_restore_data_path }}/config/local.php"
-    # The restored archive may predate the runtime-readable config permissions.
-    owner: "www-data"
-    group: "www-data"
-    mode: "0640"
-    regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
-    # Mautic's config writer uses a tab; match it to avoid a restart on every Deploy.
-    line: "\t'{{ item.key }}' => {{ lookup('template', 'php-string.j2', template_vars={'value': item.value}) | trim }},"
-    insertbefore: "^\\);$"
-  loop:
-    - key: db_driver
-      value: pdo_mysql
-    - key: db_host
-      value: "{{ _mautic_restore_database_backend.host }}"
-    - key: db_port
-      value: "{{ _mautic_restore_database_backend.port }}"
-    - key: db_name
-      value: "{{ _mautic_restore_database_name }}"
-    - key: db_user
-      value: "{{ _mautic_restore_database_user }}"
-    - key: db_password
-      value: "{{ _mautic_restore_database_password }}"
-    - key: site_url
-      value: "https://{{ _mautic_restore_fqdn }}"
-  loop_control:
-    label: "{{ item.key }}"
-  no_log: true
+- name: Mautic restore | Resolve platform mail
+  ansible.builtin.include_tasks: mail.yml
+
+# The same keys Deploy converges, so the restored file does not keep the source's mail
+# settings until the next Deploy. Restore-swap starts the services after this hook.
+- name: Mautic restore | Converge the target's platform-owned configuration fields
+  ansible.builtin.include_tasks: converge-local-php.yml
+  vars:
+    mautic_converge_file: "{{ _mautic_restore_data_path }}/config/local.php"
+    mautic_converge_installed: true
+    mautic_converge_fqdn: "{{ _mautic_restore_fqdn }}"
+    mautic_converge_database:
+      host: "{{ _mautic_restore_database_backend.host }}"
+      port: "{{ _mautic_restore_database_backend.port }}"
+      name: "{{ _mautic_restore_database_name }}"
+      user: "{{ _mautic_restore_database_user }}"
+      password: "{{ _mautic_restore_database_password }}"
 
 # Mautic compiles local.php into its cache; the restored file must not meet the old one.
 - name: Mautic restore | Clear the native cache

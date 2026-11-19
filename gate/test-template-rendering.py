@@ -1268,11 +1268,15 @@ def navidrome_rendering():
 
 
 def mautic_rendering():
-    tasks = [t for f in ("config", "credentials") for t in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{f}.yml"))]
+    tasks = [t for f in ("converge-local-php", "mail") for t in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{f}.yml"))]
     converge = task_named(
         tasks, "Mautic | Converge platform-owned configuration fields"
     )
     fields_expr = converge["vars"]["_mautic_local_php_fields"]
+    # Deploy and Restore App converge local.php through the same file.
+    for caller in ("config", "restore-replaced"):
+        assert any(task.get("ansible.builtin.include_tasks") == "converge-local-php.yml"
+                   for task in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{caller}.yml"))), caller
     # The role finds templates/php-string.j2 by name; this fixture has no role path.
     line_expr = converge["ansible.builtin.lineinfile"]["line"].replace(
         "'php-string.j2'", repr(str(ROOT / "ansible/roles/mautic/templates/php-string.j2")))
@@ -1310,6 +1314,8 @@ def mautic_rendering():
                     "ansible_managed": "fixture",
                     "_mautic_installed_marker": {"stat": {"exists": installed}},
                     "mautic_native": native,
+                    "mautic_converge_installed": installed, "mautic_converge_fqdn": "mautic.example.test",
+                    "mautic_converge_database": {"host": "h", "port": 3306, "name": "mautic", "user": "u", "password": "p"},
                 }
                 fields = render(fields_expr, variables)
                 by_key = {f["key"]: f["value"] for f in fields}
