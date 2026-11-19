@@ -74,6 +74,14 @@ def check_defaults_and_deploy():
     assert apt_refresh["changed_when"] is False
     redis_package = task_named(redis_main, "Redis | Install server")
     assert redis_package["ansible.builtin.apt"]["update_cache"] is False
+    # An ACL SAVE keeps users.acl 0600, so the next Deploy leaves its mode alone: the native
+    # server's umask drop-in is in place before the package first starts it.
+    umask = task_named(redis_main, "Redis | Write new files owner-only")
+    assert "UMask=0077" in umask["ansible.builtin.copy"]["content"]
+    assert umask["notify"] == "Restart Redis"
+    assert redis_main.index(umask) < redis_main.index(redis_package)
+    restart = read_yaml("ansible/roles/redis/handlers/main.yml")[0]
+    assert restart["ansible.builtin.systemd"]["daemon_reload"] is True
 
     acl_file = task_named(redis_main, "Redis | Create the ACL file without replacing existing users")
     assert acl_file["ansible.builtin.copy"]["content"] == ""
