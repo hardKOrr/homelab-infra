@@ -4,10 +4,8 @@
 # an app without one keeps its own playbook, as do PBS, k3s, OPNsense, PDM and Caddy's Seed.
 #
 # Plays:
-#   1. Resolve and provision (localhost): config, hosting method, then estate and hostname
-#      (tasks/apps/deploy-resolve.yml), the app's database; then the stack host (docker),
-#      the app's own guest (native) or the cluster's firewall access (kubernetes), the
-#      guest's storage and its declared firewall access.
+#   1. Resolve and provision (localhost): config, estate and hostname (deploy-resolve.yml),
+#      the database, the stack host, own guest or cluster access, storage, firewall access.
 #   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
 #   3. Deploy on the cluster: the role's kubernetes.yml.
 #   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS (only when routing.proxy is
@@ -17,18 +15,17 @@
 # Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
 # slug) and in these optional hooks, run only when the role has them:
 #   deploy-prepare.yml  localhost, after the hostname is known, before provisioning. May set
-#                       deploy_host_mounts (an attach-host-mounts.yml list),
-#                       deploy_host_mounts_owner and deploy_host_mounts_own_node (only
-#                       the guest's node) for the Docker or native guest,
-#                       native_guest_database (database placement for a native guest) and
-#                       firewall_inbound_ports (tasks/firewall/open-app-access.yml).
+#                       deploy_host_mounts (attach-host-mounts.yml), deploy_host_mounts_owner,
+#                       deploy_host_mounts_own_node (only the guest's node),
+#                       native_guest_database and firewall_inbound_ports.
 #   deploy-record.yml   localhost, before wiring, also while the restore target is
 #                       isolated: registry entries other jobs read (`media`, `databases`);
 #                       deploy_notify_note, a note computed from app_config.
 #
 # An app with `app.database` gets its database and login role on the named backend before
 # its guest is provisioned (tasks/database/deploy-consumer.yml), on the methods in
-# deploy.database_methods (default every method).
+# deploy.database_methods (default every method); with deploy.database_optional, only while
+# app.database.instance is named.
 #
 # Per-app values are app-defaults keys (shared ones in vars/app-defaults/_base.yml):
 # routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to the
@@ -101,6 +98,9 @@
       ansible.builtin.include_tasks: ../../tasks/database/deploy-consumer.yml
       when:
         - app_config.app.database is defined
+        - >-
+          not ((app_config.deploy | default({})).database_optional | default(false) | bool)
+          or app_config.app.database.instance | default('') | length > 0
         - >-
           app_config.hosting.method in (app_config.deploy | default({})).database_methods
           | default(['docker', 'kubernetes', 'native'])

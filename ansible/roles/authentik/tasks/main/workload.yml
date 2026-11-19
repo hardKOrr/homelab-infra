@@ -4,7 +4,7 @@
 # listed in main.yml.
 
 - name: Deploy the Kubernetes workload
-  ansible.builtin.include_tasks: ../kubernetes.yml
+  ansible.builtin.include_tasks: ../kubernetes-workload.yml
   when: app_config.hosting.method | default('docker') == 'kubernetes'
 
 - name: Deploy the Compose workload

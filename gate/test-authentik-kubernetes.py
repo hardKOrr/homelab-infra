@@ -185,8 +185,10 @@ def main():
             for name in ["server", "worker"]:
                 assert ("postgresql" in services[name]["depends_on"]) is (not external)
 
-    k8s = includes("kubernetes.yml")
-    for shared in ["resolve-cluster", "ensure-namespace", "open-app-access", "sync-secret", "apply-manifest", "recovery-backup"]:
+    assert includes("kubernetes.yml") == {"main.yml": includes("kubernetes.yml")["main.yml"]}
+    k8s = includes("kubernetes-workload.yml")
+    assert "../../../tasks/kubernetes/open-app-access.yml" not in k8s  # Deploy play 1 opens it
+    for shared in ["resolve-cluster", "ensure-namespace", "sync-secret", "apply-manifest", "recovery-backup"]:
         assert f"../../../tasks/kubernetes/{shared}.yml" in k8s
     database = "../../../tasks/database/kubernetes-recovery-step.yml"
     assert k8s[database]["vars"]["k8s_database_step_source"] == "registered"

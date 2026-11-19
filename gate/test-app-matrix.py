@@ -323,15 +323,20 @@ def deploy_seed(app: str, steps: list[dict]) -> dict | None:
     it: the app, its playbook directory, the role it derives from `deploy.role`, and
     app_config as the app's defaults give it (over vars/app-defaults/_base.yml), so a step
     keyed on a default (`app.database`, `routing.proxy`) is decided for the app. Firewall
-    access is left out: an instance file adds rules, so those steps stay undecided."""
+    access is left out: an instance file adds rules, so those steps stay undecided. So is
+    the database instance of an app with `deploy.database_optional`: the instance file
+    names it or leaves it empty."""
     shared = str(SHARED_DEPLOY.relative_to(ROOT))
     if not any(shared in (step.get("via") or []) for step in steps):
         return None
     base = yaml.safe_load((ROOT / "ansible/vars/app-defaults/_base.yml").read_text())
+    config = {key: value for key, value in merged(
+        base["_base_defaults"], defaults(app)).items() if key != "firewall"}
+    if (config.get("deploy") or {}).get("database_optional"):
+        config = merged(config, {"app": {"database": {"instance": RunValue()}}})
     return {"app": app, "playbook_dir": str(SHARED_DEPLOY.parent),
             "_deploy_role": (defaults(app).get("deploy") or {}).get("role", app),
-            "app_config": {key: value for key, value in merged(
-                base["_base_defaults"], defaults(app)).items() if key != "firewall"}}
+            "app_config": config}
 
 
 def deploy_reached(app: str, method: str, deep: bool = False, shared: bool = False):

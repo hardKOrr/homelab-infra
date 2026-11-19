@@ -1,0 +1,6 @@
+---
+# Deploy's cluster entry point (playbooks/apps/deploy.yml play 3). Authentik runs its whole
+# main.yml on Kubernetes too: secrets, the workload (kubernetes-workload.yml), the directory
+# and identity surface, then the exports deploy-record.yml writes to the `sso` registry key.
+- name: Deploy Authentik on the cluster
+  ansible.builtin.include_tasks: main.yml

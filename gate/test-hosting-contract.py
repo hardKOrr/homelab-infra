@@ -235,13 +235,14 @@ def check_declarations(paths):
         playbook, source = app_source(slug)
         if playbook.name == "deploy.yml":
             # deploy.yml holds every method's path, so a shim's methods come from its role:
-            # its Kubernetes adapter, and native handling in its tasks.
+            # its Kubernetes adapter, and a native hosting-method branch in its tasks (not the
+            # word alone: a native PBS client is no native install).
             role = ROOT / "ansible/roles" / ((defaults.get("deploy") or {}).get("role") or slug) / "tasks"
             role_text = "\n".join(path.read_text() for path in role.rglob("*.yml"))
             implemented = {expected}
             if (role / "kubernetes.yml").is_file():
                 implemented.add("kubernetes")
-            if "native" in role_text:
+            if re.search(r"method.*'native'|'native'.*method|== 'native'", role_text):
                 implemented |= {"native-lxc", "native-vm"}
         else:
             implemented = implemented_combinations(expected, source)

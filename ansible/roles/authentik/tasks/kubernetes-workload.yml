@@ -1,4 +1,6 @@
 ---
+# Phase of main.yml (main/workload.yml): the Kubernetes workload. Deploy opens the
+# database egress declared in app-defaults before this runs (playbooks/apps/deploy.yml).
 - name: Authentik Kubernetes | Require the registered PostgreSQL connection
   ansible.builtin.assert:
     that:
@@ -12,20 +14,6 @@
 
 - name: Authentik Kubernetes | Ensure the owned namespace
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
-
-- name: Authentik Kubernetes | Add database firewall egress
-  ansible.builtin.set_fact:
-    app_config: >-
-      {{ app_config | combine({'firewall': {'egress':
-           ((app_config.firewall | default({})).egress | default([])
-            | rejectattr('name', 'equalto', 'authentik-database') | list)
-           + [{'name': 'authentik-database', 'protocol': 'TCP',
-               'port': app_config.app.database_port | string,
-               'destination': app_config.app.database_host}]}}, recursive=True) }}
-  no_log: true
-
-- name: Authentik Kubernetes | Open access through the cluster node alias
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
 
 - name: Authentik Kubernetes | Resolve the private runtime environment
   ansible.builtin.set_fact:
