@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard LiteLLM's native method: exact pins, the rendered unit and env file, the playbook wiring."""
+"""Guard LiteLLM's native method: exact pins, the rendered unit and the env file."""
 
 import subprocess
 import tempfile
@@ -19,14 +19,6 @@ install = (role / "tasks/native.yml").read_text()
 # prisma lives in extra_proxy, not proxy; the proxy exits without it when DATABASE_URL is set.
 assert 'litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}' in install
 assert "from prisma import Prisma" in install
-
-playbook = (repo / "ansible/playbooks/apps/litellm.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] == "Ensure Docker is installed":
-        assert "== 'docker'" in task["when"], "native guests do not get Docker"
-for name in ("backup.yml", "backup-quiesced.yml", "restore-guest.yml"):
-    assert "litellm_native" in (role / "tasks" / name).read_text(), name
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)

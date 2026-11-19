@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard Kometa's native method: exact pins, the rendered unit, the playbook wiring."""
+"""Guard Kometa's native method: exact pins and the rendered unit."""
 
 import subprocess
 import tempfile
@@ -22,12 +22,6 @@ assert "git" in install and "uv sync --frozen" in install and "native_uv_sha256"
 assert app["native_python_version"] == "3.13", "match the pinned upstream base image"
 assert "--python {{ app_config.app.native_python_version }}" in install
 assert "app_config.app.native_version ~ '-python-' ~ app_config.app.native_python_version" in install
-
-playbook = (repo / "ansible/playbooks/apps/kometa.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] == "Ensure Docker is installed":
-        assert "== 'docker'" in task["when"], "native guests do not get Docker"
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)

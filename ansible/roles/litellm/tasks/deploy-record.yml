@@ -1,0 +1,18 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring). Record the instance's
+# `apps` registry entry that named AI consumers (Open WebUI) read. Skipped while a restore
+# target is isolated, so no consumer is pointed at it before it verifies. Consumers use the
+# routed HTTPS endpoint so the Kubernetes Ingress receives the right Host header; `/v1` is
+# already present and the consumer seam does not append a second one.
+- name: LiteLLM | Record the endpoint for named AI consumers
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: apps
+    # An expression, never a literal `"{{ instance }}":` key: Ansible does not template a
+    # mapping key.
+    generated_facts_data: >-
+      {{ {instance: {'provider': 'litellm', 'instance': instance,
+                     'host': 'https://' ~ _deploy_fqdn, 'port': 443,
+                     'url': 'https://' ~ _deploy_fqdn ~ '/v1'}} }}
+  when: not (recovery_isolated | default(false) | bool)

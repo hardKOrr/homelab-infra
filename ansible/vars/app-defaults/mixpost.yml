@@ -16,6 +16,10 @@
 # on a cluster that outlives any single deployment of it.
 
 mixpost_defaults:
+  # The Kubernetes method runs Mixpost's own MySQL in its namespace instead.
+  deploy:
+    database_methods: [docker, native]
+
 
   hosting:
     method: kubernetes

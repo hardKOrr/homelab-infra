@@ -47,6 +47,9 @@
 # give back. catalog/applications.yml excludes `backup` and `restore` for this reason.
 
 flaresolverr_defaults:
+  vault:
+    methods: []
+
 
   hosting:
     method: kubernetes

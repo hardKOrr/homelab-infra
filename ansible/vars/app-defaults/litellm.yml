@@ -16,6 +16,9 @@
 # See https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/145-litellm/README.md for the upstream validation and the recovery boundary.
 
 litellm_defaults:
+  deploy:
+    notify_note: Provider keys remain in Vaultwarden.
+
 
   hosting:
     method: kubernetes
@@ -70,6 +73,7 @@ litellm_defaults:
   routing:
     subdomain: litellm
     proxy: internal
+    monitor_path: /health/readiness
     access: internal
     # Authentik supplies a catalog tile, but does not sit in front of the OpenAI-compatible
     # API: clients authenticate with LiteLLM's master/proxy key instead.

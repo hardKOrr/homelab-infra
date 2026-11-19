@@ -1,0 +1,11 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring). FlareSolverr has no
+# route, so the notification says where Prowlarr reaches it. Connecting Prowlarr is a
+# Prowlarr indexer-proxy setting entered by hand (see vars/app-defaults/flaresolverr.yml).
+- name: FlareSolverr | Say where Prowlarr reaches it
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      It answers on port {{ app_config.app.node_port ~ " of any cluster node's address"
+      if app_config.hosting.method == 'kubernetes' else app_config.app.port ~ ' of its address' }}.
+      Point Prowlarr's FlareSolverr indexer-proxy setting at it; that connection is not
+      automated.

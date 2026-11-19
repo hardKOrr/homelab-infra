@@ -59,7 +59,8 @@ def check_engine(engine):
 
 def check_deploy_unrouted():
     plays = read_yaml("ansible/playbooks/apps/deploy.yml")
-    derive = next(t for t in plays[0]["tasks"] if "_deploy_routed" in t.get("ansible.builtin.set_fact", {}))
+    derive = next(t for t in read_yaml("ansible/tasks/apps/deploy-resolve.yml")
+                  if "_deploy_routed" in t.get("ansible.builtin.set_fact", {}))
     expression = derive["ansible.builtin.set_fact"]["_deploy_routed"]
     assert render(expression, app_config={"routing": {"proxy": "none"}}) is False
     assert render(expression, app_config={"routing": {}}) is True

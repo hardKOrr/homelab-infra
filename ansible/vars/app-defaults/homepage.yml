@@ -2,6 +2,9 @@
 # Homepage is a stateless, lab-wide dashboard. Its service entries are generated from the
 # topology facts that deployments already write; this file deliberately contains no URLs.
 homepage_defaults:
+  vault:
+    methods: []
+
   hosting:
     method: kubernetes
     supported: [kubernetes, docker-lxc, docker-vm, native-lxc, native-vm]

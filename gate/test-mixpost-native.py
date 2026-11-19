@@ -28,13 +28,6 @@ for name, shared in (("backup.yml", "tasks/backup/pbs-client-backup.yml"),
     text = (role / "tasks" / name).read_text()
     assert shared in text and "'native' if mixpost_native" in text, name
 
-playbook = (repo / "ansible/playbooks/apps/mixpost.yml").read_text()
-assert "tasks_from: provision" in playbook and "app_config.hosting.method == 'native'" in playbook
-for play in yaml.safe_load(playbook):
-    for task in play.get("tasks", []):
-        if task["name"] == "Ensure Docker is installed":
-            assert "== 'docker'" in task["when"], "native guests do not get Docker"
-
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     variables = {"instance": "mixpost", "mixpost_php_version": "8.2", "mixpost_env_file": "/opt/mixpost/mixpost.env",

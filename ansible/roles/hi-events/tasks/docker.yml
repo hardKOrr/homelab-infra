@@ -1,7 +1,7 @@
 ---
 # Hi.Events on Docker on a stack host (hosting.method: docker, LXC or VM): the all-in-one
 # image plus a password-protected Redis, with the database on the named PostgreSQL backend
-# (playbooks/apps/hi-events.yml provisions it before this role). Kubernetes is
+# (playbooks/apps/deploy.yml provisions it before this role). Kubernetes is
 # kubernetes.yml. Both share secrets.yml and env.yml.
 - name: Hi.Events | Create the project directory
   ansible.builtin.file:
