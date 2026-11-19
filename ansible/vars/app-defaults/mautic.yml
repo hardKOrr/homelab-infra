@@ -60,6 +60,14 @@ mautic_defaults:
 
     admin_user: admin
 
+  # SMTP egress to the platform relay for its mail (tasks/firewall/open-app-access.yml).
+  # On Kubernetes roles/mautic/tasks/kubernetes.yml opens the database and mail egress itself, so Deploy
+  # opens access only for a Docker or native guest; a second pass would delete the
+  # role's database rule on every run.
+  firewall:
+    methods: [docker, native]
+    sends_mail: true
+
   routing:
     subdomain: mautic
     proxy: internal

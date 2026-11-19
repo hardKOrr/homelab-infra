@@ -67,17 +67,11 @@ def main():
     ingress = next(d for d in docs if d['kind'] == 'Ingress')
     assert ingress['spec']['rules'][0]['host'] == 'forgejo.example.test'
     assert ingress['spec']['rules'][0]['http']['paths'][0]['path'] == '/'
-    deploy = load('ansible/playbooks/apps/forgejo.yml')
-    stack = next(t for t in deploy[0]['tasks'] if t['name'] == 'Find or create services stack host')
-    assert stack['when'] == "app_config.hosting.method == 'docker'"
-    kube = next(p for p in deploy if p['name'] == 'Forgejo | Deploy on Kubernetes')
-    assert kube['tasks'][0]['when'] == "app_config.hosting.method == 'kubernetes'"
-    wire = deploy[-1]
-    assert 'ingress_vip' in wire['vars']['wiring_upstream_host']
-    assert "80 if app_config.hosting.method == 'kubernetes'" in wire['vars']['wiring_upstream_port']
-    endpoint = next(t for t in wire['tasks'] if t['name'] == 'Record Forgejo endpoint for app-to-app consumers')
-    registration = Templar(loader=DataLoader(), variables=variables | {
-        'app_config': defaults | {'hosting': {'method': 'kubernetes'}}
+    hook = load('ansible/roles/forgejo/tasks/deploy-record.yml')
+    endpoint = next(t for t in hook if t['name'] == 'Forgejo | Record the endpoint for app-to-app consumers')
+    registration = Templar(loader=DataLoader(), variables=variables | endpoint['vars'] | {
+        'app_config': defaults | {'hosting': {'method': 'kubernetes'}},
+        '_deploy_fqdn': 'forgejo.example.test',
     }).template(endpoint['vars']['generated_facts_data'])
     assert registration['forgejo']['url'] == 'https://forgejo.example.test/'
     recovery = load('ansible/roles/forgejo/tasks/recovery-inputs.yml')

@@ -34,3 +34,10 @@ wordpress_k8s_config: "{{ app_config }}"
 wordpress_k8s_content_claim: "{{ wordpress_k8s_instance }}-content"
 wordpress_k8s_admin_secret: "{{ wordpress_k8s_instance }}-admin"
 wordpress_k8s_admin_marker: /var/www/html/wp-content/.homelab-infra-admin
+
+# The lab PBS target the deploy-prepare hook resolved on localhost
+# (tasks/backup/resolve-pbs-target.yml); unset while backup is disabled.
+wordpress_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"
+wordpress_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
+wordpress_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
+wordpress_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"

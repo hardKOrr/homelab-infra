@@ -1268,11 +1268,15 @@ def navidrome_rendering():
 
 
 def mautic_rendering():
-    tasks = [t for f in ("config", "credentials") for t in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{f}.yml"))]
+    tasks = [t for f in ("converge-local-php", "mail") for t in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{f}.yml"))]
     converge = task_named(
         tasks, "Mautic | Converge platform-owned configuration fields"
     )
     fields_expr = converge["vars"]["_mautic_local_php_fields"]
+    # Deploy and Restore App converge local.php through the same file.
+    for caller in ("config", "restore-replaced"):
+        assert any(task.get("ansible.builtin.include_tasks") == "converge-local-php.yml"
+                   for task in yaml.safe_load(read(f"ansible/roles/mautic/tasks/{caller}.yml"))), caller
     # The role finds templates/php-string.j2 by name; this fixture has no role path.
     line_expr = converge["ansible.builtin.lineinfile"]["line"].replace(
         "'php-string.j2'", repr(str(ROOT / "ansible/roles/mautic/templates/php-string.j2")))
@@ -1310,6 +1314,8 @@ def mautic_rendering():
                     "ansible_managed": "fixture",
                     "_mautic_installed_marker": {"stat": {"exists": installed}},
                     "mautic_native": native,
+                    "mautic_converge_installed": installed, "mautic_converge_fqdn": "mautic.example.test",
+                    "mautic_converge_database": {"host": "h", "port": 3306, "name": "mautic", "user": "u", "password": "p"},
                 }
                 fields = render(fields_expr, variables)
                 by_key = {f["key"]: f["value"] for f in fields}
@@ -1376,38 +1382,35 @@ def mautic_rendering():
 
 def mail_consumers_open_smtp_egress():
     tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
+    decide = task_named(tasks, "Firewall access | Decide whether the app sends mail")
+    sends = decide["ansible.builtin.set_fact"]["_fw_sends_mail"]
+    for variables, expected in (({"app_config": {"firewall": {"sends_mail": True}}}, True),
+                                ({"app_config": {}}, False),
+                                ({"app_config": {"firewall": {"sends_mail": True}},
+                                  "firewall_sends_mail": False}, False),
+                                ({"app_config": {}, "firewall_sends_mail": True}, True)):
+        assert render(sends, variables) is expected, (variables, expected)
     access = task_named(tasks, "Firewall access | Add SMTP egress for a mail consumer")
     expression = access["ansible.builtin.set_fact"]["_fw_app_access"]
     declared = {"egress": [{"name": "nntp", "protocol": "TCP", "port": 119}]}
-    on = render(expression, {"wiring_firewall": {}, "firewall_sends_mail": True,
+    on = render(expression, {"wiring_firewall": {}, "_fw_sends_mail": True,
                              "wiring_mail": {"enabled": True, "port": "587"}})
     assert on["egress"] == [{"name": "smtp", "protocol": "TCP", "port": "587"}], on
-    off = render(expression, {"wiring_firewall": {}, "firewall_sends_mail": True,
+    off = render(expression, {"wiring_firewall": {}, "_fw_sends_mail": True,
                               "wiring_mail": {"enabled": False, "port": ""}})
     assert off["egress"] == [], off
-    both = render(expression, {"wiring_firewall": declared, "firewall_sends_mail": True,
+    both = render(expression, {"wiring_firewall": declared, "_fw_sends_mail": True,
                                "wiring_mail": {"enabled": True, "port": "465"}})
     assert both["egress"] == declared["egress"] + [{"name": "smtp", "protocol": "TCP", "port": "465"}], both
-    for app in ("mautic", "odoo", "bookstack"):
-        plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
-        names = [play["name"] for play in plays]
-        if app == "bookstack":
-            docker_open = names.index("BookStack | Open Docker network access")
-            docker_deploy = names.index("BookStack | Deploy on Docker")
-            kubernetes_open = names.index("BookStack | Open Kubernetes network access")
-            kubernetes_deploy = names.index("BookStack | Deploy on Kubernetes")
-            assert docker_open < docker_deploy, names
-            assert kubernetes_open < kubernetes_deploy, names
-            docker_task = task_named(plays[docker_open]["tasks"],
-                                     "Open the app's declared access and SMTP egress from its Docker host")
-            kubernetes_task = task_named(plays[kubernetes_open]["tasks"],
-                                         "Open the app's declared access and SMTP egress from every cluster node")
-            assert docker_task["vars"]["firewall_sends_mail"] is True
-            assert kubernetes_task["vars"]["firewall_sends_mail"] is True
-            continue
-        opened = [i for i, n in enumerate(names) if n.endswith("| Open network access")]
-        deployed = [i for i, n in enumerate(names) if n.endswith("| Deploy")]
-        assert opened and opened[0] < deployed[0], (app, names)
+    # Mail consumers declare it in their defaults; deploy.yml opens access before the guest
+    # play, and the cluster path opens it for an app that declares nothing else.
+    for app in ("mautic", "odoo", "bookstack", "hi-events"):
+        defaults = yaml.safe_load(read(f"ansible/vars/app-defaults/{app}.yml"))
+        assert defaults[f"{app.replace('-', '_')}_defaults"]["firewall"]["sends_mail"] is True, app
+    cluster = yaml.safe_load(read("ansible/tasks/kubernetes/open-app-access.yml"))[0]
+    conditions = cluster["when"]
+    assert render("{{ " + conditions[-1] + " }}",
+                  {"app_config": {"firewall": {"sends_mail": True}}}) is True, conditions
 
 
 def wireguard_opens_its_udp_forward_before_deploy():

@@ -23,3 +23,10 @@ bookstack_artisan: >-
       'bookstack', 'php', '/app/www/artisan'] }}
 bookstack_artisan_chdir: "{{ bookstack_native_current if bookstack_native | bool else '/' }}"
 bookstack_artisan_user: "{{ bookstack_native_user if bookstack_native | bool else 'root' }}"
+
+# The lab PBS target the deploy-prepare hook resolved on localhost
+# (tasks/backup/resolve-pbs-target.yml); unset while backup is disabled.
+bookstack_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"
+bookstack_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
+bookstack_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
+bookstack_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"

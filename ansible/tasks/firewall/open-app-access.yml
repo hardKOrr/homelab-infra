@@ -13,13 +13,19 @@
 #                            wiring_upstream_host
 #   wiring_firewall       — the app's declared firewall access ({egress, inbound})
 #   app_config            — the app's merged config (for the mail estate)
-#   firewall_sends_mail   — true for a mail consumer (default false)
+#   firewall_sends_mail   — true for a mail consumer (default app_config.firewall.sends_mail,
+#                           else false)
 #   firewall_inbound_ports — optional {inbound name: port the app listens on}; an enabled
 #                           forward with that name must land on that port, so a changed
 #                           app port fails Deploy instead of forwarding to nothing
 #
 # The SMTP rule allows any destination on the relay's port: OPNsense filter rules take
 # addresses or aliases, not hostnames.
+
+- name: Firewall access | Decide whether the app sends mail
+  ansible.builtin.set_fact:
+    _fw_sends_mail: >-
+      {{ firewall_sends_mail | default((app_config.firewall | default({})).sends_mail | default(false)) | bool }}
 
 - name: Firewall access | Assert each enabled forward lands on the app's port
   ansible.builtin.assert:
@@ -43,7 +49,7 @@
 
 - name: Firewall access | Resolve platform mail
   ansible.builtin.include_tasks: ../mail/resolve-mail.yml
-  when: firewall_sends_mail | default(false) | bool
+  when: _fw_sends_mail | bool
 
 - name: Firewall access | Add SMTP egress for a mail consumer
   ansible.builtin.set_fact:
@@ -51,7 +57,7 @@
       {{ wiring_firewall | default({}) | combine({'egress':
            (wiring_firewall.egress | default([]))
            + ([{'name': 'smtp', 'protocol': 'TCP', 'port': wiring_mail.port | string}]
-              if (firewall_sends_mail | default(false) | bool)
+              if (_fw_sends_mail | bool)
                  and (wiring_mail.enabled | default(false) | bool) else [])}) }}
 
 - name: Firewall access | Open it on the configured provider

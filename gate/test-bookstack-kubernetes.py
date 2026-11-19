@@ -93,29 +93,15 @@ def check_defaults_and_dispatch():
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
-    deploy = yaml.safe_load((ROOT / "ansible/playbooks/apps/bookstack.yml").read_text())
-    validate = next(
-        task for task in deploy[0]["pre_tasks"]
-        if task.get("name") == "Validate supported hosting method before provisioning resources"
-    )
-    database = next(
-        task for task in deploy[0]["tasks"]
-        if task.get("name") == "Provision the named MySQL-compatible database and role"
-    )
-    assert deploy[0]["pre_tasks"].index(validate) < len(deploy[0]["pre_tasks"])
-    assert database["ansible.builtin.include_tasks"].endswith("tasks/database/provision.yml")
-    stack = next(
-        task for task in deploy[0]["tasks"]
-        if task.get("name") == "Find or create the Docker stack host"
-    )
-    assert stack["when"] == "app_config.hosting.method == 'docker'"
-    k8s_play = next(play for play in deploy if play.get("name") == "BookStack | Deploy on Kubernetes")
-    k8s_include = k8s_play["tasks"][0]
-    assert k8s_include["ansible.builtin.include_role"] == {"name": "bookstack", "tasks_from": "kubernetes"}
-    assert k8s_include["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
-    assert "homelabinfra_infra.kubernetes.ingress_vip" in str(deploy[-1]["vars"]["wiring_upstream_host"])
-    assert "80 if app_config.hosting.method == 'kubernetes'" in deploy[-1]["vars"]["wiring_upstream_port"]
-    assert "else app_config.app.port" in deploy[-1]["vars"]["wiring_upstream_port"]
+    # Deploy is playbooks/apps/deploy.yml (gate/test-app-matrix.py holds its run); the
+    # role's deploy-prepare hook resolves the PBS target the role reads on every method.
+    shim = yaml.safe_load((ROOT / "ansible/playbooks/apps/bookstack.yml").read_text())
+    assert shim == [{"name": "Deploy bookstack", "ansible.builtin.import_playbook": "deploy.yml",
+                     "vars": {"app": "bookstack"}}], shim
+    prepare = yaml.safe_load((ROLE / "tasks/deploy-prepare.yml").read_text())
+    assert prepare[0]["ansible.builtin.include_tasks"].endswith("tasks/backup/resolve-pbs-target.yml")
+    role_defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert "hostvars['localhost'].k8s_pbs_available" in role_defaults["bookstack_pbs_available"]
 
     # Backup App and Restore App own BookStack's recovery on every method: the shared
     # backup runs the deployed CronJob on Kubernetes and the role's backup.yml on a guest,

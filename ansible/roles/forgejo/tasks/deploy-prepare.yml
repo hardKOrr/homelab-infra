@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). An enabled
+# forgejo-ssh forward must land on the port Forgejo's SSH server listens on
+# (tasks/firewall/open-app-access.yml).
+- name: Forgejo | Name the port the Git SSH forward must land on
+  ansible.builtin.set_fact:
+    firewall_inbound_ports:
+      forgejo-ssh: "{{ app_config.app.ssh_port }}"

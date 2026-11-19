@@ -50,9 +50,15 @@ bookstack_defaults:
     disk_volume:
       size: 16
 
+  # SMTP egress to the platform relay for its mail, from a Docker or native guest or the
+  # cluster (tasks/firewall/open-app-access.yml).
+  firewall:
+    sends_mail: true
+
   routing:
     subdomain: bookstack
     proxy: internal
+    monitor_path: /login
     access: internal
     identity: catalog
 

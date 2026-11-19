@@ -20,8 +20,9 @@
 # slug) and in these optional hooks, run only when the role has them:
 #   deploy-prepare.yml  localhost, after the hostname is known, before provisioning. May set
 #                       deploy_host_mounts (an attach-host-mounts.yml list) and
-#                       deploy_host_mounts_owner for the Docker or native guest, and
-#                       native_guest_database (database placement for a native guest).
+#                       deploy_host_mounts_owner for the Docker or native guest,
+#                       native_guest_database (database placement for a native guest) and
+#                       firewall_inbound_ports (tasks/firewall/open-app-access.yml).
 #   deploy-record.yml   localhost, before wiring, also while the restore target is
 #                       isolated: registry entries other jobs read (`media`, `databases`);
 #                       deploy_notify_note, a note computed from app_config.
@@ -137,7 +138,6 @@
         wiring_app_name: "{{ instance }}"
         wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
         wiring_firewall: "{{ app_config.firewall | default({}) }}"
-        firewall_sends_mail: "{{ app_config.firewall.sends_mail | default(false) }}"
       when:
         - app_config.hosting.method in ['docker', 'native']
         - app_config.hosting.method in _deploy_firewall_methods

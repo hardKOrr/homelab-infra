@@ -180,9 +180,7 @@ def main():
     assert recovery["archives"][0]["name"] == "filestore"
     assert recovery["archives"][0]["claim"] == "{{ restore_target }}-filestore"
     assert recovery["stop"] == ["{{ restore_target }}"]
-    playbook = (ROOT / "ansible/playbooks/apps/odoo.yml").read_text()
-    assert "ingress_vip" in playbook
-    assert "else _odoo_host.ansible_host" in playbook
+    assert "import_playbook: deploy.yml" in (ROOT / "ansible/playbooks/apps/odoo.yml").read_text()
     print("Odoo Kubernetes: workload, initialization, external database and portable recovery passed")
 
 

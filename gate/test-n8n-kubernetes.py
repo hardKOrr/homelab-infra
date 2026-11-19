@@ -33,23 +33,10 @@ assert defaults["firewall"]["egress"][0]["port"] == (
     "{{ app_config.app.database_port | default(5432) }}"
 )
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/n8n.yml"))
-provision_tasks = playbook[0]["tasks"]
-assert any(
-    task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for task in provision_tasks
-), "n8n Deploy must call the Kubernetes role when selected"
-assert any(
-    task.get("ansible.builtin.import_tasks")
-    == "../../tasks/stack/find-or-create-host.yml"
-    and task.get("when") == "app_config.hosting.method == 'docker'"
-    for task in provision_tasks
-), "Docker remains the default guest path"
-assert "tasks/kubernetes/open-app-access.yml" in read("ansible/playbooks/apps/n8n.yml")
-assert "homelabinfra_infra.kubernetes.ingress_vip" in read(
-    "ansible/playbooks/apps/n8n.yml"
-)
+# Deploy is playbooks/apps/deploy.yml (gate/test-app-matrix.py holds its run): the
+# database egress opens on a native guest and from the cluster, not the shared stack host.
+assert "import_playbook: deploy.yml" in read("ansible/playbooks/apps/n8n.yml")
+assert defaults["firewall"]["methods"] == ["kubernetes", "native"]
 
 context = {
     "instance": "n8n-test",

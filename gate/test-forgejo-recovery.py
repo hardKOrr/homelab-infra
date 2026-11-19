@@ -170,28 +170,25 @@ def static_contract():
         "name": "forgejo-ssh", "protocol": "TCP", "port": defaults["app"]["ssh_port"],
         "enabled": False,
     }
-    playbook = yaml.safe_load((repo / "ansible/playbooks/apps/forgejo.yml").read_text())
-    firewall_play = next(play for play in playbook if "Open the app's network access" in play["name"])
-    include = firewall_play["tasks"][0]
-    assert include["ansible.builtin.include_tasks"].endswith("firewall/open-app-access.yml")
-    assert include["vars"]["firewall_inbound_ports"]["forgejo-ssh"] == "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
-    wire_play = next(play for play in playbook if play["name"] == "Forgejo | Wire")
-    assert wire_play["vars"]["wiring_monitor_url"] == "https://{{ hostvars['localhost'].forgejo_fqdn }}/api/healthz"
+    assert defaults["firewall"]["methods"] == ["docker", "native"]
+    assert defaults["routing"]["monitor_path"] == "/api/healthz"
+    prepare = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/deploy-prepare.yml").read_text())
+    assert prepare[0]["ansible.builtin.set_fact"]["firewall_inbound_ports"] == {
+        "forgejo-ssh": "{{ app_config.app.ssh_port }}"}
+    record = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/deploy-record.yml").read_text())
     endpoint_task = next(
-        task for task in wire_play["tasks"]
-        if task.get("name") == "Record Forgejo endpoint for app-to-app consumers"
+        task for task in record
+        if task.get("name") == "Forgejo | Record the endpoint for app-to-app consumers"
     )
-    endpoint = Templar(
-        loader=DataLoader(),
-        variables={
-            "instance": "forgejo-test",
-            "app_config": {"hosting": {"method": "docker"}, "app": {"port": 3000, "ssh_port": 2222}},
-            "_forgejo_host": {
-                "ansible_host": "192.0.2.45",
-                "app_config": {"app": {"port": 3000, "ssh_port": 2222}},
-            },
-        },
-    ).template(endpoint_task["vars"]["generated_facts_data"])
+    variables = {
+        "instance": "forgejo-test",
+        "_deploy_fqdn": "forgejo-test.example.test",
+        "app_config": {"hosting": {"method": "docker"}, "app": {"port": 3000, "ssh_port": 2222}},
+        "groups": {"deploy_forgejo-test": ["stack"]},
+        "hostvars": {"stack": {"ansible_host": "192.0.2.45"}},
+    }
+    endpoint = Templar(loader=DataLoader(), variables=variables | endpoint_task["vars"]).template(
+        endpoint_task["vars"]["generated_facts_data"])
     assert endpoint == {
         "forgejo-test": {
             "provider": "forgejo",

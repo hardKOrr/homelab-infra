@@ -12,6 +12,7 @@
   vars:
     resolve_guest_instance: "{{ instance }}"
     resolve_guest_type: "{{ _native_guest_guest_type }}"
+    resolve_guest_own_only: true
 
 - name: Native guest | Save existing hosts
   ansible.builtin.set_fact:

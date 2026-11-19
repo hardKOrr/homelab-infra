@@ -45,6 +45,7 @@ forgejo_defaults:
   routing:
     subdomain: forgejo
     proxy: internal
+    monitor_path: /api/healthz
     access: internal
     identity: catalog
   backup:
@@ -60,7 +61,10 @@ forgejo_defaults:
     encryption: none
   # Direct Git-over-SSH is separate from the HTTP route. Publish it to the WAN only
   # when an instance config explicitly enables this forward.
+  # The direct Git SSH forward lands on a Docker or native guest; on Kubernetes it is the
+  # NodePort app.ssh_node_port.
   firewall:
+    methods: [docker, native]
     inbound:
       - name: forgejo-ssh
         protocol: TCP

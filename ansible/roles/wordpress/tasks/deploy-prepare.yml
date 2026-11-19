@@ -1,0 +1,20 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). WordPress runs
+# only on a separately deployed MariaDB backend. Resolve the lab PBS target for
+# application-consistent recovery; the role reads it as wordpress_pbs_* (defaults/main.yml)
+# and, on Kubernetes, as k8s_pbs_*.
+- name: WordPress | Require the named MariaDB backend
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database.provider == 'mariadb'
+      - app_config.app.database.instance | length > 0
+    fail_msg: >-
+      WordPress requires a separately deployed MariaDB instance. Set
+      app.database.provider to mariadb and name its backend instance.
+    quiet: true
+
+- name: WordPress | Resolve the lab PBS target for application-consistent recovery
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('', true) }}"
+  when: app_config.backup.enabled | default(false) | bool

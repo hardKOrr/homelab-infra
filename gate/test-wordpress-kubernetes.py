@@ -62,27 +62,12 @@ def check_defaults_and_dispatch():
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "python:3.12-bookworm"
 
-    deploy = tasks("ansible/playbooks/apps/wordpress.yml")
-    validate = next(
-        task for task in deploy[0]["pre_tasks"]
-        if task.get("name") == "Validate supported hosting method"
-    )
-    provision = next(task for task in deploy[0]["tasks"]
-                     if task.get("name") == "Provision the named MariaDB database and role")
-    stack = next(task for task in deploy[0]["tasks"]
-                 if task.get("name") == "Find or create services stack host")
-    assert deploy[0]["pre_tasks"].index(validate) < len(deploy[0]["pre_tasks"])
-    assert provision["ansible.builtin.include_tasks"].endswith("database/provision.yml")
-    assert stack["when"] == "app_config.hosting.method == 'docker'"
-    k8s = next(play for play in deploy if play.get("name") == "WordPress | Deploy on Kubernetes")
-    assert k8s["tasks"][0]["ansible.builtin.include_role"] == {"name": "wordpress", "tasks_from": "kubernetes"}
-    assert k8s["tasks"][0]["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
-    wire = deploy[-1]
-    assert "homelabinfra_infra.kubernetes.ingress_vip" in wire["vars"]["wiring_upstream_host"]
-    assert "80 if app_config.hosting.method == 'kubernetes'" in wire["vars"]["wiring_upstream_port"]
-    k8s_record = next(task for task in wire["tasks"]
-                      if task.get("name") == "Record WordPress on each Kubernetes node")
-    assert k8s_record["when"] == "app_config.hosting.method == 'kubernetes'"
+    # Deploy is playbooks/apps/deploy.yml (gate/test-app-matrix.py holds its run); the
+    # role's deploy-prepare hook requires the MariaDB backend and resolves the PBS target.
+    assert tasks("ansible/playbooks/apps/wordpress.yml")[0]["ansible.builtin.import_playbook"] == "deploy.yml"
+    prepare = tasks("ansible/roles/wordpress/tasks/deploy-prepare.yml")
+    assert "app_config.app.database.provider == 'mariadb'" in prepare[0]["ansible.builtin.assert"]["that"]
+    assert prepare[1]["ansible.builtin.include_tasks"].endswith("tasks/backup/resolve-pbs-target.yml")
 
     # Backup App and Restore App own WordPress's recovery on every method; the role's
     # backup.yml and restore.yml dispatch by hosting method.

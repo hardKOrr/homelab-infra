@@ -3,7 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ n8n_project_dir }}"
     state: restarted
-  when: not (n8n_native | bool)
+  # A container Start service just created or recreated already runs the new files, and
+  # restarting it would interrupt a new install's first schema migration.
+  when:
+    - not (n8n_native | bool)
+    - not (_n8n_start.changed | default(false))
 
 - name: Restart native n8n
   ansible.builtin.systemd:

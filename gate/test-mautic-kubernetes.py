@@ -61,7 +61,7 @@ def static_contract():
     assert role_main[1]["ansible.builtin.include_tasks"] == "docker.yml"
     assert role_main[1]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
     assert role_main[3]["ansible.builtin.include_tasks"] == "kubernetes.yml"
-    assert "ingress_vip" in (ROOT / "ansible/playbooks/apps/mautic.yml").read_text()
+    assert "import_playbook: deploy.yml" in (ROOT / "ansible/playbooks/apps/mautic.yml").read_text()
 
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
     assert "../../../tasks/kubernetes/open-app-access.yml" in includes
