@@ -50,8 +50,7 @@ n8n_defaults:
     egress:
       - name: postgresql
         protocol: TCP
-        port: "{{ app_config.app.database_port | default(5432) }}"
-        destination: "{{ app_config.app.database_host | default('') }}"
+        backend: database
   routing:
     subdomain: n8n
     proxy: internal

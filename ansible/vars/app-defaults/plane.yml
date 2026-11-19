@@ -77,16 +77,10 @@ plane_defaults:
     egress:
       - name: postgresql
         protocol: TCP
-        port: "{{ app_config.app.database_port | default(5432) }}"
-        destination: "{{ app_config.app.database_host | default('') }}"
+        backend: database
       - name: redis
         protocol: TCP
-        port: >-
-          {{ (homelabinfra_infra.databases | default({})).get(
-               app_config.app.redis.instance | default(''), {}).port | default(6379) }}
-        destination: >-
-          {{ (homelabinfra_infra.databases | default({})).get(
-               app_config.app.redis.instance | default(''), {}).host | default('') }}
+        backend: redis
   routing:
     subdomain: plane
     proxy: internal

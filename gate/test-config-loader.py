@@ -120,8 +120,31 @@ def merge(base, over):
     return over
 
 
+def self_references() -> list[str]:
+    """Defaults render once, while the config loads: a template there that reads app_config
+    sees no merged config and no database connection. Name the value instead (`backend:`,
+    `source_port_from:` in tasks/firewall/open-app-access.yml)."""
+    def strings(value, where):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield from strings(item, f"{where}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from strings(item, f"{where}[{index}]")
+        elif isinstance(value, str):
+            yield where, value
+
+    return [f"{path.name}: {where} templates app_config in its defaults"
+            for path in sorted((REPO / "ansible/vars/app-defaults").glob("*.yml"))
+            for where, text in strings(yaml.safe_load(path.read_text()), "")
+            if "{{" in text and "app_config" in text]
+
+
 def main() -> int:
     dump = sys.argv[sys.argv.index("--dump") + 1] if "--dump" in sys.argv else None
+    if not dump and (bad := self_references()):
+        print("FAIL", "\nFAIL ".join(bad))
+        return 1
     targets = {}
     for path in sorted(APPS.glob("*.yml")):
         if path.stem in NOT_DEPLOY:

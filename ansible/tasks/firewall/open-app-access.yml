@@ -12,7 +12,8 @@
 #   wiring_firewall_source — optional OPNsense source alias for egress rules; defaults to
 #                            wiring_upstream_host
 #   wiring_firewall       — the app's declared firewall access ({egress, inbound})
-#   app_config            — the app's merged config (for the mail estate)
+#   app_config            — the app's merged config (for the mail estate and the
+#                           references below)
 #   firewall_sends_mail   — true for a mail consumer (default app_config.firewall.sends_mail,
 #                           else false)
 #   firewall_inbound_ports — optional {inbound name: port the app listens on}; an enabled
@@ -21,6 +22,63 @@
 #
 # The SMTP rule allows any destination on the relay's port: OPNsense filter rules take
 # addresses or aliases, not hostnames.
+#
+# An egress entry in app-defaults names config values instead of templating them: the
+# defaults are rendered once when the config loads, before Deploy provisions the database,
+# so a template reading app_config there sees nothing. Resolved here, when the rule opens:
+#   backend: <key>          destination and port of the registered backend named by
+#                           app_config.app.<key>.instance (homelabinfra_infra.databases);
+#                           the entry is dropped while that instance is empty (an
+#                           embedded database needs no egress)
+#   source_port_from: <key> source_port is app_config.app.<key>
+
+- name: Firewall access | Resolve egress that names a backend or an app value
+  ansible.builtin.set_fact:
+    _fw_egress: "{{ _fw_egress_json | from_json }}"
+  vars:
+    _fw_app: "{{ (app_config | default({})).app | default({}) }}"
+    _fw_registry: "{{ (homelabinfra_infra | default({})).databases | default({}) }}"
+    _fw_egress_json: >-
+      {%- set out = [] -%}
+      {%- for e in (wiring_firewall | default({})).egress | default([]) -%}
+      {%-   set rule = e | dict2items | rejectattr('key', 'in', ['backend', 'source_port_from'])
+                       | items2dict -%}
+      {%-   if e.source_port_from is defined -%}
+      {%-     set rule = rule | combine({'source_port_key': e.source_port_from,
+                  'source_port': _fw_app[e.source_port_from] | default('') | string}) -%}
+      {%-   endif -%}
+      {%-   if e.backend is defined -%}
+      {%-     set name = (_fw_app[e.backend] | default({})).instance | default('') -%}
+      {%-     if name | length > 0 -%}
+      {%-       set found = _fw_registry.get(name, {}) -%}
+      {%-       set _ = out.append(rule | combine({'backend_instance': name,
+                    'destination': found.host | default(''),
+                    'port': found.port | default('') | string})) -%}
+      {%-     endif -%}
+      {%-   else -%}
+      {%-     set _ = out.append(rule) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: Firewall access | Assert every named backend and app value resolved
+  ansible.builtin.assert:
+    that:
+      - >-
+        _fw_rule.backend_instance is not defined
+        or (_fw_rule.destination | length > 0 and _fw_rule.port | length > 0)
+      - _fw_rule.source_port_key is not defined or _fw_rule.source_port | length > 0
+    fail_msg: >-
+      {{ wiring_app_name }}'s egress {{ _fw_rule.name }} names
+      {{ ('backend ' ~ _fw_rule.backend_instance ~ ', which homelabinfra_infra.databases does not register')
+         if _fw_rule.backend_instance is defined
+         else 'app.' ~ _fw_rule.source_port_key | default('') ~ ' for its source port, which is empty' }}.
+      Deploy the backend first, or fix config/apps/{{ wiring_app_name }}.yml.
+    quiet: true
+  loop: "{{ _fw_egress }}"
+  loop_control:
+    loop_var: _fw_rule
+    label: "{{ _fw_rule.name }}"
 
 - name: Firewall access | Decide whether the app sends mail
   ansible.builtin.set_fact:
@@ -55,7 +113,9 @@
   ansible.builtin.set_fact:
     _fw_app_access: >-
       {{ wiring_firewall | default({}) | combine({'egress':
-           (wiring_firewall.egress | default([]))
+           (_fw_egress | map('dict2items')
+            | map('rejectattr', 'key', 'in', ['backend_instance', 'source_port_key'])
+            | map('items2dict') | list)
            + ([{'name': 'smtp', 'protocol': 'TCP', 'port': wiring_mail.port | string}]
               if (_fw_sends_mail | bool)
                  and (wiring_mail.enabled | default(false) | bool) else [])}) }}
