@@ -26,8 +26,8 @@ Three shapes are pruned, at the top level and inside every `estates.<name>` scop
 
 The top-level `databases.<instance>` entry is preserved for ordinary app removal because
 consumers own that backend independently. A database backend removal may pass
-`database_backend: true` after its exact tagged guest has been destroyed to forget only
-that backend's topology entry.
+`database_backend: true` once the backend is gone (its exact tagged guest destroyed, or a
+Docker or Kubernetes backend's data deleted) to forget only that backend's topology entry.
 
 Nothing else is touched: `domain`, unrelated roles, other estates and other instances
 come back byte-identical. Empty containers left behind by a prune are dropped too — an

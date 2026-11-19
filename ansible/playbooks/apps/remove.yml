@@ -151,8 +151,9 @@
         unwire_registry_database_backend: true
       when:
         - delete_data | default(false) | bool
-        # A backend on Kubernetes has no guest: its namespace is gone with the app.
-        - (destroy_guest | default(false) | bool) or _rm_kind | default('') == 'kubernetes'
+        # A Kubernetes backend's namespace, or a Docker backend's container and data on the
+        # stack host it does not own, is gone with the app: no guest of its own to destroy.
+        - (destroy_guest | default(false) | bool) or _rm_kind | default('') in ['kubernetes', 'docker']
         - _rm_database_backend | default(false) | bool
 
 # ── Play 4: Drop the app's named database from its registered backend ──────────

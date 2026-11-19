@@ -20,7 +20,8 @@
 # Inputs:
 #   instance                    the app being removed
 #   unwire_registry_file        absolute path to config/.generated/facts.yml
-#   unwire_registry_database_backend  true only after destroying this backend's owned guest
+#   unwire_registry_database_backend  true only once this backend is gone: its owned guest
+#                               destroyed, or a Docker or Kubernetes backend's data deleted
 #
 # NOT a degradation site. A registry the platform failed to prune is a landmine for the
 # next run, and unlike the provider unwiring above it cannot be "stale route on a proxy
