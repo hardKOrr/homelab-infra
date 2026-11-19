@@ -5,7 +5,8 @@ Checks: each backend playbook is a deploy.yml shim; its role has the deploy-prep
 deploy-record hooks on the shared database bodies; its Kubernetes entry opens the port for
 registered consumers before anything else; it has no route, so deploy.yml wires no proxy,
 SSO, monitor or DNS name and records no URL; and the Vaultwarden item reaches only the
-Kubernetes method where the engine keeps its server credential there. The registry entry
+Kubernetes method where the engine keeps its server credential there; a MariaDB or MySQL
+Docker backend refuses a stack host holding the other's conflicting client. The registry entry
 the hook writes is rendered in gate/test-database-facts.py, placement in
 gate/test-database-backend-placement.py.
 """
@@ -90,10 +91,25 @@ def check_deploy_unrouted():
     assert render(url, _deploy_routed=True, _deploy_fqdn="app.example.test") == "https://app.example.test"
 
 
+def check_docker_client_conflict():
+    """MariaDB's and Oracle's MySQL clients conflict: each Docker backend refuses the other's."""
+    for engine, other, install in (
+        ("mysql", "mariadb-client", "MySQL | Configure the Oracle APT repository for the host client"),
+        ("mariadb", "mysql-community-client", "MariaDB | Install the host client and Python client"),
+    ):
+        tasks = read_yaml(f"ansible/roles/{engine}/tasks/docker.yml")
+        names = [t.get("name") for t in tasks]
+        probe = next(t for t in tasks if other in str(t.get("ansible.builtin.command", "")))
+        refuse = tasks[names.index(probe["name"]) + 1]
+        assert "own stack" in refuse["ansible.builtin.assert"]["fail_msg"], engine
+        assert names.index(refuse["name"]) < names.index(install), engine
+
+
 def main():
     for engine in ENGINES:
         check_engine(engine)
     check_deploy_unrouted()
+    check_docker_client_conflict()
     print("Database backend Deploy: shims, hooks, consumer access and no route")
 
 
