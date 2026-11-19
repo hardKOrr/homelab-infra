@@ -1,13 +1,8 @@
 ---
-- name: Restart Actual Budget
-  community.docker.docker_compose_v2:
-    project_src: "{{ actual_budget_project_dir }}"
-    state: restarted
-    services:
-      - "{{ app_config.app.service_name }}"
-
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose file changes.
 - name: Restart native Actual Budget
-  ansible.builtin.systemd:
-    name: "{{ app_config.app.service_name }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ app_config.app.service_name }}"]

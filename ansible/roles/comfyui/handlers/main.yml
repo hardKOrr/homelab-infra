@@ -1,11 +1,8 @@
 ---
-- name: Restart ComfyUI
-  community.docker.docker_compose_v2:
-    project_src: "{{ comfyui_project_dir }}"
-    state: restarted
-
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose file changes.
 - name: Restart native ComfyUI
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]

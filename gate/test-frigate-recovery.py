@@ -75,11 +75,16 @@ def test_cpu_templates():
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["backup"]["application_consistent"] is True
     role_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/docker.yml").read_text())
-    render = next(task for task in role_tasks if task.get("name") == "Frigate | Render the redacted Compose project and application config")
-    assert render["ansible.builtin.template"]["force"] == "{{ item.force | default(true) | bool }}"
-    config_template = next(item for item in render["loop"]
+    deploy = next(task for task in role_tasks if task.get("name") == "Frigate | Deploy the Compose project")
+    assert deploy["ansible.builtin.include_tasks"] == "../../../tasks/stack/compose-deploy.yml"
+    shared = yaml.safe_load((repo / "ansible/tasks/stack/compose-deploy.yml").read_text())
+    shared_render = next(task for outer in shared for task in outer.get("block", [])
+                         if task.get("name") == "Compose deploy | Render the files the project mounts")
+    assert shared_render["ansible.builtin.template"]["force"] == "{{ item.force | default(true) | bool }}"
+    config_template = next(item for item in deploy["vars"]["compose_files"]
                            if item["dest"].endswith("/config.yml"))
     assert config_template["force"] is False
+    assert "_frigate_mqtt_password" in deploy["vars"]["compose_secrets"]
 
 
 def test_public_health_endpoints():
@@ -96,12 +101,9 @@ def test_public_health_endpoints():
                         return found
         raise AssertionError(f"Missing health task: {name}")
 
-    task = find_task(deploy_tasks, "Frigate | Wait for the public API endpoint")
-    uri = task["ansible.builtin.uri"]
-    assert uri["url"].endswith("/api/auth/first_time_login")
-    assert uri["status_code"] == 200
-    assert uri["return_content"] is False
-    assert task["no_log"] is False
+    health = find_task(deploy_tasks, "Frigate | Deploy the Compose project")["vars"]["compose_health"]
+    assert health["url"].endswith("/api/auth/first_time_login")
+    assert health.get("status", 200) == 200 and "headers" not in health  # status stays visible
     # The shared swap waits for a 200 without reading the body.
     assert swap_inputs("frigate", "restore-guest.yml")["recovery_swap_health_url"].endswith("/api/auth/first_time_login")
 

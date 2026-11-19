@@ -1,17 +1,12 @@
 ---
+# The native services' restart (tasks/native.yml, native-install.yml), skipped when this run
+# just started them. On Docker, tasks/stack/compose-deploy.yml recreates the project itself
+# when a rendered file changes.
 - name: Restart Frigate
-  community.docker.docker_compose_v2:
-    project_src: "{{ frigate_project_dir }}"
-    state: restarted
-  when: app_config.hosting.method | default('docker') == 'docker'
-
-- name: Restart native Frigate
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-    daemon_reload: true
-  loop: ["{{ instance }}-go2rtc", "{{ instance }}-nginx", "{{ instance }}"]
-  listen: Restart Frigate
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}-go2rtc", "{{ instance }}-nginx", "{{ instance }}"]
   when:
     - app_config.hosting.method | default('docker') == 'native'
     - not (_frigate_start.changed | default(false))

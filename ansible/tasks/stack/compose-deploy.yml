@@ -14,8 +14,9 @@
 #   compose_owner         — owner of the created directories (default `root`)
 #   compose_group         — group of the created directories (default `root`)
 #   compose_files         — optional files the project mounts or reads, each
-#                           `{src, dest}` with optional `mode` (default `0640`), `owner`
-#                           and `group` (default `root`); src is a role template
+#                           `{src, dest}` with optional `mode` (default `0640`), `owner`,
+#                           `group` (default `root`) and `force` (default true; false writes
+#                           the file only when absent); src is a role template
 #   compose_secrets       — the secret values the Compose file or compose_files hold; when
 #                           set, their render output stays out of the log and a failure
 #                           prints with these values masked (default none)
@@ -78,6 +79,7 @@
         owner: "{{ item.owner | default('root') }}"
         group: "{{ item.group | default('root') }}"
         mode: "{{ item.mode | default('0640') }}"
+        force: "{{ item.force | default(true) | bool }}"
       loop: "{{ compose_files | default([]) }}"
       loop_control:
         label: "{{ item.dest }}"

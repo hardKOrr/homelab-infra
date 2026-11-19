@@ -7,22 +7,6 @@
   ansible.builtin.include_role:
     name: docker
 
-- name: Actual Budget | Create project directory
-  ansible.builtin.file:
-    path: "{{ actual_budget_project_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: Actual Budget | Create writable application data directory
-  ansible.builtin.file:
-    path: "{{ app_config.app.data_path }}"
-    state: directory
-    owner: "1001"
-    group: "1001"
-    mode: "0750"
-
 - name: Actual Budget | Check the password initialization marker
   ansible.builtin.stat:
     path: "{{ actual_budget_password_marker }}"
@@ -32,37 +16,20 @@
 - name: Actual Budget | Resolve and store the application credential
   ansible.builtin.include_tasks: credentials.yml
 
-- name: Actual Budget | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ actual_budget_compose_file }}"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Actual Budget
-
-- name: Actual Budget | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ actual_budget_project_dir }}"
-
-- name: Actual Budget | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ actual_budget_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Actual Budget | Apply pending restart
-  ansible.builtin.meta: flush_handlers
-
-- name: Actual Budget | Wait for health endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}"
-    status_code: 200
-  register: _actual_budget_health
-  until: _actual_budget_health.status | default(0) == 200
-  retries: 60
-  delay: 5
-  changed_when: false
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+- name: Actual Budget | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ actual_budget_project_dir }}"
+    compose_dirs:
+      - path: "{{ app_config.app.data_path }}"
+        owner: "1001"
+        group: "1001"
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}"
+      retries: 60
+      delay: 5
 
 # The upstream reset utility needs a terminal for its two masked prompts. The helper
 # receives the credential on stdin and gives the native utility a private pseudo-terminal.
