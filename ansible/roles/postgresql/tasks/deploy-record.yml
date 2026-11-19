@@ -1,0 +1,7 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the PostgreSQL entry in
+# the databases registry. Body: tasks/database/deploy-record.yml.
+- name: PostgreSQL | Record the backend
+  ansible.builtin.include_tasks: ../../../tasks/database/deploy-record.yml
+  vars:
+    database_record_fields: "{{ {'version': app_config.app.version} }}"

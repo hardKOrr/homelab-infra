@@ -1,0 +1,22 @@
+---
+# Deploy hook body for a database backend (roles/<engine>/tasks/deploy-prepare.yml,
+# localhost, before provisioning). Native only: the guest takes the database placement
+# class (proxmox.storage_ids.database_vm, the storage node for a classed VM, no estate
+# network), and the engine's memory inputs are checked before any guest is created.
+#
+# Inputs: instance, app_config (merged), _instance_config.
+# Results: native_guest_database (read by roles/_template-native provisioning) and
+# _database_backend_guest_type / _database_backend_memory_mib.
+- name: Database backend | Prepare the native guest
+  when: app_config.hosting.method == 'native'
+  block:
+    - name: Database backend | Resolve the configured guest type
+      ansible.builtin.include_tasks: ../proxmox/resolve-native-type.yml
+
+    - name: Database backend | Place the guest as a database backend
+      ansible.builtin.set_fact:
+        native_guest_database: true
+        _database_backend_guest_type: "{{ _native_guest_guest_type }}"
+
+    - name: Database backend | Validate engine memory before provisioning
+      ansible.builtin.include_tasks: resolve-guest-memory.yml

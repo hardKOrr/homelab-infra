@@ -184,6 +184,8 @@ def check_contract_and_dispatch():
     assert unregister["vars"]["unwire_registry_database_backend"] is True
     assert "destroy_guest" in str(unregister["when"])
     assert "delete_data" in str(unregister["when"])
+    # A Docker or Kubernetes backend owns no guest: deleting its data forgets it.
+    assert "_rm_kind | default('') in ['kubernetes', 'docker']" in str(unregister["when"])
 
     main = list(tasks_recursive(read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/main.yml")))
     install = task_named(main, "Install the pinned PBS client when this lab declares application backups")

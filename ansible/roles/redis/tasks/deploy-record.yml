@@ -1,0 +1,5 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the Redis entry in
+# the databases registry. Body: tasks/database/deploy-record.yml.
+- name: Redis | Record the backend
+  ansible.builtin.include_tasks: ../../../tasks/database/deploy-record.yml

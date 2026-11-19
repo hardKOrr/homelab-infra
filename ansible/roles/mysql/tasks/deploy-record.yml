@@ -1,0 +1,7 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the MySQL entry in
+# the databases registry. Body: tasks/database/deploy-record.yml.
+- name: MySQL | Record the backend
+  ansible.builtin.include_tasks: ../../../tasks/database/deploy-record.yml
+  vars:
+    database_record_fields: "{{ {'client_hosts': app_config.app.client_hosts} }}"

@@ -49,74 +49,56 @@ def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
 
 
-def database_producers_resolve_instance_keys():
-    fixtures = {
-        "postgresql": (
-            "ansible/playbooks/apps/postgresql.yml",
-            "postgresql-immich",
-            "_postgresql_host",
-            {
-                "provider": "postgresql",
-                "version": "16",
-                "host": "192.0.2.41",
-                "port": 5432,
-                "runtime": "native",
-            },
-            {"app_config": {"app": {"version": "16", "port": 5432}}, "ansible_host": "192.0.2.41"},
-        ),
-        "redis": (
-            "ansible/playbooks/apps/redis.yml",
-            "redis-immich",
-            "_redis_host",
-            {"provider": "redis", "host": "192.0.2.42", "port": 6379},
-            {"app_config": {"app": {"port": 6379}}, "ansible_host": "192.0.2.42"},
-        ),
-        "mariadb": (
-            "ansible/playbooks/apps/mariadb.yml",
-            "mariadb-app",
-            "_mariadb_host",
-            {
-                "provider": "mariadb",
-                "host": "192.0.2.43",
-                "port": 3306,
-                "client_hosts": ["192.0.2.0/24"],
-            },
-            {
-                "app_config": {"app": {"port": 3306, "client_hosts": ["192.0.2.0/24"]}},
-                "ansible_host": "192.0.2.43",
-            },
-        ),
-        "mysql": (
-            "ansible/playbooks/apps/mysql.yml",
-            "mysql-app",
-            "_mysql_host",
-            {
-                "provider": "mysql",
-                "host": "192.0.2.44",
-                "port": 3306,
-                "client_hosts": ["192.0.2.0/24"],
-            },
-            {
-                "app_config": {"app": {"port": 3306, "client_hosts": ["192.0.2.0/24"]}},
-                "ansible_host": "192.0.2.44",
-            },
-        ),
-        "influxdb": (
-            "ansible/playbooks/apps/influxdb.yml",
-            "influxdb-app",
-            "_influxdb_host",
-            {"provider": "influxdb", "host": "192.0.2.45", "port": 8086},
-            {"app_config": {"app": {"port": 8086}}, "ansible_host": "192.0.2.45"},
-        ),
+def backend_record(engine, instance, method, app):
+    """Render the databases entry a converted backend's deploy-record hook writes."""
+    hook = yaml.safe_load(read(f"ansible/roles/{engine}/tasks/deploy-record.yml"))[0]
+    assert hook["ansible.builtin.include_tasks"].endswith("tasks/database/deploy-record.yml")
+    shared = yaml.safe_load(read("ansible/tasks/database/deploy-record.yml"))[0]
+    assert shared["ansible.builtin.include_tasks"].endswith("bootstrap/write-generated-facts.yml")
+    assert shared["vars"]["generated_facts_service"] == "databases"
+    variables = {
+        "app": engine,
+        "instance": instance,
+        "app_config": {"hosting": {"method": method}, "app": app},
+        "groups": {f"deploy_{instance}": ["guest"]},
+        "hostvars": {"guest": {"ansible_host": "192.0.2.41"}},
+        "homelabinfra_infra": {"kubernetes": {"ingress_vip": "192.0.2.10"}},
     }
+    variables["_database_record_k8s"] = render(shared["vars"]["_database_record_k8s"], variables)
+    fields = hook.get("vars", {}).get("database_record_fields")
+    if fields:
+        variables["database_record_fields"] = render(fields, variables)
+    return render(shared["vars"]["generated_facts_data"], variables)
 
-    for provider, (path, instance, host_var, expected, host) in fixtures.items():
-        task = database_fact_task(path)
-        actual = render(
-            task["vars"]["generated_facts_data"],
-            {"instance": instance, host_var: host},
-        )
-        assert actual == {instance: expected}, (provider, actual)
+
+def database_producers_resolve_instance_keys():
+    # Converted backends: guest and Kubernetes entries from the shared deploy-record hook.
+    # A guest entry clears a Kubernetes marker an earlier Deploy left; runtime is the method.
+    sql = {"port": 3306, "client_hosts": ["192.0.2.0/24"]}
+    for engine, app, extra in (
+        ("postgresql", {"port": 5432, "version": "16"}, {"version": "16"}),
+        ("redis", {"port": 6379}, {}),
+        ("mariadb", sql, {"client_hosts": ["192.0.2.0/24"]}),
+        ("mysql", sql, {"client_hosts": ["192.0.2.0/24"]}),
+    ):
+        base = {"provider": engine, "port": app["port"], **extra}
+        guest = backend_record(engine, f"{engine}-app", "native", app)
+        assert guest == {f"{engine}-app": {
+            **base, "host": "192.0.2.41", "runtime": "native", "kubernetes": ""}}, guest
+        docker = backend_record(engine, f"{engine}-app", "docker", app)
+        assert docker[f"{engine}-app"]["runtime"] == "docker", docker
+        cluster = backend_record(engine, f"{engine}-app", "kubernetes", app)
+        assert cluster == {f"{engine}-app": {
+            **base, "host": "192.0.2.10", "runtime": "kubernetes",
+            "kubernetes": {"namespace": f"app-{engine}-app"}}}, cluster
+
+    task = database_fact_task("ansible/playbooks/apps/influxdb.yml")
+    actual = render(
+        task["vars"]["generated_facts_data"],
+        {"instance": "influxdb-app",
+         "_influxdb_host": {"app_config": {"app": {"port": 8086}}, "ansible_host": "192.0.2.45"}},
+    )
+    assert actual == {"influxdb-app": {"provider": "influxdb", "host": "192.0.2.45", "port": 8086}}
 
 
 def database_vault_upsert_skips_check_mode():

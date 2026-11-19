@@ -232,12 +232,17 @@ def check_config_wiring():
         '_database_backend_guest_type: "{{ _native_guest_guest_type }}"'
     ) == 2
 
+    # The guest roles size the engine from _database_backend_guest_type on the guest: a new
+    # guest gets it from provision-native-guest.yml, a reused one from the playbook (or, for
+    # a shim on deploy.yml, from roles/_template-native/tasks/provision.yml).
+    template = ROOT / "ansible/roles/_template-native/tasks/provision.yml"
+    assert '_database_backend_guest_type: "{{ _native_guest_guest_type }}"' in template.read_text()
     for engine in ("postgresql", "redis", "mariadb", "mysql", "influxdb"):
-        app_playbook = ROOT / f"ansible/playbooks/apps/{engine}.yml"
+        text = (ROOT / f"ansible/playbooks/apps/{engine}.yml").read_text(encoding="utf-8")
         assert (
-            '_database_backend_guest_type: "{{ _database_backend_guest_type }}"'
-            in app_playbook.read_text(encoding="utf-8")
-        )
+            "import_playbook: deploy.yml" in text
+            or '_database_backend_guest_type: "{{ _database_backend_guest_type }}"' in text
+        ), engine
 
     postgresql_tasks = yaml.safe_load(
         (ROOT / "ansible/roles/postgresql/tasks/native.yml").read_text(encoding="utf-8")

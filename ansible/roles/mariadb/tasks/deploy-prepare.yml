@@ -1,0 +1,5 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): a native
+# MariaDB guest is placed as a database backend. Body: tasks/database/deploy-prepare.yml.
+- name: MariaDB | Prepare the backend guest
+  ansible.builtin.include_tasks: ../../../tasks/database/deploy-prepare.yml

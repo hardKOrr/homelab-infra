@@ -2,7 +2,7 @@
 """Guard Redis's opt-in Kubernetes workload and its shared database and recovery path.
 
 Checks: guests stay the default, the pod uses the default StorageClass and a MetalLB
-LoadBalancer on the ingress address (no Ingress), the registry marks a Kubernetes backend,
+LoadBalancer on the ingress address (no Ingress),
 the registered consumers' firewall access, and backup and restore go through the shared
 Kubernetes operations and database step (RDB plus ACL users).
 """
@@ -37,45 +37,8 @@ assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 6379
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 assert defaults["routing"] == {"proxy": "none", "identity": "none"}
 
-# ── Playbook: Kubernetes is its own branch, the guest methods keep theirs ──────────────
-playbook = load("ansible/playbooks/apps/redis.yml")
-text = read("ansible/playbooks/apps/redis.yml")
-provision = playbook[0]["tasks"]
-assert any(
-    t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for t in provision
-)
-consumer_access = next(
-    t for t in provision
-    if str(t.get("ansible.builtin.include_tasks", "")).endswith("database/open-consumer-access.yml")
-)
-assert consumer_access["vars"]["database_consumer_provider"] == "redis"
-assert any(
-    str(t.get("ansible.builtin.include_tasks", "")).endswith("kubernetes/open-app-access.yml")
-    for t in provision
-)
-assert any(
-    t.get("when") == "app_config.hosting.method == 'native'"
-    and "provision-backend-guest.yml" in str(t.get("ansible.builtin.include_tasks", ""))
-    for t in provision
-)
-# No application route, DNS record, Authentik app or monitor: the routing stays none.
-assert not any(word in text.lower() for word in ("caddy", "authentik", "kuma", "dns"))
-registry = next(
-    t["vars"]["generated_facts_data"] for p in playbook for t in p.get("tasks", [])
-    if t.get("vars", {}).get("generated_facts_service") == "databases"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-)
-registered = Environment(undefined=StrictUndefined).compile_expression(registry[3:-3])(
-    instance="redis-test",
-    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.10"}},
-    app_config={"app": {"port": 6380}},
-)
-assert registered == {"redis-test": {
-    "provider": "redis", "host": "192.0.2.10", "port": 6380,
-    "runtime": "kubernetes", "kubernetes": {"namespace": "app-redis-test"},
-}}
+# The Deploy path (shim, hooks, consumer access, registry) is in
+# gate/test-database-backend-deploy.py.
 
 # ── Manifest ────────────────────────────────────────────────────────────────────────────
 context = {

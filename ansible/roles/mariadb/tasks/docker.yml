@@ -29,6 +29,21 @@
     _mariadb_innodb_buffer_pool_size_mib: >-
       {{ app_config.app.get('memory', {}).get('innodb_buffer_pool_size', 512) | int }}
 
+# A MySQL backend on this host installed Oracle's client, which conflicts with MariaDB's:
+# refuse before apt fails on the conflict.
+- name: MariaDB | Read whether Oracle's MySQL client is installed on this host
+  ansible.builtin.command: dpkg-query -W -f=${db:Status-Abbrev} mysql-community-client
+  register: _mariadb_oracle_client
+  changed_when: false
+  failed_when: false
+
+- name: MariaDB | Refuse a stack host that has Oracle's MySQL client
+  ansible.builtin.assert:
+    that: not (_mariadb_oracle_client.stdout is match('^ii'))
+    fail_msg: >-
+      This stack host has Oracle's MySQL client installed for a MySQL backend, which
+      conflicts with the MariaDB client. Give the MariaDB backend its own stack.
+
 - name: MariaDB | Install the host client and Python client
   ansible.builtin.apt:
     name: [mariadb-client, python3-pymysql]

@@ -29,6 +29,22 @@
     _mysql_innodb_buffer_pool_size_mib: >-
       {{ app_config.app.get('memory', {}).get('innodb_buffer_pool_size', 512) | int }}
 
+# Oracle's client conflicts with Debian's MariaDB client, which a MariaDB backend or a
+# MariaDB/MySQL consumer installed on this host, and MariaDB's mysqldump is not safe
+# against MySQL 8.4: refuse before apt fails on the conflict.
+- name: MySQL | Read whether MariaDB's client is installed on this host
+  ansible.builtin.command: dpkg-query -W -f=${db:Status-Abbrev} mariadb-client
+  register: _mysql_mariadb_client
+  changed_when: false
+  failed_when: false
+
+- name: MySQL | Refuse a stack host that has MariaDB's client
+  ansible.builtin.assert:
+    that: not (_mysql_mariadb_client.stdout is match('^ii'))
+    fail_msg: >-
+      This stack host has Debian's MariaDB client installed, which conflicts with the
+      Oracle MySQL client the MySQL backend needs. Give the MySQL backend its own stack.
+
 - name: MySQL | Configure the Oracle APT repository for the host client
   ansible.builtin.include_tasks: repository.yml
 

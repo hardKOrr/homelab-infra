@@ -22,6 +22,25 @@
     lock_timeout: 120
   changed_when: false
 
+# Debian's unit runs Redis with UMask=007, so every ACL SAVE (the database provisioning, a
+# drill canary) rewrote users.acl as 0660 and the next Deploy reset it to 0600. Redis now
+# writes owner-only files itself, from its first start after the package install; the
+# official image's entrypoint already sets umask 0077.
+- name: Redis | Create the service drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ app_config.app.service_name }}.service.d"
+    state: directory
+    mode: "0755"
+  when: not (redis_docker | bool)
+
+- name: Redis | Write new files owner-only
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ app_config.app.service_name }}.service.d/homelab-umask.conf"
+    content: "[Service]\nUMask=0077\n"
+    mode: "0644"
+  notify: Restart Redis
+  when: not (redis_docker | bool)
+
 - name: Redis | Install server
   ansible.builtin.apt:
     name: redis-server

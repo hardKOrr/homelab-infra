@@ -116,11 +116,8 @@ def check_contract():
     assert defaults["routing"]["proxy"] == "none"
     assert defaults["routing"]["identity"] == "none"
 
-    deploy = task_tree(ROOT / "ansible/playbooks/apps/postgresql.yml")
-    placement = task_named(deploy, "Resolve PostgreSQL guest placement and check existing type")
-    assert placement["ansible.builtin.include_tasks"] == "../../tasks/database/resolve-backend-placement.yml"
-    provision = task_named(deploy, "Provision a new PostgreSQL backend guest")
-    assert provision["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
+    # Guest placement and the Deploy hooks: gate/test-database-backend-placement.py and
+    # gate/test-database-backend-deploy.py.
 
     main = task_tree(ROLE / "tasks/native.yml")
     pbs_client = task_named(main, "PostgreSQL | Install the pinned PBS client when backups are enabled")
@@ -192,8 +189,8 @@ def check_contract():
     assert "build:" in compose
     provision = (ROOT / "ansible/tasks/database/provision-postgresql.yml").read_text(encoding="utf-8")
     assert "_database_backend.runtime | default('native') != 'docker'" in provision
-    playbook = (ROOT / "ansible/playbooks/apps/postgresql.yml").read_text(encoding="utf-8")
-    assert "'runtime': (_postgresql_host.app_config.hosting | default({})).get('method', 'native')" in playbook
+    record = (ROOT / "ansible/tasks/database/deploy-record.yml").read_text(encoding="utf-8")
+    assert "'runtime': app_config.hosting.method" in record
     assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
     order = [docker_tasks.index(t) for t in (
         "PostgreSQL | Start the service", "PostgreSQL | Wait for the final server\n",
