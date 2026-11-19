@@ -53,7 +53,7 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ANSIBLE = os.path.join(REPO, "ansible")
 POINT = re.compile(r"host/[A-Za-z0-9._-]+/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
-MONITOR = re.compile(r"monitor\s+for\s+(\S+)\s+on\s+(https://[^\s/]+)(\S*)")
+MONITOR = re.compile(r"monitor\s+for\s+(\S+)\s+on\s+(https://[^\s/\x1b]+)([^\s\x1b]*)")
 RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
