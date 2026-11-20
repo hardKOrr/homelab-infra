@@ -34,6 +34,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import jinja2
+from jinja2 import meta
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +80,23 @@ def role_of(app: str) -> str | None:
     return ALIASES.get(app, app)
 
 
+class RunValue:
+    """A value only the run sets: any use of it leaves the expression undecided, while a
+    branch that never reads it (`a and b` with a false `a`) still decides."""
+
+    def _unknown(self, *_args, **_kwargs):
+        raise LookupError("set by the run")
+
+    __bool__ = __str__ = __len__ = __iter__ = __eq__ = __ne__ = __lt__ = __gt__ = _unknown
+    __contains__ = __getitem__ = __getattr__ = __int__ = __float__ = _unknown
+    __hash__ = object.__hash__
+
+
+@lru_cache(maxsize=None)
+def free_names(text: str) -> frozenset:
+    return frozenset(meta.find_undeclared_variables(ENV.parse("{{ " + text + " }}")))
+
+
 @lru_cache(maxsize=None)
 def compiled(text: str):
     return ENV.compile_expression(text, undefined_to_none=False)
@@ -109,15 +127,23 @@ class Decider:
         self.known: dict = dict(seed or {})
         self.cache: dict = {}
         self.names = None
+        # Names a task in the run sets (set_fact, register). One the decider cannot work out
+        # from the method keeps an expression that reads it undecided, even behind
+        # `| default(...)`: the run may set it.
+        self.runtime: set = set()
         candidates = dict(role_vars(steps))
         for step in steps:
             for scope in [step.get("keywords") or {}, *(step.get("scope") or []),
                           step.get("task") or {}]:
                 for name, value in (scope.get("vars") or {}).items():
                     candidates.setdefault(name, value)
-            fact = (step.get("task") or {}).get("ansible.builtin.set_fact") or {}
+            task = step.get("task") or {}
+            fact = task.get("ansible.builtin.set_fact") or {}
             for name, value in fact.items() if isinstance(fact, dict) else []:
                 candidates.setdefault(name, value)
+                self.runtime.add(name)
+            if isinstance(task.get("register"), str):
+                self.runtime.add(task["register"])
         expressions = {name: value.strip()[2:-2] for name, value in candidates.items()
                        if isinstance(value, str) and value.strip().startswith("{{")
                        and value.strip().endswith("}}") and value.count("{{") == 1}
@@ -141,7 +167,10 @@ class Decider:
         value = None
         if METHOD.search(expression) or self.names.search(expression):
             try:
-                value = compiled(METHOD.sub(repr(self.method), expression).strip())(**self.known)
+                source = METHOD.sub(repr(self.method), expression).strip()
+                unset = {name: RunValue() for name in free_names(source) & self.runtime
+                         if name not in self.known}
+                value = compiled(source)(**unset, **self.known)
             except Exception:  # noqa: BLE001 - anything not decidable stays undecided
                 value = None
         self.cache[expression] = value if isinstance(value, (bool, str)) else None
@@ -294,15 +323,20 @@ def deploy_seed(app: str, steps: list[dict]) -> dict | None:
     it: the app, its playbook directory, the role it derives from `deploy.role`, and
     app_config as the app's defaults give it (over vars/app-defaults/_base.yml), so a step
     keyed on a default (`app.database`, `routing.proxy`) is decided for the app. Firewall
-    access is left out: an instance file adds rules, so those steps stay undecided."""
+    access is left out: an instance file adds rules, so those steps stay undecided. So is
+    the database instance of an app with `deploy.database_optional`: the instance file
+    names it or leaves it empty."""
     shared = str(SHARED_DEPLOY.relative_to(ROOT))
     if not any(shared in (step.get("via") or []) for step in steps):
         return None
     base = yaml.safe_load((ROOT / "ansible/vars/app-defaults/_base.yml").read_text())
+    config = {key: value for key, value in merged(
+        base["_base_defaults"], defaults(app)).items() if key != "firewall"}
+    if (config.get("deploy") or {}).get("database_optional"):
+        config = merged(config, {"app": {"database": {"instance": RunValue()}}})
     return {"app": app, "playbook_dir": str(SHARED_DEPLOY.parent),
             "_deploy_role": (defaults(app).get("deploy") or {}).get("role", app),
-            "app_config": {key: value for key, value in merged(
-                base["_base_defaults"], defaults(app)).items() if key != "firewall"}}
+            "app_config": config}
 
 
 def deploy_reached(app: str, method: str, deep: bool = False, shared: bool = False):

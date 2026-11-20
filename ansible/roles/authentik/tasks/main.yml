@@ -1,7 +1,7 @@
 ---
 # Authentik: Docker Compose on a stack host or Kubernetes with registered PostgreSQL.
-# Called from Play 2 of playbooks/apps/authentik.yml. Target: the sso host,
-# which already has Docker installed (playbooks/apps/authentik.yml Play 2).
+# Called from playbooks/apps/deploy.yml (play 2 on the sso host; play 3 through
+# kubernetes.yml on Kubernetes). Docker is installed before it runs.
 #
 # SECRETS — four values, generated once and never regenerated:
 #   PG_PASS                     PostgreSQL password
@@ -37,7 +37,7 @@
 #   instance           — the instance name
 #   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
 #
-# Exports (read by Play 3 to write the sso registry key):
+# Exports (deploy-record.yml writes them to the sso registry key):
 #   authentik_api_url, authentik_api_token
 
 - name: Resolve Authentik request headers

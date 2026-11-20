@@ -1,0 +1,34 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Immich needs its
+# one declared durable media mount and its dedicated iGPU mapping; the mount is attached to
+# the stack VM on that VM's own node only.
+- name: Immich | Require exactly one new durable media mount
+  ansible.builtin.assert:
+    that:
+      - app_config.media_storage.mounts is sequence
+      - app_config.media_storage.mounts | length == 1
+      - app_config.media_storage.mounts[0].host | default('') is match('^/')
+      - app_config.media_storage.mounts[0].path | default('') is match('^/')
+      - app_config.media_storage.owner.user | default('') is match('^[a-z_][a-z0-9_-]*$')
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
+    fail_msg: >-
+      Immich needs exactly one explicitly declared media_storage.mounts entry for
+      originals/thumbnails plus media_storage.owner. The platform will attach that
+      existing host directory and will not adopt global media storage.
+    quiet: true
+
+- name: Immich | Require the dedicated iGPU mapping
+  ansible.builtin.assert:
+    that:
+      - app_config.app.gpu_device | default('') | length > 0
+      - app_config.app.gpu_render_node | default('') is match('^/dev/dri/renderD[0-9]+$')
+    fail_msg: >-
+      Immich machine learning requires a dedicated iGPU mapping in proxmox.devices and
+      a render node path inside the VM.
+    quiet: true
+
+- name: Immich | Name the originals and thumbnails mount for the stack VM
+  ansible.builtin.set_fact:
+    deploy_host_mounts: "{{ app_config.media_storage.mounts }}"
+    deploy_host_mounts_own_node: true

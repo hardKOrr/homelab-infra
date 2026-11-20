@@ -71,21 +71,16 @@ plane_defaults:
       user: plane
       vhost: plane
   # Kubernetes pods reach both registered data backends through the cluster-node alias.
-  # Docker deployments keep their existing guest access path.
+  # Docker and native deployments keep their existing guest access path.
   firewall:
+    methods: [kubernetes]
     egress:
       - name: postgresql
         protocol: TCP
-        port: "{{ app_config.app.database_port | default(5432) }}"
-        destination: "{{ app_config.app.database_host | default('') }}"
+        backend: database
       - name: redis
         protocol: TCP
-        port: >-
-          {{ (homelabinfra_infra.databases | default({})).get(
-               app_config.app.redis.instance | default(''), {}).port | default(6379) }}
-        destination: >-
-          {{ (homelabinfra_infra.databases | default({})).get(
-               app_config.app.redis.instance | default(''), {}).host | default('') }}
+        backend: redis
   routing:
     subdomain: plane
     proxy: internal
