@@ -34,10 +34,10 @@ with tempfile.TemporaryDirectory() as t:
  qm_bin=root/'qm';qm_bin.write_text(qm);qm_bin.chmod(0o700)
  for case in cases:
   d=root/case;d.mkdir();(d/'pvesh').symlink_to(pvesh_bin);(d/'qm').symlink_to(qm_bin);(d/'pct').symlink_to(qm_bin)
-  name='stack-services';status='running' if case=='repeat-running' else 'stopped'
+  name='stack-productivity';status='running' if case=='repeat-running' else 'stopped'
   vmtype='qemu' if case=='execute-qemu' else 'lxc'
   config_name_key='name' if vmtype=='qemu' else 'hostname'
-  tags='_+lab;_-docker;_.stack+services;operator-note'
+  tags='_+lab;_-docker;_.stack+productivity;operator-note'
   config={config_name_key:name,'tags':tags,'description':'operator note','digest':'fixture-revision','memory':2048}
   inventory=[{'vmid':123,'node':'localhost','name':name,'type':vmtype,'status':status,'tags':tags}]
   if case=='wrong-name':inventory[0]['name']=config[config_name_key]='stack-other'
@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory() as t:
   else:assert not calls,(case,calls)
   if case in ['low-memory','low-memory-fallback']:
    assert 'Not enough available memory for guest' in p.stdout,p.stdout
-   assert 'stack-services' in p.stdout and "node 'localhost'" in p.stdout,p.stdout
+   assert 'stack-productivity' in p.stdout and "node 'localhost'" in p.stdout,p.stdout
    assert 'needs 2048 MiB' in p.stdout and 'only 1024 MiB available' in p.stdout,p.stdout
    assert any('/nodes/localhost/status' in call for call in api_calls),api_calls
   if case=='repeat-running':

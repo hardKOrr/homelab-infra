@@ -5,7 +5,7 @@
   name: Deploy Actual Budget
   group: Applications/Personal Finance/Budgeting/Actual Budget
   description: |-
-    Deploy or converge an instanced **Actual Budget** server on the services Docker stack.
+    Deploy or converge an instanced **Actual Budget** server on its Docker stack.
 
     - **Storage:** Actual's application-native /data directory contains account.sqlite,
       server files, and all budget blobs; no platform database or cache is required.

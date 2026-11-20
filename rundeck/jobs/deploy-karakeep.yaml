@@ -16,7 +16,7 @@
       provides a catalog tile only and is not a login dependency.
     - **Secrets:** NEXTAUTH_SECRET and MEILI_MASTER_KEY are generated or reused in
       Vaultwarden; they are never read from tracked configuration.
-    - **Recovery:** the services stack guest backup covers the Compose project, both
+    - **Recovery:** the productivity stack guest backup covers the Compose project, both
       persistent paths, and the generated environment file. Restore them together as one
       application recovery unit before starting Karakeep again.
     - **Rerun:** the same credentials and durable paths are reused on every converge.
