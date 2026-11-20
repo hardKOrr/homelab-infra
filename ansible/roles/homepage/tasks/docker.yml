@@ -24,40 +24,18 @@
   loop:
     - { name: services.yaml, content: "{{ homepage_service_groups }}" }
     - { name: settings.yaml, content: "{{ homepage_settings }}" }
-  notify: Restart homepage
+  register: _homepage_config_written
 
-- name: Homepage | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "/opt/{{ instance }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart homepage
-
-- name: Homepage | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "/opt/{{ instance }}"
-    policy: missing
-  changed_when: false
-
-- name: Homepage | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    remove_orphans: true
-
-- name: Homepage | Apply pending restarts
-  ansible.builtin.meta: flush_handlers
-
-- name: Homepage | Wait for the dashboard
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ app_config.app.port }}/"
-    headers:
-      Host: "{{ homepage_fqdn }}"
-    status_code: 200
-  register: _homepage_health
-  retries: 30
-  delay: 5
-  until: _homepage_health.status | default(0) == 200
-  changed_when: false
+# The shared Compose deploy recreates the container when the Compose file or the generated
+# configuration changed, in the same up that creates it, so a new install is never
+# restarted mid first boot.
+- name: Homepage | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "/opt/{{ instance }}"
+    compose_project_mode: "0755"
+    compose_recreate: "{{ _homepage_config_written.changed }}"
+    compose_health:
+      url: "http://127.0.0.1:{{ app_config.app.port }}/"
+      headers:
+        Host: "{{ homepage_fqdn }}"
