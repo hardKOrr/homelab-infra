@@ -16,8 +16,8 @@ name the same upstream release.
 
 ## Kubernetes
 
-`hosting.method: kubernetes` runs `tasks/kubernetes.yml` instead of `storage.yml` and
-`start.yml`; the playbook's prepare play first runs `resolve-kubernetes-media.yml`. The
+`hosting.method: kubernetes` runs `tasks/kubernetes-workload.yml` instead of `storage.yml` and
+`start.yml`; deploy-prepare.yml first runs `resolve-kubernetes-media.yml`. The
 config sits on a default-StorageClass PVC. Every `media_storage` mount is mounted from its
 existing NFS share at the same path as on Docker. The pod's init container seeds
 `qBittorrent.conf` once and enforces the WebUI credential (from a Secret) and the peer

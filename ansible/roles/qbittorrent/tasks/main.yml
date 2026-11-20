@@ -1,28 +1,28 @@
 ---
-# qbittorrent role — qBittorrent as a Docker container on a stack host (Play 2 of
-# playbooks/apps/qbittorrent.yml), natively on its own guest (main/native*.yml) or on
-# Kubernetes (its localhost Kubernetes play).
+# qbittorrent role — qBittorrent as a Docker container on a stack host, natively on its own
+# guest (main/native*.yml) or on Kubernetes (kubernetes.yml runs this file), all from
+# playbooks/apps/deploy.yml.
 #
 # The media stack's torrent download client. Until this existed, the stack could
 # find releases and could not fetch any of them: tasks/app-wiring/arr-download-client.yml
 # has been complete since slice 504 and had nothing to wire.
 #
 # Variables available:
-#   app_config         — merged defaults + user config (from Play 1)
+#   app_config         — merged defaults + user config (tasks/apps/load-config.yml)
 #   instance           — the instance name (e.g. qbittorrent)
 #   homelabinfra_infra — infrastructure facts + the in-memory vault contract
 #
-# Exports (read by Play 3 to write the `media` registry key):
+# Exports (read by deploy-record.yml to write the `media` registry key):
 #   qbittorrent_media_kind, qbittorrent_media_host
 #
 # WHY THIS IS NOT THE servarr ROLE. qBittorrent is not a Servarr app: no
 # config.xml, no API key, no <APP>__ environment overrides, and its API
 # authenticates with a username and password over a session cookie. What it has
-# in common with them is the deploy shape, which is the playbook's, not the
+# in common with them is the deploy shape, which is deploy.yml's, not the
 # role's.
 
-# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and
-# the playbook's prepare play ran resolve-kubernetes-media.yml); the credential, the
+# Kubernetes: the app runs in its own namespace (kubernetes-workload.yml deploys the
+# workload and deploy-prepare.yml ran resolve-kubernetes-media.yml); the credential, the
 # sign-in proof and the vault item are shared with Docker.
 - name: Resolve the cluster the app deploys to
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
@@ -59,7 +59,7 @@
       ansible.builtin.import_tasks: main/native.yml
 
 - name: Kubernetes workload
-  ansible.builtin.include_tasks: kubernetes.yml
+  ansible.builtin.include_tasks: kubernetes-workload.yml
   when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the WebUI credential works and repair it if not

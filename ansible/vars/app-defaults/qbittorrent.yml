@@ -4,6 +4,9 @@
 # This file is git-managed — git pull may update these defaults.
 
 qbittorrent_defaults:
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -87,6 +90,7 @@ qbittorrent_defaults:
   # Nonstandard tracker or web-seed ports need an explicit egress entry in the
   # instance's config/apps/<instance>.yml firewall override.
   firewall:
+    after_deploy: true
     # Peer egress is identified by the socket source port qBittorrent binds.
     # DHT, uTP and UDP trackers share the listen socket. HTTP and HTTPS trackers,
     # web seeds, RSS, search plugins and qBittorrent's own HTTPS fetches use their

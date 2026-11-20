@@ -52,25 +52,12 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/sabnzbd.yml")}
-    docker = plays["SABnzbd | Deploy"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "sabnzbd"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in docker["tasks"]
-    )
-    kube = plays["SABnzbd | Deploy on Kubernetes"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "sabnzbd"
-        and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for task in kube["tasks"]
-    )
-    prepare = plays["SABnzbd | Prepare Kubernetes"]["tasks"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "resolve-kubernetes-media"
-        for task in prepare
-    )
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the Kubernetes
+    # shares are resolved by the role's deploy-prepare hook, and kubernetes.yml runs main.yml.
+    prepare = read_yaml(f"{ROLE}/tasks/deploy-prepare.yml")
+    assert includes(prepare, "resolve-kubernetes-media.yml")
+    entry = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
+    assert entry[0]["ansible.builtin.include_tasks"] == "main.yml"
     # Every declared mount is resolved as an NFS share and mounted at its Docker path.
     resolve = read_yaml(f"{ROLE}/tasks/resolve-kubernetes-media.yml")
     share = next(t for t in resolve if "resolve-media-nfs.yml" in str(t.get("ansible.builtin.include_tasks")))
@@ -83,7 +70,7 @@ def main():
     made = next(i for i, x in enumerate(order) if "directory" in x)
     assert nfs < made
 
-    kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
+    kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes-workload.yml")
     assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
     assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     volumes = next(t for t in kubernetes if "prepare-media-volumes.yml" in str(t.get("ansible.builtin.include_tasks")))

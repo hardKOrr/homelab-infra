@@ -1,0 +1,16 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring). Docker and native:
+# record the instance-keyed `media` registry entry (ansible/vars/CONTRACT.md §3) that
+# playbooks/stacks/wire-media-stack.yml reads to find this app. Topology only, no
+# credentials. A Kubernetes instance has no entry, so Wire Media Stack does not discover it.
+- name: Bazarr | Record the media registry entry
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    _bazarr_guest: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: media
+    # An expression, never a literal `"{{ instance }}":` key: Ansible does not template one.
+    generated_facts_data: >-
+      {{ {instance: {'app': _bazarr_guest.bazarr_media_kind,
+                     'host': _bazarr_guest.bazarr_media_host}} }}
+  when: app_config.hosting.method in ['docker', 'native']

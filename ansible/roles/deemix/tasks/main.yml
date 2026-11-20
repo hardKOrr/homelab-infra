@@ -1,6 +1,6 @@
 ---
 # deemix role — Deemix as a Docker container on a stack host, or natively on its own
-# LXC or VM (docker.yml, native.yml). Called from Play 2 of playbooks/apps/deemix.yml.
+# LXC or VM (docker.yml, native.yml). Called from playbooks/apps/deploy.yml.
 #
 # Lidarr's Deezer download client (ansible/vars/media-wiring.yml, `deemix`
 # kind — the plugins branch only; a mainline Lidarr rejects it and the wiring
@@ -8,12 +8,12 @@
 # in media-wiring.yml and nothing to wire.
 #
 # Variables available:
-#   app_config           — merged defaults + user config (from Play 1)
+#   app_config           — merged defaults + user config (tasks/apps/load-config.yml)
 #   instance              — the instance name (e.g. deemix)
 #   homelabinfra_config   — merged input config, including infrastructure.*
 #   homelabinfra_vault    — the in-memory Vaultwarden contract
 #
-# Exports (read by Play 3 to write the `media` registry key):
+# Exports (read by deploy-record.yml to write the `media` registry key):
 #   deemix_media_kind, deemix_media_host
 #
 # The ARL is an operator-owned Deezer session cookie, never generated here.
@@ -81,7 +81,7 @@
 
 # ── Storage the lab already provides ──────────────────────────────────────────
 # Same stance as roles/sabnzbd and roles/qbittorrent: the mounts are the lab's,
-# attached to the stack host by Play 1, and only ever asserted here.
+# attached to the stack host by Deploy, and only ever asserted here.
 - name: Verify the declared mounts are present on the stack host
   ansible.builtin.stat:
     path: "{{ item.path }}"
@@ -95,7 +95,7 @@
     that: item.stat.exists and item.stat.isdir
     fail_msg: >-
       {{ item.item.path }} is not present on this stack host. It is declared
-      in media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint,
+      in media_storage.mounts and Deploy attaches it as a Proxmox mountpoint,
       so either the attach did not happen or the guest has not restarted
       since. This platform attaches storage the lab already provides; it
       never creates it.

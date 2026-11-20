@@ -3,6 +3,15 @@
 # an operator-provided ARL in homelab-infra/apps/<instance>; the platform never
 # generates that session cookie.
 deemix_defaults:
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
+  # A Kubernetes instance has no media registry entry, so Wire Media Stack does not
+  # discover it.
+  deploy:
+    notify_note: >-
+      On Docker or native, run the Wire Media Stack job to register it as a download
+      client in every Lidarr running the plugins branch.
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -85,6 +94,9 @@ deemix_defaults:
     # registers that address directly in Lidarr — so gating the human-facing
     # browser route with Authentik costs the *arr wiring nothing.
     identity: forward_auth
+    # The route reaches the Deezer account with no app login, so only the SSO admin user
+    # is granted it (playbooks/apps/deploy.yml).
+    auth_admin_only: true
 
   # Stop only this service and archive config; downloads remain outside recovery.
   backup:

@@ -57,7 +57,7 @@ ENV.tests["file"] = lambda path: Path(path).is_file()
 SHARED_DEPLOY = ROOT / "ansible/playbooks/apps/deploy.yml"
 # Task files that hold a phase of deploy.yml, split out for the size budget. Their
 # includes count as deploy.yml's own.
-DEPLOY_PHASES = {"ansible/tasks/apps/deploy-resolve.yml"}
+DEPLOY_PHASES = {"ansible/tasks/apps/deploy-resolve.yml", "ansible/tasks/apps/deploy-firewall.yml"}
 
 
 def apps() -> list[str]:

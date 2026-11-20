@@ -1454,8 +1454,8 @@ def wireguard_peer_address_uses_the_ipaddr_filter():
 
 def apps_open_access_through_the_shared_task():
     # Apps use one task file for firewall access; it reaches the provider only when one is
-    # configured and refuses a forward that misses the app's port. qBittorrent applies its
-    # source-port policy after Deploy has enforced the matching client settings.
+    # configured and refuses a forward that misses the app's port. deploy.yml's step for
+    # converted apps is checked by gate/test-deploy-firewall.py.
     tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
     provider = task_named(tasks, "Firewall access | Open it on the configured provider")
     for name, expected in (("opnsense", True), ("none", False)):
@@ -1479,28 +1479,23 @@ def apps_open_access_through_the_shared_task():
         assert result is ok, (forward, port, result)
 
     ports = {"plex": ("_plex_fw_host", "plex-remote-access", "port"),
-             "qbittorrent": ("_qbt_fw_host", "bittorrent-listen", "torrenting_port"),
              "wireguard": ("_wg_fw_host", "wireguard", "port")}
-    for app in ("slskd", "qbittorrent", "sabnzbd", "plex", "wireguard"):
+    for app in ("plex", "wireguard"):
         plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
         names = [play["name"] for play in plays]
         opened = next(i for i, n in enumerate(names) if n.endswith("| Open network access"))
         deployed = next(i for i, n in enumerate(names) if n.endswith("| Deploy"))
-        if app == "qbittorrent":
-            assert deployed < opened, (app, names)
-        else:
-            assert opened < deployed, (app, names)
+        assert opened < deployed, (app, names)
         task = task_named(plays[opened]["tasks"], "Open the app's network access")
         assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", app
-        if app in ports:
-            host, forward, key = ports[app]
-            defaults = yaml.safe_load(read(f"ansible/vars/app-defaults/{app}.yml"))[f"{app}_defaults"]
-            declared = {f["name"]: f["port"] for f in defaults["firewall"]["inbound"]}
-            rendered = render(task["vars"]["firewall_inbound_ports"],
-                              {host: {"app_config": defaults}, "instance": app,
-                               "homelabinfra_config": {}})
-            assert rendered == {forward: str(defaults["app"][key])} and declared[forward] == defaults["app"][key], (
-                app, rendered, declared)
+        host, forward, key = ports[app]
+        defaults = yaml.safe_load(read(f"ansible/vars/app-defaults/{app}.yml"))[f"{app}_defaults"]
+        declared = {f["name"]: f["port"] for f in defaults["firewall"]["inbound"]}
+        rendered = render(task["vars"]["firewall_inbound_ports"],
+                          {host: {"app_config": defaults}, "instance": app,
+                           "homelabinfra_config": {}})
+        assert rendered == {forward: str(defaults["app"][key])} and declared[forward] == defaults["app"][key], (
+            app, rendered, declared)
 
 def qbittorrent_enforces_peer_ports_before_start():
     tasks = task_parts.inline(ROOT / "ansible/roles/qbittorrent/tasks/main.yml")

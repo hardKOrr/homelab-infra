@@ -27,25 +27,10 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/deemix.yml")}
-    docker = plays["Deemix | Deploy"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "deemix"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in docker["pre_tasks"] + docker.get("tasks", [])
-    )
-    kube = plays["Deemix | Deploy on Kubernetes"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-        and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for task in kube.get("pre_tasks", []) + kube["tasks"]
-    )
-    prepare = plays["Deemix | Prepare Kubernetes"]["tasks"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "resolve-kubernetes-media"
-        for task in prepare
-    )
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the Kubernetes
+    # share is resolved by the role's deploy-prepare hook.
+    prepare = read_yaml("ansible/roles/deemix/tasks/deploy-prepare.yml")
+    assert includes(prepare, "resolve-kubernetes-media.yml")
 
     resolve = read_yaml("ansible/roles/deemix/tasks/resolve-kubernetes-media.yml")
     share = next(t for t in resolve if "resolve-media-nfs.yml" in str(t.get("ansible.builtin.include_tasks")))

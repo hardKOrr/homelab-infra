@@ -1,5 +1,5 @@
 ---
-# Run on localhost before the cluster deploy (the playbook's prepare play): resolve every
+# Run on localhost before the cluster deploy (deploy-prepare.yml): resolve every
 # declared media mount as the NFS share Kubernetes mounts at the same container path as
 # the Docker stack, and create the download directories on the Proxmox node, which the pod
 # cannot do before the app starts. Sets k8s_media_nfs and opens the cluster nodes' NFS

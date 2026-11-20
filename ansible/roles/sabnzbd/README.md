@@ -16,8 +16,8 @@ the Docker image's `/config` layout, so one backup and restore serves both metho
 
 ## Kubernetes
 
-`hosting.method: kubernetes` swaps `storage.yml` and `start.yml` for `tasks/kubernetes.yml`,
-after the playbook's prepare play ran `resolve-kubernetes-media.yml`. Settings live on a
+`hosting.method: kubernetes` swaps `storage.yml` and `start.yml` for `tasks/kubernetes-workload.yml`,
+after deploy-prepare.yml ran `resolve-kubernetes-media.yml`. Settings live on a
 PVC from the cluster's default StorageClass, and the pod sees each declared media mount
 through its NFS export under the container path Docker uses. An init container seeds
 `sabnzbd.ini` once and, before every start, sets the API key held in a Secret. Kubernetes

@@ -4,6 +4,9 @@
 # This file is git-managed — git pull may update these defaults.
 
 sabnzbd_defaults:
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -125,6 +128,8 @@ sabnzbd_defaults:
     # publishes it in the Authentik catalog and leaves the app to authenticate its
     # own callers.
     identity: catalog
+    # mode=version is one of the two API modes SABnzbd answers without a key.
+    monitor_path: /api?mode=version
 
   # Stop the one service and archive config, excluding disposable logs and downloads.
   backup:

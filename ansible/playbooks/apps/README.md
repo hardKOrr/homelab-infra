@@ -185,6 +185,27 @@ hooks under `roles/<app>/tasks/`, each run only when the file exists:
 | `remove.yml` | after the Compose project stops |
 | `remove-devices.yml` | after the data paths are gone; a GPU hook calls `tasks/proxmox/detach-app-gpu.yml` |
 
+A converted app's Deploy is `playbooks/apps/deploy.yml`; its per-app steps are role hooks,
+run only when the file exists:
+
+| Hook | Deploy runs it |
+| --- | --- |
+| `deploy-prepare.yml` | on localhost after the hostname is known, before provisioning: may set `deploy_host_mounts` (attached by `tasks/proxmox/attach-host-mounts.yml`), `deploy_host_mounts_owner`, `deploy_host_mounts_own_node` (only the guest's node), `native_guest_database` and `firewall_inbound_ports` |
+| `deploy-record.yml` | on localhost before wiring, also while a restore target is isolated: registry entries other jobs read (`media`, `databases`); `deploy_notify_note`, a note computed from `app_config` |
+| `deploy-wire.yml` | on localhost after wiring, never while a restore target is isolated: connections with deployed peers; a failure recorded through `report-degradation.yml` fails the run |
+| `kubernetes.yml` | on localhost for `hosting.method: kubernetes`; it may run the whole `main.yml` |
+
+Deploy reads these app-defaults keys (shared values in `vars/app-defaults/_base.yml`):
+`routing.monitor_path`, `routing.auth_group`, `routing.auth_admin_only` (grant only the SSO
+admin user), `deploy.notify_note` (a sentence added to the notification), `vault.methods`
+and `platform_layers` (`tasks/apps/load-config.yml`), `firewall.methods` (the methods whose
+Deploy opens the declared `firewall:` access; default every method), `firewall.after_deploy`
+(open the guest's access after the role ran, `tasks/apps/deploy-firewall.yml`), `firewall.sends_mail`
+(SMTP egress to the platform relay). An `app.database` gets its database and login role on
+the named backend before the guest is provisioned (`tasks/database/deploy-consumer.yml`),
+on the methods in `deploy.database_methods` (default every method); with
+`deploy.database_optional`, only while `app.database.instance` is named.
+
 Never add an `app == '<app>'` branch to Remove. Restore App's hooks
 (`restore-inputs.yml`, `restore-provisioned.yml`, `restore-config.yml`) are listed in the
 header of `playbooks/maintenance/restore-app.yml`.
