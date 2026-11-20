@@ -1,0 +1,56 @@
+---
+# Refuse Remove with delete_data on a database backend while another deployed instance's
+# config names it as its database or Redis backend (app.database.instance,
+# app.redis.instance). Deployed means a Proxmox guest carries the instance's `_<instance>`
+# tag (record-app-on-guest.yml; a Kubernetes app's tag is on the cluster nodes); a removed
+# app keeps its config as a restore point and does not count. Dropping or destroying the backend takes that app's data with it:
+# postgresql-immich also held Authentik's database, and removing it broke the lab's SSO.
+# Remove that app first, or point it at another backend.
+#
+# Inputs: instance (the backend), _luv_config_dir (tasks/load-user-vars.yml),
+# homelabinfra_config.proxmox.node.
+# Result: _rm_backend_consumers, the deployed instances that name this backend.
+- name: Backend consumers | Register Proxmox nodes
+  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
+  when: _rm_backend_guests_json is not defined
+
+- name: Backend consumers | Read the guests' app tags
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _rm_backend_guests_read
+  changed_when: false
+  when: _rm_backend_guests_json is not defined
+
+- name: Backend consumers | Find instance configs that name this backend
+  ansible.builtin.set_fact:
+    _rm_backend_consumers: >-
+      {%- if _rm_backend_guests_json is defined -%}
+      {%-   set guests = _rm_backend_guests_json -%}
+      {%- else -%}
+      {%-   set guests = _rm_backend_guests_read.stdout | from_json -%}
+      {%- endif -%}
+      {%- set tags = [] -%}
+      {%- for guest in guests -%}
+      {%-   set _ = tags.extend((guest.tags | default('', true)).split(';')) -%}
+      {%- endfor -%}
+      {%- set found = [] -%}
+      {%- for path in query('ansible.builtin.fileglob', _luv_config_dir ~ '/apps/*.yml') | sort -%}
+      {%-   set name = path | basename | regex_replace('\.yml$', '') -%}
+      {%-   set app = ((lookup('ansible.builtin.file', path) | from_yaml) or {}).get('app') or {} -%}
+      {%-   if name != instance and ('_' ~ name) in tags and (
+              ((app.get('database') or {}).get('instance', '') == instance)
+              or ((app.get('redis') or {}).get('instance', '') == instance)) -%}
+      {%-     set _ = found.append(name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ found }}
+
+- name: Backend consumers | Refuse while another app keeps its data here
+  ansible.builtin.assert:
+    that: _rm_backend_consumers | length == 0
+    fail_msg: >-
+      Refusing to remove {{ instance }} with delete_data=true: {{ _rm_backend_consumers |
+      join(', ') }} are deployed and name it as their database or Redis backend.
+      Remove those apps first, or move them to another backend.
+    quiet: true

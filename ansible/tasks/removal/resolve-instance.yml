@@ -95,6 +95,12 @@
   ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-inputs.yml"
   when: (_rm_hooks ~ '/remove-inputs.yml') is file
 
+- name: Refuse to delete a database backend another app still uses
+  ansible.builtin.include_tasks: guard-backend-consumers.yml
+  when:
+    - _rm_database_backend | default(false) | bool
+    - delete_data | default(false) | bool
+
 # An app with a named database on a registered backend owns only that database and
 # login, never the backend guest. Check ownership before unwiring anything, so a
 # refused drop leaves the app in place; Play 4 drops it after the app has stopped.
