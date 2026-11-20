@@ -80,8 +80,11 @@ def check_defaults_and_deploy():
     assert "UMask=0077" in umask["ansible.builtin.copy"]["content"]
     assert umask["notify"] == "Restart Redis"
     assert redis_main.index(umask) < redis_main.index(redis_package)
+    # The native restart goes through tasks/apps/restart.yml, which reloads systemd first,
+    # so the umask drop-in applies.
     restart = read_yaml("ansible/roles/redis/handlers/main.yml")[0]
-    assert restart["ansible.builtin.systemd"]["daemon_reload"] is True
+    assert restart["ansible.builtin.include_tasks"].endswith("tasks/apps/restart.yml")
+    assert restart["vars"]["restart_runtime"] == "native"
 
     acl_file = task_named(redis_main, "Redis | Create the ACL file without replacing existing users")
     assert acl_file["ansible.builtin.copy"]["content"] == ""
@@ -123,10 +126,6 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password, docker=Fal
                 {
                     "name": "Restart Redis",
                     "ansible.builtin.debug": {"msg": "Redis restart requested"},
-                },
-                {
-                    "name": "Restart Redis container",
-                    "ansible.builtin.debug": {"msg": "Redis container restart requested"},
                 },
             ],
         }
@@ -171,7 +170,15 @@ def check_default_acl_reconciliation():
     assert lineinfile["regexp"] == r"^user default(?: |$)"
     assert lineinfile["line"] == "{{ _redis_default_acl_line }}"
     assert "when" not in task
-    assert "Restart Redis container" in task["notify"] and "'Restart Redis'" in task["notify"]
+    # The native restart is notified; on Docker the role's Compose deploy recreates the
+    # container from the registered result instead.
+    assert task["notify"] == "Restart Redis"
+    assert task["register"] == "_redis_acl_written"
+    main_tasks = read_yaml("ansible/roles/redis/tasks/main.yml")
+    deploy = task_named(main_tasks, "Redis | Deploy the Compose project")
+    assert deploy["ansible.builtin.include_tasks"].endswith("tasks/stack/compose-deploy.yml")
+    assert "_redis_acl_written.changed" in deploy["vars"]["compose_recreate"]
+    assert "_redis_conf_written.changed" in deploy["vars"]["compose_recreate"]
     assert task.get("no_log") is True
 
     with tempfile.TemporaryDirectory(prefix="redis-acl-reconcile-") as directory:
@@ -216,11 +223,11 @@ def check_default_acl_reconciliation():
         assert rotation_repeat == 0
         assert LAST_HANDLERS == []
 
-        # An ACL-only change on Docker restarts the container, never the native service.
+        # An ACL-only change on Docker reports changed, which the Compose deploy turns into
+        # a recreate (the real handler is native-only).
         docker_acl = Path(directory) / "docker-users.acl"
         docker_acl.write_text(f"{canary_user}\n")
         assert run_default_acl_reconciliation(docker_acl, playbook_path, first_password, docker=True) == 1
-        assert LAST_HANDLERS == ["Restart Redis container"]
 
         empty_acl_path = Path(directory) / "empty-users.acl"
         empty_acl_path.write_text(f"{canary_user}\n")

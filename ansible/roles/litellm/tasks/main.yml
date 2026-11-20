@@ -2,7 +2,9 @@
 # LiteLLM Proxy on a guest: Docker on a stack host (docker.yml) or natively on its own LXC
 # or VM (native.yml). Kubernetes is kubernetes.yml. The proxy keeps no files of its own: its routing config is rendered
 # below, its keys are in Vaultwarden, and virtual keys, spend and usage are in the named
-# PostgreSQL database that playbooks/apps/deploy.yml provisions before this role.
+# PostgreSQL database that playbooks/apps/deploy.yml provisions before this role. The
+# config and env writes notify the native restart; docker.yml recreates the container from
+# their registered results instead.
 
 - name: LiteLLM | Resolve credentials, keys and the database URL
   ansible.builtin.include_tasks: prepare.yml
@@ -38,6 +40,7 @@
     group: root
     mode: "0600"
   no_log: true
+  register: _litellm_env_written
   notify: Restart litellm
 
 - name: LiteLLM | Run on Docker

@@ -5,7 +5,6 @@
   gather_facts: false
   vars:
     instance: litellm
-    litellm_skip_restart: true
     litellm_config_owner: "{{ lookup('env', 'USER') }}"
     litellm_config_dir: "{{ scratch }}"
     app_config:

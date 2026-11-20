@@ -11,6 +11,7 @@
     owner: "{{ litellm_config_owner }}"
     group: "{{ litellm_config_owner }}"
     mode: "0644"
+  register: _litellm_config_written
   notify: Restart litellm
   when: not (recovery_restore_config | default(false) | bool)
 

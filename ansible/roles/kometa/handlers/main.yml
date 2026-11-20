@@ -1,15 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/docker.yml recreates the project itself
+# when the Compose file or a configuration file changes.
 - name: Restart kometa
-  community.docker.docker_compose_v2:
-    project_src: "{{ kometa_project_dir }}"
-    state: present
-    recreate: always
-  when: not (kometa_native | bool)
-
-- name: Restart kometa service
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
   when: kometa_native | bool
-  listen: Restart kometa

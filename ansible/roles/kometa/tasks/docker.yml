@@ -23,29 +23,16 @@
   vars:
     _kometa_files_owner: root
 
-- name: Kometa | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ kometa_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart kometa
-
-- name: Kometa | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ kometa_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Kometa | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "{{ kometa_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Kometa | Apply pending restarts
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file or a written
+# configuration file changed, in the same up that creates it, so a new install is never
+# restarted mid first run.
+- name: Kometa | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ kometa_project_dir }}"
+    compose_recreate: >-
+      {{ _kometa_files_written.changed | default(false)
+         or _kometa_collections_removed.changed | default(false) }}
 
 - name: Kometa | Read the container state
   community.docker.docker_container_info:

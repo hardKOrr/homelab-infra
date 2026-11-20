@@ -1,16 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/docker.yml recreates the project itself
+# when the Compose file, routing config or env file changes.
 - name: Restart litellm
-  community.docker.docker_compose_v2:
-    project_src: "{{ litellm_project_dir }}"
-    state: present
-    recreate: always
-  # gate/test-litellm-docker.py renders the config without a Docker host.
-  when: not (litellm_skip_restart | default(false) | bool) and not (litellm_native | bool)
-
-- name: Restart litellm service
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
   when: litellm_native | bool
-  listen: Restart litellm
