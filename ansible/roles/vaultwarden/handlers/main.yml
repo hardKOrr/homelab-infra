@@ -1,11 +1,8 @@
 ---
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose or environment file changes.
 - name: Restart vaultwarden
-  ansible.builtin.systemd:
-    name: "{{ vaultwarden_service_name }}"
-    state: restarted
-    daemon_reload: true
-
-- name: Restart vaultwarden container
-  community.docker.docker_compose_v2:
-    project_src: "{{ vaultwarden_project_dir }}"
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ vaultwarden_service_name }}"]

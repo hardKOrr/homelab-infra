@@ -136,29 +136,13 @@
     vault_item_secret_fields: [password]
   no_log: true
 
-- name: Write Emby's Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ emby_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart emby
-
-- name: Pull Emby image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ emby_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Start Emby
-  community.docker.docker_compose_v2:
-    project_src: "{{ emby_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending Emby restarts before checks
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot. The checks
+# below wait for Emby's full system information, not only a 200.
+- name: Deploy Emby's Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ emby_project_dir }}"
 
 - name: Wait for Emby's public system-info endpoint
   ansible.builtin.uri:
