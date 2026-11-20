@@ -52,40 +52,29 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/qbittorrent.yml")}
-    docker = plays["qBittorrent | Deploy"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "qbittorrent"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in docker["tasks"]
-    )
-    kube = plays["qBittorrent | Deploy on Kubernetes"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "qbittorrent"
-        and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for task in kube["tasks"]
-    )
-    prepare = plays["qBittorrent | Prepare Kubernetes"]["tasks"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "resolve-kubernetes-media"
-        for task in prepare
-    )
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the Kubernetes
+    # shares are resolved by the role's deploy-prepare hook, and kubernetes.yml runs main.yml.
+    prepare = read_yaml(f"{ROLE}/tasks/deploy-prepare.yml")
+    assert includes(prepare, "resolve-kubernetes-media.yml")
+    entry = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
+    assert entry[0]["ansible.builtin.include_tasks"] == "main.yml"
     refuse = next(t for t in prepare if "ansible.builtin.assert" in t)
-    names = [t.get("name") for t in prepare]
-    assert names.index(refuse["name"]) < next(i for i, t in enumerate(prepare) if includes([t], "open-app-access.yml"))
-    condition = refuse["ansible.builtin.assert"]["that"]
+    assert refuse["when"] == "app_config.hosting.method == 'kubernetes'"
+    condition = " ".join(refuse["ansible.builtin.assert"]["that"].split())
     for inbound, ok in (([], True), ([{"name": "bittorrent-listen", "enabled": False}], True),
                         ([{"name": "bittorrent-listen", "enabled": True}], False)):
         env = jinja2.Environment()
         assert env.compile_expression(condition)(app_config={"firewall": {"inbound": inbound}}) is ok, inbound
+    # Docker and native: the BitTorrent forward targets the port the client listens on.
+    handoff = next(t for t in prepare if "ansible.builtin.set_fact" in t)["ansible.builtin.set_fact"]
+    assert "app_config.app.torrenting_port" in handoff["firewall_inbound_ports"]["bittorrent-listen"]
 
     # Every declared mount is resolved as an NFS share and mounted at its Docker path.
     resolve = read_yaml(f"{ROLE}/tasks/resolve-kubernetes-media.yml")
     share = next(t for t in resolve if "resolve-media-nfs.yml" in str(t.get("ansible.builtin.include_tasks")))
     assert share["vars"]["k8s_media_mounts"] == "{{ _qbt_k8s_mounts }}"
 
-    kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
+    kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes-workload.yml")
     assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
     assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     volumes = next(t for t in kubernetes if "prepare-media-volumes.yml" in str(t.get("ansible.builtin.include_tasks")))

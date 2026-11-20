@@ -19,3 +19,47 @@
     groups: docker
     append: true
   loop: "{{ docker_users }}"
+
+# Watchtower pulls a new image each update and Deploy pulls on version changes; neither
+# removes the old one. A daily timer removes images no container (running or stopped) uses
+# and that are older than docker_image_prune_until.
+- name: Install the daily unused-image prune
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/homelab-docker-image-prune.{{ item.unit }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - unit: service
+      content: |
+        [Unit]
+        Description=Remove Docker images no container uses (homelab-infra)
+        Requires=docker.service
+        After=docker.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/docker image prune --all --force --filter until={{ docker_image_prune_until }}
+    - unit: timer
+      content: |
+        [Unit]
+        Description=Daily Docker unused-image prune (homelab-infra)
+
+        [Timer]
+        OnCalendar=daily
+        RandomizedDelaySec=1h
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.unit }}"
+  register: _docker_prune_units
+
+- name: Enable the daily unused-image prune
+  ansible.builtin.systemd:
+    name: homelab-docker-image-prune.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ _docker_prune_units is changed }}"

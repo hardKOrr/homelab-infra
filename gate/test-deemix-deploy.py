@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 DEPLOY = [t for f in ("main", "configure") for t in yaml.safe_load((ROOT / f"ansible/roles/deemix/tasks/{f}.yml").read_text())]
 AUTHENTIK = task_parts.inline(ROOT / "ansible/tasks/wiring/authentik.yml")
-DEEMIX_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/deemix.yml").read_text())
 
 
 def task(name, tasks=DEPLOY):
@@ -169,17 +168,18 @@ def check_login_api():
 
 
 def check_admin_binding_scope():
-    play_vars = next(p for p in DEEMIX_PLAYBOOK if p["name"] == "Deemix | Record facts and wire")["vars"]
-    assert "wiring_auth_users" in play_vars
-    assert "sso.admin_user" in play_vars["wiring_auth_users"]
-    play_text = str(DEEMIX_PLAYBOOK)
-    assert "automatic Deezer sign-in" in play_text
-    assert "Confirm the Deezer login succeeded" not in play_text
+    # Only the SSO admin user is granted Deemix's route: deploy.yml turns
+    # routing.auth_admin_only into wiring_auth_users, and only Deemix sets it.
+    deploy = yaml.safe_load((ROOT / "ansible/playbooks/apps/deploy.yml").read_text())
+    wire_vars = next(p for p in deploy if p["name"].endswith("| Record and wire"))["vars"]
+    assert "sso.admin_user" in wire_vars["wiring_auth_users"]
+    assert "routing.auth_admin_only" in wire_vars["wiring_auth_users"]
     occurrences = []
-    for path in (ROOT / "ansible/playbooks/apps").glob("*.yml"):
-        doc = yaml.safe_load(path.read_text())
-        if any("wiring_auth_users" in str(play.get("vars", {})) for play in doc):
-            occurrences.append(path.name)
+    for path in sorted((ROOT / "ansible/vars/app-defaults").glob("*.yml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for defaults in doc.values():
+            if ((defaults or {}).get("routing") or {}).get("auth_admin_only"):
+                occurrences.append(path.name)
     assert occurrences == ["deemix.yml"], occurrences
 
     text = str(AUTHENTIK)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard Unpackerr's native method: exact pins, the rendered environment, the playbook wiring."""
+"""Guard Unpackerr's native method: exact pins, the rendered environment, the deploy hook."""
 
 import subprocess
 import tempfile
@@ -20,8 +20,9 @@ assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "packagecloud.io/golift/pkgs" in install and "unpackerr={{ app_config.app.native_version }}" in install
 
-playbook = (repo / "ansible/playbooks/apps/unpackerr.yml").read_text()
-assert "tasks_from: provision" in playbook and "in ['docker', 'native']" in playbook
+# Docker and native attach the media paths the deploy-prepare hook hands deploy.yml.
+prepare = (role / "tasks/deploy-prepare.yml").read_text()
+assert "deploy_host_mounts" in prepare and "in ['docker', 'native']" in prepare
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)

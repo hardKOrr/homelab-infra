@@ -1,0 +1,17 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Docker and
+# native: hand deploy.yml the media paths in app.mounts to attach to the guest.
+# Kubernetes: resolve the same paths as the lab's existing NFS shares.
+- name: Bazarr | Hand deploy.yml the media paths to attach to the guest
+  ansible.builtin.set_fact:
+    deploy_host_mounts: "{{ app_config.app.mounts | default([], true) }}"
+    deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+  when: app_config.hosting.method in ['docker', 'native']
+
+- name: Bazarr | Resolve the existing media shares for Kubernetes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: "{{ app_config.app.mounts | default([], true) }}"
+  when:
+    - app_config.hosting.method == 'kubernetes'
+    - app_config.app.mounts | default([], true) | length > 0

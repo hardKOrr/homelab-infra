@@ -1,0 +1,16 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Docker and
+# native: hand deploy.yml the storage this app needs (app.mounts, default all of
+# media_storage so imports hardlink) to attach to the guest. Kubernetes: resolve the same
+# paths as the lab's existing NFS shares.
+- name: Deemix | Hand deploy.yml the storage to attach to the guest
+  ansible.builtin.set_fact:
+    deploy_host_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+    deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+  when: app_config.hosting.method in ['docker', 'native']
+
+- name: Deemix | Resolve the media shares for Kubernetes
+  ansible.builtin.include_tasks: resolve-kubernetes-media.yml
+  when: app_config.hosting.method == 'kubernetes'

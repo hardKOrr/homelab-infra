@@ -67,16 +67,19 @@ with tempfile.TemporaryDirectory() as t:
   path=d/'play.yml';path.write_text(yaml.safe_dump([play],sort_keys=False))
   env=dict(os.environ,START_FIXTURE=str(d),PATH=str(d)+os.pathsep+os.environ['PATH'],ANSIBLE_CONFIG=str(R/'ansible/ansible.cfg'),ANSIBLE_NOCOLOR='1')
   p=subprocess.run([str(Path.home()/'.venvs/homelab-ansible/bin/ansible-playbook'),'-i','localhost,',str(path)],env=env,text=True,capture_output=True,timeout=90)
-  good=case in ['plan','execute-lxc','execute-qemu','repeat-running'];assert (p.returncode==0)==good,(case,p.stdout,p.stderr)
+  good=case in ['plan','execute-lxc','execute-qemu','repeat-running','low-memory','low-memory-fallback'];assert (p.returncode==0)==good,(case,p.stdout,p.stderr)
   calls=(d/'commands').read_text().splitlines() if (d/'commands').exists() else []
   api_calls=(d/'pvesh-calls').read_text().splitlines() if (d/'pvesh-calls').exists() else []
   if case=='execute-lxc':assert calls==['start 123','exec 123 -- /bin/true'] and (d/'started').exists(),calls
   elif case=='execute-qemu':assert calls==['start 123','guest exec 123 -- /bin/true'] and (d/'started').exists(),calls
+  elif case in ['low-memory','low-memory-fallback']:assert calls and calls[0]=='start 123',calls
   else:assert not calls,(case,calls)
+  # A short node warns and starts the guest anyway.
   if case in ['low-memory','low-memory-fallback']:
-   assert 'Not enough available memory for guest' in p.stdout,p.stdout
-   assert 'stack-productivity' in p.stdout and "node 'localhost'" in p.stdout,p.stdout
-   assert 'needs 2048 MiB' in p.stdout and 'only 1024 MiB available' in p.stdout,p.stdout
+   out=' '.join(p.stdout.split()).replace("''","'")
+   assert 'WARNING: Guest' in out,p.stdout
+   assert 'stack-productivity' in out and "node 'localhost'" in out,p.stdout
+   assert 'configured for 2048 MiB' in out and 'only 1024 MiB available' in out,p.stdout
    assert any('/nodes/localhost/status' in call for call in api_calls),api_calls
   if case=='repeat-running':
    assert not any('/nodes/localhost/status' in call for call in api_calls),api_calls

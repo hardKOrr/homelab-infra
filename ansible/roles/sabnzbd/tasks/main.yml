@@ -1,6 +1,6 @@
 ---
 # sabnzbd role — SABnzbd as a Docker container on a stack host, or natively on its own
-# guest (main/native*.yml). Called from Play 2 of playbooks/apps/sabnzbd.yml. Target: the
+# guest (main/native*.yml). Called from playbooks/apps/deploy.yml. Target: the
 # media host, or the native guest.
 #
 # The media stack's USENET download client, the counterpart to roles/qbittorrent.
@@ -9,13 +9,13 @@
 # the `sabnzbd` kind since slice 504 and had no instance to wire.
 #
 # Variables available:
-#   app_config           — merged defaults + user config (from Play 1)
+#   app_config           — merged defaults + user config (tasks/apps/load-config.yml)
 #   instance             — the instance name (e.g. sabnzbd)
 #   homelabinfra_config  — merged input config, including infrastructure.*
 #   homelabinfra_infra   — infrastructure facts (may be absent pre-bootstrap)
 #   homelabinfra_vault   — the in-memory Vaultwarden contract
 #
-# Exports (read by Play 3 to write the `media` registry key):
+# Exports (read by deploy-record.yml to write the `media` registry key):
 #   sabnzbd_media_kind, sabnzbd_media_host
 #
 # WHY THIS IS NOT THE servarr ROLE, and not roles/qbittorrent either. SABnzbd is
@@ -25,9 +25,9 @@
 # exactly what ansible/vars/media-wiring.yml records as `auth: api_key`. What the
 # three share is the deploy shape, which belongs to the playbook, not the role.
 
-# Kubernetes: the app runs in its own namespace (kubernetes.yml deploys the workload and the
-# playbook's prepare play ran resolve-kubernetes-media.yml); the API key proof and the vault
-# item are shared with Docker.
+# Kubernetes: the app runs in its own namespace (kubernetes-workload.yml deploys the
+# workload and deploy-prepare.yml ran resolve-kubernetes-media.yml); the API key proof and
+# the vault item are shared with Docker.
 - name: Resolve the cluster the app deploys to
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
   when: app_config.hosting.method == 'kubernetes'
@@ -63,7 +63,7 @@
       ansible.builtin.import_tasks: main/native.yml
 
 - name: Kubernetes workload
-  ansible.builtin.include_tasks: kubernetes.yml
+  ansible.builtin.include_tasks: kubernetes-workload.yml
   when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the API key works and repair it if not

@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, after wiring, never while the restore
+# target is isolated). Docker and native: register this download client in every deployed
+# torrent consumer, keeping each consumer's other connections. A Kubernetes instance has no
+# media registry entry, so it is not wired.
+- name: qBittorrent | Wire this download client into deployed torrent consumers
+  ansible.builtin.include_tasks: ../../../tasks/app-wiring/qbittorrent-clients.yml
+  when: app_config.hosting.method in ['docker', 'native']

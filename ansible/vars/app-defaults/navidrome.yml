@@ -4,6 +4,9 @@
 # directory is application-owned; the music library remains operator-owned and
 # is never written by this role.
 navidrome_defaults:
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -60,6 +63,7 @@ navidrome_defaults:
     # Navidrome clients authenticate against Navidrome itself. Authentik is a
     # catalog tile only; forward_auth would break Subsonic-compatible clients.
     identity: catalog
+    monitor_path: /ping   # Navidrome's unauthenticated liveness endpoint
 
   # PBS archives only the quiesced application data directory. The external
   # music library is not part of this recovery unit and is never deleted by

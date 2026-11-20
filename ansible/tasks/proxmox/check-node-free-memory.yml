@@ -1,7 +1,7 @@
 ---
 # Inputs:
 #   proxmox_memory_node       — node that will own the guest
-#   proxmox_memory_guest      — guest name shown in the failure message
+#   proxmox_memory_guest      — guest name shown in the warning
 #   proxmox_guest_memory_mib  — configured guest memory in MiB
 
 - name: Proxmox memory | Require the guest size and target node
@@ -25,15 +25,16 @@
   register: _proxmox_memory_node_status
   changed_when: false
 
-- name: Proxmox memory | Require enough available memory for the guest
-  ansible.builtin.assert:
-    quiet: true
-    that:
-      - (_proxmox_memory_available_bytes | int) >= (_proxmox_memory_needed_mib | int) * 1024 * 1024
-    fail_msg: >-
-      Not enough available memory for guest '{{ proxmox_memory_guest }}' on Proxmox node
-      '{{ proxmox_memory_node }}': needs {{ _proxmox_memory_needed_mib }} MiB, only
-      {{ _proxmox_memory_available_mib }} MiB available.
+# Proxmox lets guests' configured memory exceed the node's RAM, and a guest rarely uses
+# all of it, so a short node is a warning and a notification, never a refused Deploy.
+- name: Proxmox memory | Compare the guest size with the node's available memory
+  ansible.builtin.set_fact:
+    _proxmox_memory_short: "{{ (_proxmox_memory_available_bytes | int) < (_proxmox_memory_needed_mib | int) * 1024 * 1024 }}"
+    _proxmox_memory_message: >-
+      Guest '{{ proxmox_memory_guest }}' on Proxmox node '{{ proxmox_memory_node }}' is
+      configured for {{ _proxmox_memory_needed_mib }} MiB and the node reports only
+      {{ _proxmox_memory_available_mib }} MiB available. It starts anyway; free memory on
+      the node or move a guest if it swaps or the node runs out.
   vars:
     _proxmox_memory_status: "{{ _proxmox_memory_node_status.stdout | from_json }}"
     _proxmox_memory_available_bytes: >-
@@ -48,3 +49,17 @@
       }}
     _proxmox_memory_available_mib: "{{ _proxmox_memory_available_bytes | int // (1024 * 1024) }}"
     _proxmox_memory_needed_mib: "{{ proxmox_guest_memory_mib | int }}"
+
+- name: Proxmox memory | Warn that the node is short of memory for the guest
+  when: _proxmox_memory_short | bool
+  block:
+    - name: Proxmox memory | Print the shortfall
+      ansible.builtin.debug:
+        msg: "WARNING: {{ _proxmox_memory_message }}"
+
+    - name: Proxmox memory | Notify the shortfall
+      ansible.builtin.include_tasks: ../notify.yml
+      vars:
+        notify_title: "Node {{ proxmox_memory_node }} is short of memory"
+        notify_message: "{{ _proxmox_memory_message }}"
+        notify_priority: high

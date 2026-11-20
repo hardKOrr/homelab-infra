@@ -25,23 +25,12 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
 
-    playbook = read_yaml("ansible/playbooks/apps/bazarr.yml")
-    plays = {play["name"]: play for play in playbook}
-    docker = plays["Bazarr | Deploy"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "bazarr"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in docker["tasks"]
-    )
-    kube = plays["Bazarr | Deploy on Kubernetes"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-        and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for task in kube["tasks"]
-    )
-    prepare = plays["Bazarr | Prepare Kubernetes"]["tasks"]
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the Kubernetes
+    # shares are resolved by the role's deploy-prepare hook.
+    prepare = read_yaml("ansible/roles/bazarr/tasks/deploy-prepare.yml")
     assert includes(prepare, "tasks/kubernetes/resolve-media-nfs.yml")
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
+    record = read_yaml("ansible/roles/bazarr/tasks/deploy-record.yml")
+    assert includes(record, "tasks/bootstrap/write-generated-facts.yml")
 
     kubernetes = read_yaml("ansible/roles/bazarr/tasks/kubernetes.yml")
     assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")

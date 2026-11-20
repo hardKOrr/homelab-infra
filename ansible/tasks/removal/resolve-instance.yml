@@ -95,6 +95,12 @@
   ansible.builtin.include_tasks: "{{ _rm_hooks }}/remove-inputs.yml"
   when: (_rm_hooks ~ '/remove-inputs.yml') is file
 
+- name: Refuse to delete a database backend another app still uses
+  ansible.builtin.include_tasks: ../database/guard-backend-consumers.yml
+  when:
+    - _rm_database_backend | default(false) | bool
+    - delete_data | default(false) | bool
+
 # An app with a named database on a registered backend owns only that database and
 # login, never the backend guest. Check ownership before unwiring anything, so a
 # refused drop leaves the app in place; Play 4 drops it after the app has stopped.
@@ -105,6 +111,48 @@
          and (app_config.app.database.provider | default('')) in ['postgresql', 'mariadb', 'mysql']
          and (app_config.app.database.instance | default('') | length > 0)
          and not (_rm_no_named_database | default(false) | bool) }}
+
+# A backend an earlier Remove destroyed is gone from the registry and from Proxmox, and the
+# app's database went with it: nothing is left to drop. A backend Proxmox still reports
+# under its name or tag while the registry lacks it stays a refusal (resolve-app-database).
+- name: Register Proxmox nodes when the app's database backend is unregistered
+  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
+  when:
+    - _rm_drops_database | bool
+    - app_config.app.database.instance not in (homelabinfra_infra.databases | default({}))
+
+- name: Read Proxmox guests when the app's database backend is unregistered
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _rm_backend_guests
+  changed_when: false
+  when:
+    - _rm_drops_database | bool
+    - app_config.app.database.instance not in (homelabinfra_infra.databases | default({}))
+
+- name: Skip the drop of a database whose backend is already destroyed
+  ansible.builtin.set_fact:
+    _rm_drops_database: false
+  when:
+    - _rm_backend_guests.stdout is defined
+    - >-
+      _rm_backend_guests.stdout | from_json
+      | selectattr('name', 'defined')
+      | selectattr('name', 'equalto', app_config.app.database.instance) | list | length == 0
+    - >-
+      _rm_backend_guests.stdout | from_json
+      | map(attribute='tags') | map('default', '', true) | map('split', ';') | flatten
+      | select('equalto', '_' ~ app_config.app.database.instance) | list | length == 0
+
+- name: Report the database that went with its backend
+  ansible.builtin.debug:
+    msg: >-
+      {{ app_config.app.database.instance }} is no longer registered and Proxmox has no
+      guest for it, so {{ instance }}'s database went with that backend; nothing to drop.
+  when:
+    - _rm_backend_guests.stdout is defined
+    - not (_rm_drops_database | bool)
 
 - name: Resolve the app's named database before unwiring
   ansible.builtin.include_tasks: ../database/resolve-app-database.yml

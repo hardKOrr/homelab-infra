@@ -28,7 +28,7 @@
 
 # ── Storage the lab already provides ──────────────────────────────────────────
 # Same stance as roles/servarr: the mounts are the lab's, attached to the stack
-# host by Play 1, and only ever asserted here. A container started against a
+# host by Deploy, and only ever asserted here. A container started against a
 # missing bind source gets an empty directory, and qBittorrent then downloads into
 # the stack host's own root disk until it fills.
 - name: Verify the declared mounts are present on the stack host
@@ -44,7 +44,7 @@
     that: item.stat.exists and item.stat.isdir
     fail_msg: >-
       {{ item.item.path }} is not present on this stack host. It is declared in
-      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      media_storage.mounts and Deploy attaches it as a Proxmox mountpoint, so
       either the attach did not happen or the guest has not restarted since. This
       platform attaches storage the lab already provides; it never creates it.
   loop: "{{ _qbt_mount_check.results }}"

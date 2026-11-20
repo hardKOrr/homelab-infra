@@ -28,17 +28,22 @@ def task_index(tasks, *, name=None, include=None):
 
 status_read = preflight[1]["ansible.builtin.command"]["argv"]
 assert status_read == ["pvesh", "get", "/nodes/{{ proxmox_memory_node }}/status", "--output-format", "json"]
-capacity_assert = preflight[2]["ansible.builtin.assert"]
-memory_vars = str(preflight[2]["vars"])
-assert "_proxmox_memory_available_bytes | int" in str(capacity_assert["that"])
-assert "_proxmox_memory_needed_mib | int" in str(capacity_assert["that"])
+# A short node warns and notifies; it never refuses the guest.
+compare = preflight[2]
+assert "ansible.builtin.assert" not in str(preflight[2:]), "the memory check must not refuse a guest"
+short = compare["ansible.builtin.set_fact"]["_proxmox_memory_short"]
+memory_vars = str(compare["vars"])
+assert "_proxmox_memory_available_bytes | int" in short and "_proxmox_memory_needed_mib | int" in short
 assert "memory.available" in memory_vars
 assert "memory.total" in memory_vars and "memory.used" in memory_vars
 assert "memory.free" not in memory_vars
-assert "proxmox_memory_guest" in capacity_assert["fail_msg"]
-assert "proxmox_memory_node" in capacity_assert["fail_msg"]
-assert "_proxmox_memory_needed_mib" in capacity_assert["fail_msg"]
-assert "_proxmox_memory_available_mib" in capacity_assert["fail_msg"]
+message = compare["ansible.builtin.set_fact"]["_proxmox_memory_message"]
+for name in ("proxmox_memory_guest", "proxmox_memory_node", "_proxmox_memory_needed_mib",
+             "_proxmox_memory_available_mib"):
+    assert name in message, name
+warn = preflight[3]
+assert warn["when"] == "_proxmox_memory_short | bool"
+assert any("notify.yml" in str(t.get("ansible.builtin.include_tasks")) for t in warn["block"])
 
 expected = {
     "vm-create.yml": ("Create VM", "Start the VM"),

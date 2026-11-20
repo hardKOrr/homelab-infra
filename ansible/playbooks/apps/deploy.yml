@@ -8,31 +8,14 @@
 #      the database, the stack host, own guest or cluster access, storage, firewall access.
 #   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
 #   3. Deploy on the cluster: the role's kubernetes.yml.
-#   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS (only when routing.proxy is
-#      not none), the guest record. Skipped while a restore target is isolated.
+#   4. Record and wire: registry entries, firewall access deferred by firewall.after_deploy;
+#      then, unless a restore target is isolated, reverse proxy, SSO, uptime monitor, DNS
+#      (only when routing.proxy is not none), the guest record and peer wiring.
 #   5. Notify, unless the restore target is isolated.
 #
 # Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
-# slug) and in these optional hooks, run only when the role has them:
-#   deploy-prepare.yml  localhost, after the hostname is known, before provisioning. May set
-#                       deploy_host_mounts (attach-host-mounts.yml), deploy_host_mounts_owner,
-#                       deploy_host_mounts_own_node (only the guest's node),
-#                       native_guest_database and firewall_inbound_ports.
-#   deploy-record.yml   localhost, before wiring, also while the restore target is
-#                       isolated: registry entries other jobs read (`media`, `databases`);
-#                       deploy_notify_note, a note computed from app_config.
-#
-# An app with `app.database` gets its database and login role on the named backend before
-# its guest is provisioned (tasks/database/deploy-consumer.yml), on the methods in
-# deploy.database_methods (default every method); with deploy.database_optional, only while
-# app.database.instance is named.
-#
-# Per-app values are app-defaults keys (shared ones in vars/app-defaults/_base.yml):
-# routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to the
-# notification), vault.methods and platform_layers (tasks/apps/load-config.yml),
-# firewall.methods (the methods whose Deploy opens the declared `firewall:` access; default
-# every method), firewall.sends_mail (SMTP egress to the platform relay). The display name
-# is the catalog entry's `name`.
+# slug), its optional deploy-prepare/-record/-wire hooks and the app-defaults keys listed
+# under Deploy hooks in README.md. The display name is the catalog entry's `name`.
 
 # ── Play 1: Resolve and provision ──────────────────────────────────────────────
 - name: "Deploy {{ app | default('(no app)') }} | Resolve and provision"
@@ -133,18 +116,9 @@
         - deploy_host_mounts | default([]) | length > 0
 
     - name: Open the guest's declared network access
-      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      ansible.builtin.include_tasks: ../../tasks/apps/deploy-firewall.yml
       vars:
-        wiring_app_name: "{{ instance }}"
-        wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
-        wiring_firewall: "{{ app_config.firewall | default({}) }}"
-      when:
-        - app_config.hosting.method in ['docker', 'native']
-        - app_config.hosting.method in _deploy_firewall_methods
-        - >-
-          (app_config.firewall.egress | default([]) | length > 0)
-          or (app_config.firewall.inbound | default([]) | length > 0)
-          or (app_config.firewall.sends_mail | default(false) | bool)
+        deploy_firewall_phase: before
 
     - name: Refresh inventory for Kubernetes access
       ansible.builtin.meta: refresh_inventory
@@ -233,6 +207,11 @@
     wiring_app_display: "{{ _deploy_display }} ({{ instance }})"
     wiring_monitor_url: "https://{{ _deploy_fqdn }}{{ app_config.routing.monitor_path }}"
     wiring_auth_group: "{{ app_config.routing.auth_group }}"
+    wiring_auth_users: >-
+      {{ [homelabinfra_infra.sso.admin_user]
+         if app_config.routing.auth_admin_only | default(false) | bool
+            and (homelabinfra_infra.sso | default({})).admin_user | default('') | length > 0
+         else [] }}
     wiring_identity_mode: "{{ app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ app_config.routing.access | default('internal') }}"
 
@@ -242,6 +221,11 @@
         name: "{{ _deploy_role }}"
         tasks_from: deploy-record
       when: (playbook_dir ~ '/../../roles/' ~ _deploy_role ~ '/tasks/deploy-record.yml') is file
+
+    - name: Open the guest's declared network access that waits for the guest deploy
+      ansible.builtin.include_tasks: ../../tasks/apps/deploy-firewall.yml
+      vars:
+        deploy_firewall_phase: after
 
     # New-instance recovery provisions the workload without letting it publish the target
     # route or contact production peers before its selected artifact verifies.
@@ -276,6 +260,12 @@
              if _deploy_k8s | bool else groups['deploy_' ~ instance] }}
         record_guest_kind: "{{ app_config.hosting.method }}"
         record_guest_url: "{{ 'https://' ~ _deploy_fqdn if _deploy_routed | bool else '' }}"
+
+    - name: Run the role's deploy-wire hook
+      ansible.builtin.include_role:
+        name: "{{ _deploy_role }}"
+        tasks_from: deploy-wire
+      when: (playbook_dir ~ '/../../roles/' ~ _deploy_role ~ '/tasks/deploy-wire.yml') is file
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

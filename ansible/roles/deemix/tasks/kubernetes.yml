@@ -1,7 +1,7 @@
 ---
 # Deemix on Kubernetes: its config lives on a default-StorageClass PVC and its download
-# directory is the existing NFS share mounted at /downloads, as on Docker. The playbook's
-# prepare play has already resolved the share into k8s_media_nfs.
+# directory is the existing NFS share mounted at /downloads, as on Docker.
+# deploy-prepare.yml has already resolved the share into k8s_media_nfs.
 - name: Deemix Kubernetes | Resolve the cluster and API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 

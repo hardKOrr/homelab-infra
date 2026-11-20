@@ -1,9 +1,9 @@
 ---
-# Unpackerr on Kubernetes, run from the playbook's localhost play. It is stateless: the
-# Arr endpoints and API keys come from the media registry each deploy (arrs.yml), the keys
+# Unpackerr on Kubernetes, run from playbooks/apps/deploy.yml on localhost. It is
+# stateless: the Arr endpoints and API keys come from the media registry each deploy (arrs.yml), the keys
 # reach the pod through a Secret downstream of Vaultwarden, and the media and download
-# shares are the existing NFS exports at their Docker container paths (resolved by the
-# prepare play into k8s_media_nfs). There is no volume to back up and no UI to publish.
+# shares are the existing NFS exports at their Docker container paths (resolved by
+# deploy-prepare.yml into k8s_media_nfs). There is no volume to back up and no UI to publish.
 - name: Unpackerr Kubernetes | Resolve and verify the registered Arr applications
   ansible.builtin.include_tasks: arrs.yml
 

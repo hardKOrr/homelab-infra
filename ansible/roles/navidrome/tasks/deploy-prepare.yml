@@ -1,0 +1,14 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Docker and
+# native: hand deploy.yml the lab's storage roots to attach to the guest; the role narrows
+# the container bind (read-only) to app.library_subpath, and no storage is created.
+# Kubernetes: resolve the library's existing NFS share.
+- name: Navidrome | Hand deploy.yml the storage roots to attach to the guest
+  ansible.builtin.set_fact:
+    deploy_host_mounts: "{{ (app_config.media_storage | default({})).mounts | default([], true) }}"
+    deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+  when: app_config.hosting.method in ['docker', 'native']
+
+- name: Navidrome | Resolve the existing library share for Kubernetes
+  ansible.builtin.include_tasks: resolve-kubernetes-library.yml
+  when: app_config.hosting.method == 'kubernetes'

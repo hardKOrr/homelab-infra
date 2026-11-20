@@ -1,5 +1,14 @@
 ---
 bazarr_defaults:
+  # infrastructure.yml's media_storage, merged in as app_config.media_storage.
+  platform_layers: [media_storage]
+  # A Kubernetes instance has no media registry entry, so Wire Media Stack does not
+  # discover it.
+  deploy:
+    notify_note: >-
+      On Docker or native, run the Wire Media Stack job to connect it to the selected
+      Sonarr and Radarr instances.
+
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]

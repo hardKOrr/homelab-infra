@@ -19,31 +19,12 @@ def main():
     assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["hosting"]["impossible"] == {}
 
-    playbook = read_yaml("ansible/playbooks/apps/navidrome.yml")
-    docker_hosts = [play for play in playbook if play["name"] == "Navidrome | Deploy"]
-    assert len(docker_hosts) == 1
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "navidrome"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in docker_hosts[0]["tasks"]
-    )
-    assert any(
-        play["name"] == "Navidrome | Deploy on Kubernetes"
-        and any(
-            task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-            and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-            for task in play["tasks"]
-        )
-        for play in playbook
-    )
-    assert "tasks/kubernetes/open-app-access.yml" in str(playbook)
-    assert any(
-        task.get("ansible.builtin.include_tasks")
-        == "../../roles/navidrome/tasks/resolve-kubernetes-library.yml"
-        for play in playbook
-        if play["name"] == "Navidrome | Prepare Kubernetes"
-        for task in play["tasks"]
-    )
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the role's
+    # deploy-prepare hook resolves the Kubernetes library share.
+    prepare = read_yaml("ansible/roles/navidrome/tasks/deploy-prepare.yml")
+    assert any(task.get("ansible.builtin.include_tasks") == "resolve-kubernetes-library.yml"
+               and task.get("when") == "app_config.hosting.method == 'kubernetes'"
+               for task in prepare)
     library = read_yaml("ansible/roles/navidrome/tasks/resolve-kubernetes-library.yml")
     assert any(
         task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "findmnt"

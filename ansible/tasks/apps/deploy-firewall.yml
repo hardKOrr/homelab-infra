@@ -1,0 +1,27 @@
+---
+# Guest firewall step of playbooks/apps/deploy.yml (localhost): open the app's declared
+# `firewall:` access for its Docker or native guest. Deploy calls it twice; it acts in the
+# provision play, or after the guest deploy when `firewall.after_deploy` is true (an
+# egress rule that matches only settings the role enforces, such as qBittorrent's peer
+# source ports).
+#
+# Inputs: app_config, instance, deploy_firewall_phase (before | after), and
+# firewall_inbound_ports from a deploy-prepare hook.
+- name: Deploy | Open the guest's declared network access
+  ansible.builtin.include_tasks: ../firewall/open-app-access.yml
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+    wiring_firewall: "{{ app_config.firewall | default({}) }}"
+  when:
+    - app_config.hosting.method in ['docker', 'native']
+    - >-
+      app_config.hosting.method in (app_config.firewall | default({})).methods
+      | default(['docker', 'kubernetes', 'native'])
+    - >-
+      ((app_config.firewall | default({})).after_deploy | default(false) | bool)
+      == (deploy_firewall_phase == 'after')
+    - >-
+      (app_config.firewall.egress | default([]) | length > 0)
+      or (app_config.firewall.inbound | default([]) | length > 0)
+      or (app_config.firewall.sends_mail | default(false) | bool)

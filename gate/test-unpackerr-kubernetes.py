@@ -24,25 +24,10 @@ def main():
     assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["routing"]["proxy"] == "none"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/unpackerr.yml")}
-    provision = plays["Unpackerr | Provision"]["tasks"]
-    stack = next(t for t in provision if "find-or-create-host" in str(t))
-    assert stack["when"] == "app_config.hosting.method == 'docker'"
-    attach = next(t for t in provision if "attach-host-mounts" in str(t))
-    assert "app_config.hosting.method in ['docker', 'native']" in attach["when"]
-    prepare = plays["Unpackerr | Prepare Kubernetes"]["tasks"]
+    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the role's
+    # deploy-prepare hook resolves the Kubernetes shares.
+    prepare = read_yaml(f"{ROLE}/tasks/deploy-prepare.yml")
     assert includes(prepare, "tasks/kubernetes/resolve-media-nfs.yml")
-    assert includes(prepare, "tasks/kubernetes/open-app-access.yml")
-    deploy = plays["Unpackerr | Deploy"]["tasks"]
-    assert [t["when"] for t in deploy if "include_role" in str(t)] == [
-        "hostvars['localhost'].app_config.hosting.method == 'docker'",
-        "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"]
-    kube = plays["Unpackerr | Deploy on Kubernetes"]["tasks"]
-    assert any(
-        t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-        and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for t in kube
-    )
 
     # The role must not pull Docker onto a Kubernetes run through role dependencies.
     assert "dependencies" not in read_yaml(f"{ROLE}/meta/main.yml")

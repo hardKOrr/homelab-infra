@@ -11,8 +11,9 @@
         url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_auth_flow_slug }}"
         method: GET
         headers: "{{ _ak_headers }}"
-        status_code: 200
       register: _ak_auth_flow
+      # The assert below prints the status, or the connection error, of a failed lookup.
+      failed_when: false
       no_log: true
 
     - name: Wire Authentik | Look up invalidation flow
@@ -20,9 +21,22 @@
         url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_invalidation_flow_slug }}"
         method: GET
         headers: "{{ _ak_headers }}"
-        status_code: 200
       register: _ak_inval_flow
+      # The assert below prints the status, or the connection error, of a failed lookup.
+      failed_when: false
       no_log: true
+
+    - name: Wire Authentik | Require both flow lookups
+      ansible.builtin.assert:
+        that:
+          - _ak_auth_flow.status | default(-1) == 200
+          - _ak_inval_flow.status | default(-1) == 200
+        fail_msg: >-
+          Authentik at {{ _ak_api }} refused the flow lookup (authorization: HTTP
+          {{ _ak_auth_flow.status | default('none') }} {{ _ak_auth_flow.msg | default('') }};
+          invalidation: HTTP {{ _ak_inval_flow.status | default('none') }}
+          {{ _ak_inval_flow.msg | default('') }}).
+        quiet: true
 
     - name: Wire Authentik | Assert both flows exist
       ansible.builtin.assert:

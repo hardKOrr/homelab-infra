@@ -1,21 +1,21 @@
 ---
-# slskd role — slskd as a Docker container on a stack host (Play 3 of
-# playbooks/apps/slskd.yml), natively on its own LXC or VM (native*.yml), or in its own
-# Kubernetes namespace (the playbook's
-# Kubernetes play; kubernetes.yml, after resolve-kubernetes-media.yml ran in its prepare
-# play). Credentials, the API proof and the vault item are shared by both methods.
+# slskd role — slskd as a Docker container on a stack host, natively on its own LXC or VM
+# (native*.yml), or in its own Kubernetes namespace (kubernetes.yml runs this file, which
+# includes kubernetes-workload.yml after deploy-prepare.yml ran
+# resolve-kubernetes-media.yml). Credentials, the API proof and the vault item are shared
+# by every method.
 #
 # Lidarr's plugins-branch Soulseek download client (ansible/vars/media-wiring.yml,
 # `slskd` kind — the plugins branch only; a mainline Lidarr rejects it and the
 # wiring reports the failed probe, same caveat as `deemix`).
 #
 # Variables available:
-#   app_config           — merged defaults + user config (from Play 1)
+#   app_config           — merged defaults + user config (tasks/apps/load-config.yml)
 #   instance              — the instance name (e.g. slskd)
 #   homelabinfra_config   — merged input config, including infrastructure.*
 #   homelabinfra_vault    — the in-memory Vaultwarden contract
 #
-# Exports (read by Play 4 to write the `media` registry key):
+# Exports (read by deploy-record.yml to write the `media` registry key):
 #   slskd_media_kind, slskd_media_host
 #
 # WHY THIS IS NEITHER roles/deemix NOR roles/sabnzbd, but borrows from both.
@@ -140,7 +140,7 @@
   when: app_config.hosting.method == 'native'
 
 - name: Kubernetes workload
-  ansible.builtin.include_tasks: kubernetes.yml
+  ansible.builtin.include_tasks: kubernetes-workload.yml
   when: app_config.hosting.method == 'kubernetes'
 
 - name: Prove the API key and the Soulseek login

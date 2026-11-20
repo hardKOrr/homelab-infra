@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Run gate/check-structure.py on a scratch repository: a clean tree passes; a file
-growing past its ceiling, a new over-budget file, an exception that meets its rule, a
-directory nobody maps, an unreachable README, a restated passage, a literal app-name
+"""Run gate/check-structure.py on a scratch repository: a clean tree passes, and a big file
+is only a note; a directory nobody maps, an unreachable README, a restated passage, a literal app-name
 comparison in a playbook and a missing per-app path each fail."""
 
 import shutil
@@ -33,7 +32,7 @@ BASE = {
     "config.example/apps/demo.example.yml": "app: {}\n",
     "config.example/apps/other.example.yml": "app: {}\n",
 }
-EXCEPTIONS = {"size": {"ansible/playbooks/apps/remove.yml": 341}}
+EXCEPTIONS = {}
 
 
 def run(files: dict[str, str], exceptions: dict) -> subprocess.CompletedProcess:
@@ -61,12 +60,9 @@ def expect(name: str, files: dict, exceptions: dict, ok: bool, needle: str = "")
 
 
 expect("clean tree", BASE, EXCEPTIONS, True)
-expect("ceiling exceeded", {**BASE, "ansible/playbooks/apps/remove.yml": BASE[
-    "ansible/playbooks/apps/remove.yml"] + "# more\n"}, EXCEPTIONS, False, "grew to 342")
-expect("new over-budget file", {**BASE, "ansible/roles/demo/tasks/big.yml": "- x\n" * 301},
-       EXCEPTIONS, False, "big.yml is 301")
-expect("exception now met", {**BASE, "ansible/playbooks/apps/remove.yml": "- hosts: all\n"},
-       EXCEPTIONS, False, "now meets the rule")
+expect("a big file is a note, not a failure",
+       {**BASE, "ansible/roles/demo/tasks/big.yml": "- x\n" * 301}, EXCEPTIONS, True,
+       "note: ansible/roles/demo/tasks/big.yml is 301 lines")
 expect("unmapped directory", {**BASE, "ansible/tasks/thing/a.yml": "- x\n"}, EXCEPTIONS,
        False, "readme: ansible/tasks")
 expect("mapped by the nearest README",
@@ -80,7 +76,7 @@ expect("restated passage", {**BASE, "gate/README.md": f"# Gate\n{PASSAGE}\n",
 expect("app literal in a shared playbook",
        {**BASE, "ansible/playbooks/apps/remove.yml": BASE["ansible/playbooks/apps/remove.yml"]
         + "      when: (remove_app | default(instance)) == 'demo'\n"},
-       {"size": {"ansible/playbooks/apps/remove.yml": 342}}, False,
+       EXCEPTIONS, False,
        "literal: ansible/playbooks/apps/remove.yml")
 expect("provider comparison is not an app literal",
        {**BASE, "ansible/playbooks/apps/demo.yml": "- when: dns.provider == 'other'\n"},

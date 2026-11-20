@@ -26,7 +26,7 @@
 
 # ── Storage the lab already provides ──────────────────────────────────────────
 # Same stance as roles/servarr and roles/qbittorrent: the mounts are the lab's,
-# attached to the stack host by Play 1, and only ever asserted here. A container
+# attached to the stack host by Deploy, and only ever asserted here. A container
 # started against a missing bind source gets an empty directory, and SABnzbd then
 # unpacks into the stack host's own root disk until it fills.
 - name: Verify the declared mounts are present on the stack host
@@ -42,7 +42,7 @@
     that: item.stat.exists and item.stat.isdir
     fail_msg: >-
       {{ item.item.path }} is not present on this stack host. It is declared in
-      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      media_storage.mounts and Deploy attaches it as a Proxmox mountpoint, so
       either the attach did not happen or the guest has not restarted since. This
       platform attaches storage the lab already provides; it never creates it.
   loop: "{{ _sab_mount_check.results }}"
@@ -117,8 +117,8 @@
 #
 # The estate's domain, not the lab's, when the app declares one: routing.estate
 # picks a domain from the `domains:` map in config/infrastructure.yml
-# (ansible/vars/CONTRACT.md §5). tasks/resolve-estate.yml does this in Play 3 and
-# does not run here, so the estate is resolved from the authored config directly.
+# (ansible/vars/CONTRACT.md §5). Deploy resolves it with tasks/resolve-estate.yml;
+# this step reads the authored config directly so it holds wherever the role runs.
 - name: Resolve the hostname the reverse proxy publishes
   ansible.builtin.set_fact:
     _sab_host_whitelist: >-

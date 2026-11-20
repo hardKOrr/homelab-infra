@@ -1,7 +1,7 @@
 ---
 # Bazarr on Kubernetes: its config lives on a default-StorageClass PVC and the media and
 # download shares are the existing NFS exports, mounted at the same container paths as on
-# Docker. The playbook's prepare play has already resolved them into k8s_media_nfs.
+# Docker. deploy-prepare.yml has already resolved them into k8s_media_nfs.
 - name: Bazarr Kubernetes | Resolve the cluster and API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 

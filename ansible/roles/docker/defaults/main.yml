@@ -7,3 +7,8 @@ docker_daemon_config:
     max-size: "10m"
     max-file: "3"
     
+# Daily removal of images no container uses (Watchtower and Deploy leave the old ones
+# behind; a stack host's disk filled with them). Images younger than this stay, so a
+# Rollback soon after an update still finds the previous image locally; Rollback pulls
+# its image anyway.
+docker_image_prune_until: 168h
