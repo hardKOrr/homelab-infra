@@ -1,15 +1,18 @@
 ---
+# The native service's restart (native.yml and the ARL in main.yml). On Docker,
+# tasks/docker.yml recreates the project itself when the Compose file or the ARL changes.
 - name: Restart deemix
-  community.docker.docker_compose_v2:
-    project_src: "{{ deemix_project_dir }}"
-    state: present
-    recreate: always
-  when: app_config.hosting.method == 'docker'
-
-- name: Restart native deemix
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart deemix
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
   when: app_config.hosting.method == 'native'
+
+# config.json exists only once Deemix has started, so the Lidarr setting in configure.yml
+# needs a restart after first boot on either method.
+- name: Apply Deemix settings
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: "{{ 'native' if app_config.hosting.method == 'native' else 'docker' }}"
+    restart_compose_project: "{{ deemix_project_dir }}"
+    restart_services: ["{{ instance }}"]

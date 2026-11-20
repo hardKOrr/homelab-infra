@@ -37,7 +37,7 @@
     group: "{{ app_config.app.pgid | default(1000) }}"
     mode: "0640"
   when: not (_dmx_settings.createSingleFolder | default(false) | bool)
-  notify: Restart deemix
+  notify: Apply Deemix settings
   no_log: true
 
 - name: Apply the Lidarr-compatible Deemix setting

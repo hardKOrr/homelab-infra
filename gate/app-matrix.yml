@@ -430,6 +430,7 @@ deemix:
     - tasks/proxmox/attach-host-mounts.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/resolve-estate.yml

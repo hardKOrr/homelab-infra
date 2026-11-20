@@ -110,7 +110,7 @@ def check_settings_reconcile():
                 }},
             },
             "tasks": tasks + tasks,
-            "handlers": [{"name": "Restart deemix", "ansible.builtin.debug": {
+            "handlers": [{"name": "Apply Deemix settings", "ansible.builtin.debug": {
                 "msg": "restart requested",
             }}],
         }]
@@ -122,7 +122,7 @@ def check_settings_reconcile():
         assert saved["createSingleFolder"] is True
         assert saved["tracknameTemplate"] == "keep-custom-template"
         assert saved["downloadLocation"] == "/downloads"
-        assert result.stdout.count("RUNNING HANDLER [Restart deemix]") == 1
+        assert result.stdout.count("RUNNING HANDLER [Apply Deemix settings]") == 1
 
 
 def check_login_api():

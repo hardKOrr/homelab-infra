@@ -191,8 +191,9 @@
     - _dmx_arl_file.stat.exists
   no_log: true
 
-# A non-empty rotation notifies the restart handler because Deemix reads .arl
-# at process start. An unchanged value creates no restart. A first account-free
+# A non-empty rotation restarts Deemix because it reads .arl at process start: natively
+# through the handler, on Docker as a recreate (docker.yml). An unchanged value creates
+# no restart. A first account-free
 # deployment initializes an empty file; later empty inputs leave it untouched.
 - name: Seed the Deezer ARL
   ansible.builtin.copy:
@@ -204,6 +205,7 @@
   when: >-
     (app_config.app.arl | default('', true) | length > 0)
     or not _dmx_arl_file.stat.exists
+  register: _dmx_arl_written
   notify: Restart deemix
   no_log: true
 
