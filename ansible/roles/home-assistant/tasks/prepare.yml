@@ -1,5 +1,7 @@
 ---
 # Inputs shared by every guest method: credentials, directories, seed config and secrets.
+# Their writes notify the native restart; on Docker, docker.yml recreates the project
+# instead, from the registered results.
 - name: Home Assistant | Resolve integration credentials
   ansible.builtin.include_tasks: credentials.yml
 
@@ -24,6 +26,7 @@
     mode: "0640"
     force: false
   when: app_config.app.initial_configuration | default({}) | length > 0
+  register: _ha_seed_written
   notify: Restart Home Assistant
 
 - name: Home Assistant | Render the hidden integration secrets
@@ -34,4 +37,5 @@
     group: root
     mode: "0600"
   no_log: true
+  register: _ha_secrets_written
   notify: Restart Home Assistant

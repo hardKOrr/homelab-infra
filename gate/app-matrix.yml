@@ -851,6 +851,7 @@ home-assistant:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
