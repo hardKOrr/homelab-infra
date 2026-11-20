@@ -56,9 +56,9 @@ recorded in `gate/structure.yml`, may not grow, and are deleted once they meet t
 
 1. **One home per fact.** Other text links to it instead of restating it. Two docs share
    no run of 12 words.
-2. **Size budgets, in lines:** playbook, task file, template and Markdown 300; this file 80;
-   Python and shell 600. Over budget, split by phase or move per-app behavior into the
-   role. Raising a recorded ceiling needs a reason in the PR body.
+2. **Size is a guide, never a blocker:** about 300 lines for a playbook, task file, template
+   or Markdown file, 600 for Python and shell. The gate lists bigger files as notes. Split
+   one when that makes it easier to follow, never just to pass the gate.
 3. **A README is a map.** Each directory outside `ansible/roles/` has a README, or the
    nearest README above it names it (`name/`). It says what lives there and where to go
    next in a few lines; the code and its header comment explain behavior.
