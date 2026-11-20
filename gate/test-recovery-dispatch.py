@@ -448,13 +448,11 @@ def main():
         task for task in plane_hook
         if task.get("name") == "Remove Plane recovery schedule"
     )
-    assert plane_schedule["ansible.builtin.cron"]["name"] == (
-        "homelab-infra Plane backup {{ instance }}"
-    )
-    assert plane_schedule["ansible.builtin.cron"]["cron_file"] == (
-        "homelab-infra-plane-{{ instance }}"
-    )
-    assert plane_schedule["ansible.builtin.cron"]["state"] == "absent"
+    # The schedule's own /etc/cron.d file goes; no crontab binary is needed to remove it.
+    assert plane_schedule["ansible.builtin.file"] == {
+        "path": "/etc/cron.d/homelab-infra-plane-{{ instance }}", "state": "absent"}
+    deploy_schedule = (repo / "ansible/roles/plane/tasks/recovery-timer.yml").read_text()
+    assert 'cron_file: "homelab-infra-plane-{{ instance }}"' in deploy_schedule
     assert "when" not in plane_schedule  # Remove App runs Plane's hook only for Plane
 
     plane_config = next(
