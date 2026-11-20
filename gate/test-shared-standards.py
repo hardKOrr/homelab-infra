@@ -173,7 +173,6 @@ ALLOWLIST = {
     "restore-ownership": set(),
     "compose-deploy": {
         "ansible/roles/authentik/tasks/main/workload.yml",
-        "ansible/roles/caddy/tasks/main/docker.yml",
         "ansible/roles/immich/tasks/main.yml",
         "ansible/roles/mautic/tasks/docker.yml",
         "ansible/roles/observability/tasks/docker.yml",
@@ -182,7 +181,6 @@ ALLOWLIST = {
     "restart-handler": {
         "ansible/roles/_template-native/handlers/main.yml",
         "ansible/roles/authentik/handlers/main.yml",
-        "ansible/roles/caddy/handlers/main.yml",
         "ansible/roles/docker/handlers/main.yml",
         "ansible/roles/immich/handlers/main.yml",
         "ansible/roles/mautic/handlers/main.yml",

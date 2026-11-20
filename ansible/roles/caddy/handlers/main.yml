@@ -1,19 +1,11 @@
 ---
 # Restart, never reload: `caddy reload` re-applies the base config file and would
 # drop every route the wiring tasks added through the admin API. A restart with
-# --resume replays the autosaved running config instead. See tasks/main.yml.
+# --resume replays the autosaved running config instead. See tasks/main.yml. On Docker,
+# main/config.yml recreates the container itself (the same --resume restart).
 - name: Restart caddy
-  ansible.builtin.systemd:
-    name: "{{ caddy_service_name }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ caddy_service_name }}"]
   when: caddy_native | bool
-
-# Recreate, which restarts the process with --resume, so autosaved routes are replayed.
-- name: Restart caddy container
-  community.docker.docker_compose_v2:
-    project_src: "{{ caddy_project_dir }}"
-    state: present
-    recreate: always
-  listen: Restart caddy
-  when: caddy_docker | bool

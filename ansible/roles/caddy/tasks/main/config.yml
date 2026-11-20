@@ -153,6 +153,7 @@
     - _caddy_autosave.content is defined
     - ((_caddy_autosave.content | b64decode | from_json).admin | default({})).listen | default('')
       != (_caddy_bind_ip ~ ':' ~ (app_config.app.port | int))
+  register: _caddy_autosave_discarded
   notify: Restart caddy
 
 - name: Enable and start caddy service
@@ -163,12 +164,15 @@
     daemon_reload: true
   when: caddy_native | bool
 
-# Builds the image first when it carries compiled-in modules and is not yet present.
-- name: Start the Caddy container
-  community.docker.docker_compose_v2:
-    project_src: "{{ caddy_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy builds the image when it carries compiled-in modules and is
+# not yet present (otherwise pulls it when missing), and starts the container once,
+# recreating it in that up when the Compose file changed or the autosave was discarded —
+# a recreate restarts the process with --resume, which then applies the base config.
+- name: Deploy the Caddy Compose project
+  ansible.builtin.include_tasks: ../../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ caddy_project_dir }}"
+    compose_recreate: "{{ _caddy_autosave_discarded.changed | default(false) }}"
   when: caddy_docker | bool
 
 - name: Apply pending restarts before touching the admin API
