@@ -84,8 +84,10 @@ def check_defaults_and_dispatch():
     assert backup[1]["ansible.builtin.include_tasks"] == "backup-native.yml"
     inputs = tasks("ansible/roles/wordpress/tasks/restore-inputs.yml")
     assert "restore_target_config.routing.subdomain" in inputs[1]["ansible.builtin.set_fact"]["restore_target_fqdn"]
-    seam = next(play for play in tasks("ansible/playbooks/maintenance/restore-app.yml")
-                if play["name"].startswith("Restore App | Restore Docker"))["tasks"][0]["vars"]
+    seam = next(task for task in next(
+        play for play in tasks("ansible/playbooks/maintenance/restore-app.yml")
+        if play["name"].startswith("Restore App | Restore Docker"))["tasks"]
+        if task.get("name") == "Restore the application-owned archive")["vars"]
     assert seam["restore_target_fqdn"] == "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
 
 

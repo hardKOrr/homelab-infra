@@ -98,17 +98,12 @@
 # use their namespaced restore job; application-consistent Docker and native-LXC roles own
 # their recovery mechanism. Apps without one remain on whole-guest PBS recovery.
 #
-# Per-app inputs live in role hooks (roles/<role>/tasks/<hook>), each run only when the
-# role has it: restore-inputs.yml before the storage identity checks (source material,
-# target path rewrites, an optional restore_source/target_storage_path), restore-provisioned.yml
-# after a new target is provisioned, and restore-config.yml once the target is resolved
+# Per-app inputs live in role hooks (roles/<role>/tasks/<hook>), each run only when the role
+# has it: restore-inputs.yml before the storage identity checks (source material, target path
+# rewrites, an optional restore_source/target_storage_path), restore-provisioned.yml after a
+# new target is provisioned, and restore-config.yml once the target is resolved
 # (restore_app_config, the app_config the role's restore task gets; see
 # tasks/recovery/rebase-target-path.yml). Play 1's phases are tasks/recovery/restore-app-*.yml.
-
-# Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
-# durable originals/thumbnails from one application-consistent PBS snapshot. Plan mode lists
-# snapshots only; overwrite mode validates the archive before replacing media and leaves
-# services stopped after a failed destructive step.
 
 - name: "Restore App | Restore application data from PBS"
   hosts: localhost
@@ -205,9 +200,16 @@
   # Application role dependencies can require host facts before their task runs.
   gather_facts: true
   tasks:
-    # A dispatched application recovery task must set this generic completion fact only after
-    # its restore and health check are complete; the notification and degradation gate
-    # below must not silently skip a future native-LXC or Docker role.
+    # Host facts, not role vars: a role var outranks set_fact, so resolve-estate.yml's estate
+    # overlay (domain, SSO, DNS, the estate's mail credential) would not take in the role.
+    - name: Load the platform facts the application role reads
+      ansible.builtin.set_fact:
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+      no_log: true
+
+    # The role sets the generic completion fact only once its restore and health check are
+    # done, so the notification and degradation gate below cover every Docker or native role.
     - name: Restore the application-owned archive
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost'].recovery_capability.role | default(hostvars['localhost']._ra_app) }}"
@@ -220,8 +222,6 @@
              | default(hostvars['localhost'].restore_target_config) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         frigate_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
-        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
-        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
         restore_target: "{{ hostvars['localhost']._ra_target }}"
         restore_destination: "{{ hostvars['localhost'].recovery_destination_resolved }}"
         restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"

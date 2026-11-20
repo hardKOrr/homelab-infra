@@ -74,8 +74,10 @@ def write_executable(path, content):
 def check_playbook_contract():
     """Restore App runs the role's restore on the guest; the role takes the point's group and
     the target's published name from Restore App's generic inputs."""
-    run = next(play for play in RESTORE_APP
-               if play["name"].startswith("Restore App | Restore Docker"))["tasks"][0]
+    run = next(task for task in next(
+        play for play in RESTORE_APP
+        if play["name"].startswith("Restore App | Restore Docker"))["tasks"]
+        if task.get("name") == "Restore the application-owned archive")
     assert run["vars"]["restore_backup_id"] == "{{ hostvars['localhost']._ra_backup_id }}"
     assert run["vars"]["restore_target_fqdn"] == \
         "{{ hostvars['localhost'].restore_target_fqdn | default('') }}"
