@@ -80,7 +80,9 @@ services = yaml.safe_load((role / "defaults/main.yml").read_text())["mautic_nati
 assert services == ["mautic-cron", "mautic-worker", "apache2"]
 handlers = yaml.safe_load((role / "handlers/main.yml").read_text())
 native_handlers = [h for h in handlers if h.get("listen") == "Restart mautic"]
-assert [h.get("ansible.builtin.systemd", {}).get("state") for h in native_handlers] == ["stopped", None, "restarted"]
+assert [h.get("ansible.builtin.systemd", {}).get("state") for h in native_handlers] == ["stopped", None, None]
+assert native_handlers[2]["ansible.builtin.include_tasks"].endswith("tasks/apps/restart.yml")
+assert native_handlers[2]["vars"]["restart_services"] == "{{ mautic_native_services | reverse | list }}"
 assert native_handlers[0]["loop"] == "{{ mautic_native_services }}"
 backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for block in backup for t in ([block] + block.get("block", []))

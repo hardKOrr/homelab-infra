@@ -1,12 +1,8 @@
 ---
-- name: Restart mautic
-  community.docker.docker_compose_v2:
-    project_src: "{{ mautic_project_dir }}"
-    state: restarted
-  when: not (mautic_native | bool)
-
-# Mautic compiles local.php into its cache, so a native restart starts from an empty one.
-# Stop every cache writer before deleting it; the worker and cron can recreate files.
+# Native restart: Mautic compiles local.php into its cache, so a native restart starts from
+# an empty one. Stop every cache writer before deleting it; the worker and cron can
+# recreate files. On Docker, tasks/docker.yml recreates the services itself when the
+# Compose file or local.php changes.
 - name: Stop native Mautic before clearing the cache
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -23,9 +19,9 @@
   when: mautic_native | bool
 
 - name: Restart native Mautic
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-  loop: "{{ mautic_native_services | reverse | list }}"
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: "{{ mautic_native_services | reverse | list }}"
   listen: Restart mautic
   when: mautic_native | bool

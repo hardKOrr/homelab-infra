@@ -1,28 +1,23 @@
 ---
 # Mautic on Docker: the official image's web, cron and worker services. main.yml has
 # already created the directories and written local.php.
-- name: Mautic | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ mautic_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  # The rendered file embeds MAUTIC_DB_PASSWORD in plain text (docker-compose.yml.j2's
-  # x-mautic-env anchor) — a diff or failure output would otherwise print it.
-  no_log: true
-  notify: Restart mautic
-
-- name: Mautic | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ mautic_project_dir }}"
-
-- name: Mautic | Start web service
-  community.docker.docker_compose_v2:
-    project_src: "{{ mautic_project_dir }}"
-    state: present
-    services: [mautic_web]
-    remove_orphans: true
+# The shared Compose deploy starts the web service once, recreating it in that up when the
+# Compose file (which embeds MAUTIC_DB_PASSWORD, so its render stays out of the log) or
+# local.php (config.yml) changed. Cron and the worker start after web answers, recreated
+# when this deploy changed anything, so a changed local.php reaches them too.
+- name: Mautic | Deploy the web service
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ mautic_project_dir }}"
+    compose_services: [mautic_web]
+    compose_secrets: ["{{ app_config.app.database_password }}"]
+    compose_recreate: >-
+      {{ _mautic_local_php_seeded.changed | default(false)
+         or mautic_converge_result.changed | default(false) }}
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/"
+      status: [200, 302]
+      retries: 60
 
 - name: Mautic | Verify the web runtime can access its configuration
   ansible.builtin.command:
@@ -41,24 +36,12 @@
       - test -r /var/www/html/config/local.php && test -w /var/www/html/config/local.php
   changed_when: false
 
-- name: Mautic | Apply pending restart
-  ansible.builtin.meta: flush_handlers
-
-- name: Mautic | Wait for health endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/"
-    status_code: [200, 302]
-  register: _mautic_health
-  until: _mautic_health.status | default(0) in [200, 302]
-  retries: 60
-  delay: 5
-  changed_when: false
-
 - name: Mautic | Start background services
   community.docker.docker_compose_v2:
     project_src: "{{ mautic_project_dir }}"
     state: present
     services: [mautic_cron, mautic_worker]
+    recreate: "{{ 'always' if compose_deploy_changed | bool else 'auto' }}"
 
 # Mautic's schema and admin user are created once, non-interactively, through its own
 # console installer rather than the browser-based setup wizard — the same reasoning as
