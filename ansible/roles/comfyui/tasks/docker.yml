@@ -39,16 +39,13 @@
       NVIDIA Container Toolkit in the GPU guest before deploying ComfyUI.
   when: app_config.app.accelerator | default('cuda') == 'cuda'
 
-- name: ComfyUI | Create the project and storage root directories
+- name: ComfyUI | Create the storage root directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ app_config.app.storage_path }}"
     state: directory
     owner: root
     group: root
     mode: "0750"
-  loop:
-    - "{{ comfyui_project_dir }}"
-    - "{{ app_config.app.storage_path }}"
 
 - name: ComfyUI | Give the mounted directories to the app's runtime user
   ansible.builtin.include_tasks: storage-ownership.yml
@@ -56,24 +53,9 @@
 - name: ComfyUI | Preserve existing user data before mounting persistent storage
   ansible.builtin.include_tasks: migrate-user-data.yml
 
-- name: ComfyUI | Render the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ comfyui_compose_file }}"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart ComfyUI
-
-- name: ComfyUI | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ comfyui_project_dir }}"
-
-- name: ComfyUI | Start the application
-  community.docker.docker_compose_v2:
-    project_src: "{{ comfyui_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: ComfyUI | Apply pending restart
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+- name: ComfyUI | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ comfyui_project_dir }}"

@@ -23,7 +23,8 @@
     group: root
     mode: '0600'
   no_log: true
-  notify: "{{ 'Restart WireGuard container' if wireguard_docker | bool else 'Restart WireGuard' }}"
+  notify: Restart WireGuard
+  when: not (wireguard_docker | bool)
 
 - name: WireGuard | Enable and start wg-quick
   ansible.builtin.systemd_service:
@@ -32,11 +33,17 @@
     enabled: true
   when: not (wireguard_docker | bool)
 
-- name: WireGuard | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "{{ wireguard_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy renders the wg-quick config with the project and recreates the
+# container when either changed, in the same up that creates it.
+- name: WireGuard | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ wireguard_project_dir }}"
+    compose_files:
+      - src: wg.conf.j2
+        dest: "{{ wireguard_conf_path }}"
+        mode: "0600"
+    compose_secrets: ["{{ _wg_server_private_key }}"]
   when: wireguard_docker | bool
 
 - name: WireGuard | Apply pending restarts before verifying

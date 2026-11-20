@@ -1,13 +1,9 @@
 ---
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose file or server config changes.
 - name: Restart ntfy
-  ansible.builtin.systemd:
-    name: "{{ ntfy_service_name }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ ntfy_service_name }}"]
   when: not (ntfy_docker | bool)
-
-- name: Restart ntfy container
-  community.docker.docker_compose_v2:
-    project_src: "{{ ntfy_project_dir }}"
-    state: restarted
-  when: ntfy_docker | bool

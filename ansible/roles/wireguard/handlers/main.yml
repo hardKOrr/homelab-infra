@@ -1,12 +1,9 @@
 ---
+# The native wg-quick unit's restart. On Docker, tasks/stack/compose-deploy.yml recreates
+# the project itself when the Compose file or wg-quick config changes.
 - name: Restart WireGuard
-  ansible.builtin.systemd_service:
-    name: "wg-quick@{{ app_config.app.interface }}"
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["wg-quick@{{ app_config.app.interface }}"]
   when: not (wireguard_docker | bool)
-
-- name: Restart WireGuard container
-  community.docker.docker_compose_v2:
-    project_src: "{{ wireguard_project_dir }}"
-    state: restarted
-  when: wireguard_docker | bool

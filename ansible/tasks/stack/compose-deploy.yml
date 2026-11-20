@@ -13,12 +13,17 @@
 #                           directory; entries are paths, or `{path, owner, group, mode}`
 #   compose_owner         — owner of the created directories (default `root`)
 #   compose_group         — group of the created directories (default `root`)
+#   compose_project_mode  — mode of the project directory (default `0750`)
 #   compose_files         — optional files the project mounts or reads, each
-#                           `{src, dest}` with optional `mode` (default `0640`), `owner`
-#                           and `group` (default `root`); src is a role template
+#                           `{src, dest}` with optional `mode` (default `0640`), `owner`,
+#                           `group` (default `root`) and `force` (default true; false writes
+#                           the file only when absent); src is a role template
 #   compose_secrets       — the secret values the Compose file or compose_files hold; when
 #                           set, their render output stays out of the log and a failure
 #                           prints with these values masked (default none)
+#   compose_recreate      — optional; true recreates the project as a changed rendered file
+#                           does, for a mounted file the role writes itself (a copied
+#                           script, a `changed` result passed in) (default false)
 #   compose_networks      — optional external Docker networks the project joins; each is
 #                           created when absent and never removed here
 #   compose_pull_policy   — `missing` (default) or `always`
@@ -58,7 +63,9 @@
     owner: "{{ item.owner | default(compose_owner | default('root')) }}"
     group: "{{ item.group | default(compose_group | default('root')) }}"
     mode: "{{ item.mode | default('0750') }}"
-  loop: "{{ [compose_project_dir] + compose_dirs | default([]) }}"
+  loop: >-
+    {{ [{'path': compose_project_dir, 'mode': compose_project_mode | default('0750')}]
+       + compose_dirs | default([]) }}
 
 - name: Compose deploy | Ensure the shared Docker networks exist
   community.docker.docker_network:
@@ -78,6 +85,7 @@
         owner: "{{ item.owner | default('root') }}"
         group: "{{ item.group | default('root') }}"
         mode: "{{ item.mode | default('0640') }}"
+        force: "{{ item.force | default(true) | bool }}"
       loop: "{{ compose_files | default([]) }}"
       loop_control:
         label: "{{ item.dest }}"
@@ -121,14 +129,16 @@
     recreate: "{{ 'always' if _compose_rendered_changed | bool else 'auto' }}"
   vars:
     _compose_rendered_changed: >-
-      {{ _compose_file_written.changed | default(false)
+      {{ compose_recreate | default(false) | bool
+         or _compose_file_written.changed | default(false)
          or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
   register: _compose_up
 
 - name: Compose deploy | Record whether the project changed
   ansible.builtin.set_fact:
     compose_deploy_changed: >-
-      {{ _compose_up.changed | default(false) or _compose_file_written.changed | default(false)
+      {{ _compose_up.changed | default(false) or compose_recreate | default(false) | bool
+         or _compose_file_written.changed | default(false)
          or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
 
 - name: Compose deploy | Apply pending restarts

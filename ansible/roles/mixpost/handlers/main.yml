@@ -1,15 +1,9 @@
 ---
+# The native services' restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when the Compose or environment file changes.
 - name: Restart mixpost
-  community.docker.docker_compose_v2:
-    project_src: "{{ mixpost_project_dir }}"
-    state: restarted
-  when: not (mixpost_native | bool)
-
-- name: Restart native mixpost
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-    daemon_reload: true
-  loop: "{{ ['php' ~ mixpost_php_version ~ '-fpm'] + mixpost_native_app_services }}"
-  listen: Restart mixpost
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: "{{ ['php' ~ mixpost_php_version ~ '-fpm'] + mixpost_native_app_services }}"
   when: mixpost_native | bool

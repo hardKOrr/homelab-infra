@@ -10,6 +10,7 @@ actual-budget:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -368,6 +369,7 @@ comfyui:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -499,6 +501,7 @@ emby:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -569,6 +572,7 @@ forgejo-runner:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/notify.yml
     - tasks/assert-no-degradations.yml
@@ -697,6 +701,7 @@ frigate:
     - tasks/proxmox/attach-usb-passthrough.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -763,6 +768,7 @@ hi-events:
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/mail/resolve-mail.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -1165,6 +1171,7 @@ karakeep:
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -1506,6 +1513,7 @@ mariadb:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/database/install-server-recovery.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/database/deploy-record.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
@@ -1673,6 +1681,7 @@ mixpost:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -1963,6 +1972,7 @@ ntfy:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/backup/pbs-client-install.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bootstrap/write-generated-facts.yml
@@ -2213,6 +2223,7 @@ ollama:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
@@ -2278,6 +2289,7 @@ open-webui:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/backup/pbs-client-script.yml
     - tasks/bootstrap/write-generated-facts.yml
@@ -3318,6 +3330,7 @@ vaultwarden:
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
     - tasks/vaultwarden/token-sink.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -3389,6 +3402,7 @@ wireguard:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/wiring/uptime-kuma.yml

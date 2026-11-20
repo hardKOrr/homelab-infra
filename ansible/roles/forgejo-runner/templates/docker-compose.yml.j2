@@ -10,6 +10,13 @@ services:
     restart: unless-stopped
     volumes:
       - "{{ app_config.app.data_path }}/docker:/var/lib/docker"
+    # The runner exits when it cannot reach this daemon, so it starts only once the daemon
+    # answers (depends_on below); otherwise a first boot crash-loops until dockerd is up.
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
 
   runner:
     image: {{ app_config.app.image }}
@@ -23,4 +30,5 @@ services:
       - "{{ app_config.app.data_path }}:/data"
       - "{{ forgejo_runner_entrypoint }}:/opt/runner/register-and-run.sh:ro"
     depends_on:
-      - docker
+      docker:
+        condition: service_healthy

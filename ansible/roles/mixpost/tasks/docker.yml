@@ -24,33 +24,17 @@
 - name: Mixpost | Resolve and store the application secrets
   ansible.builtin.include_tasks: secrets.yml
 
-- name: Mixpost | Write the environment file
-  ansible.builtin.template:
-    src: mixpost.env.j2
-    dest: "{{ mixpost_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart mixpost
-
-- name: Mixpost | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ mixpost_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart mixpost
-
-- name: Mixpost | Pull the images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ mixpost_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Mixpost | Start the services
-  community.docker.docker_compose_v2:
-    project_src: "{{ mixpost_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy renders the environment file with the project and recreates
+# the project when either changed, in the same up that creates it, so a new install is
+# never restarted mid first boot.
+- name: Mixpost | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ mixpost_project_dir }}"
+    compose_files:
+      - src: mixpost.env.j2
+        dest: "{{ mixpost_env_file }}"
+        mode: "0600"
+    compose_secrets: >-
+      {{ [_mp_app_key, _mp_redis_password, app_config.app.database_password | default('')]
+         | select | list }}

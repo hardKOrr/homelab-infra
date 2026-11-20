@@ -1750,7 +1750,7 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
     )
     render_index = next(
         i for i, task in enumerate(role_tasks)
-        if task.get("name") == "ComfyUI | Render the Compose project"
+        if task.get("name") == "ComfyUI | Deploy the Compose project"
     )
     assert migration_index < render_index, role_tasks
 
