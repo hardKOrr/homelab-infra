@@ -1004,6 +1004,7 @@ influxdb:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/resolve-estate.yml
@@ -1759,6 +1760,7 @@ mysql:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/database/install-server-recovery.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/database/deploy-record.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml

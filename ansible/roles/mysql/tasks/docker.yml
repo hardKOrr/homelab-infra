@@ -78,72 +78,36 @@
     group: "999"
     mode: "0750"
 
-- name: MySQL | Create the project and config directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop:
-    - "{{ mysql_project_dir }}"
-    - "{{ mysql_project_dir }}/conf.d"
-
-# The image gives this directory to its mysql user when it initializes, so Deploy creates
-# it but never sets its owner or mode, which would undo that on every run.
+# The image gives its state directory to its mysql user when it initializes, so Deploy
+# creates it but never sets its owner or mode, which would undo that on every run. The
+# shared Compose deploy renders the tuning with the project and recreates the container
+# when either changed, in the same up that creates it, so a new install is never
+# restarted mid initialization (a second entrypoint run would skip it and leave the
+# system tables incomplete).
 - name: MySQL | Create the state directory
   ansible.builtin.file:
     path: "{{ mysql_project_dir }}/data"
     state: directory
 
-- name: MySQL | Write the server tuning
-  ansible.builtin.template:
-    src: homelab-infra.cnf.j2
-    dest: "{{ mysql_project_dir }}/conf.d/z-homelab-infra.cnf"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart MySQL container
+- name: MySQL | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ mysql_project_dir }}"
+    compose_project_mode: "0755"
+    compose_dirs:
+      - path: "{{ mysql_project_dir }}/conf.d"
+        mode: "0755"
+    compose_files:
+      - src: homelab-infra.cnf.j2
+        dest: "{{ mysql_project_dir }}/conf.d/z-homelab-infra.cnf"
+        mode: "0644"
 
-- name: MySQL | Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ mysql_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart MySQL container
-
-- name: MySQL | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ mysql_project_dir }}"
-
-- name: MySQL | Start the service
-  community.docker.docker_compose_v2:
-    project_src: "{{ mysql_project_dir }}"
-    state: present
-    remove_orphans: true
-
-# The image's init server runs with networking off; the final server has it on. Wait for
-# the final server before any restart, so a restart never interrupts first-run initialization
-# (a second entrypoint run would skip it and leave the system tables incomplete).
+# The image's init server runs with networking off; the final server has it on.
 - name: MySQL | Wait for the final server
   ansible.builtin.command:
     argv: [mysql, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --batch, --skip-column-names, --execute, SELECT @@skip_networking]
   register: _mysql_ready
   until: _mysql_ready.rc == 0 and _mysql_ready.stdout | trim == '0'
-  retries: 60
-  delay: 5
-  changed_when: false
-
-- name: MySQL | Apply pending restarts once initialization is complete
-  ansible.builtin.meta: flush_handlers
-
-- name: MySQL | Wait for the final server after a restart
-  ansible.builtin.command:
-    argv: [mysql, --protocol=socket, --user=root, --socket=/run/mysqld/mysqld.sock, --batch, --skip-column-names, --execute, SELECT @@skip_networking]
-  register: _mysql_ready_again
-  until: _mysql_ready_again.rc == 0 and _mysql_ready_again.stdout | trim == '0'
   retries: 60
   delay: 5
   changed_when: false
