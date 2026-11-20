@@ -1,6 +1,0 @@
----
-- name: Restart plex
-  community.docker.docker_compose_v2:
-    project_src: "{{ plex_project_dir }}"
-    state: present
-    recreate: always

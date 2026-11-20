@@ -74,28 +74,16 @@
 - name: Configure Plex access to declared DRI devices
   ansible.builtin.include_tasks: configure-devices.yml
 
-- name: Write the Plex Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ plex_project_dir }}/docker-compose.yml"
-    mode: "0640"
-  notify: Restart plex
-  no_log: true
-
-- name: Pull the Plex image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ plex_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Start Plex
-  community.docker.docker_compose_v2:
-    project_src: "{{ plex_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending Plex restarts before checks
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot (and never
+# spends its one-use claim token on a start that is then thrown away).
+- name: Deploy the Plex Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ plex_project_dir }}"
+    compose_owner: "{{ app_config.app.puid | default(1313) }}"
+    compose_group: "{{ app_config.app.pgid | default(1313) }}"
+    compose_secrets: "{{ [_plex_claim_token | default('')] | select | list }}"
 
 - name: Wait for Plex to answer its identity endpoint
   ansible.builtin.uri:
