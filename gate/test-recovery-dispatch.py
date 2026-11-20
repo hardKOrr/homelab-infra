@@ -206,6 +206,19 @@ def main():
         plays = load_playbook(repo / "ansible/playbooks/maintenance" / playbook)
         target_play = next(play for play in plays if play.get("name") == play_name)
         assert target_play.get("gather_facts") is True, play_name
+        # The platform facts reach the role as host facts, never as include_role vars: a
+        # role var outranks set_fact, so resolve-estate.yml's estate overlay (domain, SSO,
+        # DNS, the estate's mail credential) would not take inside the role.
+        tasks = target_play["tasks"]
+        load = next(i for i, t in enumerate(tasks)
+                    if t.get("name") == "Load the platform facts the application role reads")
+        dispatch = next(i for i, t in enumerate(tasks) if t.get("name") in (
+            "Run the application-owned backup", "Restore the application-owned archive"))
+        assert load < dispatch, play_name
+        assert set(tasks[load]["ansible.builtin.set_fact"]) == {
+            "homelabinfra_infra", "homelabinfra_vault"}, play_name
+        assert not {"homelabinfra_infra", "homelabinfra_vault"} & set(tasks[dispatch]["vars"]), \
+            play_name
 
     backup_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/backup.yml").read_text())
     archive_block = next(item for item in backup_tasks
@@ -243,8 +256,10 @@ def main():
             repo / f"ansible/roles/{role}/tasks/restore-config.yml")}
 
     source = load_playbook(repo / "ansible/playbooks/maintenance/restore-app.yml")
-    dispatch = next(play for play in source if play["name"] ==
-                    "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"][0]
+    dispatch = next(task for task in next(
+        play for play in source if play["name"] ==
+        "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"]
+        if task.get("name") == "Restore the application-owned archive")
     for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr", "frigate"]:
         for config_path, expected_path in [(f"/opt/{app}/config", f"/opt/{app}-copy/config"),
                                            ("/srv/custom/config", "/srv/custom/config")]:

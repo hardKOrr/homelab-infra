@@ -214,6 +214,14 @@
   # Application role dependencies can require host facts before their task runs.
   gather_facts: true
   tasks:
+    # Host facts, not role vars: a role var outranks set_fact, so resolve-estate.yml's estate
+    # overlay (domain, SSO, DNS, the estate's mail credential) would not take in the role.
+    - name: Load the platform facts the application role reads
+      ansible.builtin.set_fact:
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
+      no_log: true
+
     # A dispatched application recovery task must set this generic completion fact only after
     # its archive is complete. Keeping the contract generic prevents a future role from
     # silently skipping the notification and degradation gate.
@@ -223,8 +231,6 @@
         tasks_from: backup
       vars:
         app_config: "{{ hostvars['localhost'].app_config }}"
-        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
-        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
       when: app_target_kind | default('native') in ['docker', 'native']
 
     - name: Notify application backup
