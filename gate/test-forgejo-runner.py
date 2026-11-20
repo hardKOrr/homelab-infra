@@ -487,21 +487,23 @@ def check_non_root_entrypoint_access():
 
 
 def check_runner_service_running_retries():
+    """The runner waits for a healthy Docker daemon, and Deploy catches a crash loop."""
+    compose = (repo / "ansible/roles/forgejo-runner/templates/docker-compose.yml.j2").read_text()
+    assert 'test: ["CMD", "docker", "info"]' in compose
+    assert "condition: service_healthy" in compose
     role_tasks = yaml.safe_load(
         (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
     )
-    check = next(
-        task
-        for task in role_tasks
-        if task.get("name") == "Forgejo Runner | Check that the runner service is running"
-    )
-    assert check["retries"] == 12
-    assert check["delay"] == 5
-    assert check["ansible.builtin.command"]["argv"][-4:] == [
-        "ps", "--status", "running", "--services"
-    ]
-    assert "runner" in check["until"]
-    assert "stdout_lines" in check["until"]
+    names = [task.get("name") for task in role_tasks]
+    first = names.index("Forgejo Runner | Read the runner's state")
+    wait = names.index("Forgejo Runner | Give a failing runner time to restart")
+    after = names.index("Forgejo Runner | Read the runner's state again")
+    stayed = names.index("Forgejo Runner | Assert the runner stayed up")
+    assert first < wait < after < stayed
+    assert role_tasks[first]["retries"] == 12 and role_tasks[first]["delay"] == 5
+    assert "RestartCount" in role_tasks[first]["ansible.builtin.command"]["argv"][3]
+    that = role_tasks[stayed]["ansible.builtin.assert"]["that"]
+    assert any("_forgejo_runner_state.stdout.split()[1]" in c for c in that), that
 
 
 def main():
