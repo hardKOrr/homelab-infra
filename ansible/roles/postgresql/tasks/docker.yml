@@ -110,16 +110,13 @@
     group: postgres
     mode: "0750"
 
-- name: PostgreSQL | Create the project and build directories
+- name: PostgreSQL | Create the build directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ postgresql_project_dir }}/build"
     state: directory
     owner: root
     group: root
     mode: "0755"
-  loop:
-    - "{{ postgresql_project_dir }}"
-    - "{{ postgresql_project_dir }}/build"
 
 # The image gives this directory to its postgres user when it initializes, so Deploy
 # creates it but never sets its owner or mode, which would undo that on every run.
@@ -127,24 +124,6 @@
   ansible.builtin.file:
     path: "{{ postgresql_project_dir }}/data"
     state: directory
-
-- name: PostgreSQL | Permit only declared application networks
-  ansible.builtin.template:
-    src: pg_hba.conf.j2
-    dest: "{{ postgresql_project_dir }}/pg_hba.conf"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart PostgreSQL container
-
-- name: PostgreSQL | Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ postgresql_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart PostgreSQL container
 
 - name: PostgreSQL | Write the image build file
   ansible.builtin.copy:
@@ -154,33 +133,26 @@
     group: root
     mode: "0640"
 
-# The image is built by `docker compose up` below when absent.
-- name: PostgreSQL | Start the service
-  community.docker.docker_compose_v2:
-    project_src: "{{ postgresql_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy builds the image when absent, renders pg_hba.conf with the
+# project and starts it once, recreating it in that up when either changed, so a new
+# install is never restarted mid initialization.
+- name: PostgreSQL | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ postgresql_project_dir }}"
+    compose_project_mode: "0755"
+    compose_files:
+      # Permit only declared application networks.
+      - src: pg_hba.conf.j2
+        dest: "{{ postgresql_project_dir }}/pg_hba.conf"
+        mode: "0644"
 
 # The image's init server listens on the socket only; the final server also answers on TCP.
-# Wait for the final server before any restart, so a restart never interrupts first-run
-# initialization.
 - name: PostgreSQL | Wait for the final server
   ansible.builtin.command:
     argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
   register: _postgresql_ready
   until: _postgresql_ready.rc == 0
-  retries: 60
-  delay: 5
-  changed_when: false
-
-- name: PostgreSQL | Apply pending restarts once initialization is complete
-  ansible.builtin.meta: flush_handlers
-
-- name: PostgreSQL | Wait for the final server after a restart
-  ansible.builtin.command:
-    argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
-  register: _postgresql_ready_again
-  until: _postgresql_ready_again.rc == 0
   retries: 60
   delay: 5
   changed_when: false

@@ -1,9 +1,9 @@
 ---
 - name: Restart pbs
-  ansible.builtin.systemd:
-    name: "{{ pbs_service_name }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ pbs_service_name }}"]
 
 - name: Reload systemd
   ansible.builtin.systemd:

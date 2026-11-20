@@ -177,13 +177,9 @@ ALLOWLIST = {
         "ansible/roles/plane/tasks/docker.yml",
     },
     "restart-handler": {
-        "ansible/roles/_template-native/handlers/main.yml",
         "ansible/roles/authentik/handlers/main.yml",
-        "ansible/roles/docker/handlers/main.yml",
         "ansible/roles/immich/handlers/main.yml",
-        "ansible/roles/pbs/handlers/main.yml",
         "ansible/roles/plane/handlers/main.yml",
-        "ansible/roles/postgresql/handlers/main.yml",
     },
     "k8s-single-container": {
         "ansible/roles/actual-budget/templates/manifest.yaml.j2",

@@ -2493,6 +2493,7 @@ postgresql:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/database/postgresql-repository.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/database/deploy-record.yml
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
