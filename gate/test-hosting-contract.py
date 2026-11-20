@@ -124,7 +124,7 @@ def current_combination(slug, defaults):
                 or ("vm" if isinstance(proxmox.get("vm"), dict) else "lxc" if isinstance(proxmox.get("lxc"), dict) else "vm")
             )
         elif (defaults.get("hosting", {}).get("method") != "kubernetes"
-              and re.search(r"community\.docker\.|docker_compose_v2|docker_container", source)):
+              and re.search(r"community\.docker\.|docker_compose_v2|docker_container|tasks/stack/compose-deploy\.yml", source)):
             # Docker on the app's own guest with Kubernetes as an opt-in path (ComfyUI);
             # its proxmox.vm block is the Docker VM, and proxmox.guest_type is native-only.
             method = "docker"
@@ -136,7 +136,7 @@ def current_combination(slug, defaults):
         else:
             method = "kubernetes"
             guest_type = ""
-    elif re.search(r"community\.docker\.|docker_compose_v2|docker_container", source):
+    elif re.search(r"community\.docker\.|docker_compose_v2|docker_container|tasks/stack/compose-deploy\.yml", source):
         # A native-default app that adds a Docker stack path (Caddy) keeps its own guest.
         native_default = (defaults.get("hosting", {}).get("method") == "native"
                           and any(p in source for p in (

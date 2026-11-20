@@ -48,7 +48,7 @@
     vault_item_secret_fields: [secret_key]
   no_log: true
 
-- name: Open WebUI | Render the environment file
+- name: Open WebUI | Render the native environment file
   ansible.builtin.template:
     src: open-webui.env.j2
     dest: "{{ open_webui_env_file }}"
@@ -57,37 +57,33 @@
     mode: "0600"
   no_log: true
   notify: Restart Open WebUI
+  when: open_webui_native | bool
 
 - name: Open WebUI | Install and start the native service
   ansible.builtin.include_tasks: native.yml
   when: open_webui_native | bool
 
-- name: Open WebUI | Render the Compose project
+# The shared Compose deploy renders the environment file with the project and recreates
+# the container when either changed, in the same up that creates it, so a new install is
+# never restarted mid first boot.
+- name: Open WebUI | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ open_webui_project_dir }}"
+    compose_files:
+      - src: open-webui.env.j2
+        dest: "{{ open_webui_env_file }}"
+        mode: "0600"
+    compose_secrets: "{{ [_open_webui_secret_key, _open_webui_litellm_api_key] | select | list }}"
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/health"
+      retries: 60
   when: not (open_webui_native | bool)
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ open_webui_compose_file }}"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Open WebUI
 
-- name: Open WebUI | Pull the image
-  when: not (open_webui_native | bool)
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ open_webui_project_dir }}"
-
-- name: Open WebUI | Start the application
-  when: not (open_webui_native | bool)
-  community.docker.docker_compose_v2:
-    project_src: "{{ open_webui_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Open WebUI | Apply pending restart
+- name: Open WebUI | Apply the pending native restart
   ansible.builtin.meta: flush_handlers
 
-- name: Open WebUI | Wait for the health endpoint
+- name: Open WebUI | Wait for the native health endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/health"
     status_code: 200
@@ -96,6 +92,7 @@
   retries: 60
   delay: 5
   changed_when: false
+  when: open_webui_native | bool
 
 # The scheduled timer and Backup App invoke one root-only helper so manual and recurring
 # points use the same quiesce, SQLite check and data.pxar member, uploaded by the shared

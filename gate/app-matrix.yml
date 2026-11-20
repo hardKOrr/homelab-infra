@@ -10,6 +10,7 @@ actual-budget:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -366,6 +367,7 @@ comfyui:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -695,6 +697,7 @@ frigate:
     - tasks/proxmox/attach-usb-passthrough.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -1959,6 +1962,7 @@ ntfy:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/backup/pbs-client-install.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bootstrap/write-generated-facts.yml
@@ -2209,6 +2213,7 @@ ollama:
     - tasks/stack/find-or-create-host.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/resolve-estate.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
@@ -2274,6 +2279,7 @@ open-webui:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/backup/pbs-client-script.yml
     - tasks/bootstrap/write-generated-facts.yml

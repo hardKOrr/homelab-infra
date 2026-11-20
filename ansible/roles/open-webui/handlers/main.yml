@@ -1,13 +1,9 @@
 ---
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose or environment file changes.
 - name: Restart Open WebUI
-  community.docker.docker_compose_v2:
-    project_src: "{{ open_webui_project_dir }}"
-    state: restarted
-  when: not (open_webui_native | bool)
-
-- name: Restart native Open WebUI
-  ansible.builtin.systemd:
-    name: "{{ open_webui_native_service }}"
-    state: restarted
-  listen: Restart Open WebUI
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ open_webui_native_service }}"]
   when: open_webui_native | bool
