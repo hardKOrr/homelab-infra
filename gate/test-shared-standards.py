@@ -175,7 +175,6 @@ ALLOWLIST = {
         "ansible/roles/authentik/tasks/main/workload.yml",
         "ansible/roles/immich/tasks/main.yml",
         "ansible/roles/mautic/tasks/docker.yml",
-        "ansible/roles/observability/tasks/docker.yml",
         "ansible/roles/plane/tasks/docker.yml",
     },
     "restart-handler": {
@@ -184,7 +183,6 @@ ALLOWLIST = {
         "ansible/roles/docker/handlers/main.yml",
         "ansible/roles/immich/handlers/main.yml",
         "ansible/roles/mautic/handlers/main.yml",
-        "ansible/roles/observability/handlers/main.yml",
         "ansible/roles/pbs/handlers/main.yml",
         "ansible/roles/plane/handlers/main.yml",
         "ansible/roles/postgresql/handlers/main.yml",

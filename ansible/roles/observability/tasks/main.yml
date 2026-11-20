@@ -134,6 +134,8 @@
     vault_item_secret_fields: [admin_password]
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+# The env file and Grafana's provisioning notify the native restart; on Docker,
+# docker.yml recreates the stack from their registered results instead.
 - name: Write the compose environment file
   ansible.builtin.template:
     src: env.j2
@@ -142,6 +144,7 @@
     group: root
     mode: "0600"
   no_log: true
+  register: _obs_env_written
   notify: Restart observability
 
 # Written into its own directory, which is what the compose file bind-mounts.
@@ -172,6 +175,7 @@
     src: datasource.yml.j2
     dest: "{{ app_config.app.config_path }}/provisioning/datasources/prometheus.yml"
     mode: "0644"
+  register: _obs_datasource_written
   notify: Restart observability
 
 - name: Write the Grafana dashboard provisioning
@@ -179,6 +183,7 @@
     src: dashboards.yml.j2
     dest: "{{ app_config.app.config_path }}/provisioning/dashboards/homelab-infra.yml"
     mode: "0644"
+  register: _obs_dashboards_written
   notify: Restart observability
 
 - name: Install the default homelab dashboard
@@ -186,6 +191,7 @@
     src: homelab-nodes.json
     dest: "{{ app_config.app.config_path }}/dashboards/homelab-nodes.json"
     mode: "0644"
+  register: _obs_dashboard_written
   notify: Restart observability
 
 # ── Run ───────────────────────────────────────────────────────────────────────

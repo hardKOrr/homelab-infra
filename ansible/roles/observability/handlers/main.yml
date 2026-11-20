@@ -1,23 +1,19 @@
 ---
+# The native services' restart. On Docker, tasks/docker.yml recreates the stack itself
+# when the Compose file, env file or Grafana provisioning changes.
 - name: Restart observability
-  community.docker.docker_compose_v2:
-    project_src: "{{ observability_project_dir }}"
-    state: present
-    recreate: always
-  when: not (observability_native | bool)
-
-- name: Restart native observability
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-  loop: "{{ observability_native_services }}"
-  listen: Restart observability
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: "{{ observability_native_services }}"
   when: observability_native | bool
 
 # Prometheus reloads its scrape config without dropping the TSDB — cheaper and
-# less disruptive than recreating the container when only targets changed.
+# less disruptive than recreating the container when only targets changed. A container
+# the Compose deploy just created or recreated already read the new config.
 - name: Reload prometheus
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.prometheus_port }}/-/reload"
     method: POST
     status_code: [200, 204]
+  when: observability_native | bool or not (compose_deploy_changed | default(false) | bool)
