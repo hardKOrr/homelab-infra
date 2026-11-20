@@ -178,8 +178,6 @@ ALLOWLIST = {
         "ansible/roles/mautic/tasks/docker.yml",
         "ansible/roles/observability/tasks/docker.yml",
         "ansible/roles/plane/tasks/docker.yml",
-        "ansible/roles/qbittorrent/tasks/main/start.yml",
-        "ansible/roles/sabnzbd/tasks/main/compose.yml",
     },
     "restart-handler": {
         "ansible/roles/_template-native/handlers/main.yml",
@@ -192,8 +190,6 @@ ALLOWLIST = {
         "ansible/roles/pbs/handlers/main.yml",
         "ansible/roles/plane/handlers/main.yml",
         "ansible/roles/postgresql/handlers/main.yml",
-        "ansible/roles/qbittorrent/handlers/main.yml",
-        "ansible/roles/sabnzbd/handlers/main.yml",
     },
     "k8s-single-container": {
         "ansible/roles/actual-budget/templates/manifest.yaml.j2",

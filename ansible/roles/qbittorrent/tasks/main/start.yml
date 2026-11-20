@@ -1,6 +1,6 @@
 ---
-# Phase of main.yml (Docker only): seed the config, enforce the peer port settings, start the
-# app and wait for it. Imported in place; inputs are listed in main.yml.
+# Phase of main.yml (Docker only): seed the config, enforce the peer port settings, deploy
+# the Compose project and wait for it. Imported in place; inputs are listed in main.yml.
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 # force: false — seeded once, then qBittorrent's. See the template's header for
@@ -15,31 +15,11 @@
     force: false
   no_log: true      # the file carries the password hash
 
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ qbittorrent_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart qbittorrent
-
-# ── Run ───────────────────────────────────────────────────────────────────────
-# policy: missing, matching roles/servarr and roles/observability — a deploy
-# ensures the image is present, Watchtower is what moves it forward and reports
-# it. Re-pulling :latest on every deploy would make each run a silent, unreviewed
-# upgrade.
-- name: Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ qbittorrent_project_dir }}"
-    policy: missing
-  changed_when: false
-
 # qBittorrent owns its config after the initial seed, so a template edit alone
 # would never update an existing instance. Check the two firewall-dependent
 # settings before the first start: a legacy config must not run with unbounded
 # peer source ports while this deploy is converging. Only stop an already-running
-# app when one of the settings has drifted; the normal start below applies the
+# app when one of the settings has drifted; the Compose deploy below starts it on the
 # corrected file before the playbook updates firewall access.
 - name: Check qBittorrent's outgoing peer port settings
   community.general.ini_file:
@@ -86,14 +66,13 @@
         label: "{{ item.option }}"
       no_log: true
 
-- name: Start the app
-  community.docker.docker_compose_v2:
-    project_src: "{{ qbittorrent_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending restarts before the WebUI checks
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot. Images are
+# pulled only when missing; Watchtower moves them forward and reports it.
+- name: Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ qbittorrent_project_dir }}"
 
 - name: Wait for the WebUI to answer
   ansible.builtin.uri:

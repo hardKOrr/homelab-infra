@@ -1506,9 +1506,8 @@ def qbittorrent_enforces_peer_ports_before_start():
     names = [t["name"] for t in tasks + [x for b in tasks for x in b.get("block", [])] if "name" in t]
     check = names.index("Check qBittorrent's outgoing peer port settings")
     enforce = names.index("Enforce qBittorrent's outgoing peer port settings when they drift")
-    start = names.index("Start the app")
-    flush = names.index("Apply pending restarts before the WebUI checks")
-    assert check < enforce < start < flush, names
+    start = names.index("Deploy the Compose project")
+    assert check < enforce < start, names
     assert not any("Ensure qBittorrent is started after updating its port settings" in name
                    for name in names), names
 
