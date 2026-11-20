@@ -27,39 +27,21 @@
 - name: Hi.Events | Assemble the application environment
   ansible.builtin.include_tasks: env.yml
 
-- name: Hi.Events | Write the environment file
-  ansible.builtin.template:
-    src: hi-events.env.j2
-    dest: "{{ hi_events_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart hi-events
-
-- name: Hi.Events | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ hi_events_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart hi-events
-
-- name: Hi.Events | Pull the images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ hi_events_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Hi.Events | Start the services
-  community.docker.docker_compose_v2:
-    project_src: "{{ hi_events_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Hi.Events | Apply pending restarts
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy renders the environment file with the project and recreates
+# the project when either changed, in the same up that creates it, so a new install is
+# never restarted mid first boot (its first start runs the migrations).
+- name: Hi.Events | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ hi_events_project_dir }}"
+    compose_files:
+      - src: hi-events.env.j2
+        dest: "{{ hi_events_env_file }}"
+        mode: "0600"
+    compose_secrets: >-
+      {{ [_he_app_key, _he_jwt_secret, _he_database_url, _he_redis_password,
+          app_config.app.database_password | default(''),
+          (wiring_mail | default({})).password | default('')] | select | list }}
 
 # The first start runs the database migrations before the application is ready.
 - name: Hi.Events | Wait until the application is ready

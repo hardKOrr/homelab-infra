@@ -13,6 +13,7 @@
 #                           directory; entries are paths, or `{path, owner, group, mode}`
 #   compose_owner         — owner of the created directories (default `root`)
 #   compose_group         — group of the created directories (default `root`)
+#   compose_project_mode  — mode of the project directory (default `0750`)
 #   compose_files         — optional files the project mounts or reads, each
 #                           `{src, dest}` with optional `mode` (default `0640`), `owner`,
 #                           `group` (default `root`) and `force` (default true; false writes
@@ -59,7 +60,9 @@
     owner: "{{ item.owner | default(compose_owner | default('root')) }}"
     group: "{{ item.group | default(compose_group | default('root')) }}"
     mode: "{{ item.mode | default('0750') }}"
-  loop: "{{ [compose_project_dir] + compose_dirs | default([]) }}"
+  loop: >-
+    {{ [{'path': compose_project_dir, 'mode': compose_project_mode | default('0750')}]
+       + compose_dirs | default([]) }}
 
 - name: Compose deploy | Ensure the shared Docker networks exist
   community.docker.docker_network:
