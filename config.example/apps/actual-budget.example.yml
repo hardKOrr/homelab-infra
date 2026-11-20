@@ -31,7 +31,7 @@ routing:
 backup:
   # A manual or scheduled recovery point stops only Actual Budget, archives all of /data
   # as one PBS data.pxar, and restarts the service. It does not snapshot or restore the
-  # other applications sharing the services stack guest.
+  # other applications sharing the productivity stack guest.
   enabled: true
   schedule: "0 3 * * *"
   retention_days: 14

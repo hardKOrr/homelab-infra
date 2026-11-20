@@ -9,7 +9,7 @@ karakeep_defaults:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
-  stack: services
+  stack: productivity
 
   # Used only when hosting.method is native (the guest type comes from the instance's
   # proxmox.guest_type). The production Next.js build needs the memory.

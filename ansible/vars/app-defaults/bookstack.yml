@@ -6,7 +6,7 @@ bookstack_defaults:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
-  stack: services
+  stack: productivity
 
   # Backup App and Restore App run this app's backup and restore on every hosting method.
   recovery:

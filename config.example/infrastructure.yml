@@ -476,6 +476,8 @@ vaultwarden:
 #     disk_size: 32
 #   monitoring:
 #     memory: 8192
+#   ci:                           # Forgejo Runner's own VM
+#     node: <pve-node-3>
 #   media:
 #     guest_type: vm              # lxc | vm; defaults to vm
 #     pool: media

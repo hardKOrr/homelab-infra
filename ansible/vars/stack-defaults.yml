@@ -22,7 +22,9 @@
 #       storage: <vm-image-store> # optional Proxmox VM image storage
 #
 # Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
-# values apply when the host is CREATED. Changing them later does not move a running host.
+# values apply when the host is CREATED. Changing them later does not move a running host;
+# Deploy warns and notifies when a reused host has fewer cores or less memory than its
+# sizing (tasks/stack/report-undersized-host.yml).
 #
 # STACK NAMES ARE BARE CONCEPTS. A stack is `media`, never `media` with a `_stack` suffix:
 # the type is carried by the hostname prefix (`stack-media`) and by the Proxmox tag
@@ -104,10 +106,39 @@ stack_defaults:
     memory: 4096
     disk_size: 32
 
-  # Actual Budget, Karakeep (with Meilisearch and headless Chrome), n8n and Plane. Plane's
-  # API, workers and web front end alone outgrow the 2 GiB default; at that size the host
-  # swaps until SSH and every tenant's HTTP route stop answering.
-  services:
+  # Purpose stacks for the general Docker apps, one per kind of work, so a tenant's restart
+  # or memory spike stays inside its own purpose. An app moves with `stack:` in its config;
+  # a lab resizes or pins one under infrastructure.stacks.
+  #
+  # Forgejo: Git hosting and its database.
+  dev:
+    cores: 2
+    memory: 4096
+    disk_size: 32
+
+  # Forgejo Runner alone: CI jobs build images and run arbitrary workloads, so they get a
+  # host no other app shares. Pin it with infrastructure.stacks.ci.node.
+  ci:
+    cores: 4
+    memory: 4096
+    disk_size: 64
+
+  # Odoo and Mautic: business apps with their own databases and cron workers.
+  business:
+    cores: 4
+    memory: 4096
+    disk_size: 32
+
+  # WordPress.
+  web:
+    cores: 2
+    memory: 2048
+    disk_size: 16
+
+  # Plane, n8n, BookStack, Karakeep (with Meilisearch and headless Chrome) and Actual
+  # Budget. Plane's API, workers and web front end alone outgrow 2 GiB; at that size the
+  # host swaps until SSH and every tenant's HTTP route stop answering.
+  productivity:
     cores: 4
     memory: 8192
     disk_size: 32

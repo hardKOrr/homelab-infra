@@ -1,0 +1,38 @@
+---
+# Report a reused stack host that is smaller than its stack's sizing. Sizing applies when
+# a host is created, so a host built under older defaults keeps its old size. This warns
+# and notifies; it never blocks the deploy or resizes the guest.
+#
+# Inputs:
+#   report_stack_host   — inventory name of the reused stack host
+#   report_stack_sizing — the resolved sizing (stack-defaults + infrastructure.stacks)
+- name: Measure the stack host against its sizing
+  ansible.builtin.set_fact:
+    _stack_undersized: >-
+      {{ (['memory ' ~ _have_memory ~ ' MiB < ' ~ _want_memory ~ ' MiB']
+          if _have_memory | int > 0 and _have_memory | int < _want_memory | int else [])
+         + (['cores ' ~ _have_cores ~ ' < ' ~ _want_cores]
+            if _have_cores | int > 0 and _have_cores | int < _want_cores | int else []) }}
+  vars:
+    _have_memory: "{{ hostvars[report_stack_host].proxmox_memory | default(0) }}"
+    _have_cores: "{{ hostvars[report_stack_host].proxmox_cores | default(0) }}"
+    _want_memory: "{{ report_stack_sizing.memory | default(0) }}"
+    _want_cores: "{{ report_stack_sizing.cores | default(0) }}"
+
+- name: Warn that the stack host is undersized
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: stack host {{ report_stack_host }} is smaller than its sizing
+      ({{ _stack_undersized | join(', ') }}). Resize it in Proxmox or rebuild it;
+      Deploy continues.
+  when: _stack_undersized | length > 0
+
+- name: Notify that the stack host is undersized
+  ansible.builtin.include_tasks: ../notify.yml
+  vars:
+    notify_title: "Stack host {{ report_stack_host }} is undersized"
+    notify_message: >-
+      {{ report_stack_host }} has {{ _stack_undersized | join(', ') }}. Resize it in
+      Proxmox or rebuild it.
+    notify_priority: high
+  when: _stack_undersized | length > 0
