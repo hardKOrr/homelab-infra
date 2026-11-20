@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
-TASK = ROOT / "ansible/tasks/removal/guard-backend-consumers.yml"
+TASK = ROOT / "ansible/tasks/database/guard-backend-consumers.yml"
 
 wiring = yaml.safe_load((ROOT / "ansible/tasks/removal/resolve-instance.yml").read_text())
 step = next(t for t in wiring if "guard-backend-consumers.yml" in str(t.get("ansible.builtin.include_tasks")))
