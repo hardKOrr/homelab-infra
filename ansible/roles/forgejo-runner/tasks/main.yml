@@ -44,21 +44,34 @@
       {{ _forgejo_runner_entrypoint_file.changed
          or _forgejo_runner_registration_needs_reset | default(false) | bool }}
 
-- name: Forgejo Runner | Check that the runner service is running
+# A crash-looping runner shows as running between restarts, so the check reads its restart
+# count, waits, and requires it running with the same count.
+- name: Forgejo Runner | Read the runner's state
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ forgejo_runner_project_dir }}"
-      - ps
-      - --status
-      - running
-      - --services
-  register: _forgejo_runner_services
+    argv: [docker, inspect, --format, "{{ '{{.State.Running}} {{.RestartCount}}' }}", "{{ instance }}-forgejo-runner"]
+  register: _forgejo_runner_state
   changed_when: false
   retries: 12
   delay: 5
-  until: >-
-    _forgejo_runner_services.rc == 0
-    and 'runner' in (_forgejo_runner_services.stdout_lines | default([]))
+  until: _forgejo_runner_state.rc == 0 and _forgejo_runner_state.stdout.split()[0] == 'true'
+
+- name: Forgejo Runner | Give a failing runner time to restart
+  ansible.builtin.wait_for:
+    timeout: 15
+
+- name: Forgejo Runner | Read the runner's state again
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{.State.Running}} {{.RestartCount}}' }}", "{{ instance }}-forgejo-runner"]
+  register: _forgejo_runner_state_after
+  changed_when: false
+
+- name: Forgejo Runner | Assert the runner stayed up
+  ansible.builtin.assert:
+    that:
+      - _forgejo_runner_state_after.stdout.split()[0] == 'true'
+      - _forgejo_runner_state_after.stdout.split()[1] == _forgejo_runner_state.stdout.split()[1]
+    fail_msg: >-
+      The Forgejo runner restarted while Deploy watched it (running/restarts before
+      {{ _forgejo_runner_state.stdout }}, after {{ _forgejo_runner_state_after.stdout }}).
+      Read `docker logs {{ instance }}-forgejo-runner` on the stack host.
+    quiet: true
