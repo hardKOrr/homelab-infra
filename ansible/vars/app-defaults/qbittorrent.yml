@@ -100,7 +100,7 @@ qbittorrent_defaults:
       - name: bittorrent-peers-udp
         protocol: UDP
         port: ""
-        source_port: "{{ ((app_config | default({})).get('app', {})).get('torrenting_port', 6881) }}"
+        source_port_from: torrenting_port
       - name: bittorrent-web-http
         protocol: TCP
         port: 80

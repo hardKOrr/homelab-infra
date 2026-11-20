@@ -58,12 +58,26 @@ authentik_defaults:
   update:
     github_repo: goauthentik/authentik
 
+  # Deploy provisions app.database only when its instance is named; an empty instance
+  # keeps the embedded PostgreSQL (Docker only, roles/authentik/tasks/deploy-prepare.yml).
+  deploy:
+    database_optional: true
+
+  # Egress to the registered PostgreSQL, from the stack host or the cluster. Dropped while
+  # app.database.instance is empty (tasks/firewall/open-app-access.yml).
+  firewall:
+    egress:
+      - name: authentik-database
+        protocol: TCP
+        backend: database
+
   routing:
     proxy: internal
     access: internal            # LAN-only by default. Set public only when remote users
                                 # must sign in from off-LAN — it is the front door to SSO
     identity: none              # Authentik IS the SSO provider — never wrap it in itself
     subdomain: auth             # default hostname auth.<domain>; override per instance
+    monitor_path: /-/health/live/
 
   # ── Directory as code ────────────────────────────────────────────────────────
   # Groups and accounts this deploy creates and keeps correct through the API

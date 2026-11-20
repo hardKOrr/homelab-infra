@@ -1,0 +1,48 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml play 4, before wiring): record the `sso` registry
+# key (ansible/vars/CONTRACT.md §3) from the endpoint and admin the role exported, then
+# re-resolve the estate so this run's wiring and every later app deploy read it. A
+# non-default routing.estate lands it under estates.<name>.sso. An isolated restore target
+# never takes over the key.
+#
+# The role exports on the stack host (Docker) or on localhost (Kubernetes). `host` is the
+# direct LAN URL with its scheme; tasks/wiring/authentik.yml appends /api/v3.
+- name: Authentik | Record the sso registry key and the notification note
+  when: not (recovery_isolated | default(false) | bool)
+  vars:
+    _authentik_exports: >-
+      {{ hostvars['localhost'] if app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]] }}
+    _authentik_estate: "{{ app_config.routing.estate | default('', true) }}"
+  block:
+    - name: Authentik | Record the sso registry key
+      ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: sso
+        generated_facts_estate: "{{ _authentik_estate }}"
+        generated_facts_data:
+          provider: authentik
+          instance: "{{ instance }}"
+          host: "{{ _authentik_exports.authentik_api_url }}"
+          admin_user: "{{ _authentik_exports.authentik_admin_username }}"
+
+    - name: Authentik | Resolve the estate with the new key
+      ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _authentik_estate }}"
+
+    - name: Authentik | Say where the admin and account passwords are
+      ansible.builtin.set_fact:
+        deploy_notify_note: >-
+          Sign in as {{ _authentik_exports.authentik_admin_username }}; the generated
+          password is admin_password in the Vaultwarden item {{ _authentik_vault }}.
+          Apps register per their routing.identity mode from their next deploy. Accounts,
+          groups, MFA, login sources, flows and brands come from
+          config/apps/{{ instance }}.yml; an account reaches a published application only
+          through the group '{{ app_config.routing.auth_group }}', and each generated
+          account password is user_<username>_password in the same item.
+      vars:
+        _authentik_vault: >-
+          {{ 'homelab-infra/sso' if _authentik_estate | length == 0
+             else 'homelab-infra/estates/' ~ _authentik_estate ~ '/sso' }}

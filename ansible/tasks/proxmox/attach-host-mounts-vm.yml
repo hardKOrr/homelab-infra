@@ -35,8 +35,8 @@
 - name: VM host mounts | Resolve eligible compute nodes and unique host paths
   ansible.builtin.set_fact:
     _vmfs_compute_nodes: >-
-      {{ attach_mounts_nodes
-         | default(homelabinfra_config.proxmox.node_roles.compute | default([])) | list }}
+      {{ (attach_mounts_nodes | default([], true)
+          or homelabinfra_config.proxmox.node_roles.compute | default([])) | list }}
     _vmfs_host_paths: >-
       {{ attach_mounts_list | map(attribute='host')
          | map('regex_replace', '/+$', '') | unique | list }}

@@ -1393,13 +1393,14 @@ def mail_consumers_open_smtp_egress():
     access = task_named(tasks, "Firewall access | Add SMTP egress for a mail consumer")
     expression = access["ansible.builtin.set_fact"]["_fw_app_access"]
     declared = {"egress": [{"name": "nntp", "protocol": "TCP", "port": 119}]}
-    on = render(expression, {"wiring_firewall": {}, "_fw_sends_mail": True,
+    on = render(expression, {"wiring_firewall": {}, "_fw_egress": [], "_fw_sends_mail": True,
                              "wiring_mail": {"enabled": True, "port": "587"}})
     assert on["egress"] == [{"name": "smtp", "protocol": "TCP", "port": "587"}], on
-    off = render(expression, {"wiring_firewall": {}, "_fw_sends_mail": True,
+    off = render(expression, {"wiring_firewall": {}, "_fw_egress": [], "_fw_sends_mail": True,
                               "wiring_mail": {"enabled": False, "port": ""}})
     assert off["egress"] == [], off
-    both = render(expression, {"wiring_firewall": declared, "_fw_sends_mail": True,
+    both = render(expression, {"wiring_firewall": declared, "_fw_egress": declared["egress"],
+                               "_fw_sends_mail": True,
                                "wiring_mail": {"enabled": True, "port": "465"}})
     assert both["egress"] == declared["egress"] + [{"name": "smtp", "protocol": "TCP", "port": "465"}], both
     # Mail consumers declare it in their defaults; deploy.yml opens access before the guest

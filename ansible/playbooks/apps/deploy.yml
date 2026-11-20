@@ -1,42 +1,38 @@
 ---
 # Deploy one app instance on its configured hosting method. Each converted
-# playbooks/apps/<app>.yml is a shim importing this playbook with `vars: {app: <app>}`, so
-# its Rundeck job and drill command stay as they are. Until an app has its shim, its own
-# playbook is the entry point. PBS, k3s, OPNsense, PDM and Caddy's Seed path keep their own.
+# playbooks/apps/<app>.yml is a shim importing this playbook with `vars: {app: <app>}`;
+# an app without one keeps its own playbook, as do PBS, k3s, OPNsense, PDM and Caddy's Seed.
 #
 # Plays:
-#   1. Resolve and provision (localhost): config, hosting method, then estate and hostname
-#      (tasks/apps/deploy-resolve.yml), the app's database; then the stack host (docker),
-#      the app's own guest (native) or the cluster's firewall access (kubernetes), the
-#      guest's storage and its declared firewall access.
+#   1. Resolve and provision (localhost): config, estate and hostname (deploy-resolve.yml),
+#      the database, the stack host, own guest or cluster access, storage, firewall access.
 #   2. Deploy on the guest: bootstrap, OS update notifications, Docker, the role's main.yml.
 #   3. Deploy on the cluster: the role's kubernetes.yml.
-#   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS (only with a route:
-#      routing.proxy is not none; an app without one needs no domain), the guest record.
-#      Skipped while a restore target is isolated (recovery_isolated).
+#   4. Record and wire: reverse proxy, SSO, uptime monitor, DNS (only when routing.proxy is
+#      not none), the guest record. Skipped while a restore target is isolated.
 #   5. Notify, unless the restore target is isolated.
 #
 # Per-app behavior lives in the role (`deploy.role` in the app's defaults, default the app
 # slug) and in these optional hooks, run only when the role has them:
 #   deploy-prepare.yml  localhost, after the hostname is known, before provisioning. May set
-#                       deploy_host_mounts (an attach-host-mounts.yml list) and
-#                       deploy_host_mounts_owner for the Docker or native guest,
-#                       native_guest_database (database placement for a native guest) and
-#                       firewall_inbound_ports (tasks/firewall/open-app-access.yml).
+#                       deploy_host_mounts (attach-host-mounts.yml), deploy_host_mounts_owner,
+#                       deploy_host_mounts_own_node (only the guest's node),
+#                       native_guest_database and firewall_inbound_ports.
 #   deploy-record.yml   localhost, before wiring, also while the restore target is
 #                       isolated: registry entries other jobs read (`media`, `databases`);
 #                       deploy_notify_note, a note computed from app_config.
 #
 # An app with `app.database` gets its database and login role on the named backend before
 # its guest is provisioned (tasks/database/deploy-consumer.yml), on the methods in
-# deploy.database_methods (default every method).
+# deploy.database_methods (default every method); with deploy.database_optional, only while
+# app.database.instance is named.
 #
 # Per-app values are app-defaults keys (shared ones in vars/app-defaults/_base.yml):
 # routing.monitor_path, routing.auth_group, deploy.notify_note (a sentence added to the
-# deploy notification), vault.methods and platform_layers (tasks/apps/load-config.yml),
+# notification), vault.methods and platform_layers (tasks/apps/load-config.yml),
 # firewall.methods (the methods whose Deploy opens the declared `firewall:` access; default
-# every method), firewall.sends_mail (SMTP egress to the platform relay for a Docker or
-# native guest). The display name is the catalog entry's `name`.
+# every method), firewall.sends_mail (SMTP egress to the platform relay). The display name
+# is the catalog entry's `name`.
 
 # ── Play 1: Resolve and provision ──────────────────────────────────────────────
 - name: "Deploy {{ app | default('(no app)') }} | Resolve and provision"
@@ -103,6 +99,9 @@
       when:
         - app_config.app.database is defined
         - >-
+          not ((app_config.deploy | default({})).database_optional | default(false) | bool)
+          or app_config.app.database.instance | default('') | length > 0
+        - >-
           app_config.hosting.method in (app_config.deploy | default({})).database_methods
           | default(['docker', 'kubernetes', 'native'])
 
@@ -128,6 +127,7 @@
         attach_mounts_guest: "{{ groups['deploy_' ~ instance][0] }}"
         attach_mounts_list: "{{ deploy_host_mounts }}"
         attach_mounts_owner: "{{ deploy_host_mounts_owner | default({}) }}"
+        attach_mounts_nodes: "{{ [hostvars[groups['deploy_' ~ instance][0]].proxmox_node] if deploy_host_mounts_own_node | default(false) else [] }}"
       when:
         - app_config.hosting.method in ['docker', 'native']
         - deploy_host_mounts | default([]) | length > 0

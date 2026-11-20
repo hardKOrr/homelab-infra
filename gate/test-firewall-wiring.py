@@ -95,9 +95,9 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run(server, root, task, instance, firewall, extra_vars=None):
+def run(server, root, task, instance, firewall, extra_vars=None, databases=None):
     server.calls.clear()
-    infra = {"firewall": {
+    infra = {"databases": databases or {}, "firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
         "api_key": "fixture-key", "api_secret": "fixture-secret",
         "interfaces": [{"cidr": "198.51.100.0/24", "interface": "opt4"},
@@ -350,9 +350,11 @@ def main():
         server.rules["filter"]["qbt-old"] = {
             "description": "homelab-infra: qbittorrent egress bittorrent-peers",
             "interface": "opt4", "source_net": "198.51.100.34"}
-        qbt_app = {"torrenting_port": qbt_defaults["app"]["torrenting_port"]}
+        # Through the shared open-app-access, which resolves source_port_from when the rule
+        # opens: an instance's own torrenting_port, not the default, reaches the rule.
+        qbt_app = {"torrenting_port": 51413}
         check("qBittorrent replaces its broad legacy peer rule",
-              run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
+              run(server, root, "firewall/open-app-access.yml", "qbittorrent", qbt_defaults["firewall"],
                   {"app_config": {"app": qbt_app}}),
               ["filter/addRule", "filter/addRule", "filter/addRule", "filter/addRule",
                "filter/delRule", "filter/apply"])
@@ -364,7 +366,7 @@ def main():
               f"{qbt_role_defaults['qbittorrent_peer_outgoing_ports_min']}-{qbt_role_defaults['qbittorrent_peer_outgoing_ports_max']}")
         check("qBittorrent UDP peers use the listen source port",
               qbt_rules.get("bittorrent-peers-udp", {}).get("source_port"),
-              str(qbt_defaults["app"]["torrenting_port"]))
+              "51413")
         check("qBittorrent allows HTTP trackers and web fetches on TCP/80",
               (qbt_rules.get("bittorrent-web-http", {}).get("protocol"),
                qbt_rules.get("bittorrent-web-http", {}).get("destination_port")),
@@ -373,6 +375,19 @@ def main():
               (qbt_rules.get("bittorrent-web-https", {}).get("protocol"),
                qbt_rules.get("bittorrent-web-https", {}).get("destination_port")),
               ("TCP", "443"))
+
+        # A `backend:` egress opens to the registered backend's address and port, resolved
+        # after Deploy's database step, not to any destination.
+        n8n_firewall = yaml.safe_load(
+            (repo / "ansible/vars/app-defaults/n8n.yml").read_text())["n8n_defaults"]["firewall"]
+        run(server, root, "firewall/open-app-access.yml", "n8n-backend", n8n_firewall,
+            {"app_config": {"app": {"database": {"instance": "pg-lab"}}}},
+            databases={"pg-lab": {"host": "198.51.100.50", "port": 6543}})
+        pg_rule = next((r for r in server.rules["filter"].values()
+                        if r.get("description") == "homelab-infra: n8n-backend egress postgresql"), {})
+        check("a backend egress opens to the registered backend only",
+              (pg_rule.get("destination_net"), pg_rule.get("destination_port")),
+              ("198.51.100.50", "6543"))
         check("qBittorrent rerun changes nothing",
               run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
                   {"app_config": {"app": qbt_app}}), [])

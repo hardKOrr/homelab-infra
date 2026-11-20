@@ -1,0 +1,11 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml play 1, before the database step): on Kubernetes the
+# workload has no embedded PostgreSQL, so app.database must name the registered backend.
+- name: Authentik | Require a registered backend on Kubernetes
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database.provider == 'postgresql'
+      - app_config.app.database.instance | default('') | length > 0
+    fail_msg: Set app.database.instance to the registered PostgreSQL backend for Kubernetes.
+    quiet: true
+  when: app_config.hosting.method == 'kubernetes'

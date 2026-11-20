@@ -29,9 +29,7 @@ assert defaults["hosting"]["method"] == "docker"
 assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
-assert defaults["firewall"]["egress"][0]["port"] == (
-    "{{ app_config.app.database_port | default(5432) }}"
-)
+assert defaults["firewall"]["egress"][0]["backend"] == "database"
 
 # Deploy is playbooks/apps/deploy.yml (gate/test-app-matrix.py holds its run): the
 # database egress opens on a native guest and from the cluster, not the shared stack host.
