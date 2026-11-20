@@ -10,7 +10,7 @@ app:
   chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
   meilisearch_image: getmeili/meilisearch:v1.41.0
   # Karakeep's SQLite database, assets, and archives are stored here and included in the
-  # services stack guest backup. Keep this on durable local storage.
+  # productivity stack guest backup. Keep this on durable local storage.
   data_path: "/opt/{{ instance }}/data"
   # Leave signups enabled until the first account is created, then set true and redeploy.
   disable_signups: false
@@ -22,7 +22,7 @@ backup:
   enabled: true
   schedule: "0 3 * * *"
 
-# Recovery boundary: the services stack guest backup includes the Compose project, this
+# Recovery boundary: the productivity stack guest backup includes the Compose project, this
 # data path, and /opt/<instance>/meilisearch. Restore all of them together before starting
 # Karakeep; the SQLite database and its Meilisearch index are one application recovery unit.
 

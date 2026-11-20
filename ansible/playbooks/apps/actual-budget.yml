@@ -1,5 +1,5 @@
 ---
-# Deploy Actual Budget on the services Docker stack, a native guest, or Kubernetes.
+# Deploy Actual Budget on its Docker stack, a native guest, or Kubernetes.
 #
 # Actual is intentionally self-contained: its account.sqlite, server files, and budget
 # blobs live in one durable /data mount, and its native server password is generated once
@@ -43,7 +43,7 @@
         native_guest_network_app: actual-budget
       when: app_config.hosting.method == 'native'
 
-    - name: Find or create services stack host
+    - name: Find or create the stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"

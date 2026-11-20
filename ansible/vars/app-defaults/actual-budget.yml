@@ -13,7 +13,7 @@ actual_budget_defaults:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
-  stack: services
+  stack: productivity
 
   recovery:
     methods: [native]

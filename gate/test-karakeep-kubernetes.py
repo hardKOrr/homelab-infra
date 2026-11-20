@@ -42,7 +42,7 @@ provision = playbook[0]
 validate = next(task for task in provision["pre_tasks"]
                 if task.get("name") == "Validate supported hosting method")
 stack = next(task for task in provision["tasks"]
-             if task.get("name") == "Find or create services stack host")
+             if task.get("name") == "Find or create the stack host")
 kubernetes = next(task for task in provision["tasks"]
                   if task.get("name") == "Deploy Karakeep on Kubernetes")
 assert provision["pre_tasks"].index(validate) < len(provision["pre_tasks"])

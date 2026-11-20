@@ -8,7 +8,7 @@
     Deploy or converge an instanced WordPress site.
 
     - Database: named external MariaDB backend mariadb-wordpress by default; no database
-      sidecar is created in the services stack.
+      sidecar is created in the web stack.
     - Credentials: the initial administrator password and named database role password
       are generated or reused from homelab-infra/apps/<instance> in Vaultwarden.
     - Durability: WordPress's /var/www/html/wp-content directory contains uploads, themes and

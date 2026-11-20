@@ -6,7 +6,7 @@ forgejo_runner_defaults:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
-  stack: services
+  stack: ci
   app:
     # One exact upstream version for both methods: the image tag and the release binary the
     # native method downloads (amd64 only) and verifies against native_sha256.

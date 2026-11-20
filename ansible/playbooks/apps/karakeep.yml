@@ -48,7 +48,7 @@
         karakeep_fqdn: >-
           {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
 
-    - name: Find or create services stack host
+    - name: Find or create the stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"

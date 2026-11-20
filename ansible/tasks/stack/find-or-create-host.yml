@@ -20,15 +20,11 @@
 #                                         lab's default estate). Placement is resolved from
 #                                         the stack AND the estate, so an estate-scoped app
 #                                         can never silently land on another estate's host
-#   deploy_group                        — optional; inventory group the host is added to.
-#                                         Defaults to 'app_deploy' for back-compat, but every
-#                                         app playbook passes a PER-INSTANCE name
-#                                         (deploy_<instance>). add_host groups persist for the
-#                                         whole run, and bootstrap.yml chains app playbooks via
-#                                         import_playbook — a single shared group would
-#                                         accumulate hosts across steps, so step N's Play 2
-#                                         would run its role on every earlier app's guest and
-#                                         its Play 3 would read [0], the FIRST app's host.
+#   deploy_group                        — optional; inventory group the host is added to
+#                                         (default 'app_deploy'). Pass deploy_<instance>:
+#                                         add_host groups persist across the plays that
+#                                         bootstrap.yml chains, so a shared group would
+#                                         hand a later app every earlier app's host.
 #   app_config                          — merged app config (handed to Play 2 via add_host)
 #   stack_placement_devices             — optional proxmox.devices keys for non-GPU passthrough
 #   homelabinfra_config.ansible.ssh_user
@@ -244,17 +240,21 @@
     homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
     homelabinfra_stack_host_created: false
   when: _stack_hosts | length > 0
-  # Inventory bookkeeping, not a lab change: add_host always reports changed,
-  # which alone keeps a fully converged re-run off changed=0.
+  # Inventory bookkeeping; add_host always reports changed, which breaks changed=0 re-runs.
   changed_when: false
 
-# A reused stack host is not necessarily a RUNNING one — this branch skips the
-# provisioning block below, which is where starting lives. See the header of
-# tasks/proxmox/ensure-guest-running.yml for the failure this prevents.
+# A reused host may be stopped; starting lives in the create block this branch skips.
 - name: Ensure the existing stack host is running
   ansible.builtin.include_tasks: ../proxmox/ensure-guest-running.yml
   vars:
     ensure_guest_host: "{{ _stack_hosts[0] }}"
+  when: _stack_hosts | length > 0
+
+- name: Report an existing stack host smaller than its sizing
+  ansible.builtin.include_tasks: report-undersized-host.yml
+  vars:
+    report_stack_host: "{{ _stack_hosts[0] }}"
+    report_stack_sizing: "{{ _stack_sizing }}"
   when: _stack_hosts | length > 0
 
 # ── Provision new stack host ───────────────────────────────────────────────────

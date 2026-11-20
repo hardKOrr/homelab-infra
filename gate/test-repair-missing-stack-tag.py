@@ -41,24 +41,24 @@ with tempfile.TemporaryDirectory() as t:
  cases=['plan','execute','repeat','shared-override','wrong-name','unowned','other-stack','template','duplicate','missing','locked','wrong-confirmation','missing-estate','wrong-estate']
  for case in cases:
   d=root/case;d.mkdir();(d/'pvesh').symlink_to(binary)
-  stack_id='services' if case=='shared-override' else 'services-beta'
+  stack_id='productivity' if case=='shared-override' else 'productivity-beta'
   expected_tag='_.stack+'+stack_id
   guest_name='stack-'+stack_id
   tags='_+lab;_-docker;operator-note'
-  if case in ['repeat','other-stack']:tags+=';_.stack+services-beta'
-  if case=='other-stack':tags+=';_.stack+services-alpha'
+  if case in ['repeat','other-stack']:tags+=';_.stack+productivity-beta'
+  if case=='other-stack':tags+=';_.stack+productivity-alpha'
   if case=='shared-override':tags='_+lab;_-docker;operator-note'
   config={'hostname':guest_name,'tags':tags,'description':'operator note\n| mixpost | docker | internal | 2026-01-01 |','net0':'name=eth0,ip=192.0.2.10/24,hwaddr=00:11:22:33:44:55','digest':'fixture-revision','rootfs':'fixture-storage:vm-123-disk-0,size=8G'}
   inventory=[{'vmid':123,'node':'localhost','name':guest_name,'type':'lxc','tags':tags}]
-  if case=='wrong-name':config['hostname']=inventory[0]['name']='stack-services-alpha'
+  if case=='wrong-name':config['hostname']=inventory[0]['name']='stack-productivity-alpha'
   if case=='unowned':config['tags']=inventory[0]['tags']=config['tags'].replace('_+lab;','')
   if case=='other-stack':config['tags']=inventory[0]['tags']=tags
   if case=='template':inventory[0]['template']=1
   if case=='locked':config['lock']='backup'
   before=copy.deepcopy(config);(d/'123.json').write_text(json.dumps(config));(d/'inventory.json').write_text(json.dumps(inventory))
   play={'hosts':'localhost','gather_facts':False,'become':False,'connection':'local','vars':{'repair_execute':False},'tasks':adapt(copy.deepcopy(source),d)}
-  infra_stacks={'services':{'shared':True}} if case=='shared-override' else {}
-  play['vars'].update({'homelabinfra_config':{'proxmox':{'node':'localhost'},'infrastructure':{'stacks':infra_stacks,'domains':{'alpha':{},'beta':{}}}},'repair_stack':'services','repair_estate':'alpha' if case=='wrong-estate' else ('' if case in ['missing-estate','shared-override'] else 'beta'),'repair_vmids':'123,123' if case=='duplicate' else ('999' if case=='missing' else '123'),'repair_execute':case not in ['plan','missing-estate','wrong-estate'],'repair_confirmation':'WRONG' if case=='wrong-confirmation' else 'ADD STACK TAG '+expected_tag})
+  infra_stacks={'productivity':{'shared':True}} if case=='shared-override' else {}
+  play['vars'].update({'homelabinfra_config':{'proxmox':{'node':'localhost'},'infrastructure':{'stacks':infra_stacks,'domains':{'alpha':{},'beta':{}}}},'repair_stack':'productivity','repair_estate':'alpha' if case=='wrong-estate' else ('' if case in ['missing-estate','shared-override'] else 'beta'),'repair_vmids':'123,123' if case=='duplicate' else ('999' if case=='missing' else '123'),'repair_execute':case not in ['plan','missing-estate','wrong-estate'],'repair_confirmation':'WRONG' if case=='wrong-confirmation' else 'ADD STACK TAG '+expected_tag})
   # Notifications are outside the tag mutation contract and need a provider.
   for task in play['tasks']:
    if 'block' in task:task['block']=[x for x in task['block'] if 'ansible.builtin.include_tasks' not in x]
