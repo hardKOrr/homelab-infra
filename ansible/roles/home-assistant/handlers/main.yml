@@ -1,16 +1,11 @@
 ---
+# The native service's restart, skipped when native.yml just started it. On Docker,
+# tasks/docker.yml recreates the project itself when a file it mounts changes.
 - name: Restart Home Assistant
-  community.docker.docker_compose_v2:
-    project_src: "{{ home_assistant_project_dir }}"
-    state: restarted
-  when: app_config.hosting.method | default('docker') == 'docker'
-
-- name: Restart native Home Assistant
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart Home Assistant
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
   when:
     - app_config.hosting.method | default('docker') == 'native'
     - not (_ha_start.changed | default(false))

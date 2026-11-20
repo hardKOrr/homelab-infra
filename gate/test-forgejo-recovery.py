@@ -298,10 +298,15 @@ def check_install():
     seed = tasks["Forgejo | Seed a new install's secret key"]
     assert seed["when"] == "not _forgejo_app_ini.stat.exists", "an existing app.ini keeps its key"
     assert "notify" not in seed, "the key lands before the first start"
+    # Docker starts once through the shared Compose deploy, and the restart handler is
+    # native-only and skipped when native.yml just started the service: neither restarts a
+    # new install mid schema creation.
+    assert tasks["Forgejo | Deploy the Compose project"]["ansible.builtin.include_tasks"] \
+        .endswith("tasks/stack/compose-deploy.yml")
     restart = yaml.safe_load((repo / "ansible/roles/forgejo/handlers/main.yml").read_text())[0]
     assert "not (_forgejo_start.changed | default(false))" in restart["when"], \
-        "never restart a container Start service just created (a new install's schema creation)"
-    assert tasks["Forgejo | Start service"]["register"] == "_forgejo_start"
+        "never restart a service native.yml just started (a new install's schema creation)"
+    assert restart["vars"]["restart_runtime"] == "native"
     create = tasks["Forgejo | Create the administrator"]
     listing = ("ID   Username   Email                     IsActive IsAdmin 2FA\n"
                "1    {name}   someone@example.invalid  true     true    false\n")

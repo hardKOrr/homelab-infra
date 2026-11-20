@@ -1,4 +1,7 @@
+---
+# The Docker engine's restart, through the shared systemd restart (it reloads units first).
 - name: Restart Docker
-  ansible.builtin.systemd:
-    name: docker
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["docker"]

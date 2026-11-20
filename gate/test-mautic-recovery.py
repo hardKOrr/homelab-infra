@@ -164,17 +164,18 @@ def static_contract():
         assert config_task[module]["group"] == "www-data"
         assert config_task[module]["mode"] == "0640"
     deploy_names = [task.get("name") for task in deploy_tasks]
+    # The shared Compose deploy starts only the web service and waits for its health.
     start_web = next(task for task in deploy_tasks
-                     if task.get("name") == "Mautic | Start web service")
+                     if task.get("name") == "Mautic | Deploy the web service")
     verify_runtime = next(task for task in deploy_tasks
                           if task.get("name") == "Mautic | Verify the web runtime can access its configuration")
-    wait_health = next(task for task in deploy_tasks
-                       if task.get("name") == "Mautic | Wait for health endpoint")
     start_background = next(task for task in deploy_tasks
                             if task.get("name") == "Mautic | Start background services")
     store_credentials = next(task for task in deploy_tasks
                              if task.get("name") == "Mautic | Store credentials in the canonical Vaultwarden item")
-    assert start_web["community.docker.docker_compose_v2"]["services"] == ["mautic_web"]
+    assert start_web["ansible.builtin.include_tasks"].endswith("tasks/stack/compose-deploy.yml")
+    assert start_web["vars"]["compose_services"] == ["mautic_web"]
+    assert start_web["vars"]["compose_health"]["status"] == [200, 302]
     assert store_credentials.get("when") == "not ansible_check_mode"
     runtime_check = " ".join(verify_runtime["ansible.builtin.command"]["argv"])
     assert "--user www-data" in runtime_check
@@ -183,8 +184,8 @@ def static_contract():
     assert start_background["community.docker.docker_compose_v2"]["services"] == [
         "mautic_cron", "mautic_worker"
     ]
-    assert deploy_names.index(verify_runtime["name"]) < deploy_names.index(wait_health["name"])
-    assert deploy_names.index(wait_health["name"]) < deploy_names.index(start_background["name"])
+    assert deploy_names.index(start_web["name"]) < deploy_names.index(verify_runtime["name"])
+    assert deploy_names.index(verify_runtime["name"]) < deploy_names.index(start_background["name"])
 
     assert config["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
     upload = next(task for task in tasks_recursive(backup_source)

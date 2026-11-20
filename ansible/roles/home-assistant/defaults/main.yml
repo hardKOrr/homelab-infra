@@ -1,5 +1,4 @@
 home_assistant_project_dir: "/opt/{{ instance }}"
-home_assistant_compose_file: "{{ home_assistant_project_dir }}/docker-compose.yml"
 home_assistant_secrets_file: "{{ app_config.app.config_path }}/secrets.yaml"
 # Native: the interpreter, source and venv live beside the config directory, which is the
 # only recovery unit. The stamp ties the venv to native_version.

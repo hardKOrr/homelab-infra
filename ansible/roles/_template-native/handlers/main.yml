@@ -1,5 +1,7 @@
 ---
+# The app's systemd restart, through the shared restart (tasks/apps/restart.yml).
 - name: Restart APP_NAME
-  ansible.builtin.systemd:
-    name: APP_NAME
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["APP_NAME"]

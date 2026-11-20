@@ -1,14 +1,9 @@
 ---
-- name: Restart searxng
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    recreate: always
-  when: app_config.hosting.method == 'docker'
-
+# The native service's restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when a file it renders changes.
 - name: Restart searxng service
-  ansible.builtin.systemd:
-    name: "{{ searxng_service }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ searxng_service }}"]
   when: app_config.hosting.method == 'native'

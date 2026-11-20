@@ -1,37 +1,10 @@
 ---
 # Included by main.yml (Docker only): the Compose project on the stack host.
 
-# ── Directories ───────────────────────────────────────────────────────────────
-- name: Create project directory
-  ansible.builtin.file:
-    path: "{{ uptime_kuma_project_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: Create data directory
-  ansible.builtin.file:
-    path: "{{ app_config.app.data_path }}"
-    state: directory
-    mode: "0750"
-
-# ── Compose ───────────────────────────────────────────────────────────────────
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ uptime_kuma_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart uptime-kuma
-
-- name: Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ uptime_kuma_project_dir }}"
-
-- name: Start Uptime Kuma
-  community.docker.docker_compose_v2:
-    project_src: "{{ uptime_kuma_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+- name: Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ uptime_kuma_project_dir }}"
+    compose_dirs: ["{{ app_config.app.data_path }}"]

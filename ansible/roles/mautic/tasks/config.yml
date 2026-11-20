@@ -1,5 +1,7 @@
 ---
-# Mautic's local.php, for Docker and native alike: seeded once, then only the keys Deploy owns are converged.
+# Mautic's local.php, for Docker and native alike: seeded once, then only the keys Deploy owns
+# are converged. A change notifies the native restart; on Docker, docker.yml recreates the
+# services from the registered results instead.
 - name: Mautic | Check whether the configuration already exists
   ansible.builtin.stat:
     path: "{{ mautic_config_file }}"
@@ -26,6 +28,7 @@
     mode: "0640"
   no_log: true
   when: not _mautic_local_php_stat.stat.exists
+  register: _mautic_local_php_seeded
   notify: Restart mautic
 
 # The converge path for every later run: update only the keys this role actually owns,

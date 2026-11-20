@@ -66,43 +66,21 @@
     group: root
     mode: "0600"
   no_log: true
+  register: _n8n_env_written
   notify: Restart n8n
 
+# The shared Compose deploy recreates the container when the Compose file or the
+# environment file (written above for both methods) changed, in the same up that creates
+# it, so a new install's first schema migration is never interrupted by a restart.
 - name: n8n | Deploy on Docker
-  when: not (n8n_native | bool)
-  block:
-    - name: n8n | Render Compose project
-      ansible.builtin.template:
-        src: docker-compose.yml.j2
-        dest: "{{ n8n_project_dir }}/docker-compose.yml"
-        owner: root
-        group: root
-        mode: "0640"
-      notify: Restart n8n
-
-    - name: n8n | Pull image
-      community.docker.docker_compose_v2_pull:
-        project_src: "{{ n8n_project_dir }}"
-
-    - name: n8n | Start service
-      community.docker.docker_compose_v2:
-        project_src: "{{ n8n_project_dir }}"
-        state: present
-        remove_orphans: true
-      register: _n8n_start
-
-    - name: n8n | Apply pending restart
-      ansible.builtin.meta: flush_handlers
-
-    - name: n8n | Wait for health endpoint
-      ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/healthz"
-        status_code: 200
-      register: _n8n_health
-      until: _n8n_health.status | default(0) == 200
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ n8n_project_dir }}"
+    compose_recreate: "{{ _n8n_env_written.changed }}"
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/healthz"
       retries: 60
-      delay: 5
-      changed_when: false
+  when: not (n8n_native | bool)
 
 - name: n8n | Deploy natively
   ansible.builtin.include_tasks: native.yml

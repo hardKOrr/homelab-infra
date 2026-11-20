@@ -14,6 +14,8 @@
 #   compose_owner         — owner of the created directories (default `root`)
 #   compose_group         — group of the created directories (default `root`)
 #   compose_project_mode  — mode of the project directory (default `0750`)
+#   compose_file_mode     — mode of docker-compose.yml (default `0640`; `0600` when it
+#                           carries secrets)
 #   compose_files         — optional files the project mounts or reads, each
 #                           `{src, dest}` with optional `mode` (default `0640`), `owner`,
 #                           `group` (default `root`) and `force` (default true; false writes
@@ -21,6 +23,8 @@
 #   compose_secrets       — the secret values the Compose file or compose_files hold; when
 #                           set, their render output stays out of the log and a failure
 #                           prints with these values masked (default none)
+#   compose_services      — optional; start only these services (the rest of the project
+#                           starts later from the role, e.g. after an installer)
 #   compose_recreate      — optional; true recreates the project as a changed rendered file
 #                           does, for a mounted file the role writes itself (a copied
 #                           script, a `changed` result passed in) (default false)
@@ -98,7 +102,7 @@
         dest: "{{ compose_project_dir }}/docker-compose.yml"
         owner: root
         group: root
-        mode: "0640"
+        mode: "{{ compose_file_mode | default('0640') }}"
       register: _compose_file_written
       no_log: "{{ compose_secrets | default([]) | length > 0 }}"
   rescue:
@@ -115,10 +119,12 @@
                | default(compose_project_dir ~ '/docker-compose.yml') }}: {{ result.msg
                | default('no message') }}{{ '' if loop.last else '; ' }}{% endfor %}
 
+# A service with `build:` is never pulled: the up below builds its image when missing.
 - name: Compose deploy | Pull the images
   community.docker.docker_compose_v2_pull:
     project_src: "{{ compose_project_dir }}"
     policy: "{{ compose_pull_policy | default('missing') }}"
+    ignore_buildable: true
   changed_when: false
 
 - name: Compose deploy | Start the project
@@ -126,6 +132,7 @@
     project_src: "{{ compose_project_dir }}"
     state: present
     remove_orphans: true
+    services: "{{ compose_services | default(omit) }}"
     recreate: "{{ 'always' if _compose_rendered_changed | bool else 'auto' }}"
   vars:
     _compose_rendered_changed: >-

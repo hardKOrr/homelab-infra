@@ -1,17 +1,9 @@
 ---
+# The native web server's restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when the Compose or environment file changes.
 - name: Restart WordPress
-  community.docker.docker_compose_v2:
-    project_src: "{{ wordpress_project_dir }}"
-    state: restarted
-  # A container Start service just created or recreated already runs the new files, and
-  # restarting it would interrupt a new install's first core extraction.
-  when:
-    - not (wordpress_native | bool)
-    - not (_wordpress_start.changed | default(false))
-
-- name: Restart native WordPress
-  ansible.builtin.systemd:
-    name: apache2
-    state: restarted
-  listen: Restart WordPress
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: [apache2]
   when: wordpress_native | bool

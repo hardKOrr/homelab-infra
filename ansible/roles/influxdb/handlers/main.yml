@@ -1,12 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when the Compose file changes.
 - name: Restart InfluxDB
-  ansible.builtin.systemd:
-    name: "{{ app_config.app.service_name }}"
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ app_config.app.service_name }}"]
   when: not (influxdb_docker | bool)
-- name: Restart InfluxDB container
-  community.docker.docker_compose_v2:
-    project_src: "{{ influxdb_project_dir }}"
-    state: present
-    recreate: always
-  when: influxdb_docker | bool

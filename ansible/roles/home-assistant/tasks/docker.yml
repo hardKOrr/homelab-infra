@@ -1,35 +1,16 @@
 ---
-- name: Home Assistant | Render the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ home_assistant_compose_file }}"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Home Assistant
-
-- name: Home Assistant | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ home_assistant_project_dir }}"
-
-- name: Home Assistant | Start the application
-  community.docker.docker_compose_v2:
-    project_src: "{{ home_assistant_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Home Assistant | Apply pending restart
-  ansible.builtin.meta: flush_handlers
-
-- name: Home Assistant | Wait for the health endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/"
-    status_code: 200
-  register: _ha_health
-  until: _ha_health.status | default(0) == 200
-  retries: 60
-  delay: 5
-  changed_when: false
+# The shared Compose deploy recreates the container when the Compose file, the seed
+# configuration or the integration secrets (prepare.yml) changed, in the same up that
+# creates it, so a new install is never restarted mid first boot.
+- name: Home Assistant | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ home_assistant_project_dir }}"
+    compose_recreate: >-
+      {{ _ha_seed_written.changed | default(false) or _ha_secrets_written.changed | default(false) }}
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/"
+      retries: 60
 
 - name: Home Assistant | Export the application URL
   ansible.builtin.set_fact:

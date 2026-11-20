@@ -1,12 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when the Compose file or server tuning changes.
 - name: Restart MySQL
-  ansible.builtin.systemd:
-    name: "{{ app_config.app.service_name }}"
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ app_config.app.service_name }}"]
   when: not (mysql_docker | bool)
-
-- name: Restart MySQL container
-  community.docker.docker_compose_v2:
-    project_src: "{{ mysql_project_dir }}"
-    state: restarted
-  when: mysql_docker | bool

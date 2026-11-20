@@ -1,63 +1,27 @@
 ---
 # BookStack on Docker (Compose). Native hosting is native.yml.
 
-- name: BookStack | Create project and durable data directories
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: "{{ item.owner }}"
-    group: "{{ item.group }}"
-    mode: "{{ item.mode }}"
-  loop:
-    - {path: "{{ bookstack_project_dir }}", owner: root, group: root, mode: "0750"}
-    - {path: "{{ app_config.app.data_path }}", owner: "{{ app_config.app.puid }}", group: "{{ app_config.app.pgid }}", mode: "0750"}
-
-- name: BookStack | Render environment file
-  ansible.builtin.template:
-    src: bookstack.env.j2
-    dest: "{{ bookstack_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart BookStack
-
-- name: BookStack | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ bookstack_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  no_log: true
-  notify: Restart BookStack
-
-- name: BookStack | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ bookstack_project_dir }}"
-    policy: missing
-  no_log: true
-
-- name: BookStack | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ bookstack_project_dir }}"
-    state: present
-    remove_orphans: true
-  register: _bookstack_start
-  no_log: true
-
-- name: BookStack | Apply pending restart
-  ansible.builtin.meta: flush_handlers
-
-- name: BookStack | Wait for login endpoint
-  ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/login"
-    status_code: 200
-  register: _bookstack_health
-  until: _bookstack_health.status | default(0) == 200
-  retries: 60
-  delay: 5
-  changed_when: false
+# The shared Compose deploy renders the environment file with the project and recreates
+# the container when either changed, in the same up that creates it, so a new install's
+# first schema migration is never interrupted by a restart.
+- name: BookStack | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ bookstack_project_dir }}"
+    compose_dirs:
+      - path: "{{ app_config.app.data_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+    compose_files:
+      - src: bookstack.env.j2
+        dest: "{{ bookstack_env_file }}"
+        mode: "0600"
+    compose_secrets: >-
+      {{ [_bookstack_app_key, app_config.app.database_password | default(''),
+          (wiring_mail | default({})).password | default('')] | select | list }}
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/login"
+      retries: 60
 
 - name: BookStack | Initialize the administrator
   ansible.builtin.include_tasks: admin.yml

@@ -1,16 +1,8 @@
 ---
-# Phase of main.yml: create the directories, write Compose and start the app. Imported in
+# Phase of main.yml: create the config directory and deploy the Compose project. Imported in
 # place; inputs are listed in main.yml.
 
 # ── Directories ───────────────────────────────────────────────────────────────
-- name: Create project directory
-  ansible.builtin.file:
-    path: "{{ servarr_project_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
 # Owned by the container's uid, not root: the app writes its own config.xml and
 # database here on first start.
 - name: Create the config directory
@@ -21,32 +13,12 @@
     group: "{{ app_config.app.pgid | default(1000) }}"
     mode: "0750"
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ servarr_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  no_log: true      # the compose file carries the API key
-  notify: Restart servarr
-
-# ── Run ───────────────────────────────────────────────────────────────────────
-# policy: missing, matching roles/observability — a deploy ensures the image is
-# present, Watchtower is what moves it forward and reports it. Re-pulling :latest
-# on every deploy would make each run a silent, unreviewed upgrade.
-- name: Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ servarr_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Start the app
-  community.docker.docker_compose_v2:
-    project_src: "{{ servarr_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending restarts before the checks
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+# Its render stays out of the log: the Compose file carries the API key. Images are pulled
+# only when missing; Watchtower moves them forward and reports it.
+- name: Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ servarr_project_dir }}"
+    compose_secrets: ["{{ _servarr_api_key }}"]

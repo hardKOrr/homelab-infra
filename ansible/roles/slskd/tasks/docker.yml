@@ -3,31 +3,14 @@
 # storage.yml has already prepared the directories and the lab storage. Inputs are set in
 # main.yml.
 
-- name: Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ slskd_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart slskd
-  no_log: true   # the rendered file carries the Soulseek password and the API key
-
-# ── Run ───────────────────────────────────────────────────────────────────────
-# policy: missing, matching roles/deemix and roles/sabnzbd — a deploy ensures
-# the image is present, Watchtower is what moves it forward and reports it.
-- name: Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ slskd_project_dir }}"
-    policy: missing
-  changed_when: false
-
-- name: Start the app
-  community.docker.docker_compose_v2:
-    project_src: "{{ slskd_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending restarts before the checks
-  ansible.builtin.meta: flush_handlers
-
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot. Its
+# render stays out of the log: the file carries the Soulseek password and the API key.
+# policy missing, as everywhere: Watchtower moves the image forward and reports it.
+- name: Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ slskd_project_dir }}"
+    compose_secrets: >-
+      {{ [_slskd_soulseek_password, _slskd_api_key, _slskd_web_password | default('')]
+         | select | list }}

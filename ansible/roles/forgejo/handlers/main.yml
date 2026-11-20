@@ -1,20 +1,12 @@
 ---
+# The native service's restart, skipped when native.yml just started it. On Docker,
+# tasks/stack/compose-deploy.yml recreates the project itself when the Compose or
+# environment file changes.
 - name: Restart Forgejo
-  community.docker.docker_compose_v2:
-    project_src: "{{ forgejo_project_dir }}"
-    state: restarted
-  # A container Start service just created or recreated already runs the new files, and
-  # restarting it would interrupt a new install's first schema creation.
-  when:
-    - app_config.hosting.method | default('docker') == 'docker'
-    - not (_forgejo_start.changed | default(false))
-
-- name: Restart native Forgejo
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart Forgejo
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
   when:
     - app_config.hosting.method | default('docker') == 'native'
     - not (_forgejo_start.changed | default(false))

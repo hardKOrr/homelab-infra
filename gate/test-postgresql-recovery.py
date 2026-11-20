@@ -192,10 +192,13 @@ def check_contract():
     record = (ROOT / "ansible/tasks/database/deploy-record.yml").read_text(encoding="utf-8")
     assert "'runtime': app_config.hosting.method" in record
     assert 'mode: "0750"' in docker_tasks and "d /var/run/postgresql 0750" in docker_tasks
+    # An empty data directory is initialized by the first start, so nothing may restart it:
+    # the shared Compose deploy starts it once, then Deploy waits for the final server, and
+    # no handler restarts the container.
     order = [docker_tasks.index(t) for t in (
-        "PostgreSQL | Start the service", "PostgreSQL | Wait for the final server\n",
-        "PostgreSQL | Apply pending restarts", "after a restart")]
-    assert order == sorted(order), "wait for the final server before flushing restarts"
+        "tasks/stack/compose-deploy.yml", "PostgreSQL | Wait for the final server\n")]
+    assert order == sorted(order), "deploy the project, then wait for the final server"
+    assert "docker_compose_v2" not in (ROLE / "handlers/main.yml").read_text(encoding="utf-8")
     staged = (ROLE / "tasks/restore-staged.yml").read_text(encoding="utf-8")
     assert "- verify\n" in staged and '"{{ recovery_swap_stage }}/postgresql"' in staged
     verified = (ROLE / "tasks/restore-verified.yml").read_text(encoding="utf-8")

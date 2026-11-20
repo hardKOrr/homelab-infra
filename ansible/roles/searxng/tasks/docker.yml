@@ -8,56 +8,21 @@
 - name: SearXNG | Resolve and store the application secrets
   ansible.builtin.include_tasks: secrets.yml
 
-- name: SearXNG | Create the project directory
-  ansible.builtin.file:
-    path: "/opt/{{ instance }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-# Owned by the image's searxng user so the container can read a file that carries secrets.
-- name: SearXNG | Write the settings file
-  ansible.builtin.template:
-    src: settings.yml.j2
-    dest: "/opt/{{ instance }}/settings.yml"
-    owner: "{{ app_config.app.uid }}"
-    group: "{{ app_config.app.uid }}"
-    mode: "0400"
-  no_log: true
-  notify: Restart searxng
-
-- name: SearXNG | Write the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "/opt/{{ instance }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart searxng
-
-- name: SearXNG | Pull the images
-  community.docker.docker_compose_v2_pull:
-    project_src: "/opt/{{ instance }}"
-    policy: missing
-  changed_when: false
-
-- name: SearXNG | Start the containers
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    remove_orphans: true
-
-- name: SearXNG | Apply pending restarts
-  ansible.builtin.meta: flush_handlers
-
-- name: SearXNG | Wait for the application
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ app_config.app.port }}/healthz"
-    status_code: 200
-  register: _sx_health
-  retries: 30
-  delay: 5
-  until: _sx_health.status | default(0) == 200
-  changed_when: false
+# The shared Compose deploy renders the settings file with the project and recreates the
+# containers when either changed, in the same up that creates them, so a new install is
+# never restarted mid first boot. The settings file is owned by the image's searxng user
+# so the container can read a file that carries secrets.
+- name: SearXNG | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "/opt/{{ instance }}"
+    compose_file_mode: "0600"
+    compose_files:
+      - src: settings.yml.j2
+        dest: "/opt/{{ instance }}/settings.yml"
+        owner: "{{ app_config.app.uid }}"
+        group: "{{ app_config.app.uid }}"
+        mode: "0400"
+    compose_secrets: ["{{ _sx_secret_key }}", "{{ _sx_redis_password }}"]
+    compose_health:
+      url: "http://127.0.0.1:{{ app_config.app.port }}/healthz"

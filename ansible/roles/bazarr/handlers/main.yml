@@ -1,12 +1,8 @@
 ---
-- name: Restart bazarr
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    recreate: always
-
+# The native service's restart (only native.yml notifies it). On Docker,
+# tasks/stack/compose-deploy.yml recreates the project itself when the Compose file changes.
 - name: Restart native bazarr
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]

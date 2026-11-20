@@ -1,55 +1,30 @@
 ---
-- name: Odoo | Create project directory
-  ansible.builtin.file:
-    path: "{{ odoo_project_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-
-- name: Odoo | Create writable filestore for the official image user
-  ansible.builtin.file:
-    path: "{{ app_config.app.filestore_path }}"
-    state: directory
-    owner: "{{ app_config.app.puid }}"
-    group: "{{ app_config.app.pgid }}"
-    mode: "0750"
-
 - name: Odoo | Remove obsolete unused environment secret file
   ansible.builtin.file:
     path: "{{ odoo_project_dir }}/.env"
     state: absent
 
-- name: Odoo | Render configuration
-  ansible.builtin.template:
-    src: odoo.conf.j2
-    dest: "{{ odoo_config_file }}"
-    # The config contains database and master-password secrets. The official image runs
-    # as the configured Odoo UID, so that account must own the private, read-only file.
-    owner: "{{ app_config.app.puid }}"
-    group: "{{ app_config.app.pgid }}"
-    mode: "0400"
-  no_log: true
-  notify: Restart odoo
-
-- name: Odoo | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ odoo_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart odoo
-
-- name: Odoo | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ odoo_project_dir }}"
-
-- name: Odoo | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ odoo_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy renders odoo.conf (a single-file bind mount Compose cannot see
+# change) with the project and recreates the container when either changed, in the same up
+# that creates it. The config holds database and master-password secrets; the official
+# image runs as the configured Odoo UID, so that account owns the private, read-only file.
+- name: Odoo | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ odoo_project_dir }}"
+    compose_dirs:
+      - path: "{{ app_config.app.filestore_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+    compose_files:
+      - src: odoo.conf.j2
+        dest: "{{ odoo_config_file }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+        mode: "0400"
+    compose_secrets: >-
+      {{ [app_config.app.database_password | default(''), _odoo_admin_password | default(''),
+          (wiring_mail | default({})).password | default('')] | select | list }}
 
 - name: Odoo | Read completed module set
   ansible.builtin.slurp:
@@ -109,9 +84,6 @@
     group: root
     mode: "0600"
   when: _odoo_modules_current.content is not defined or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
-
-- name: Odoo | Apply pending restart
-  ansible.builtin.meta: flush_handlers
 
 - name: Odoo | Wait for health endpoint
   ansible.builtin.uri:

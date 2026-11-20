@@ -1,13 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/main.yml recreates the project itself
+# when the Compose file, listener config or ACL file changes.
 - name: Restart Redis
-  ansible.builtin.systemd:
-    name: "{{ app_config.app.service_name }}"
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ app_config.app.service_name }}"]
   when: not (redis_docker | bool)
-- name: Restart Redis container
-  community.docker.docker_compose_v2:
-    project_src: "{{ redis_project_dir }}"
-    state: present
-    recreate: always
-  when: redis_docker | bool

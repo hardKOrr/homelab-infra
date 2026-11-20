@@ -118,40 +118,20 @@
     enabled: true
   when: not (influxdb_docker | bool)
 
-- name: InfluxDB | Create the Docker project and data directories
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: "{{ item.owner }}"
-    group: "{{ item.owner }}"
-    mode: "{{ item.mode }}"
-  loop:
-    - {path: "{{ influxdb_project_dir }}", owner: root, mode: "0755"}
-    # The image entrypoint enforces 0700 on the directory holding influxd.bolt.
-    - {path: "{{ influxdb_data_path }}", owner: "{{ influxdb_owner }}", mode: "0700"}
-  when: influxdb_docker | bool
-
-- name: InfluxDB | Write docker-compose.yml
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ influxdb_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart InfluxDB container
-  when: influxdb_docker | bool
-
-- name: InfluxDB | Pull the image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ influxdb_project_dir }}"
-    policy: missing
-  when: influxdb_docker | bool
-
-- name: InfluxDB | Start the container
-  community.docker.docker_compose_v2:
-    project_src: "{{ influxdb_project_dir }}"
-    state: present
-    remove_orphans: true
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+- name: InfluxDB | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ influxdb_project_dir }}"
+    compose_project_mode: "0755"
+    compose_file_mode: "0644"
+    compose_dirs:
+      # The image entrypoint enforces 0700 on the directory holding influxd.bolt.
+      - path: "{{ influxdb_data_path }}"
+        owner: "{{ influxdb_owner }}"
+        group: "{{ influxdb_owner }}"
+        mode: "0700"
   when: influxdb_docker | bool
 
 - name: InfluxDB | Apply cache changes before health check

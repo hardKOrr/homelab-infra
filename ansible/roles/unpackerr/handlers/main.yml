@@ -1,14 +1,9 @@
 ---
+# The native service's restart. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when the Compose file changes.
 - name: Restart unpackerr
-  community.docker.docker_compose_v2:
-    project_src: "/opt/{{ instance }}"
-    state: present
-    recreate: always
-  when: not (unpackerr_native | bool)
-- name: Restart native unpackerr
-  ansible.builtin.systemd:
-    name: "{{ unpackerr_service }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart unpackerr
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ unpackerr_service }}"]
   when: unpackerr_native | bool
