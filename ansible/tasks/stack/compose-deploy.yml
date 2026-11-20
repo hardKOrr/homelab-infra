@@ -21,6 +21,9 @@
 #   compose_secrets       — the secret values the Compose file or compose_files hold; when
 #                           set, their render output stays out of the log and a failure
 #                           prints with these values masked (default none)
+#   compose_recreate      — optional; true recreates the project as a changed rendered file
+#                           does, for a mounted file the role writes itself (a copied
+#                           script, a `changed` result passed in) (default false)
 #   compose_networks      — optional external Docker networks the project joins; each is
 #                           created when absent and never removed here
 #   compose_pull_policy   — `missing` (default) or `always`
@@ -126,14 +129,16 @@
     recreate: "{{ 'always' if _compose_rendered_changed | bool else 'auto' }}"
   vars:
     _compose_rendered_changed: >-
-      {{ _compose_file_written.changed | default(false)
+      {{ compose_recreate | default(false) | bool
+         or _compose_file_written.changed | default(false)
          or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
   register: _compose_up
 
 - name: Compose deploy | Record whether the project changed
   ansible.builtin.set_fact:
     compose_deploy_changed: >-
-      {{ _compose_up.changed | default(false) or _compose_file_written.changed | default(false)
+      {{ _compose_up.changed | default(false) or compose_recreate | default(false) | bool
+         or _compose_file_written.changed | default(false)
          or (_compose_files_written.results | default([]) | selectattr('changed') | list | length > 0) }}
 
 - name: Compose deploy | Apply pending restarts

@@ -179,7 +179,6 @@ ALLOWLIST = {
         "ansible/roles/caddy/tasks/main/docker.yml",
         "ansible/roles/deemix/tasks/docker.yml",
         "ansible/roles/flaresolverr/tasks/docker.yml",
-        "ansible/roles/forgejo-runner/tasks/main.yml",
         "ansible/roles/forgejo/tasks/docker.yml",
         "ansible/roles/home-assistant/tasks/docker.yml",
         "ansible/roles/homepage/tasks/docker.yml",
@@ -216,7 +215,6 @@ ALLOWLIST = {
         "ansible/roles/deemix/handlers/main.yml",
         "ansible/roles/docker/handlers/main.yml",
         "ansible/roles/flaresolverr/handlers/main.yml",
-        "ansible/roles/forgejo-runner/handlers/main.yml",
         "ansible/roles/forgejo/handlers/main.yml",
         "ansible/roles/home-assistant/handlers/main.yml",
         "ansible/roles/homepage/handlers/main.yml",
@@ -243,7 +241,6 @@ ALLOWLIST = {
         "ansible/roles/slskd/handlers/main.yml",
         "ansible/roles/unpackerr/handlers/main.yml",
         "ansible/roles/uptime-kuma/handlers/main.yml",
-        "ansible/roles/wireguard/handlers/main.yml",
         "ansible/roles/wordpress/handlers/main.yml",
     },
     "k8s-single-container": {

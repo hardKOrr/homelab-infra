@@ -18,16 +18,6 @@
 - name: Forgejo Runner | Reconcile and record the registration
   ansible.builtin.include_tasks: registration.yml
 
-- name: Forgejo Runner | Render registration environment
-  ansible.builtin.template:
-    src: runner.env.j2
-    dest: "{{ forgejo_runner_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart Forgejo Runner
-
 - name: Forgejo Runner | Install idempotent registration entrypoint
   ansible.builtin.copy:
     src: register-and-run.sh
@@ -35,30 +25,24 @@
     owner: "1000"
     group: "1000"
     mode: "0550"
-  notify: Restart Forgejo Runner
+  register: _forgejo_runner_entrypoint_file
 
-- name: Forgejo Runner | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ forgejo_runner_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  no_log: true
-  notify: Restart Forgejo Runner
-
-- name: Forgejo Runner | Pull images
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ forgejo_runner_project_dir }}"
-
-- name: Forgejo Runner | Start and register the runner
-  community.docker.docker_compose_v2:
-    project_src: "{{ forgejo_runner_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Forgejo Runner | Apply pending restart
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy renders the registration environment with the project and
+# recreates the runner when either, the entrypoint or the registration changed, in the same
+# up that creates it, so a new runner is never restarted mid registration.
+- name: Forgejo Runner | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ forgejo_runner_project_dir }}"
+    compose_files:
+      - src: runner.env.j2
+        dest: "{{ forgejo_runner_env_file }}"
+        mode: "0600"
+    compose_secrets: "{{ [_forgejo_runner_token | default('')] | select | list }}"
+    # A cleared registration (reconcile-registration.yml) re-registers on this recreate.
+    compose_recreate: >-
+      {{ _forgejo_runner_entrypoint_file.changed
+         or _forgejo_runner_registration_needs_reset | default(false) | bool }}
 
 - name: Forgejo Runner | Check that the runner service is running
   ansible.builtin.command:

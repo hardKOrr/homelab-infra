@@ -1,9 +1,12 @@
 ---
+# Kubernetes and native restarts. On Docker, tasks/stack/compose-deploy.yml recreates the
+# project itself when a rendered file, the entrypoint or the registration changes.
 - name: Restart Forgejo Runner
-  community.docker.docker_compose_v2:
-    project_src: "{{ forgejo_runner_project_dir }}"
-    state: restarted
-  when: (app_config.hosting.method | default('docker')) == 'docker'
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ instance }}"]
+  when: (app_config.hosting.method | default('docker')) == 'native'
 
 # Listens on the same topic so one notification restarts whichever method hosts the runner.
 - name: Restart Forgejo Runner on Kubernetes
@@ -13,11 +16,3 @@
   become: true
   listen: Restart Forgejo Runner
   when: (app_config.hosting.method | default('docker')) == 'kubernetes'
-
-- name: Restart native Forgejo Runner
-  ansible.builtin.systemd:
-    name: "{{ instance }}"
-    state: restarted
-    daemon_reload: true
-  listen: Restart Forgejo Runner
-  when: (app_config.hosting.method | default('docker')) == 'native'
