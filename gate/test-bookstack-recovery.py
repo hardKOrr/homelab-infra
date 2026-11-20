@@ -166,9 +166,10 @@ def check_restore_contract():
         "path": "{{ _bookstack_restore_data_path }}", "source": "storage",
         "owner": "{{ bookstack_owner }}", "group": "{{ bookstack_group }}", "mode": "0750"}]
     deployed = next(task for task in BOOKSTACK_DOCKER
-                    if task.get("name") == "BookStack | Create project and durable data directories")
+                    if task.get("name") == "BookStack | Deploy the Compose project")
+    # compose-deploy.yml gives a compose_dirs entry mode 0750 unless it names one.
     assert {"path": "{{ app_config.app.data_path }}", "owner": "{{ app_config.app.puid }}",
-            "group": "{{ app_config.app.pgid }}", "mode": "0750"} in deployed["loop"], \
+            "group": "{{ app_config.app.pgid }}"} in deployed["vars"]["compose_dirs"], \
         "the restore gives /config the owner Deploy gives it"
     assert swap["recovery_swap_database"] == {
         "config": "{{ app_config.app.database }}", "dump": "database/database.sql"}

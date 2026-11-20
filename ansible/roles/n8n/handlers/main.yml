@@ -1,17 +1,9 @@
 ---
+# The native service's restart (tasks/native.yml). On Docker, tasks/main.yml recreates the
+# project itself when the Compose or environment file changes.
 - name: Restart n8n
-  community.docker.docker_compose_v2:
-    project_src: "{{ n8n_project_dir }}"
-    state: restarted
-  # A container Start service just created or recreated already runs the new files, and
-  # restarting it would interrupt a new install's first schema migration.
-  when:
-    - not (n8n_native | bool)
-    - not (_n8n_start.changed | default(false))
-
-- name: Restart native n8n
-  ansible.builtin.systemd:
-    name: "{{ n8n_native_service }}"
-    state: restarted
-  listen: Restart n8n
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ n8n_native_service }}"]
   when: n8n_native | bool

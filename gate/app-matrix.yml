@@ -209,6 +209,7 @@ bookstack:
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/mail/resolve-mail.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/backup/pbs-client-script.yml
     - tasks/database/resolve-app-database.yml
     - tasks/database/install-client.yml
@@ -622,6 +623,7 @@ forgejo:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -1841,6 +1843,7 @@ n8n:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -2137,6 +2140,7 @@ odoo:
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/mail/resolve-mail.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
@@ -3475,6 +3479,7 @@ wordpress:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/stack/compose-deploy.yml
     - tasks/backup/pbs-client-script.yml
     - tasks/database/resolve-app-database.yml
     - tasks/database/install-client.yml

@@ -10,38 +10,18 @@
 - name: Forgejo | Prepare data, credentials and configuration
   ansible.builtin.include_tasks: prepare.yml
 
-- name: Forgejo | Render environment file
-  ansible.builtin.template:
-    src: forgejo.env.j2
-    dest: "{{ forgejo_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart Forgejo
-
-- name: Forgejo | Render Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ forgejo_project_dir }}/docker-compose.yml"
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Forgejo
-
-- name: Forgejo | Pull image
-  community.docker.docker_compose_v2_pull:
-    project_src: "{{ forgejo_project_dir }}"
-
-- name: Forgejo | Start service
-  community.docker.docker_compose_v2:
-    project_src: "{{ forgejo_project_dir }}"
-    state: present
-    remove_orphans: true
-  register: _forgejo_start
-
-- name: Forgejo | Apply pending restart
-  ansible.builtin.meta: flush_handlers
+# The shared Compose deploy renders the environment file with the project and recreates
+# it when either changed, in the same up that creates it, so a new install's first schema
+# creation is never interrupted by a restart.
+- name: Forgejo | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ forgejo_project_dir }}"
+    compose_files:
+      - src: forgejo.env.j2
+        dest: "{{ forgejo_env_file }}"
+        mode: "0600"
+    compose_secrets: "{{ [app_config.app.database_password | default('')] | select | list }}"
 
 - name: Forgejo | Administrator and sign-in
   ansible.builtin.include_tasks: admin.yml

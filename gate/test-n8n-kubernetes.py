@@ -119,6 +119,6 @@ assert key_tasks == [
 ]
 # Docker hosting restores through the shared swap with Compose (gate/test-n8n-restore.py).
 assert "'docker'" in swap_inputs("n8n", "restore-guest.yml")["recovery_swap_runtime"]
-assert "docker-compose.yml.j2" in read("ansible/roles/n8n/tasks/main.yml")
+assert "tasks/stack/compose-deploy.yml" in read("ansible/roles/n8n/tasks/main.yml")
 
 print("n8n keeps Docker as default and renders its Kubernetes workload and paired PBS restore")
