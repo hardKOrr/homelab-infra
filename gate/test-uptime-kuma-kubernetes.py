@@ -55,6 +55,9 @@ assert [t.get("ansible.builtin.include_tasks") for t in wire["block"]] == [
 ]
 record = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/deploy-record.yml"))[0]
 assert "app_config.hosting.method in ['docker', 'native']" in record["when"]
+# Monitoring is one lab-wide key: only the platform Kuma records it, on every method.
+assert "instance == 'uptime-kuma'" in record["when"]
+assert wire["block"][1]["when"] == "instance == 'uptime-kuma'"
 
 manifest = list(yaml.safe_load_all(render(
     read("ansible/roles/uptime-kuma/templates/manifest.yaml.j2"),

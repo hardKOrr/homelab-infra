@@ -44,7 +44,10 @@ assert yaml.safe_load(read("ansible/playbooks/apps/ntfy.yml")) == [{
 shared = read("ansible/roles/_template-native/tasks/provision.yml")
 assert 'resolve_guest_type: "{{ _native_guest_guest_type }}"' in shared
 assert "resolve-native-type.yml" in shared
-record = yaml.safe_load(read("ansible/roles/ntfy/tasks/deploy-record.yml"))[0]["block"][0]
+record_hook = yaml.safe_load(read("ansible/roles/ntfy/tasks/deploy-record.yml"))[0]
+# Notifications is one lab-wide key: only the platform Ntfy records it.
+assert "instance == 'ntfy'" in record_hook["when"]
+record = record_hook["block"][0]
 assert record["ansible.builtin.include_tasks"].endswith("tasks/bootstrap/write-generated-facts.yml")
 assert record["vars"]["generated_facts_service"] == "notifications"
 assert set(record["vars"]["generated_facts_data"]) == {"provider", "instance", "host", "topic"}

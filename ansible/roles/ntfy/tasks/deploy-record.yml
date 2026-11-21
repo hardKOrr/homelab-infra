@@ -2,13 +2,16 @@
 # Deploy hook (playbooks/apps/deploy.yml play 4, before wiring): record the `notifications`
 # registry key (ansible/vars/CONTRACT.md §3) from the publish endpoint the role exported,
 # then re-resolve the estate so this run's wiring and every later deploy read it. The
-# registry stores topology; the publish token stays in Vaultwarden. An isolated restore
-# target never takes over the key.
+# registry stores topology; the publish token stays in Vaultwarden. Notifications is one
+# lab-wide key, so only the instance named `ntfy` records it; another Ntfy instance or an
+# isolated restore target never takes it over.
 #
 # The role exports on its guest (Docker, native) or on localhost (Kubernetes): a native or
 # Docker instance publishes to its guest, a Kubernetes one to its routed HTTPS hostname.
 - name: Ntfy | Record the notifications registry key
-  when: not (recovery_isolated | default(false) | bool)
+  when:
+    - instance == 'ntfy'
+    - not (recovery_isolated | default(false) | bool)
   vars:
     _ntfy_exports: >-
       {{ hostvars['localhost'] if app_config.hosting.method == 'kubernetes'

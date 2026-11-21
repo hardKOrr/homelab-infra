@@ -2,11 +2,15 @@
 # Deploy hook (playbooks/apps/deploy.yml play 4, before wiring): a Docker or native Kuma
 # was configured on its guest, so its `monitoring` key is recorded before the wiring
 # registers Kuma's own monitor. Kubernetes records it in deploy-wire.yml, after the route
-# its setup signs in through exists. An isolated restore target never takes over the key.
+# its setup signs in through exists. Monitoring is one lab-wide key, so only the instance
+# named `uptime-kuma` records it: a second Kuma (a test copy, another estate's) never
+# replaces it, and removing that copy never takes the key away. Nor does an isolated
+# restore target.
 - name: Uptime Kuma | Record the monitoring registry key from the guest
   ansible.builtin.include_tasks: record-facts.yml
   vars:
     uptime_kuma_exports: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
   when:
+    - instance == 'uptime-kuma'
     - app_config.hosting.method in ['docker', 'native']
     - not (recovery_isolated | default(false) | bool)
