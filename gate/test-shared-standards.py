@@ -182,7 +182,6 @@ ALLOWLIST = {
         "ansible/roles/plane/handlers/main.yml",
     },
     "k8s-single-container": {
-        "ansible/roles/actual-budget/templates/manifest.yaml.j2",
         "ansible/roles/bazarr/templates/manifest.yaml.j2",
         "ansible/roles/bookstack/templates/manifest.yaml.j2",
         "ansible/roles/deemix/templates/manifest.yaml.j2",
