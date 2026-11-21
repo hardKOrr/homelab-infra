@@ -43,7 +43,11 @@ module.exports = async ({ page, step, url, secrets }) => {
     await password.waitFor({ timeout: 60000 });
     await page.locator('input[type=password]').fill(secrets.server_password);
     await page.keyboard.press('Enter');
-    await page.getByText('Create new file').or(page.getByText('Import file')).first().waitFor();
+    // Signed in with no budget open: the file list, or 26.11's welcome screen once more.
+    await page.waitForURL(u => !u.pathname.startsWith('/login'), { timeout: 60000 });
+    await page.getByText('Create new file').or(page.getByText('Import file'))
+      .or(page.getByText('Server online')).first().waitFor({ timeout: 60000 });
+    await page.waitForFunction(() => typeof window.$send === 'function', null, { timeout: 60000 });
   });
 
   if (mode === 'absent') {
