@@ -1617,6 +1617,7 @@ mautic:
     - tasks/mail/resolve-mail.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/stack/compose-deploy.yml
+    - tasks/apps/restart.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml

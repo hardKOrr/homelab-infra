@@ -1,0 +1,19 @@
+---
+# Record every migration of a freshly installed Mautic schema as executed, so the image's
+# start-up `doctrine:migrations:migrate` has nothing left to run (see the caller's comment).
+# Input: mautic_record_migrations_argv — the command prefix that runs `sh -c <script>` as
+# www-data inside the Mautic web container or pod; mautic_record_migrations_delegate
+# (optional) — the host that runs it.
+- name: Mautic | Record every migration of the installed schema
+  ansible.builtin.command:
+    argv: >-
+      {{ mautic_record_migrations_argv + [
+           'cd /var/www/html'
+           ~ ' && php bin/console doctrine:migrations:migrate --no-interaction'
+           ~ ' && php bin/console doctrine:migrations:version --add --all --no-interaction'
+           ~ ' && php bin/console doctrine:migrations:up-to-date'
+         ] }}
+  delegate_to: "{{ mautic_record_migrations_delegate | default(inventory_hostname) }}"
+  become: true
+  register: _mautic_record_migrations
+  changed_when: true

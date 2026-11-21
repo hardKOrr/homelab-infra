@@ -45,3 +45,31 @@
 - name: Mautic | Deploy on Kubernetes
   ansible.builtin.include_tasks: kubernetes.yml
   when: app_config.hosting.method | default('docker') == 'kubernetes'
+
+# The installer writes `db_driver` and `site_url` into local.php itself, after config.yml
+# converged it without them. Converge once more on the Deploy that installed Mautic, so that
+# Deploy ends in the state a repeat Deploy finds and the repeat changes nothing.
+# kubernetes.yml does the same with its own converge.
+# config.yml registers the marker again, so the fact holds this Deploy's answer.
+- name: Mautic | Record whether this Deploy installed Mautic
+  ansible.builtin.set_fact:
+    _mautic_installed_now: "{{ not _mautic_installed_marker.stat.exists }}"
+  when: app_config.hosting.method | default('docker') in ['docker', 'native']
+
+- name: Mautic | Converge the configuration the installer completed
+  when:
+    - app_config.hosting.method | default('docker') in ['docker', 'native']
+    - _mautic_installed_now | bool
+  block:
+    - name: Mautic | Converge local.php after installation
+      ansible.builtin.include_tasks: config.yml
+
+    # Native restarts through the role's handler, which config.yml notifies.
+    - name: Mautic | Recreate the Docker services after a converged change
+      ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+      vars:
+        restart_runtime: docker
+        restart_compose_project: "{{ mautic_project_dir }}"
+      when:
+        - app_config.hosting.method | default('docker') == 'docker'
+        - mautic_converge_result.changed | default(false)
