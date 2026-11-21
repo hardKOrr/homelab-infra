@@ -7,7 +7,7 @@
   ansible.builtin.set_fact:
     _kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
     _kuma_password: >-
-      {{ homelabinfra_infra.monitoring.admin_password
+      {{ uptime_kuma_stored.admin_password | default('')
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
   no_log: true
 
@@ -66,7 +66,7 @@
 - name: Store the monitoring password before first-time setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
-    vault_item_name: homelab-infra/monitoring
+    vault_item_name: "{{ uptime_kuma_vault_item }}"
     vault_item_merge: true
     vault_item_fields:
       provider: uptime_kuma
@@ -163,7 +163,7 @@
   ansible.builtin.debug:
     msg: >-
       {{ 'Uptime Kuma admin account created — credentials are in the vault under
-          homelab-infra/monitoring.' if _kuma_needs_setup | bool
+          ' ~ uptime_kuma_vault_item ~ '.' if _kuma_needs_setup | bool
          else 'Uptime Kuma already has an admin account; using the recorded password.' }}
 
 # ── REST API key ──────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@
     # holds from an earlier deploy.
     _kuma_api_key: >-
       {{ app_config.app.api_key
-         | default(homelabinfra_infra.monitoring.token | default(''), true) }}
+         | default(uptime_kuma_stored.token | default(''), true) }}
   no_log: true
 
 # Minting the first key was the one step this role could not do, on the belief that
@@ -312,7 +312,7 @@
 - name: Store and verify the monitoring API key
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
-    vault_item_name: homelab-infra/monitoring
+    vault_item_name: "{{ uptime_kuma_vault_item }}"
     vault_item_fields:
       provider: uptime_kuma
       instance: "{{ instance }}"
@@ -336,9 +336,9 @@
       - ""
       - "One-time step:"
       - "  1. Open https://{{ instance }}.{{ _kuma_domain }} and sign in as"
-      - "     {{ _kuma_user }} (password is in homelab-infra/monitoring)."
+      - "     {{ _kuma_user }} (password is in {{ uptime_kuma_vault_item }})."
       - "  2. Profile -> API Keys -> Add API Key, name it '{{ uptime_kuma_api_key_name }}'."
-      - "  3. Add it as field token in Vaultwarden item homelab-infra/monitoring and"
+      - "  3. Add it as field token in Vaultwarden item {{ uptime_kuma_vault_item }} and"
       - "     re-run this deploy."
       - "════════════════════════════════════════════════════════════════════"
   vars:

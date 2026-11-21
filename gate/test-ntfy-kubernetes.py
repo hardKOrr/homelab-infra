@@ -48,6 +48,11 @@ record_hook = yaml.safe_load(read("ansible/roles/ntfy/tasks/deploy-record.yml"))
 # Notifications is one lab-wide key: only the platform Ntfy records it.
 assert "instance == 'ntfy'" in record_hook["when"]
 record = record_hook["block"][0]
+ntfy_defaults = yaml.safe_load(read("ansible/roles/ntfy/defaults/main.yml"))
+for name, item in (("ntfy", "homelab-infra/notifications"), ("ntfy-test", "homelab-infra/apps/ntfy-test")):
+    assert render(ntfy_defaults["ntfy_vault_item"], {**ntfy_defaults, "instance": name}).strip() == item
+for f in ("credentials-prepare.yml", "credentials-provision.yml"):
+    assert "homelab-infra/notifications" not in read(f"ansible/roles/ntfy/tasks/{f}")
 assert record["ansible.builtin.include_tasks"].endswith("tasks/bootstrap/write-generated-facts.yml")
 assert record["vars"]["generated_facts_service"] == "notifications"
 assert set(record["vars"]["generated_facts_data"]) == {"provider", "instance", "host", "topic"}

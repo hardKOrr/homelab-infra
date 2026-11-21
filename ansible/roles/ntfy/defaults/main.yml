@@ -1,6 +1,16 @@
 ---
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/ntfy.yml and config/apps/<instance>.yml.
+# Notifications is one lab-wide service: the instance named `ntfy` keeps its publish
+# account in the shared homelab-infra/notifications item and records the `notifications`
+# registry key. Any other Ntfy keeps its own in homelab-infra/apps/<instance>, which config
+# loading overlays onto app_config.app, and never touches the shared ones.
+ntfy_platform: "{{ instance == 'ntfy' }}"
+ntfy_vault_item: >-
+  {{ 'homelab-infra/notifications' if ntfy_platform | bool else 'homelab-infra/apps/' ~ instance }}
+ntfy_stored: >-
+  {{ ((homelabinfra_infra | default({})).get('notifications', {}))
+     if ntfy_platform | bool else app_config.app }}
 ntfy_docker: "{{ app_config.hosting.method | default('native') == 'docker' }}"
 ntfy_service_name: ntfy
 # Docker: the Compose project, server config and state live together in /opt/<instance>;

@@ -19,7 +19,7 @@
   vars:
     kuma_base: "{{ drill_app_routed_url if _rat_kind == 'kubernetes' else drill_app_url }}"
     kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
-    kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
+    kuma_password: "{{ uptime_kuma_stored.admin_password }}"
 
 - name: Uptime Kuma drill canary | Require a signed-in session
   ansible.builtin.assert:
@@ -91,7 +91,7 @@
         kuma_call_event: setSettings
         kuma_call_args:
           - "{{ _kuma_canary_settings | combine({'keepDataPeriodDays': _kuma_canary_days}) }}"
-          - "{{ homelabinfra_infra.monitoring.admin_password }}"
+          - "{{ uptime_kuma_stored.admin_password }}"
         kuma_call_ack_id: 4
         kuma_call_secret: true
 
@@ -158,7 +158,7 @@
         kuma_call_event: setSettings
         kuma_call_args:
           - "{{ _kuma_canary_settings | combine({'keepDataPeriodDays': 180}) }}"
-          - "{{ homelabinfra_infra.monitoring.admin_password }}"
+          - "{{ uptime_kuma_stored.admin_password }}"
         kuma_call_ack_id: 8
         kuma_call_secret: true
 

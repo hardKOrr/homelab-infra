@@ -3404,7 +3404,7 @@ uptime-kuma:
     native: [tasks/recovery/restore-swap.yml]
 vaultwarden:
   method: native
-  supported: [docker-lxc, docker-vm, kubernetes, native-lxc]
+  supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]
   deploy:
     docker:
     - tasks/load-user-vars.yml

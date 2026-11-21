@@ -6,7 +6,7 @@
 vaultwarden_defaults:
   hosting:
     method: native
-    supported: [native-lxc, docker-lxc, docker-vm, kubernetes]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   recovery:
     methods: [native]

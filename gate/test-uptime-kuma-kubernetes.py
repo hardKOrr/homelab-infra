@@ -58,6 +58,12 @@ assert "app_config.hosting.method in ['docker', 'native']" in record["when"]
 # Monitoring is one lab-wide key: only the platform Kuma records it, on every method.
 assert "instance == 'uptime-kuma'" in record["when"]
 assert wire["block"][1]["when"] == "instance == 'uptime-kuma'"
+# ...and only it keeps its account in the shared item; another Kuma uses its own.
+kuma_defaults = yaml.safe_load(read("ansible/roles/uptime-kuma/defaults/main.yml"))
+for name, item in (("uptime-kuma", "homelab-infra/monitoring"), ("uptime-kuma-test", "homelab-infra/apps/uptime-kuma-test")):
+    assert render(kuma_defaults["uptime_kuma_vault_item"], {**kuma_defaults, "instance": name}).strip() == item
+assert "homelab-infra/monitoring" not in read("ansible/roles/uptime-kuma/tasks/configure.yml")
+assert "homelabinfra_infra.monitoring" not in read("ansible/roles/uptime-kuma/tasks/configure.yml")
 
 manifest = list(yaml.safe_load_all(render(
     read("ansible/roles/uptime-kuma/templates/manifest.yaml.j2"),

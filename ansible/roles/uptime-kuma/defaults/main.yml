@@ -5,6 +5,17 @@
 # The names of the objects this role creates in Uptime Kuma are NOT here: the wiring
 # tasks need them too and a role default is invisible to them, so they live in
 # ansible/vars/uptime-kuma.yml, which this role includes as its first task.
+# Monitoring is one lab-wide service: the instance named `uptime-kuma` keeps its account in
+# the shared homelab-infra/monitoring item and records the `monitoring` registry key. Any
+# other Kuma (a test copy, another estate's) keeps its own in homelab-infra/apps/<instance>,
+# which config loading overlays onto app_config.app, and never touches the shared ones.
+uptime_kuma_platform: "{{ instance == 'uptime-kuma' }}"
+uptime_kuma_vault_item: >-
+  {{ 'homelab-infra/monitoring' if uptime_kuma_platform | bool else 'homelab-infra/apps/' ~ instance }}
+uptime_kuma_stored: >-
+  {{ ((homelabinfra_infra | default({})).monitoring | default({}))
+     if uptime_kuma_platform | bool else app_config.app }}
+
 uptime_kuma_project_dir: "/opt/{{ instance }}"
 uptime_kuma_env_file: "/opt/{{ instance }}/.env"
 
