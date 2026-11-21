@@ -142,6 +142,9 @@
       elif [ -e "$link" ]; then
         cp -an "$link"/. "$target"/
         chown -R www-data:www-data "$target"
+        # `cp -a` of "$link"/. also copies the release folder's own 0755 onto the target;
+        # put back the 0750 that main.yml sets, so the next Deploy changes nothing.
+        chmod 0750 "$target"
         rm -rf "$link"
       fi
       mkdir -p "$(dirname "$link")"
