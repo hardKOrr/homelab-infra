@@ -33,7 +33,9 @@ module.exports = async ({ page, step, url, secrets }) => {
   };
 
   await step('sign in with the server password', async () => {
-    await page.goto(base);
+    // Actual 26.11 opens on a welcome screen before it routes to its sign-in page.
+    await page.goto(`${base}/login`);
+    await page.locator('input[type=password]').waitFor({ timeout: 60000 });
     await page.locator('input[type=password]').fill(secrets.server_password);
     await page.keyboard.press('Enter');
     await page.getByText('Create new file').or(page.getByText('Import file')).first().waitFor();
