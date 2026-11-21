@@ -182,10 +182,9 @@ def main():
     backup_guard = next(task for task in all_tasks(backup_source)
                         if task.get("name") == "Karakeep backup | Require a non-empty SQLite database before backup")
     assert backup_guard["ansible.builtin.assert"]["that"]
+    # Deploy opens the guest's firewall access through playbooks/apps/deploy.yml.
     deploy = yaml.safe_load((repo / "ansible/playbooks/apps/karakeep.yml").read_text())
-    firewall_play = next(play for play in deploy if play.get("name") == "Karakeep | Open network access")
-    assert any("open-app-access.yml" in task.get("ansible.builtin.include_tasks", "")
-               for task in firewall_play["tasks"])
+    assert deploy[0]["ansible.builtin.import_playbook"] == "deploy.yml"
 
     for case in ["backup-success", "backup-failure", "backup-missing-database"]:
         backup_check(case)

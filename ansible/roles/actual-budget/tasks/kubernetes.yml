@@ -10,16 +10,20 @@
 - name: Actual Budget Kubernetes | Resolve and store the application credential
   ansible.builtin.include_tasks: credentials.yml
 
-- name: Actual Budget Kubernetes | Render the workload manifest
-  ansible.builtin.set_fact:
-    _actual_budget_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-
-- name: Actual Budget Kubernetes | Apply the workload manifest
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+- name: Actual Budget Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
   vars:
-    k8s_manifest: "{{ _actual_budget_k8s_manifest }}"
-    k8s_wait_for:
-      - "deployment/{{ instance }}"
+    k8s_app:
+      name: actual-budget
+      image: "{{ app_config.app.image }}"
+      image_pull_policy: Always
+      port: "{{ app_config.app.port }}"
+      container_port: "{{ app_config.app.container_port }}"
+      host: "{{ actual_budget_fqdn }}"
+      volumes:
+        - {name: data, mount_path: /data, storage: "{{ app_config.app.storage }}"}
+      probe: {path: /}
+      security_context: {run_as_user: 1001, run_as_group: 1001, fs_group: 1001}
     k8s_wait_timeout: 600
 
 - name: Actual Budget Kubernetes | Schedule the application backup

@@ -73,24 +73,17 @@ def check_contract_and_dispatch():
     assert "native" in str(dispatch["when"])
     assert "restore_target_backup_id" in dispatch["vars"]
 
+    # Native Deploy reuses the instance's kept guest through the shared native provision
+    # (gate/test-instance-guest-reuse.py), which never creates over an existing identity.
     deploy = read_yaml(ROOT / "ansible/playbooks/apps/vaultwarden.yml")
-    deploy_tasks = list(tasks_recursive(deploy)) + list(tasks_recursive(
-        read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/provision-native.yml")))
-    retained = task_named(deploy_tasks, "Resolve this instance's guest, reusing one Remove kept")
-    assert retained["ansible.builtin.include_tasks"] == "../../../tasks/proxmox/resolve-instance-guest.yml"
-    assert retained["vars"]["resolve_guest_type"] == "lxc"
-    provision = task_named(deploy_tasks, "Provision new LXC")
-    assert provision["when"] == "_existing_hosts | length == 0"
+    assert deploy[0]["ansible.builtin.import_playbook"] == "deploy.yml"
+    assert defaults_guest_type() == "lxc"
     create_guard = read_yaml(ROOT / "ansible/tasks/proxmox/lxc-create.yml")
     identity_guard = task_named(create_guard, "Refuse existing identity at the LXC creation seam")
     identity_checks = str(identity_guard["ansible.builtin.assert"]["that"])
     assert "proxmox_vmid" in identity_checks and "proxmox_hostname" in identity_checks
-    second_play = deploy[1]
-    resolver = task_named(tasks_recursive(second_play), "Resolve the estate domain for this Vaultwarden instance")
-    assert resolver["ansible.builtin.import_tasks"] == "../../tasks/resolve-estate.yml"
-    assert "app_config.routing.estate" in resolver["vars"]["resolve_estate_name"]
-    record = task_named(deploy_tasks, "Record Vaultwarden facts")
-    assert record["when"] == "instance == 'vaultwarden'", (
+    record = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/deploy-record.yml")[0]
+    assert "instance == 'vaultwarden'" in record["when"], (
         "a family instance must not replace the platform Vaultwarden registry entry")
 
     registry_spec = importlib.util.spec_from_file_location(
@@ -452,6 +445,11 @@ def check_restore_swap():
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def defaults_guest_type():
+    defaults = read_yaml(ROOT / "ansible/vars/app-defaults/vaultwarden.yml")
+    return defaults["vaultwarden_defaults"]["proxmox"]["guest_type"]
 
 
 def main():

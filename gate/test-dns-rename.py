@@ -288,6 +288,21 @@ def main():
             repeated = run_play(root, "opnsense-repeat", opn_vars, opn_task)
             check("OPNsense repeat Deploy reports no changes", changed_count(repeated), 0)
 
+            # Remove deletes only the instance's own override: another instance's record
+            # under the same name (a copy left on the app's default subdomain) stays.
+            other = {"enabled": "1", "hostname": "shared", "domain": "example.test",
+                     "rr": "A", "server": "192.0.2.30", "description": "homelab-infra: other-app"}
+            server.opnsense_overrides["other-app"] = deepcopy(other)
+            unwire = [{"ansible.builtin.include_tasks": str(repo / "ansible/tasks/unwiring/opnsense.yml")}]
+            run_play(root, "opnsense-unwire-foreign",
+                     {**opn_vars, "wiring_domain": "shared.example.test"}, unwire)
+            check("OPNsense Remove keeps another instance's record at the same name",
+                  server.opnsense_overrides.get("other-app"), other)
+            run_play(root, "opnsense-unwire-owned", opn_vars, unwire)
+            check("OPNsense Remove deletes the instance's own record",
+                  [r.get("hostname") for r in server.opnsense_overrides.values()
+                   if r.get("description") == owned_description], [])
+
             pihole_tasks = [
                 {"ansible.builtin.include_tasks": str(repo / "ansible/tasks/wiring/caddy.yml")},
                 {"ansible.builtin.include_tasks": str(repo / "ansible/tasks/wiring/pihole.yml")},

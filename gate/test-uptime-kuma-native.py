@@ -20,12 +20,10 @@ install = (role / "tasks/native-install.yml").read_text()
 assert "https://github.com/louislam/uptime-kuma.git" in install and "argv: [npm, run, setup]" in install
 assert "native_version" in install and "node_version" in install
 
-playbook = (repo / "ansible/playbooks/apps/uptime-kuma.yml").read_text()
-assert "tasks_from: provision" in playbook and "in ['docker', 'native']" in playbook
-# A native guest gets the same OS baseline as a Docker stack host (bootstrap marker kept).
-for task in yaml.safe_load(playbook)[1]["tasks"]:
-    if task["name"] in ("Bootstrap guest", "Configure OS update notifications"):
-        assert "hosting.method in ['docker', 'native']" in str(task["when"]), task["name"]
+# Deploy is a shim on playbooks/apps/deploy.yml, which provisions the native guest and gives
+# it the same OS baseline as a Docker stack host.
+playbook = yaml.safe_load((repo / "ansible/playbooks/apps/uptime-kuma.yml").read_text())
+assert playbook[0]["ansible.builtin.import_playbook"] == "deploy.yml"
 
 # Creating the data directory before Git clone must leave the clone directory empty.
 role_defaults = yaml.safe_load((role / "defaults/main.yml").read_text())

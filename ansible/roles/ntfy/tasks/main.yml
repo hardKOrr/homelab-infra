@@ -10,7 +10,8 @@
 #
 # Credentials: the publish account's
 # password and access token are generated on first deploy and stored in the
-# canonical `homelab-infra/notifications` item. The guest keeps a
+# canonical `homelab-infra/notifications` item (another instance: its own item,
+# see defaults/main.yml). The guest keeps a
 # bcrypt hash in ntfy's own auth database — no plaintext secret is written to the
 # guest filesystem. On re-run the existing values come from Vaultwarden, so the
 # credentials every other tool was configured with stay valid.

@@ -58,6 +58,7 @@ karakeep_defaults:
     subdomain: karakeep
     proxy: internal
     access: internal
+    monitor_path: /api/health   # Karakeep's unauthenticated health endpoint
     # Karakeep owns its user accounts and password authentication. Authentik provides a
     # catalog tile but does not become an authentication dependency for the app.
     identity: catalog

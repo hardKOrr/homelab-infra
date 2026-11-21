@@ -1,0 +1,22 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml play 4, after wiring): Kuma on Kubernetes is set up
+# through its published route, which exists only now. Then the `monitoring` key is recorded
+# and Kuma's own monitor registered; when the route did not answer, setup is reported as a
+# gap and retried on the next Deploy. deploy.yml skips this hook for an isolated restore.
+- name: Uptime Kuma | Set up Kuma through its published Kubernetes route
+  when: app_config.hosting.method == 'kubernetes'
+  block:
+    - name: Uptime Kuma | Configure Kuma through its route
+      ansible.builtin.include_tasks: configure-kubernetes.yml
+
+    - name: Uptime Kuma | Record the monitoring registry key
+      ansible.builtin.include_tasks: record-facts.yml
+      vars:
+        uptime_kuma_exports: "{{ hostvars['localhost'] }}"
+      when: instance == 'uptime-kuma'   # only the platform Kuma owns the key (deploy-record.yml)
+
+    - name: Uptime Kuma | Register Kuma's own monitor
+      ansible.builtin.include_tasks: ../../../tasks/wiring/uptime-kuma.yml
+      when:
+        - _kuma_k8s_route_reachable | default(true) | bool
+        - _deploy_routed | bool

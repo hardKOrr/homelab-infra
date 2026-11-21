@@ -33,10 +33,21 @@ module.exports = async ({ page, step, url, secrets }) => {
   };
 
   await step('sign in with the server password', async () => {
+    // Actual 26.11 greets a new browser with a welcome screen; Start budgeting leads to
+    // the sign-in page. Older versions open on the sign-in page.
     await page.goto(base);
+    const password = page.locator('input[type=password]');
+    const start = page.getByText('Start budgeting');
+    await password.or(start).first().waitFor({ timeout: 60000 });
+    if (await start.isVisible()) await start.click();
+    await password.waitFor({ timeout: 60000 });
     await page.locator('input[type=password]').fill(secrets.server_password);
     await page.keyboard.press('Enter');
-    await page.getByText('Create new file').or(page.getByText('Import file')).first().waitFor();
+    // Signed in with no budget open: the file list, or 26.11's welcome screen once more.
+    await page.waitForURL(u => !u.pathname.startsWith('/login'), { timeout: 60000 });
+    await page.getByText('Create new file').or(page.getByText('Import file'))
+      .or(page.getByText('Server online')).first().waitFor({ timeout: 60000 });
+    await page.waitForFunction(() => typeof window.$send === 'function', null, { timeout: 60000 });
   });
 
   if (mode === 'absent') {
