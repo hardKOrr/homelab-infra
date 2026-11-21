@@ -164,18 +164,17 @@ def installer_arguments():
 def installation_finishes_migrations():
     names = [task.get("name") for task in kubernetes_tasks]
     install = names.index("Mautic Kubernetes | Run the non-interactive installer")
-    migrate = names.index("Mautic Kubernetes | Finish the installed schema migrations")
+    migrate = names.index("Mautic Kubernetes | Record the installed schema's migrations")
     marker = names.index("Mautic Kubernetes | Record installation on the persistent config volume")
     converge = names.index("Mautic Kubernetes | Converge installed config")
     assert install < migrate < marker < converge
     task = kubernetes_tasks[migrate]
     assert task["when"] == "_mautic_k8s_install_state.stdout | trim == 'missing'"
-    assert task["ansible.builtin.command"]["argv"][-1] == (
-        "cd /var/www/html && exec php bin/console doctrine:migrations:migrate --no-interaction"
-    )
-    assert task["no_log"] is True
-    report = task_named(kubernetes_tasks, "Mautic Kubernetes | Report a migration failure without credentials")
-    assert report["vars"]["scrub_failure_result"] == "{{ _mautic_k8s_migrations_result }}"
+    assert task["ansible.builtin.include_tasks"] == "record-migrations.yml"
+    assert task["vars"]["mautic_record_migrations_argv"][-1] == "-c"
+    record = yaml.safe_load((ROOT / "ansible/roles/mautic/tasks/record-migrations.yml").read_text())[0]
+    script = record["ansible.builtin.command"]["argv"]
+    assert "doctrine:migrations:version --add --all --no-interaction" in script
 
 
 def main():

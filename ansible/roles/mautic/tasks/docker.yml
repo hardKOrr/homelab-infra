@@ -74,6 +74,30 @@
   no_log: true
   when: not _mautic_installed_marker.stat.exists
 
+# mautic:install creates the current schema but records only some migrations. The web
+# entrypoint runs `doctrine:migrations:migrate` on every start, and Doctrine never records a
+# migration its pre-check skips, so the unrecorded ones run again on each start and one of
+# them rewrites local.php's mailer_dsn to smtp://localhost:25. Record them all once, on the
+# Deploy that installed this schema.
+- name: Mautic | Record the installed schema's migrations
+  ansible.builtin.include_tasks: record-migrations.yml
+  vars:
+    mautic_record_migrations_argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ mautic_project_dir }}"
+      - exec
+      - -T
+      - --user
+      - www-data
+      - --workdir
+      - /var/www/html
+      - mautic_web
+      - sh
+      - -c
+  when: not _mautic_installed_marker.stat.exists
+
 - name: Mautic | Record installation complete
   ansible.builtin.copy:
     dest: "{{ mautic_project_dir }}/.installed"
