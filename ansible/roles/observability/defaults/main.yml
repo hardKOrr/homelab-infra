@@ -1,6 +1,16 @@
 ---
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/observability.yml and config/apps/<instance>.yml.
+# Metrics is one lab-wide service: the instance named `observability` keeps its Grafana
+# login in the shared homelab-infra/metrics item and records the `metrics` registry key.
+# Any other instance keeps its own in homelab-infra/apps/<instance>, which config loading
+# overlays onto app_config.app, and never touches the shared ones.
+observability_platform: "{{ instance == 'observability' }}"
+observability_vault_item: >-
+  {{ 'homelab-infra/metrics' if observability_platform | bool else 'homelab-infra/apps/' ~ instance }}
+observability_stored: >-
+  {{ ((homelabinfra_infra | default({})).get('metrics', {}))
+     if observability_platform | bool else app_config.app }}
 observability_project_dir: "/opt/{{ instance }}"
 observability_env_file: "/opt/{{ instance }}/.env"
 observability_datasource_name: Prometheus
