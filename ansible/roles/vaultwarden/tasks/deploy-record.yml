@@ -1,0 +1,29 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml play 4, before wiring): the instance named
+# `vaultwarden` is the platform credential server, so it records the `vaultwarden` registry
+# key (ansible/vars/CONTRACT.md §3) — its guest's direct HTTP endpoint, or its routed HTTPS
+# hostname on Kubernetes — and re-resolves the estate so the rest of this run reads it.
+# Other instances (a second estate's vault) never replace that key, nor does an isolated
+# restore target.
+- name: Vaultwarden | Record the platform credential server
+  when:
+    - instance == 'vaultwarden'
+    - not (recovery_isolated | default(false) | bool)
+  vars:
+    _vw_on_guest: "{{ app_config.hosting.method in ['native', 'docker'] }}"
+  block:
+    - name: Vaultwarden | Record the vaultwarden registry key
+      ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: vaultwarden
+        generated_facts_data:
+          host: >-
+            {{ ('http://' ~ hostvars[groups['deploy_' ~ instance][0]].ansible_host)
+               if _vw_on_guest | bool else 'https://' ~ _deploy_fqdn }}
+          port: "{{ app_config.app.port | int if _vw_on_guest | bool else 443 }}"
+
+    - name: Vaultwarden | Resolve the estate with the new key
+      ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"

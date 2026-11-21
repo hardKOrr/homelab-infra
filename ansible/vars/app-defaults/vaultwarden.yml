@@ -21,7 +21,7 @@ vaultwarden_defaults:
   # k3s cluster, its data on one default-StorageClass volume (`app.storage`).
 
   proxmox:
-    type: lxc                   # native LXC — single binary, no Docker needed
+    guest_type: lxc             # native LXC — single binary, no Docker needed
     # Boot tier 20 — every deploy and every service credential resolves through here,
     # so it precedes everything except the edge.
     boot_order: 20
@@ -56,6 +56,11 @@ vaultwarden_defaults:
   update:
     github_repo: dani-garcia/vaultwarden
     binary_path: /usr/local/bin/vaultwarden
+
+  deploy:
+    notify_note: >-
+      Its admin panel is at /admin, using the admin token stored on the runner during
+      bootstrap.
 
   routing:
     subdomain: vaultwarden                 # hostname on the estate domain, independent of the instance name

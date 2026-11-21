@@ -35,28 +35,12 @@ assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/vaultwarden.yml"))
-provision = playbook[0]["tasks"]
-kube_when = "app_config.hosting.method | default('native') == 'kubernetes'"
-assert any(
-    task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and task.get("when") == kube_when
-    for task in provision
-)
-assert any(
-    "provision-native.yml" in str(task.get("ansible.builtin.include_tasks", ""))
-    and task.get("when") == "app_config.hosting.method | default('native') == 'native'"
-    for task in provision
-)
-deploy = playbook[1]["tasks"]
-assert any(
-    task.get("ansible.builtin.include_role", {}).get("name") == "vaultwarden"
-    and "['native', 'docker']" in task.get("when", "")
-    for task in deploy
-)
-text = read("ansible/playbooks/apps/vaultwarden.yml")
-assert "../../tasks/kubernetes/open-app-access.yml" in text
-assert "homelabinfra_infra.kubernetes.ingress_vip" in text
+# A shim on playbooks/apps/deploy.yml; gate/app-matrix.yml records what each method reaches.
+assert yaml.safe_load(read("ansible/playbooks/apps/vaultwarden.yml")) == [{
+    "name": "Deploy vaultwarden",
+    "ansible.builtin.import_playbook": "deploy.yml",
+    "vars": {"app": "vaultwarden"},
+}]
 
 context = {
     "instance": "vaultwarden-test",
