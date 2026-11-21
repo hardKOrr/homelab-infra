@@ -1,0 +1,31 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml play 4, before wiring): record the `notifications`
+# registry key (ansible/vars/CONTRACT.md §3) from the publish endpoint the role exported,
+# then re-resolve the estate so this run's wiring and every later deploy read it. The
+# registry stores topology; the publish token stays in Vaultwarden. An isolated restore
+# target never takes over the key.
+#
+# The role exports on its guest (Docker, native) or on localhost (Kubernetes): a native or
+# Docker instance publishes to its guest, a Kubernetes one to its routed HTTPS hostname.
+- name: Ntfy | Record the notifications registry key
+  when: not (recovery_isolated | default(false) | bool)
+  vars:
+    _ntfy_exports: >-
+      {{ hostvars['localhost'] if app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]] }}
+  block:
+    - name: Ntfy | Record the notifications registry key
+      ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: notifications
+        generated_facts_data:
+          provider: ntfy
+          instance: "{{ instance }}"
+          host: "{{ _ntfy_exports.ntfy_publish_host }}"
+          topic: "{{ app_config.app.topic }}"
+
+    - name: Ntfy | Resolve the estate with the new key
+      ansible.builtin.include_tasks: ../../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"

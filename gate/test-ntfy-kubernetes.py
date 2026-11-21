@@ -34,30 +34,20 @@ assert defaults["recovery"]["methods"] == ["native"]
 assert defaults["backup"]["schedule"]
 assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/ntfy.yml"))
-provision = playbook[0]
-validate = next(task for task in provision["pre_tasks"]
-                if task.get("name") == "Validate supported hosting method")
-assert validate["ansible.builtin.include_tasks"] == "../../tasks/hosting/validate-app.yml"
-kubernetes = next(task for task in provision["tasks"]
-                  if task.get("name") == "Deploy Ntfy on Kubernetes")
-assert kubernetes["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
-native = next(task for task in provision["tasks"]
-              if task.get("name") == "Provision or reuse the native guest")
-assert native["ansible.builtin.include_role"] == {"name": "_template-native", "tasks_from": "provision"}
-assert native["when"] == "app_config.hosting.method == 'native'"
+# A shim on playbooks/apps/deploy.yml (which opens the cluster access and provisions the
+# native guest); gate/app-matrix.yml records what each method reaches.
+assert yaml.safe_load(read("ansible/playbooks/apps/ntfy.yml")) == [{
+    "name": "Deploy ntfy",
+    "ansible.builtin.import_playbook": "deploy.yml",
+    "vars": {"app": "ntfy"},
+}]
 shared = read("ansible/roles/_template-native/tasks/provision.yml")
 assert 'resolve_guest_type: "{{ _native_guest_guest_type }}"' in shared
 assert "resolve-native-type.yml" in shared
-record_facts = next(task for task in playbook[2]["pre_tasks"]
-                    if task.get("ansible.builtin.import_tasks", "").endswith(
-                        "tasks/bootstrap/write-generated-facts.yml"))
-assert record_facts["vars"]["generated_facts_service"] == "notifications"
-assert set(record_facts["vars"]["generated_facts_data"]) == {
-    "provider", "instance", "host", "topic"
-}
-assert "tasks/kubernetes/open-app-access.yml" in read("ansible/roles/ntfy/tasks/kubernetes.yml")
+record = yaml.safe_load(read("ansible/roles/ntfy/tasks/deploy-record.yml"))[0]["block"][0]
+assert record["ansible.builtin.include_tasks"].endswith("tasks/bootstrap/write-generated-facts.yml")
+assert record["vars"]["generated_facts_service"] == "notifications"
+assert set(record["vars"]["generated_facts_data"]) == {"provider", "instance", "host", "topic"}
 
 role_tasks = yaml.safe_load(read("ansible/roles/ntfy/tasks/kubernetes.yml"))
 estate = role_tasks[0]

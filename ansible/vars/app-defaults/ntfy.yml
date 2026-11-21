@@ -58,6 +58,11 @@ ntfy_defaults:
     github_repo: binwiederhier/ntfy
     binary_path: /usr/bin/ntfy
 
+  deploy:
+    notify_note: >-
+      It is the platform notifications provider; publishing needs the homelab-infra
+      token, anonymous posts are denied.
+
   routing:
     subdomain: ntfy                        # hostname on the estate domain, independent of the instance name
     proxy: internal
@@ -65,6 +70,7 @@ ntfy_defaults:
                                 # notifications off-LAN without a VPN
     identity: catalog           # catalog tile only — Ntfy has its own token/user auth;
                                 # forward_auth would break every publisher's token POST
+    monitor_path: /v1/health    # anonymous even under auth-default-access: deny-all
 
   # Ntfy's auth database and cached messages/attachments form one recovery point.
   # The app is stopped while both directories are archived to PBS.

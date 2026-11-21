@@ -29,9 +29,6 @@
          homelabinfra_infra.domain
          | default(homelabinfra_config.infrastructure.domain, true) }}
 
-- name: Ntfy Kubernetes | Open declared cluster network access
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
-
 - name: Ntfy Kubernetes | Save the publish credential before applying it
   ansible.builtin.include_tasks: credentials-prepare.yml
 
