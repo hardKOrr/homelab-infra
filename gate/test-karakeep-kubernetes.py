@@ -37,25 +37,12 @@ assert defaults["backup"]["client"] == {
     "component": "main",
 }
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/karakeep.yml"))
-provision = playbook[0]
-validate = next(task for task in provision["pre_tasks"]
-                if task.get("name") == "Validate supported hosting method")
-stack = next(task for task in provision["tasks"]
-             if task.get("name") == "Find or create the stack host")
-kubernetes = next(task for task in provision["tasks"]
-                  if task.get("name") == "Deploy Karakeep on Kubernetes")
-assert provision["pre_tasks"].index(validate) < len(provision["pre_tasks"])
-assert stack["when"] == "app_config.hosting.method == 'docker'"
-assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
-assert kubernetes["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-assert "tasks/kubernetes/open-app-access.yml" in read("ansible/playbooks/apps/karakeep.yml")
-assert "record_guest_kind" in read("ansible/playbooks/apps/karakeep.yml")
-
-wire = playbook[-1]
-assert "recovery_isolated" in str(wire["tasks"][0])
-assert "homelabinfra_infra.kubernetes.ingress_vip" in str(wire["vars"]["wiring_upstream_host"])
-assert "else 80" in str(wire["vars"]["wiring_upstream_port"])
+# A shim on playbooks/apps/deploy.yml; gate/app-matrix.yml records what each method reaches.
+assert yaml.safe_load(read("ansible/playbooks/apps/karakeep.yml")) == [{
+    "name": "Deploy karakeep",
+    "ansible.builtin.import_playbook": "deploy.yml",
+    "vars": {"app": "karakeep"},
+}]
 
 context = {
     "instance": "karakeep",
