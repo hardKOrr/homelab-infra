@@ -1,0 +1,183 @@
+---
+# Provision an app's own Docker VM (deploy-provision hooks of Ollama, ComfyUI and Home
+# Assistant): reuse the owned guest or clone a new one, then attach the dedicated GPU when
+# the app wants one. Adds the guest to deploy_<instance> and sets _app_vm_guest.
+#
+# Inputs: app_config, instance, app_vm_display, app_vm_network_app, app_vm_gpu (true when
+# app.gpu_device is to be passed through), app_vm_placement_devices (optional: proxmox.devices
+# names the VM must be placed with, such as a USB coordinator).
+- name: Refresh inventory to get current Proxmox state
+  ansible.builtin.meta: refresh_inventory
+
+- name: Resolve the tagged or uniquely named owned {{ app_vm_display }} VM
+  ansible.builtin.include_tasks: ../proxmox/resolve-instance-guest.yml
+  vars:
+    resolve_guest_instance: "{{ instance }}"
+
+- name: Record the resolved {{ app_vm_display }} VM candidates
+  ansible.builtin.set_fact:
+    _app_vm_existing_hosts: "{{ resolve_guest_hosts }}"
+    _app_vm_needs_identity_record: "{{ resolve_guest_needs_tag | bool }}"
+
+- name: Refuse ambiguous existing {{ app_vm_display }} VMs
+  ansible.builtin.assert:
+    that:
+      - _app_vm_existing_hosts | length <= 1
+    fail_msg: >-
+      Multiple guests match the {{ app_vm_display }} instance tag. Refusing to reuse an
+      arbitrary VM; remove the stale app record and retry.
+
+- name: Resolve the existing {{ app_vm_display }} VM node
+  ansible.builtin.set_fact:
+    _app_vm_existing_node: "{{ hostvars[_app_vm_existing_hosts[0]].proxmox_node | default('') }}"
+  when: _app_vm_existing_hosts | length > 0
+
+- name: Require the existing {{ app_vm_display }} guest to be a VM with a known node
+  ansible.builtin.assert:
+    that:
+      - hostvars[_app_vm_existing_hosts[0]].proxmox_vmtype | default('') == 'qemu'
+      - _app_vm_existing_node | length > 0
+    fail_msg: >-
+      Existing {{ app_vm_display }} guest must be a VM with a known Proxmox node. This deployment
+      does not convert an existing guest in place.
+  when: _app_vm_existing_hosts | length > 0
+
+- name: Use the existing {{ app_vm_display }} VM node for device operations
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'node': _app_vm_existing_node}}, recursive=True) }}
+  when: _app_vm_existing_hosts | length > 0
+
+- name: Add the existing VM to the deploy group
+  ansible.builtin.add_host:
+    name: "{{ _app_vm_existing_hosts[0] }}"
+    groups: "deploy_{{ instance }}"
+    ansible_host: >-
+      {{ hostvars[_app_vm_existing_hosts[0]].ansible_host
+         | default(hostvars[_app_vm_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    proxmox_vmtype: qemu
+    proxmox_node: "{{ _app_vm_existing_node }}"
+    proxmox_name: "{{ hostvars[_app_vm_existing_hosts[0]].proxmox_name | default(instance, true) }}"
+    proxmox_vmid: "{{ hostvars[_app_vm_existing_hosts[0]].proxmox_vmid }}"
+    app_config: "{{ app_config }}"
+    homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+  when: _app_vm_existing_hosts | length > 0
+  changed_when: false
+
+- name: Ensure the existing VM is running
+  ansible.builtin.include_tasks: ../proxmox/ensure-guest-running.yml
+  vars:
+    ensure_guest_host: "{{ _app_vm_existing_hosts[0] }}"
+  when: _app_vm_existing_hosts | length > 0
+
+- name: Set the existing VM guest name
+  ansible.builtin.set_fact:
+    _app_vm_guest: "{{ _app_vm_existing_hosts[0] }}"
+  when: _app_vm_existing_hosts | length > 0
+
+- name: Provision a new {{ app_vm_display }} VM
+  when: _app_vm_existing_hosts | length == 0
+  block:
+    - name: Resolve the {{ app_vm_display }} network
+      ansible.builtin.include_tasks: ../network/resolve-network.yml
+      vars:
+        resolve_network_app: "{{ app_vm_network_app }}"
+        resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
+
+    - name: Set the {{ app_vm_display }} VM identity and ownership tags
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'vm':
+               app_config.proxmox.vm | combine({
+                 'name': instance,
+                 'tags': ((app_config.proxmox.vm.tags | default(['_+lab', '_-debian']))
+                          + ['_' ~ instance]) | unique
+               }, recursive=True)
+             }}, recursive=True) }}
+
+    - name: Ensure the Debian cloud-init template exists
+      ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
+      vars:
+        proxmox_placement_class: >-
+          {{ 'gpu_vm' if app_vm_gpu | bool
+             else 'floating_vm' }}
+        proxmox_placement_device: "{{ app_config.app.gpu_device | default('', true) | trim if app_vm_gpu | bool else '' }}"
+        proxmox_placement_devices: "{{ app_vm_placement_devices | default([]) }}"
+        cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
+        cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
+        cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
+        cloud_template_storage: >-
+          {{ app_config.proxmox.cloud_template.storage
+             | default(homelabinfra_config.proxmox.storage, true) }}
+        cloud_template_bridge: "{{ network_effective.bridge | default('vmbr0') }}"
+
+    - name: Generate the {{ app_vm_display }} VM address
+      ansible.builtin.import_tasks: ../network/generate-ip.yml
+      vars:
+        network_name: "{{ app_config.proxmox.network | default('', true) }}"
+        pool_name: "{{ app_config.proxmox.pool | default('') }}"
+        requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+    - name: Set the VM address in the platform config
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({
+            'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}
+          }, recursive=True) }}
+
+    - name: Derive the {{ app_vm_display }} VMID
+      ansible.builtin.import_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Clone the {{ app_vm_display }} VM from the cloud-init template
+      ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+      vars:
+        proxmox_placement_class: >-
+          {{ 'gpu_vm' if app_vm_gpu | bool
+             else 'floating_vm' }}
+        proxmox_placement_device: "{{ app_config.app.gpu_device | default('', true) | trim if app_vm_gpu | bool else '' }}"
+        proxmox_placement_devices: "{{ app_vm_placement_devices | default([]) }}"
+        proxmox_placement_node: "{{ _guest_placement.node }}"
+
+    - name: Add the new VM to the deploy group
+      ansible.builtin.add_host:
+        name: "{{ instance }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        proxmox_vmtype: qemu
+        proxmox_node: "{{ homelabinfra_config.proxmox.node }}"
+        proxmox_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+      changed_when: false
+
+    - name: Set the new VM guest name
+      ansible.builtin.set_fact:
+        _app_vm_guest: "{{ instance }}"
+
+- name: Record {{ app_vm_display }} VM identity before application deployment
+  ansible.builtin.include_tasks: ../proxmox/record-app-on-guest.yml
+  vars:
+    record_guest_kind: docker
+    record_guest_require_success: true
+  when: _app_vm_needs_identity_record
+
+# PCIe passthrough is not hotplugged. The shared task preflights the exact declaration,
+# ownership tag, node presence, and exclusive conflict before qm set, and restores a
+# previously running VM if assignment fails.
+- name: Attach the named {{ app_vm_display }} PCI device
+  ansible.builtin.include_tasks: ../proxmox/attach-pci-passthrough.yml
+  vars:
+    pci_passthrough_guest: "{{ _app_vm_guest }}"
+    pci_passthrough_device:
+      id: >-
+        {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+           | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+           | list | first }}
+      mapping: >-
+        {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+           | default(app_config.app.gpu_device) }}
+      pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(false) | bool }}"
+  when: app_vm_gpu | bool

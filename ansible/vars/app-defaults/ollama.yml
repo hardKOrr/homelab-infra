@@ -6,6 +6,9 @@
 # exposes one persistent model-storage mount to Compose so model blobs and Ollama's
 # metadata survive image replacement and are covered by the application archive.
 ollama_defaults:
+  # The app keeps no Vaultwarden item on any method.
+  vault:
+    methods: []
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -57,6 +60,7 @@ ollama_defaults:
     # contract.
 
   routing:
+    monitor_path: /api/tags
     subdomain: ollama
     proxy: internal
     access: internal

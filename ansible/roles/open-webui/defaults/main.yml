@@ -23,3 +23,10 @@ open_webui_staged_check: |
   sys.exit(0 if result == "ok" else "webui.db failed its SQLite integrity check: " + result)
 # Upstream copies its frontend assets here at import, so the service user must own it.
 open_webui_native_static: "{{ open_webui_native_home }}/static"
+
+# The named model backends Deploy's deploy-prepare hook resolved on localhost
+# (tasks/app-wiring/open-webui-upstreams.yml).
+open_webui_ollama_instance: "{{ hostvars['localhost'].open_webui_ollama_instance | default('') }}"
+open_webui_litellm_instance: "{{ hostvars['localhost'].open_webui_litellm_instance | default('') }}"
+open_webui_ollama_url: "{{ hostvars['localhost'].open_webui_ollama_url | default('') }}"
+open_webui_litellm_url: "{{ hostvars['localhost'].open_webui_litellm_url | default('') }}"

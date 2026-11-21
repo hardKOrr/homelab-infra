@@ -2,6 +2,11 @@
 # Frigate defaults to a one-tenant Docker-on-VM stack. A declared GPU can route it to the
 # stack that owns that device; its recordings stay on the existing external storage mount.
 frigate_defaults:
+  # The lab's declared recording storage, as app_config.recording_storage.
+  platform_layers:
+    - {name: recording_storage, from: frigate_storage}
+  vault:
+    methods: []
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -87,6 +92,7 @@ frigate_defaults:
       size: 32
 
   routing:
+    monitor_path: /api/version
     subdomain: frigate
     proxy: internal
     access: internal

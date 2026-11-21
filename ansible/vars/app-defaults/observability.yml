@@ -71,6 +71,7 @@ observability_defaults:
     # above is still live — it is the port Prometheus scrapes every guest on.
 
   routing:
+    monitor_path: /api/health
     subdomain: observability               # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only: Grafana exposes metrics for every guest

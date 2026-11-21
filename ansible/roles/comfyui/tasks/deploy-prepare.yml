@@ -1,0 +1,27 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). The CUDA form
+# needs ComfyUI's own Docker VM with a dedicated GPU; native runs in CPU mode.
+- name: ComfyUI | Assert the native accelerator
+  when: app_config.hosting.method == 'native'
+  ansible.builtin.assert:
+    that: app_config.app.accelerator | default('cuda') == 'cpu'
+    fail_msg: >-
+      Native ComfyUI runs in CPU mode (app.accelerator: cpu, or use Docker on a VM for
+      the dedicated GPU).
+    quiet: true
+
+- name: ComfyUI | Assert the VM, accelerator, and model-storage contract
+  when: app_config.hosting.method == 'docker'
+  ansible.builtin.assert:
+    that:
+      - app_config.proxmox.vm is mapping
+      - app_config.app.accelerator | default('cuda') in ['cuda', 'cpu']
+      - >-
+        app_config.app.accelerator | default('cuda') != 'cuda'
+        or app_config.app.gpu_device | default('') | length > 0
+      - app_config.app.storage_path | default('') | length > 0
+      - app_config.app.models_path | default('') | length > 0
+    fail_msg: >-
+      ComfyUI requires its own Docker-capable VM, accelerator cuda or cpu, a dedicated
+      proxmox.devices mapping in cuda mode, and an explicit persistent model-storage path.
+    quiet: true

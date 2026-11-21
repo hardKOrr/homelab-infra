@@ -26,9 +26,6 @@
       mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
   when: app_config.app.usb_mapping | default('', true) | length > 0
 
-- name: Home Assistant | Open declared cluster firewall access
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
-
 - name: Home Assistant | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 

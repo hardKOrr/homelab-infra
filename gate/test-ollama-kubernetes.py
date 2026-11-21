@@ -29,23 +29,13 @@ assert defaults["app"]["gpu_device"] == ""
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/ollama.yml"))
-provision = playbook[0]
-tasks = {task["name"]: task for task in provision["tasks"]}
-assert "app_config.hosting.method == 'docker'" in tasks[
-    "Provision Ollama's own VM"]["when"]
-assert "app_config.hosting.method == 'docker'" in tasks[
-    "Find or create the Docker stack host"]["when"]
-kubernetes = tasks["Deploy Ollama on Kubernetes"]
-assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
-assert kubernetes["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-assert "open-app-access.yml" in str(tasks["Open Ollama's declared Kubernetes network access"])
-assert any(t["name"] == "Refuse a GPU on Kubernetes" for t in provision["pre_tasks"])
-
-wire = playbook[-1]
-assert "recovery_isolated" in str(wire["tasks"][0])
-assert "homelabinfra_infra.kubernetes.ingress_vip" in str(wire["vars"]["wiring_upstream_host"])
-assert "80 if" in str(wire["vars"]["wiring_upstream_port"])
+# Deploy is the shared deploy.yml; only Docker without a stack takes Ollama's own VM, and a
+# GPU is refused anywhere else.
+own_vm = yaml.safe_load(read("ansible/roles/ollama/tasks/deploy-provision.yml"))
+assert all("app_config.hosting.method == 'docker'" in task["when"] for task in own_vm)
+prepare = {t["name"]: t for t in yaml.safe_load(read("ansible/roles/ollama/tasks/deploy-prepare.yml"))}
+assert "app_config.hosting.method == 'docker'" in prepare["Ollama | Refuse a GPU off its own Docker VM"][
+    "ansible.builtin.assert"]["that"]
 
 context = {
     "instance": "ollama",

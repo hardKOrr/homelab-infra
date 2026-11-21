@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the notification says
+# which Forgejo the runner registered against.
+- name: Forgejo Runner | Name the Forgejo instance in the notification
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      It is registered against named Forgejo instance {{ app_config.app.forgejo_instance }}
+      and will re-register when its URL or token changes or Forgejo forgets the registration.

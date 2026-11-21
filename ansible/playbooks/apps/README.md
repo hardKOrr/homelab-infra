@@ -191,13 +191,15 @@ run only when the file exists:
 | Hook | Deploy runs it |
 | --- | --- |
 | `deploy-prepare.yml` | on localhost after the hostname is known, before provisioning: may set `deploy_host_mounts` (attached by `tasks/proxmox/attach-host-mounts.yml`), `deploy_host_mounts_owner`, `deploy_host_mounts_own_node` (only the guest's node), `native_guest_database` and `firewall_inbound_ports` |
+| `deploy-provision.yml` | on localhost after the database, before the shared stack or native guest step: provisions a guest of the app's own shape (`tasks/proxmox/provision-app-vm.yml`) into `deploy_<instance>` and sets `deploy_guest_provided` so the shared step skips |
 | `deploy-record.yml` | on localhost before wiring, also while a restore target is isolated: registry entries other jobs read (`media`, `databases`); `deploy_notify_note`, a note computed from `app_config` |
 | `deploy-wire.yml` | on localhost after wiring, never while a restore target is isolated: connections with deployed peers; a failure recorded through `report-degradation.yml` fails the run |
 | `kubernetes.yml` | on localhost for `hosting.method: kubernetes`; it may run the whole `main.yml` |
 
 Deploy reads these app-defaults keys (shared values in `vars/app-defaults/_base.yml`):
 `routing.monitor_path`, `routing.auth_group`, `routing.auth_admin_only` (grant only the SSO
-admin user), `deploy.notify_note` (a sentence added to the notification), `vault.methods`
+admin user), `deploy.kubernetes_upstream_port` (`app`: the proxy reaches a
+Kubernetes app on the ingress address at `app.port`, not the ingress route on 80), `deploy.notify_note` (a sentence added to the notification), `vault.methods`
 and `platform_layers` (`tasks/apps/load-config.yml`), `firewall.methods` (the methods whose
 Deploy opens the declared `firewall:` access; default every method), `firewall.after_deploy`
 (open the guest's access after the role ran, `tasks/apps/deploy-firewall.yml`), `firewall.sends_mail`

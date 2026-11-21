@@ -4,6 +4,10 @@
 # explicit recovery units. Version 2 is selected because its stable HTTP API,
 # setup endpoint, and package-managed service are supported by upstream.
 influxdb_defaults:
+  # On Kubernetes the API Service listens on the ingress address at app.port, which the
+  # reverse proxy targets too.
+  deploy:
+    kubernetes_upstream_port: app
   hosting:
     method: native
     # Docker runs the official image on a stack host, whose stack guest_type picks the LXC or VM.
@@ -45,6 +49,7 @@ influxdb_defaults:
     bucket: default
 
   routing:
+    monitor_path: /health
     subdomain: influxdb
     proxy: internal
     access: internal

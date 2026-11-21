@@ -27,24 +27,10 @@ def main():
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
-    plays = {play["name"]: play for play in read_yaml("ansible/playbooks/apps/comfyui.yml")}
-    provision = plays["ComfyUI | Provision"]["tasks"]
-    assert all(
-        "docker" in str(task.get("when")) for task in provision
-        if task.get("name", "").startswith(("Provision ComfyUI", "Find or create"))
-    )
-    assert includes(plays["ComfyUI | Prepare Kubernetes"]["tasks"], "tasks/kubernetes/open-app-access.yml")
-    deploy = plays["ComfyUI | Deploy"]["tasks"]
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("name") == "comfyui"
-        and task.get("when") == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
-        for task in deploy
-    )
-    assert any(
-        task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-        and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-        for task in plays["ComfyUI | Deploy on Kubernetes"]["tasks"]
-    )
+    # Deploy is the shared deploy.yml; only Docker without a stack takes ComfyUI's own VM.
+    own_vm = read_yaml("ansible/roles/comfyui/tasks/deploy-provision.yml")
+    assert includes(own_vm, "tasks/proxmox/provision-app-vm.yml")
+    assert all("app_config.hosting.method == 'docker'" in task["when"] for task in own_vm)
 
     tasks = read_yaml("ansible/roles/comfyui/tasks/kubernetes.yml")
     assert "cpu" in str(tasks[0]["ansible.builtin.assert"]["that"])

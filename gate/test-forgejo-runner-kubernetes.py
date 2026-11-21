@@ -65,24 +65,17 @@ def main():
     assert defaults["backup"]["retention_days"] > 0
     assert {"image", "key_url", "repository", "suite", "component"} <= defaults["backup"]["client"].keys()
 
-    plays = {play["name"]: play for play in read_yaml(REPO / "ansible/playbooks/apps/forgejo-runner.yml")}
-    provision = plays["Forgejo Runner | Provision"]["tasks"]
-    stack = next(t for t in provision if "find-or-create-host" in str(t.get("ansible.builtin.import_tasks")))
-    assert stack["when"] == "app_config.hosting.method == 'docker'"
-    assert includes(plays["Forgejo Runner | Prepare Kubernetes"]["tasks"], "tasks/kubernetes/open-app-access.yml")
-    deploy = plays["Forgejo Runner | Deploy"]["tasks"]
-    docker_deploy = next(t for t in deploy if t["name"] == "Deploy Forgejo Runner")
-    assert docker_deploy["when"] == "hostvars['localhost'].app_config.hosting.method == 'docker'"
-    native_deploy = next(t for t in deploy if t["name"] == "Deploy Forgejo Runner natively")
-    assert native_deploy["ansible.builtin.include_role"]["tasks_from"] == "native"
-    assert native_deploy["when"] == "hostvars['localhost'].app_config.hosting.method == 'native'"
+    # Deploy is the shared deploy.yml; the role's main.yml picks the Docker or native install.
+    main_tasks = read_yaml(ROLE / "tasks/main.yml")
+    docker_deploy = next(t for t in main_tasks if t["name"] == "Forgejo Runner | Deploy on Docker")
+    assert docker_deploy["when"] == "app_config.hosting.method == 'docker'"
+    native_deploy = next(t for t in main_tasks if t["name"] == "Forgejo Runner | Deploy natively")
+    assert native_deploy["ansible.builtin.include_tasks"] == "native.yml"
+    assert native_deploy["when"] == "app_config.hosting.method == 'native'"
     assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
     # One exact upstream version for the image and the pinned native binary.
     assert defaults["app"]["image"].endswith(":" + defaults["app"]["native_version"])
     assert len(defaults["app"]["native_sha256"]) == 64
-    kube = plays["Forgejo Runner | Deploy on Kubernetes"]["tasks"][0]
-    assert kube["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-    assert kube["when"] == "app_config.hosting.method == 'kubernetes'"
 
     native = read_yaml(ROLE / "tasks/native.yml")
     git = next(t for t in native if t.get("ansible.builtin.apt", {}).get("name") == "git")
@@ -96,7 +89,7 @@ def main():
     backup = next(t for t in tasks if "recovery-backup.yml" in str(t.get("ansible.builtin.include_tasks")))
     assert backup["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ instance }}-data"
     # Docker and Kubernetes share the registration steps.
-    assert includes(read_yaml(ROLE / "tasks/main.yml"), "registration.yml")
+    assert includes(read_yaml(ROLE / "tasks/docker.yml"), "registration.yml")
     for name in ("files", "clear"):
         for method in ("host", "kubernetes"):
             assert (ROLE / f"tasks/registration-{name}-{method}.yml").is_file()

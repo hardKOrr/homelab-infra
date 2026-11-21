@@ -109,9 +109,9 @@ def test_public_health_endpoints():
 
 
 def test_deploy_preflight():
-    playbook_source = yaml.safe_load((repo / "ansible/playbooks/apps/frigate.yml").read_text())
-    guard = next(task for task in playbook_source[0]["pre_tasks"]
-                 if task.get("name") == "Assert Frigate has an explicit detector and recording-storage contract")
+    hook = yaml.safe_load((repo / "ansible/roles/frigate/tasks/deploy-prepare.yml").read_text())
+    guard = next(task for task in hook
+                 if task.get("name") == "Frigate | Assert an explicit detector and recording-storage contract")
     cases = [
         ({"cameras": {}, "recordings_path": "", "coral_usb_mapping": ""}, True),
         ({"cameras": {"front": {}}, "recordings_path": "", "coral_usb_mapping": ""}, False),

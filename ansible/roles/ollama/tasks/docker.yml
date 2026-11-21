@@ -1,0 +1,70 @@
+---
+# Docker install, included from main.yml.
+# The PCI attach seam proves that the exact GPU belongs to this VM. These checks prove the
+# guest can use it before Compose starts: PCI assignment alone is not a CUDA health check.
+# The Debian guest image must have the matching NVIDIA driver and NVIDIA Container Toolkit
+# prepared for the passed-through card; these checks run only when gpu_device is declared.
+- name: Ollama | Verify the passed-through NVIDIA GPU is visible
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=name, --format=csv,noheader]
+  register: _ollama_nvidia_smi
+  changed_when: false
+  failed_when: false
+  when: app_config.app.gpu_device | default('', true) | trim | length > 0
+
+- name: Ollama | Assert the passed-through GPU is usable in the guest
+  ansible.builtin.assert:
+    that:
+      - _ollama_nvidia_smi.rc == 0
+      - _ollama_nvidia_smi.stdout | trim | length > 0
+    fail_msg: >-
+      The Ollama VM does not report an NVIDIA GPU through nvidia-smi. Verify the exact PCI
+      device assignment, guest driver, console recovery, and VM reboot before deploying.
+  when: app_config.app.gpu_device | default('', true) | trim | length > 0
+
+- name: Ollama | Verify Docker exposes the NVIDIA runtime
+  ansible.builtin.command:
+    argv: [docker, info, --format, "{{ '{{json .Runtimes}}' }}"]
+  register: _ollama_docker_info
+  changed_when: false
+  failed_when: false
+  when: app_config.app.gpu_device | default('', true) | trim | length > 0
+
+- name: Ollama | Assert Docker has the NVIDIA Container Toolkit runtime
+  ansible.builtin.assert:
+    that:
+      - _ollama_docker_info.rc == 0
+      - _ollama_docker_info.stdout is search('nvidia')
+    fail_msg: >-
+      Docker does not expose the NVIDIA runtime in {{ instance }}. Install/configure the
+      NVIDIA Container Toolkit in the GPU guest before deploying Ollama.
+  when: app_config.app.gpu_device | default('', true) | trim | length > 0
+
+- name: Ollama | Assert the storage paths are inside the application storage root
+  ansible.builtin.include_tasks: storage-contained.yml
+
+# The shared Compose deploy recreates the container when the Compose file changed, in the
+# same up that creates it, so a new install is never restarted mid first boot.
+- name: Ollama | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ ollama_project_dir }}"
+    compose_dirs: ["{{ app_config.app.storage_path }}"]
+    compose_health:
+      url: "http://localhost:{{ app_config.app.port }}/api/tags"
+      retries: "{{ ollama_http_retries }}"
+      delay: "{{ ollama_http_delay }}"
+
+- name: Ollama | Read the API tags endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/tags"
+    status_code: 200
+  register: _ollama_health
+  changed_when: false
+
+- name: Ollama | Assert the API tags response is valid
+  ansible.builtin.assert:
+    that:
+      - _ollama_health.json is defined
+      - _ollama_health.json.models is defined
+    fail_msg: Ollama answered its API health endpoint without a model list.

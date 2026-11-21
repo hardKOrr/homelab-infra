@@ -1,0 +1,14 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the sign-in and scrape
+# count for the notification, read from the host the role ran on.
+- name: Observability | Describe the Grafana sign-in and scrape targets
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      Grafana signs in as {{ _obs_host.observability_admin_username }} (password in
+      Vaultwarden item {{ observability_vault_item | trim }}). Prometheus is scraping
+      {{ _obs_host.observability_scrape_target_count }} host(s); re-run this deploy after
+      adding guests to pick them up.
+  vars:
+    _obs_host: >-
+      {{ hostvars['localhost'] if app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]] }}

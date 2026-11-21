@@ -469,7 +469,7 @@ def check_registration_reconciliation():
 
 def check_non_root_entrypoint_access():
     role_tasks = yaml.safe_load(
-        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+        (repo / "ansible/roles/forgejo-runner/tasks/docker.yml").read_text()
     )
     entrypoint = next(
         task["ansible.builtin.copy"]
@@ -492,7 +492,7 @@ def check_runner_service_running_retries():
     assert 'test: ["CMD", "docker", "info"]' in compose
     assert "condition: service_healthy" in compose
     role_tasks = yaml.safe_load(
-        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+        (repo / "ansible/roles/forgejo-runner/tasks/docker.yml").read_text()
     )
     names = [task.get("name") for task in role_tasks]
     first = names.index("Forgejo Runner | Read the runner's state")

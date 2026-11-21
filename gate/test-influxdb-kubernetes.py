@@ -38,48 +38,19 @@ assert defaults["hosting"]["supported"] == [
 assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 8086
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 
-# ── Playbook: Kubernetes is its own branch, the guest methods keep theirs ──────────────
-playbook = load("ansible/playbooks/apps/influxdb.yml")
-provision = playbook[0]["tasks"]
-assert any(
-    t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for t in provision
-)
+# ── Deploy: the shared deploy.yml with database-backend hooks ──────────────────────────
+kube = load("ansible/roles/influxdb/tasks/kubernetes.yml")
 consumer_access = next(
-    t for t in provision
+    t for t in kube
     if str(t.get("ansible.builtin.include_tasks", "")).endswith("database/open-consumer-access.yml")
 )
 assert consumer_access["vars"]["database_consumer_provider"] == "influxdb"
-assert any(
-    str(t.get("ansible.builtin.include_tasks", "")).endswith("kubernetes/open-app-access.yml")
-    for t in provision
-)
-assert any(
-    t.get("when") == "app_config.hosting.method == 'native'"
-    and "provision-backend-guest.yml" in str(t.get("ansible.builtin.include_tasks", ""))
-    for t in provision
-)
-registry = next(
-    t["vars"]["generated_facts_data"] for p in playbook for t in p.get("tasks", [])
-    if t.get("vars", {}).get("generated_facts_service") == "databases"
-    and t.get("when") == "app_config.hosting.method == 'kubernetes'"
-)
-registered = Environment(undefined=StrictUndefined).compile_expression(registry[3:-3])(
-    instance="influx-test",
-    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.10"}},
-    app_config={"app": {"port": 8087}},
-)
-assert registered == {"influx-test": {
-    "provider": "influxdb", "host": "192.0.2.10", "port": 8087,
-    "runtime": "kubernetes", "kubernetes": {"namespace": "app-influx-test"},
-}}
-# The route, DNS record and monitor point at the ingress address, once, as on guests.
-wire = next(p for p in playbook if p["name"] == "InfluxDB | Wire")
-assert "ingress_vip" in wire["vars"]["wiring_upstream_host"]
-assert wire["vars"]["wiring_upstream_port"] == "{{ _influxdb_host.app_config.app.port }}"
-wiring_calls = [t["name"] for t in wire["tasks"] if "wiring/" in str(t.get("ansible.builtin.include_tasks", ""))]
-assert wiring_calls == ["Wire reverse proxy", "Wire SSO", "Wire uptime monitoring", "Wire DNS"], wiring_calls
+assert "tasks/database/deploy-prepare.yml" in read("ansible/roles/influxdb/tasks/deploy-prepare.yml")
+assert "tasks/database/deploy-record.yml" in read("ansible/roles/influxdb/tasks/deploy-record.yml")
+# The route targets the API Service on the ingress address at app.port, as on guests.
+assert defaults["deploy"]["kubernetes_upstream_port"] == "app"
+assert "kubernetes_upstream_port | default('ingress') == 'app'" in read(
+    "ansible/playbooks/apps/deploy.yml")
 
 # ── Manifest ────────────────────────────────────────────────────────────────────────────
 context = {

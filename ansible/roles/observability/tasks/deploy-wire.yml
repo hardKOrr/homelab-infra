@@ -1,0 +1,18 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, after wiring, never for an isolated
+# restore target): the platform instance records the lab-wide `metrics` registry key.
+- name: Observability | Record the metrics registry key
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    _obs_host: >-
+      {{ hostvars['localhost'] if app_config.hosting.method == 'kubernetes'
+         else hostvars[groups['deploy_' ~ instance][0]] }}
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: metrics
+    generated_facts_data:
+      provider: prometheus_grafana
+      instance: "{{ instance }}"
+      host: "{{ _obs_host.observability_grafana_url }}"
+      prometheus_host: "{{ _obs_host.observability_prometheus_url }}"
+      admin_user: "{{ _obs_host.observability_admin_username }}"
+  when: observability_platform | bool

@@ -4,7 +4,7 @@
 wireguard_defaults:
   hosting:
     method: native
-    supported: [native-lxc, docker-lxc, docker-vm, kubernetes]
+    supported: [native-lxc, native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm) runs the
   # image below on that stack host. The native default is unchanged.
@@ -13,7 +13,7 @@ wireguard_defaults:
   # k3s cluster, with a UDP LoadBalancer Service on the ingress VIP (the WAN forward targets it).
 
   proxmox:
-    type: lxc
+    guest_type: lxc
     boot_order: 30
     # Inherit the lab's proxmox.lxc.ostemplate; only instance config may override it.
     cores: 1

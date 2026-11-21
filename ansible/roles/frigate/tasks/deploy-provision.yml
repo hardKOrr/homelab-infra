@@ -1,0 +1,26 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, provisioning). Docker Frigate's stack
+# host is placed on the node holding its Coral, then gets its recording storage and
+# devices (provision-docker.yml); native and Kubernetes take deploy.yml's shared steps.
+- name: Frigate | Provision the Docker host with its storage and devices
+  when: app_config.hosting.method == 'docker'
+  block:
+    - name: Frigate | Find or create the dedicated Docker host (VM, or LXC with frigate-lxc)
+      ansible.builtin.include_tasks: ../../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+        stack_placement_devices: >-
+          {{ (homelabinfra_config.proxmox.devices | default({}) | dict2items
+              | selectattr('value.identifiers', 'defined')
+              | selectattr('value.identifiers', 'contains', app_config.app.coral_usb_mapping | default(''))
+              | map(attribute='key') | list)
+             if app_config.app.detector == 'coral' else [] }}
+
+    - name: Frigate | Attach recording storage and devices, and forward the guest inputs
+      ansible.builtin.include_tasks: provision-docker.yml
+
+    - name: Frigate | Skip deploy.yml's stack host
+      ansible.builtin.set_fact:
+        deploy_guest_provided: true

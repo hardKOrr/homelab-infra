@@ -5,6 +5,9 @@
 # separate Compose mounts so checkpoints, custom nodes, inputs, and outputs survive image
 # replacement and are covered by the application archive.
 comfyui_defaults:
+  # The app keeps no Vaultwarden item on any method.
+  vault:
+    methods: []
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
@@ -66,6 +69,7 @@ comfyui_defaults:
     # LoRAs. A model cache is not treated as disposable for this recovery contract.
 
   routing:
+    monitor_path: /system_stats
     subdomain: comfyui
     proxy: internal
     access: internal

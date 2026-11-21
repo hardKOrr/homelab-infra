@@ -2,6 +2,7 @@
 # Emby is an independent media-server option on the shared media stack. It does
 # not participate in the Servarr API registry and is never selected by default.
 emby_defaults:
+  platform_layers: [media_storage]
   hosting:
     method: docker
     supported: [docker-vm]
@@ -40,6 +41,7 @@ emby_defaults:
         collection_type: music
         subpath: music
   routing:
+    monitor_path: /emby/System/Info/Public
     subdomain: emby
     proxy: internal
     access: internal

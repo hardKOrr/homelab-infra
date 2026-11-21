@@ -30,21 +30,16 @@ assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernet
 assert defaults["app"]["config_storage"] > 0
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["encryption"] == "none"
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/home-assistant.yml"))
-provision, wire = playbook[0], playbook[-1]
-branch = next(t for t in provision["tasks"] if t.get("block") and "kubernetes" in t["when"])
-assert branch["when"] == "app_config.hosting.method == 'kubernetes'"
+# Deploy is the shared deploy.yml; Kubernetes takes its shared steps and the role's
+# kubernetes.yml, every guest form goes through the deploy-provision hook.
+provision = yaml.safe_load(read(f"{ROLE}/tasks/deploy-provision.yml"))
+assert provision[0]["when"] == "app_config.hosting.method in ['docker', 'native']"
 # Templates resolve by basename only inside the role's context.
-assert branch["block"][0]["ansible.builtin.include_role"] == {
-    "name": "home-assistant", "tasks_from": "kubernetes"}
 for name in ("manifest.yaml.j2", "secrets.yaml.j2", "configuration.yaml.j2"):
     assert (ROOT / ROLE / "templates" / name).is_file()
-assert branch["block"][1]["ansible.builtin.meta"] == "end_play"
-assert provision["tasks"].index(branch) == 0
-vm = next(t for t in provision["pre_tasks"] if t["name"].startswith("Assert the explicit VM"))
+vm = next(t for t in yaml.safe_load(read(f"{ROLE}/tasks/deploy-prepare.yml"))
+          if t["name"].endswith("Assert the explicit VM and optional USB contract"))
 assert vm["when"] == "app_config.hosting.method == 'docker'"
-assert "homelabinfra_infra.kubernetes.ingress_vip" in str(wire["vars"]["wiring_upstream_host"])
-assert "80 if" in str(wire["vars"]["wiring_upstream_port"])
 
 base = {
     "instance": "home-assistant", "home_assistant_fqdn": "home-assistant.example.test",

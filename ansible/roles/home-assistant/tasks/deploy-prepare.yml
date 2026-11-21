@@ -1,0 +1,32 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): Home Assistant's
+# guest and Zigbee USB contract. A coordinator uses a Proxmox USB resource mapping, never a
+# raw vendor:product pair; an empty mapping disables passthrough.
+- name: Home Assistant | Assert the native guest contract
+  when: app_config.hosting.method == 'native'
+  ansible.builtin.assert:
+    that:
+      - (app_config.stack | default('', true) | length) == 0
+      - >-
+        (app_config.app.usb_mapping | default('', true) | length == 0)
+        or (app_config.app.usb_device_path | default('') is match('^/dev/'))
+    fail_msg: >-
+      Native Home Assistant runs on its own guest: set no stack. When usb_mapping is set,
+      usb_device_path must name the coordinator's serial node.
+    quiet: true
+
+- name: Home Assistant | Assert the explicit VM and optional USB contract
+  when: app_config.hosting.method == 'docker'
+  ansible.builtin.assert:
+    that:
+      - app_config.proxmox.vm is mapping
+      - app_config.stack | default('home-assistant-lxc', true) == 'home-assistant-lxc'
+      - >-
+        (app_config.app.usb_mapping | default('', true) | length == 0)
+        or (app_config.app.usb_device_path | default('') is match('^/dev/'))
+    fail_msg: >-
+      Home Assistant runs on its own VM, or on Docker on an LXC with
+      stack: home-assistant-lxc. When usb_mapping is set, it also requires an exact
+      dedicated Proxmox USB resource mapping and the coordinator's guest serial path. Do
+      not use a raw vendor:product pair or adopt a pre-existing untagged device.
+    quiet: true

@@ -6,6 +6,8 @@
 # uses a dedicated mapping; on the LXC it uses the shared LXC seam; on Kubernetes it is
 # attached to the first cluster node and the pod is pinned there.
 home_assistant_defaults:
+  vault:
+    methods: []
   hosting:
     method: docker
     supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]

@@ -1,0 +1,15 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). A media server
+# serves the whole library, so the stack host gets app.mounts or, by default, all of
+# media_storage.
+- name: Emby | Check the GPU placement declaration
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/assert-dedicated-igpu.yml
+  vars:
+    igpu_app_display: Emby
+
+- name: Emby | Hand deploy.yml the media paths to attach to the stack host
+  ansible.builtin.set_fact:
+    deploy_host_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+    deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"

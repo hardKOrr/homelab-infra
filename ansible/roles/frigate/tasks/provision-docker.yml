@@ -1,6 +1,6 @@
 ---
 # Docker-only provisioning for Frigate: recording storage, device passthrough and the
-# inputs forwarded to the stack host. Included by playbooks/apps/frigate.yml.
+# inputs forwarded to the stack host. Included by deploy-provision.yml after the stack host.
 
 - name: Resolve the declared Frigate recording mount
   ansible.builtin.set_fact:
@@ -42,7 +42,7 @@
   when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Attach Frigate's existing recording storage with the platform owner mapping
-  ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-host-mounts.yml
   vars:
     attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
     attach_mounts_list: "{{ app_config.recording_storage.mounts }}"
@@ -66,7 +66,7 @@
   when: app_config.app.detector == 'coral'
 
 - name: Attach the declared Coral through its dedicated USB mapping
-  ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-usb-passthrough.yml
   vars:
     usb_passthrough_guest: "{{ homelabinfra_instance.stack.hostname }}"
     usb_passthrough_device:

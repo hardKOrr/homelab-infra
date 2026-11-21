@@ -1,0 +1,18 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, provisioning). Docker ComfyUI without a
+# stack runs on its own VM, with the dedicated GPU attached when it uses one; a stack or
+# native instance takes deploy.yml's shared steps.
+- name: ComfyUI | Provision its own VM
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/provision-app-vm.yml
+  vars:
+    app_vm_display: ComfyUI
+    app_vm_network_app: comfyui
+    app_vm_gpu: "{{ app_config.app.accelerator | default('cuda') == 'cuda' }}"
+  when: &own_vm
+    - app_config.hosting.method == 'docker'
+    - app_config.stack | default('', true) | length == 0
+
+- name: ComfyUI | Skip deploy.yml's stack host
+  ansible.builtin.set_fact:
+    deploy_guest_provided: true
+  when: *own_vm

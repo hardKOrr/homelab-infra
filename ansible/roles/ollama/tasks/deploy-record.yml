@@ -1,0 +1,21 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the `apps` registry
+# entry named AI consumers (Open WebUI, LiteLLM) read: the guest's port, or the cluster
+# route on Kubernetes.
+- name: Ollama | Record the endpoint for named AI consumers
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    _ollama_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    _ollama_guest_ip: >-
+      {{ '' if _ollama_k8s | bool else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: apps
+    generated_facts_data: >-
+      {{ {instance: {
+           'provider': 'ollama',
+           'instance': instance,
+           'host': ('https://' ~ _deploy_fqdn) if _ollama_k8s | bool else ('http://' ~ _ollama_guest_ip),
+           'port': '443' if _ollama_k8s | bool else (app_config.app.port | string),
+           'url': ('https://' ~ _deploy_fqdn ~ '/') if _ollama_k8s | bool
+                  else ('http://' ~ _ollama_guest_ip ~ ':' ~ (app_config.app.port | string) ~ '/')
+         }} }}

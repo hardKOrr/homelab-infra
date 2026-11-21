@@ -1,0 +1,25 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). The WAN forward
+# targets app.port, and a Docker WireGuard needs a stack of its own: it takes the guest's
+# UDP port and kernel module settings, which no other app on a stack should share.
+- name: WireGuard | Refuse a stack another app deploys to
+  ansible.builtin.assert:
+    that: >-
+      _wg_shared_with | length == 0
+    fail_msg: >-
+      WireGuard on Docker needs its own stack, but {{ app_config.stack }} is the default
+      stack of {{ _wg_shared_with | join(', ') }}. Name a stack no other app uses.
+    quiet: true
+  vars:
+    _wg_shared_with: >-
+      {{ _app_defaults | dict2items
+         | rejectattr('key', 'equalto', 'wireguard_defaults')
+         | selectattr('value.stack', 'defined')
+         | selectattr('value.stack', 'equalto', app_config.stack)
+         | map(attribute='key') | map('regex_replace', '_defaults$', '') | list }}
+  when: app_config.hosting.method == 'docker'
+
+- name: WireGuard | Hand deploy.yml the forwarded port
+  ansible.builtin.set_fact:
+    firewall_inbound_ports:
+      wireguard: "{{ app_config.app.port }}"

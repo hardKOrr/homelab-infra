@@ -25,19 +25,13 @@ def open_webui_release_image_and_docker_bootstrap():
         == "ghcr.io/open-webui/open-webui:v0.11.4"
     )
 
-    plays = yaml.safe_load(
-        (ROOT / "ansible/playbooks/apps/open-webui.yml").read_text(encoding="utf-8")
-    )
-    deploy = next(play for play in plays if play.get("name") == "Open WebUI | Deploy")
-    tasks = deploy["tasks"]
-
-    bootstrap = task_named(tasks, "Bootstrap the Open WebUI guest")
-    updates = task_named(tasks, "Configure OS update notifications")
-    docker = task_named(tasks, "Ensure Docker is installed on the AI stack host")
-    app = task_named(tasks, "Deploy Open WebUI")
-
-    assert tasks.index(bootstrap) < tasks.index(updates) < tasks.index(docker) < tasks.index(app)
-    assert docker["ansible.builtin.include_role"]["name"] == "docker"
+    # Deploy is the shared deploy.yml; the role reads the backends the deploy-prepare hook
+    # resolved on localhost through its defaults.
+    prepare = (ROOT / "ansible/roles/open-webui/tasks/deploy-prepare.yml").read_text(encoding="utf-8")
+    assert "tasks/app-wiring/open-webui-upstreams.yml" in prepare
+    role_defaults = (ROOT / "ansible/roles/open-webui/defaults/main.yml").read_text(encoding="utf-8")
+    for name in ("ollama_instance", "litellm_instance", "ollama_url", "litellm_url"):
+        assert f"open_webui_{name}: \"{{{{ hostvars['localhost'].open_webui_{name}" in role_defaults, name
 
 
 def open_webui_kubernetes_deployment_uses_shared_operations():
@@ -50,15 +44,6 @@ def open_webui_kubernetes_deployment_uses_shared_operations():
     assert defaults["app"]["data_mount_path"] == "/app/backend/data"
     assert defaults["app"]["storage"] > 0
     assert defaults["backup"]["application_consistent"] is True
-
-    plays = yaml.safe_load(
-        (ROOT / "ansible/playbooks/apps/open-webui.yml").read_text(encoding="utf-8")
-    )
-    k8s_play = next(play for play in plays if play.get("name") == "Open WebUI | Deploy Kubernetes")
-    deploy = task_named(k8s_play["tasks"], "Deploy Open WebUI on the Kubernetes hosting backend")
-    assert deploy["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-    assert deploy["when"] == "hostvars['localhost'].app_config.hosting.method == 'kubernetes'"
-    assert "localhost" in next(play for play in plays if play.get("name") == "Open WebUI | Deploy")["hosts"]
 
     tasks = yaml.safe_load(
         (ROOT / "ansible/roles/open-webui/tasks/kubernetes.yml").read_text(encoding="utf-8")

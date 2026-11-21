@@ -1,0 +1,6 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): resolve the
+# named Ollama and LiteLLM endpoints Open WebUI uses; the role reads them through its
+# defaults.
+- name: Open WebUI | Resolve the named deployed upstreams
+  ansible.builtin.include_tasks: ../../../tasks/app-wiring/open-webui-upstreams.yml

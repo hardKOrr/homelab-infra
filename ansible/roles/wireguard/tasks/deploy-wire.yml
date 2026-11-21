@@ -1,0 +1,17 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, after wiring). WireGuard is a UDP
+# endpoint with no route (routing.proxy none), so deploy.yml wires nothing for it; this
+# points its DNS name straight at the guest or the cluster VIP and pings that address.
+- name: WireGuard | Wire DNS and a ping monitor to the UDP host
+  vars:
+    wiring_domain: "{{ _deploy_fqdn }}"
+    wiring_ip: "{{ wiring_upstream_host | trim }}"
+    wiring_monitor_type: ping
+    wiring_monitor_url: "{{ wiring_upstream_host | trim }}"
+  block:
+    - name: WireGuard | Wire DNS directly to the UDP host
+      ansible.builtin.include_tasks: "../../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: (homelabinfra_infra.dns | default({})).provider | default('none') != 'none'
+    - name: WireGuard | Monitor the UDP host
+      ansible.builtin.include_tasks: ../../../tasks/wiring/uptime-kuma.yml
+      when: (homelabinfra_infra.monitoring | default({})).provider | default('none') != 'none'
