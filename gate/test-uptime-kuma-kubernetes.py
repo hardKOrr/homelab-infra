@@ -39,33 +39,22 @@ assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] == "buildpack-deps:bookworm-curl"
 assert {rule["port"] for rule in defaults["firewall"]["egress"]} == {80, 443}
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/uptime-kuma.yml"))
-provision = playbook[0]
-stack = task_named(provision["tasks"], "Find or create stack host")
-assert stack["when"] == "app_config.hosting.method == 'docker'"
-
-docker = playbook[1]
-docker_role = task_named(docker["tasks"], "Deploy Uptime Kuma")
-assert docker_role["when"] == "hostvars['localhost'].app_config.hosting.method in ['docker', 'native']"
+# A shim on playbooks/apps/deploy.yml; gate/app-matrix.yml records what each method reaches.
+assert yaml.safe_load(read("ansible/playbooks/apps/uptime-kuma.yml")) == [{
+    "name": "Deploy uptime-kuma",
+    "ansible.builtin.import_playbook": "deploy.yml",
+    "vars": {"app": "uptime-kuma"},
+}]
 assert "configure.yml" in read("ansible/roles/uptime-kuma/tasks/main.yml")
-
-kubernetes = playbook[2]
-k8s_deploy = task_named(kubernetes["tasks"], "Deploy Uptime Kuma into its Kubernetes namespace")
-assert k8s_deploy["when"] == "app_config.hosting.method == 'kubernetes'"
-assert k8s_deploy["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-
-wire = playbook[3]
-wire_vars = wire["vars"]
-assert "homelabinfra_infra.kubernetes.ingress_vip" in wire_vars["wiring_upstream_host"]
-assert "else _kuma_deploy_host.ansible_host" in wire_vars["wiring_upstream_host"]
-assert "80 if _kuma_hosting_method == 'kubernetes'" in wire_vars["wiring_upstream_port"]
-assert "Configure Uptime Kuma through its published Kubernetes route" in {
-    task.get("name") for task in wire["tasks"]
-}
-assert wire["tasks"].index(task_named(wire["tasks"], "Wire DNS")) < wire["tasks"].index(
-    task_named(wire["tasks"], "Configure Uptime Kuma through its published Kubernetes route")
-)
-assert "record_guest_names" in str(task_named(wire["tasks"], "Record the app on its Proxmox guest"))
+# Kubernetes sets Kuma up through its route, so after the wiring: the deploy-wire hook
+# configures it, records the monitoring key and then registers Kuma's own monitor.
+wire = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/deploy-wire.yml"))[0]
+assert wire["when"] == "app_config.hosting.method == 'kubernetes'"
+assert [t.get("ansible.builtin.include_tasks") for t in wire["block"]] == [
+    "configure-kubernetes.yml", "record-facts.yml", "../../../tasks/wiring/uptime-kuma.yml",
+]
+record = yaml.safe_load(read("ansible/roles/uptime-kuma/tasks/deploy-record.yml"))[0]
+assert "app_config.hosting.method in ['docker', 'native']" in record["when"]
 
 manifest = list(yaml.safe_load_all(render(
     read("ansible/roles/uptime-kuma/templates/manifest.yaml.j2"),
@@ -168,9 +157,8 @@ registry_facts = task_named(
 )
 assert "kuma_url" in registry_facts["ansible.builtin.set_fact"]
 assert "kuma_admin_username" in registry_facts["ansible.builtin.set_fact"]
-self_monitor = task_named(wire["tasks"], "Register uptime monitor")
+# An unanswered route is a reported gap, which fails the Deploy before its notice.
+self_monitor = wire["block"][2]
 assert any("_kuma_k8s_route_reachable" in condition for condition in self_monitor["when"])
-notify = task_named(wire["tasks"], "Notify deployment complete")
-assert "published route did not answer" in notify["vars"]["notify_message"]
 
 print("Uptime Kuma: opt-in Kubernetes deploy, shared setup and cross-method recovery passed")
