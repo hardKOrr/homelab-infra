@@ -28,6 +28,10 @@
       X-Plex-Token: "{{ _plex_server_token }}"
     status_code: 200
   register: _plex_hardware_put
+  # Right after its first claim Plex restarts its server and refuses calls for a moment.
+  until: _plex_hardware_put.status | default(0) == 200
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
   failed_when: false
   when: >-
     _plex_hardware_codecs_current != _plex_hardware_transcoding_value
