@@ -3,7 +3,10 @@
 # Inverse of tasks/wiring/opnsense.yml. Called by playbooks/apps/remove.yml.
 #
 # Wiring contract (vars supplied by the calling playbook):
-#   wiring_domain:  full domain of the record to remove
+#   wiring_domain:    full domain of the record to remove
+#   wiring_app_name:  the instance; only its own override (description
+#                     "homelab-infra: <instance>", as the wire half writes it) is removed,
+#                     never another instance's or an operator's record for the same name
 #
 # Optional overrides (must match what the wire half used):
 #   wiring_hostname:    hostname portion  (default: first label of wiring_domain)
@@ -26,6 +29,7 @@
     _opn_hostname: "{{ wiring_hostname | default(wiring_domain.split('.')[0]) }}"
     _opn_zone: "{{ wiring_dns_domain | default(wiring_domain.split('.')[1:] | join('.')) }}"
     _opn_validate: "{{ homelabinfra_infra.dns.validate_certs | default(false) }}"
+    _opn_owner_description: "homelab-infra: {{ wiring_app_name | default(_opn_hostname) }}"
   block:
     - name: Unwire OPNsense | Assert wiring contract vars
       ansible.builtin.assert:
@@ -61,6 +65,7 @@
           {{ (_opn_search.json.rows | default([]))
              | selectattr('hostname', 'equalto', _opn_hostname)
              | selectattr('domain', 'equalto', _opn_zone)
+             | selectattr('description', 'equalto', _opn_owner_description)
              | list | first | default({}) }}
 
     - name: Unwire OPNsense | Delete host override
