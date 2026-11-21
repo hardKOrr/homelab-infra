@@ -33,9 +33,14 @@ module.exports = async ({ page, step, url, secrets }) => {
   };
 
   await step('sign in with the server password', async () => {
-    // Actual 26.11 opens on a welcome screen before it routes to its sign-in page.
-    await page.goto(`${base}/login`);
-    await page.locator('input[type=password]').waitFor({ timeout: 60000 });
+    // Actual 26.11 greets a new browser with a welcome screen; Start budgeting leads to
+    // the sign-in page. Older versions open on the sign-in page.
+    await page.goto(base);
+    const password = page.locator('input[type=password]');
+    const start = page.getByText('Start budgeting');
+    await password.or(start).first().waitFor({ timeout: 60000 });
+    if (await start.isVisible()) await start.click();
+    await password.waitFor({ timeout: 60000 });
     await page.locator('input[type=password]').fill(secrets.server_password);
     await page.keyboard.press('Enter');
     await page.getByText('Create new file').or(page.getByText('Import file')).first().waitFor();
