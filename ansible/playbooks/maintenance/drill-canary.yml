@@ -54,7 +54,7 @@
           ansible.builtin.include_tasks: ../../tasks/drill/sso-owner.yml
 
         - name: Stop before the canary
-          ansible.builtin.meta: end_playbook
+          ansible.builtin.meta: end_play
 
     - name: Resolve the canary
       ansible.builtin.set_fact:
@@ -120,7 +120,7 @@
     _dc_file: "{{ _dc._dc_marker_dir }}/.lab-drill-canary"
   tasks:
     - name: Marker canary
-      when: not _dc._dc_hook.stat.exists and _dc._rat_kind != 'kubernetes'
+      when: drill_action != 'owner' and not _dc._dc_hook.stat.exists and _dc._rat_kind != 'kubernetes'
       block:
         - name: Require the marker directory
           ansible.builtin.stat:
