@@ -34,7 +34,22 @@
   retries: "{{ tautulli_http_retries }}"
   delay: "{{ tautulli_http_delay }}"
   changed_when: false
+  failed_when: false
   no_log: true
+
+# The request carries the API key, so its result stays hidden; the outcome prints here.
+- name: Require Tautulli to list the Plex admin
+  ansible.builtin.assert:
+    that:
+      - _tautulli_users.status | default(0) == 200
+      - >-
+        (_tautulli_users.json.response.data | default([])
+         | selectattr('is_admin', 'equalto', 1) | list | length) > 0
+    fail_msg: >-
+      Tautulli did not import a Plex admin after {{ tautulli_http_retries }} tries:
+      get_users answered HTTP {{ _tautulli_users.status | default('nothing') }} with
+      {{ _tautulli_users.json.response.data | default([]) | length }} user(s). Check that
+      the Plex server it points at is claimed and answering.
 
 - name: Store and verify the Tautulli API key
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
