@@ -68,6 +68,18 @@
         _deploy_own_defaults: "{{ _app_defaults[(app | replace('-', '_')) ~ '_defaults'] }}"
 
   tasks:
+    # Hook results are localhost facts, and one ansible-playbook run can deploy several
+    # apps (bootstrap chains them), so clear what an earlier app's hooks set.
+    - name: Clear the hook results of an earlier Deploy in this run
+      ansible.builtin.set_fact:
+        deploy_guest_provided: false
+        deploy_host_mounts: []
+        deploy_host_mounts_owner: {}
+        deploy_host_mounts_own_node: false
+        native_guest_database: false
+        firewall_inbound_ports: {}
+        deploy_notify_note: ""
+
     - name: Resolve the estate, role and published hostname
       ansible.builtin.include_tasks: ../../tasks/apps/deploy-resolve.yml
 
@@ -301,5 +313,5 @@
         notify_message: >-
           {{ instance }} is running on {{ {'docker': 'Docker', 'native': 'its own guest',
           'kubernetes': 'the Kubernetes backend'}[app_config.hosting.method] }}{{
-          (' at https://' ~ _deploy_fqdn) if _deploy_routed | bool else '' }}. {{ deploy_notify_note | default((app_config.deploy | default({})).notify_note | default('')) }}
+          (' at https://' ~ _deploy_fqdn) if _deploy_routed | bool else '' }}. {{ deploy_notify_note | default('', true) or (app_config.deploy | default({})).notify_note | default('') }}
       when: not (recovery_isolated | default(false) | bool)

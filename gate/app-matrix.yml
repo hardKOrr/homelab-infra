@@ -887,6 +887,7 @@ home-assistant:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/wiring/proxy-sources.yml
     - tasks/stack/compose-deploy.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -931,6 +932,7 @@ home-assistant:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/bitwarden/upsert-item.yml
+    - tasks/wiring/proxy-sources.yml
     - tasks/backup/pbs-client-install.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
