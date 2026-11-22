@@ -17,13 +17,20 @@
 - name: Observability restore | Reapply the target's administrator password
   ansible.builtin.command:
     argv: >-
-      {{ ['docker', 'exec', instance ~ '-grafana', 'sh', '-c',
-          'grafana cli --homepath /usr/share/grafana admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"']
+      {{ ['docker', 'exec', instance ~ '-grafana', 'sh', '-c', _obs_reset_docker]
          if app_config.hosting.method | default('docker') == 'docker'
-         else ['runuser', '-u', 'grafana', '--', 'sh', '-c',
-               'set -a; . /etc/default/grafana-server; set +a; grafana cli --homepath "$GRAFANA_HOME"
-                --config "$CONF_FILE" --configOverrides "cfg:default.paths.data=$DATA_DIR"
-                admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"'] }}
+         else ['runuser', '-u', 'grafana', '--', 'sh', '-c', _obs_reset_native] }}
+    # The grafana user cannot read root's home, and Grafana's CLI reads its working directory.
+    chdir: /
+  vars:
+    _obs_reset_docker: >-
+      grafana cli --homepath /usr/share/grafana admin reset-admin-password
+      "$GF_SECURITY_ADMIN_PASSWORD"
+    _obs_reset_native: >-
+      set -a; . /etc/default/grafana-server; set +a;
+      grafana cli --homepath "$GRAFANA_HOME" --config "$CONF_FILE"
+      --configOverrides "cfg:default.paths.data=$DATA_DIR"
+      admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"
   register: _observability_restore_password_reset
   changed_when: true
   failed_when: false
