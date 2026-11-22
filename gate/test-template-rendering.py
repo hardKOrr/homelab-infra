@@ -1423,6 +1423,17 @@ def wireguard_opens_its_udp_forward_before_deploy():
                                                 "port": defaults["app"]["port"], "enabled": True}]
     assert not defaults["firewall"].get("after_deploy", False)
     hook = yaml.safe_load(read("ansible/roles/wireguard/tasks/deploy-prepare.yml"))
+    # A Docker WireGuard refuses a stack another app's defaults deploy to, read from every
+    # app's defaults file, not only its own.
+    refuse = task_named(hook, "WireGuard | Refuse a stack another app deploys to")
+    from ansible.plugins.loader import init_plugin_loader
+    init_plugin_loader()
+    for stack, shared in (("media", True), ("services-lxc", False)):
+        names = render(refuse["vars"]["_wg_shared_with"],
+                       {"_wg_defaults_dir": str(ROOT / "ansible/vars/app-defaults"),
+                        "app_config": {"stack": stack}})
+        assert (len(names) > 0) is shared, (stack, names)
+        assert not shared or "plex" in names, names
     task = task_named(hook, "WireGuard | Hand deploy.yml the forwarded port")
     ports = render(task["ansible.builtin.set_fact"]["firewall_inbound_ports"],
                    {"app_config": defaults, "instance": "wireguard"})

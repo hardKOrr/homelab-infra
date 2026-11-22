@@ -2,21 +2,28 @@
 # Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). The WAN forward
 # targets app.port, and a Docker WireGuard needs a stack of its own: it takes the guest's
 # UDP port and kernel module settings, which no other app on a stack should share.
+# Every other app's default stack, read from its defaults file as text (the defaults hold
+# templates this hook cannot render).
 - name: WireGuard | Refuse a stack another app deploys to
   ansible.builtin.assert:
-    that: >-
-      _wg_shared_with | length == 0
+    that: _wg_shared_with | length == 0
     fail_msg: >-
       WireGuard on Docker needs its own stack, but {{ app_config.stack }} is the default
       stack of {{ _wg_shared_with | join(', ') }}. Name a stack no other app uses.
     quiet: true
   vars:
     _wg_shared_with: >-
-      {{ _app_defaults | dict2items
-         | rejectattr('key', 'equalto', 'wireguard_defaults')
-         | selectattr('value.stack', 'defined')
-         | selectattr('value.stack', 'equalto', app_config.stack)
-         | map(attribute='key') | map('regex_replace', '_defaults$', '') | list }}
+      {%- set out = [] -%}
+      {%- for path in query('ansible.builtin.fileglob', _wg_defaults_dir ~ '/*.yml') | sort -%}
+      {%- set name = path | basename | splitext | first -%}
+      {%- if not name.startswith('_') and name != 'wireguard'
+            and app_config.stack in (lookup('ansible.builtin.file', path)
+                                     | regex_findall('(?m)^  stack: *["\']?([A-Za-z0-9_.-]+)')) -%}
+      {%- set _ = out.append(name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _wg_defaults_dir: "{{ playbook_dir }}/../../vars/app-defaults"
   when: app_config.hosting.method == 'docker'
 
 - name: WireGuard | Hand deploy.yml the forwarded port
