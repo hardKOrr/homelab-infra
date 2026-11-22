@@ -17,33 +17,36 @@ schema_version: 2
 #
 # FIELDS
 #   name      display name; the Deploy job is "Deploy <name>" and the leaf folder is <name>
-#   job       the deploy job file in rundeck/jobs/
+#   summary   the Deploy job's one line of operator text, after "Deploy or converge <name>,":
+#             what the app is and anything to do before or after a Deploy. The rest of
+#             that description is read from the app's defaults (rundeck/jobs/deploy-app.yaml).
+#   deploy_uuid  the Deploy job's Rundeck UUID; never change it, history is keyed on it
+#   job       instead of summary and deploy_uuid: the app's own Deploy job file in
+#             rundeck/jobs/, only for Caddy, k3s Cluster, PBS, OPNsense and PDM
 #   root      Applications (optional software) | Platform (capabilities the lab runs on)
 #   category  first group segment under the root
 #   type      second group segment; omit for Platform entries, which have no type axis
 #   essential true withholds the Remove job — the platform cannot function without it
-#   extra     day-2 actions beyond the ones the hosting kind implies (see rundeck/app-actions.yml)
-#   exclude   derived actions this application cannot implement safely
+#   extra     app-specific actions (rundeck/app-actions.yml `app_actions`) this app offers
+#   exclude   standard actions this application cannot implement truthfully, with the
+#             reason in a comment beside it
 #   scope     REQUIRED. estate = one deployment per estate, so its instances are named
 #             <app>-<estate>[-<variant>]. lab = one deployment serves every estate.
 #             There is no default: the shared side of the estate boundary is a deliberate,
 #             named exception, not whatever nobody got round to classifying.
-#   actions   explicit action list, replacing derivation entirely. Use only when the
-#             hosting kind genuinely does not describe the thing (the k3s cluster).
 #
-# HOSTING IS NOT DECLARED HERE. Which day-2 actions exist are derived from
-# `hosting.method` in ansible/vars/app-defaults/<slug>.yml, with ISO-installed native
-# appliances retaining their separate action family. Deriving the ACTION SET from
-# hosting is not the same thing as grouping by hosting, which this file still forbids.
+# HOSTING IS NOT DECLARED HERE. Which standard actions an app gets follows from facts its
+# ansible/vars/app-defaults/<slug>.yml already states (rundeck/app-actions.yml lists
+# them); grouping by hosting is still forbidden.
 
 applications:
   authentik:
     name: Authentik
-    job: deploy-authentik.yaml
+    summary: the lab's single sign-on provider.
+    deploy_uuid: 8a71d987-b7cc-5b46-969b-4c54033676d4
     root: Platform
     category: Access and Identity
     scope: estate
-    extra: [backup, restore]
     # Authentik is a four-service Compose project. The generic rollback seam can only
     # select and pin one image, so presenting Rollback Authentik would actually roll back
     # PostgreSQL (the first service) and then claim the application was rolled back.
@@ -57,43 +60,42 @@ applications:
     scope: lab                          # the platform's single TLS edge fronts every estate
     # Its application archive exists only on Kubernetes; a native or Docker Caddy
     # refuses Backup/Restore App in one sentence and recovers through the guest jobs.
-    extra: [backup, restore]
     essential: true
 
   postgresql:
     name: PostgreSQL
-    job: deploy-postgresql.yaml
+    summary: an independently managed PostgreSQL backend that apps request databases from.
+    deploy_uuid: 8ab3d955-3cb1-45cb-92bd-4f752ef43078
     root: Platform
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
-    extra: [backup, restore]
 
   mysql:
     name: MySQL
-    job: deploy-mysql.yaml
+    summary: an independently managed MySQL backend that apps request databases from.
+    deploy_uuid: 8510fac0-c18f-4fe7-9e17-a8f235e1208a
     root: Platform
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
-    extra: [backup, restore]
 
   influxdb:
     name: InfluxDB
-    job: deploy-influxdb.yaml
+    summary: an independently managed InfluxDB OSS v2 backend.
+    deploy_uuid: 4ce2f0a9-b6d3-4eb2-9ed7-08d818ae8bac
     root: Platform
     category: Data Services
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
-    extra: [backup, restore]
 
   redis:
     name: Redis
-    job: deploy-redis.yaml
+    summary: an independently managed Redis cache backend.
+    deploy_uuid: 567d0a1e-a473-4ab8-9433-46ecd1b481f3
     root: Platform
     category: Data Services
     scope: lab
-    extra: [backup, restore]
   opnsense:
     name: OPNsense
     job: deploy-opnsense.yaml
@@ -102,75 +104,77 @@ applications:
     scope: lab
   wireguard:
     name: WireGuard
-    job: deploy-wireguard.yaml
+    summary: inbound WireGuard VPN server; its keys live in Vaultwarden and survive Remove.
+    deploy_uuid: 65e21baf-5014-5a8e-a6ed-60cc4a7ad731
     root: Platform
     category: Network
     scope: lab
-    actions: [backup, configure, restart, restore, tail, wireguard_remove]
+    # Its Remove keeps the Vaultwarden item holding the tunnel keys.
+    extra: [wireguard_remove]
 
   bazarr:
     name: Bazarr
-    job: deploy-bazarr.yaml
+    summary: subtitle manager for the media stack; its API key is kept in Vaultwarden.
+    deploy_uuid: c5f2d7db-e1e6-5cb0-ae75-2d3f8741a28f
     root: Applications
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   deemix:
     name: Deemix
-    job: deploy-deemix.yaml
+    summary: Lidarr's Deezer download client; store a current ARL in hidden field `arl` of its Vaultwarden item first, then run Wire Media Stack.
+    deploy_uuid: 6e73af16-adcc-4bb5-9418-c2bc549cbf87
     root: Applications
     category: Media & Entertainment
     type: Download Clients
     scope: estate
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   jellyfin:
     name: Jellyfin
-    job: deploy-jellyfin.yaml
+    summary: media server; first-run setup, the admin account and a library per *arr path are created for you.
+    deploy_uuid: d4ef9a86-ba44-4fa3-99b0-468b3e541f32
     root: Applications
     category: Media & Entertainment
     type: Media Servers
     scope: estate
-    extra: [backup, restore]
 
   emby:
     name: Emby
-    job: deploy-emby.yaml
+    summary: media server; first-run setup, the admin account and a library per *arr path are created for you.
+    deploy_uuid: ff92e0a0-00dd-407a-9f77-f93293e5a366
     root: Applications
     category: Media & Entertainment
     type: Media Servers
     scope: estate
     # Emby owns its admin login and native /config recovery; shared media is external.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   navidrome:
     name: Navidrome
-    job: deploy-navidrome.yaml
+    summary: music server over the read-only music library; create its first administrator in its own setup screen.
+    deploy_uuid: 4b40d65d-6f3f-4ba2-83f7-a6a7e6de3d4b
     root: Applications
     category: Media & Entertainment
     type: Media Servers
     scope: estate
     # Only Navidrome application data is recoverable; its external music library is
     # mounted read-only and remains outside the named Compose project.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   immich:
     name: Immich
-    job: deploy-immich.yaml
+    summary: photo library on named PostgreSQL (pgvector) and Redis backends; authorize its media_storage mount in the instance config first.
+    deploy_uuid: a8b2efd1-6e75-471e-859d-6723e6ce6be1
     root: Applications
     category: Media & Entertainment
     type: Photo Management
     scope: estate
     # Immich owns a role-backed database/media recovery path in addition to the generic
     # Docker actions. Its named external backends and dedicated GPU VM are not sidecars.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   plex:
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
     name: Plex
-    job: deploy-plex.yaml
+    summary: Plex Media Server; store a fresh claim token in its Vaultwarden item before the first deploy.
+    deploy_uuid: 7bc5b63a-4e2b-44ac-b29f-60313cc06b1b
     root: Applications
     category: Media & Entertainment
     type: Media Servers
@@ -178,16 +182,17 @@ applications:
 
   tautulli:
     name: Tautulli
-    job: deploy-tautulli.yaml
+    summary: Plex statistics; deploy Plex first.
+    deploy_uuid: 1b67d2e4-908d-44c4-9f05-d828d09d497c
     root: Applications
     category: Media & Entertainment
     type: Media Analytics
     scope: estate
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   jellyseerr:
     name: Jellyseerr
-    job: deploy-jellyseerr.yaml
+    summary: media request front end; sign in once in its own UI to connect a media server and the *arrs.
+    deploy_uuid: 3f1a9c7e-6b52-4d18-9e0a-8c4f2d6a1b73
     root: Applications
     category: Media & Entertainment
     type: Request Management
@@ -195,16 +200,17 @@ applications:
 
   kometa:
     name: Kometa
-    job: deploy-kometa.yaml
+    summary: scheduled Plex metadata and collection worker; store config.yml as hidden field `config_yml` of its Vaultwarden item first.
+    deploy_uuid: 0cbefb9c-0632-4d22-8af8-79ee34b3d9d5
     root: Applications
     category: Media & Entertainment
     type: Library Management
     scope: estate
-    exclude: [backup, restore]
 
   maintainerr:
     name: Maintainerr
-    job: deploy-maintainerr.yaml
+    summary: media library cleanup; sign in once in its own UI to connect a media server and the *arrs.
+    deploy_uuid: aa5a9d81-e109-486a-9e14-87a28aaf646f
     root: Applications
     category: Media & Entertainment
     type: Library Management
@@ -212,7 +218,8 @@ applications:
 
   flaresolverr:
     name: FlareSolverr
-    job: deploy-flaresolverr.yaml
+    summary: Cloudflare-solving proxy for Prowlarr, reached on a fixed NodePort; point Prowlarr's FlareSolverr setting at it by hand.
+    deploy_uuid: 35b7188f-ae43-47f1-a943-a6b109a7ea9f
     root: Applications
     category: Media & Entertainment
     type: Indexer Management
@@ -222,21 +229,15 @@ applications:
     # estate-routed app's per-instance subdomain) from needing one allocation per
     # estate — see ansible/vars/app-defaults/flaresolverr.yml.
     scope: lab
-    # Stateless — no config, no database, nothing a backup would recover that a redeploy
-    # does not already give back. See vars/app-defaults/flaresolverr.yml.
-    exclude: [backup, restore]
 
   unpackerr:
     name: Unpackerr
-    job: deploy-unpackerr.yaml
+    summary: extracts completed downloads for every registered *arr; no UI.
+    deploy_uuid: a0b6b4f9-519d-500c-8820-76f2ea3d3e9f
     root: Applications
     category: Media & Entertainment
     type: Download Clients
     scope: estate
-    # Unpackerr is a stateless daemon. Its Arr settings are reconstructed from
-    # the media registry and Vaultwarden at every deploy, so backup/restore
-    # would not recover application state.
-    exclude: [backup, restore]
 
   k3s-cluster:
     name: k3s Cluster
@@ -246,20 +247,25 @@ applications:
     scope: lab                          # one cluster hosts workloads from every estate
     # Cluster Remove is explicit and destructive: remove hosted apps first, then confirm
     # that every node VM disk and local-path volume can be deleted.
-    actions: [configure, remove_k3s_cluster]
+    extra: [remove_k3s_cluster]
+    # The cluster is a set of node VMs, not one guest running one service, so the
+    # one-guest Restart and Tail actions have nothing to target.
+    exclude: [restart, tail]
 
   lidarr:
     name: Lidarr
-    job: deploy-lidarr.yaml
+    summary: music library automation; run Wire Media Stack afterward.
+    deploy_uuid: 6edfcf84-162a-5368-9a79-e46ec196a0dc
     root: Applications
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [backup, restore, migrate]
+    extra: [migrate]
 
   mixpost:
     name: Mixpost
-    job: deploy-mixpost.yaml
+    summary: social-media scheduler with its own login; its APP_KEY is never rotated on a re-run.
+    deploy_uuid: 0816fdee-48a4-5f9a-b0d3-20e8bccfacbc
     root: Applications
     category: Content & Publishing
     type: Social Publishing
@@ -267,31 +273,29 @@ applications:
 
   homepage:
     name: Homepage
-    job: deploy-homepage.yaml
+    summary: the lab dashboard, regenerated from topology facts on every run.
+    deploy_uuid: 7ca0f8e4-d8dd-5a85-8ed4-8449777fdfe8
     root: Applications
     category: Management
     type: Dashboards
     # One topology registry serves every estate, so the generated dashboard is lab-wide.
     scope: lab
-    # Homepage has only generated ConfigMap data. A backup or restore action would be a
-    # misleading no-op; redeploy regenerates its complete state from topology facts.
-    exclude: [backup, restore]
 
   ntfy:
     name: Ntfy
-    job: deploy-ntfy.yaml
+    summary: the platform notification hub.
+    deploy_uuid: a4a83926-957f-59c8-a60d-64469151f05d
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one notification hub for the whole lab
-    extra: [backup, restore]
 
   observability:
     name: Observability
-    job: deploy-observability.yaml
+    summary: Prometheus and Grafana.
+    deploy_uuid: 3c52788e-f659-5c2f-90f9-60ddf6144237
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one metrics and dashboard stack covers every guest
-    extra: [backup, restore]
     # Prometheus and Grafana are separate services. The generic rollback seam cannot
     # truthfully roll this application back as one unit.
     exclude: [rollback]
@@ -310,21 +314,22 @@ applications:
     category: Management
     scope: lab                          # one PDM inventory spans explicitly authorized lab remotes
     # Installer VM lifecycle is intentionally separate from guest-agent actions.
-    actions: [pdm_backup, pdm_restore, pdm_remove]
+    extra: [pdm_backup, pdm_restore, pdm_remove]
 
   prowlarr:
     name: Prowlarr
-    job: deploy-prowlarr.yaml
+    summary: indexer manager for the *arrs; run Wire Media Stack afterward.
+    deploy_uuid: 8fa8c215-104e-50d2-ab75-6ce219aac208
     root: Applications
     category: Media & Entertainment
     type: Indexer Management
     scope: estate
-    extra: [backup, restore, migrate]
+    extra: [migrate]
 
   qbittorrent:
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
     name: qBittorrent
-    job: deploy-qbittorrent.yaml
+    summary: torrent download client; run Wire Media Stack afterward.
+    deploy_uuid: 6d0f2353-96d6-59a6-8986-b57b9b06ceb7
     root: Applications
     category: Media & Entertainment
     type: Download Clients
@@ -332,68 +337,71 @@ applications:
 
   radarr:
     name: Radarr
-    job: deploy-radarr.yaml
+    summary: film library automation; run Wire Media Stack afterward.
+    deploy_uuid: 7218f07d-24d2-547a-96d8-146bbbf2ab8f
     root: Applications
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [backup, restore, migrate]
+    extra: [migrate]
 
   sabnzbd:
     name: SABnzbd
-    job: deploy-sabnzbd.yaml
+    summary: Usenet download client; registers itself with deployed Usenet consumers.
+    deploy_uuid: 2fad81ab-4d7d-5eac-89f2-0a0fa7862e9b
     root: Applications
     category: Media & Entertainment
     type: Download Clients
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
     scope: estate
 
   slskd:
     name: slskd
-    job: deploy-slskd.yaml
+    summary: Lidarr's Soulseek download client; store `slsk_username` and `slsk_password` in its Vaultwarden item first, then run Wire Media Stack.
+    deploy_uuid: 7c1e4a3f-6b9d-4f2a-8e7c-3d5a9b0c1f6e
     root: Applications
     category: Media & Entertainment
     type: Download Clients
     scope: estate
-    extra: [backup, restore]
 
   sonarr:
     name: Sonarr
-    job: deploy-sonarr.yaml
+    summary: television library automation; run Wire Media Stack afterward.
+    deploy_uuid: 10893fda-28ad-5771-88ee-f4c3a51f24e7
     root: Applications
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [backup, restore, migrate]
+    extra: [migrate]
 
   uptime-kuma:
     name: Uptime Kuma
-    job: deploy-uptime-kuma.yaml
+    summary: the platform uptime monitor; later Deploys add their own monitors.
+    deploy_uuid: a2035f11-a8dc-5574-b9de-7411820c51ba
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one status view of the whole lab
-    extra: [backup, restore]
 
   vaultwarden:
     name: Vaultwarden
-    job: deploy-vaultwarden.yaml
+    summary: the platform secret store; re-running this job is its update path.
+    deploy_uuid: 9cddd873-1100-5656-b827-567cd642f709
     root: Platform
     category: Access and Identity
     scope: lab                          # one vault is the platform's root of trust
-    extra: [backup, restore]
     essential: true
 
   mariadb:
     name: MariaDB
-    job: deploy-mariadb.yaml
+    summary: an independently managed MariaDB backend that apps request databases from.
+    deploy_uuid: 04d4447f-e4b3-4d73-a493-96298ff5029d
     root: Platform
     category: Data Services
     scope: lab
-    extra: [backup, restore]
 
   odoo:
     name: Odoo Community CRM
-    job: deploy-odoo.yaml
+    summary: Odoo Community CRM on a named PostgreSQL backend (postgresql-odoo by default).
+    deploy_uuid: 8f34bd88-1e15-4b2c-91a4-odoo4130001
     root: Applications
     category: Business and CRM
     type: Customer Relationship Management
@@ -401,48 +409,46 @@ applications:
     # Odoo owns an application-consistent PostgreSQL-plus-filestore recovery path. Keep
     # the generic backup/restore actions beside this product rather than treating its
     # shared services guest snapshot as an application-only archive.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   searxng:
     name: SearXNG
-    job: deploy-searxng.yaml
+    summary: metasearch engine with no login and no stored state.
+    deploy_uuid: 1a2f8c3e-6b7d-5e91-8f02-searxng00001
     root: Applications
     category: Search & Discovery
     scope: estate
-    # SearXNG declares no `backup:` block — see vars/app-defaults/searxng.yml — so a
-    # generated Backup/Restore job would always find nothing to run.
-    exclude: [backup, restore]
 
   mautic:
     name: Mautic
-    job: deploy-mautic.yaml
+    summary: marketing automation on a named MariaDB backend; configure the platform mail contract first or campaigns cannot send.
+    deploy_uuid: 3d5e9a71-4c2b-5f88-9a01-mautic000001
     root: Applications
     category: Marketing
     type: Email Campaigns
     scope: estate
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   bookstack:
     name: BookStack
-    job: deploy-bookstack.yaml
+    summary: documentation wiki on a named MariaDB backend (mariadb-bookstack by default).
+    deploy_uuid: 5f2ccf37-40b5-4b10-9c47-6a1c2d3e4f50
     root: Applications
     category: Content & Publishing
     type: Documentation
     scope: estate
-    extra: [backup, restore]
 
   wordpress:
     name: WordPress
-    job: deploy-wordpress.yaml
+    summary: WordPress site on a named MariaDB backend (mariadb-wordpress by default).
+    deploy_uuid: 6f2a4b76-4e54-4c35-8d1e-410000000001
     root: Applications
     category: Content & Publishing
     type: Website
     scope: estate
-    extra: [backup, restore]
 
   hi-events:
     name: Hi.Events
-    job: deploy-hi-events.yaml
+    summary: public event ticketing on a named PostgreSQL backend; refuses to deploy until the platform mail contract is configured.
+    deploy_uuid: 7be2a9d4-1f6c-5a33-b7de-hievents0001
     root: Applications
     category: Events
     type: Ticketing
@@ -450,37 +456,39 @@ applications:
 
   n8n:
     name: n8n
-    job: deploy-n8n.yaml
+    summary: workflow automation on a named PostgreSQL backend (postgresql-n8n by default).
+    deploy_uuid: 4e819c67-7cf4-4a31-8b72-08d1c5e5a8c1
     root: Applications
     category: Automation
     type: Workflow Automation
     scope: estate
     # n8n owns native application-consistent backup and restore.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   plane:
     name: Plane
-    job: deploy-plane.yaml
+    summary: project planning on named PostgreSQL and Redis backends with a local MinIO store.
+    deploy_uuid: 1c5d6f93-0f5f-43b6-a0d7-182c5e31aa21
     root: Applications
     category: Planning and Collaboration
     type: Project Management
     scope: estate
     # Plane has native recovery for its multi-container Compose unit; the generic
     # one-image rollback action cannot truthfully converge all of its services.
-    actions: [backup, configure, remove, restart, restore, tail]
+    exclude: [rollback]
 
   forgejo:
     name: Forgejo
-    job: deploy-forgejo.yaml
+    summary: source control on a named PostgreSQL backend (postgresql-forgejo by default), with Git SSH on its own port.
+    deploy_uuid: c2d4a6e8-1a21-4c5d-8f90-27be3d5f7a19
     root: Applications
     category: Developer Tools
     type: Source Control
     scope: estate
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   forgejo-runner:
     name: Forgejo Runner
-    job: deploy-forgejo-runner.yaml
+    summary: CI runner for a named Forgejo instance; deploy that Forgejo and store the runner token in Vaultwarden first.
+    deploy_uuid: 70b7c182-8ef3-4a56-b901-36cf4d6e8a20
     root: Applications
     category: Developer Tools
     type: CI
@@ -490,41 +498,39 @@ applications:
     exclude: [rollback]
   actual-budget:
     name: Actual Budget
-    job: deploy-actual-budget.yaml
+    summary: the budgeting server; its server password is generated once into Vaultwarden, so read it there on first use.
+    deploy_uuid: 5f44f3e0-1e0e-47bb-9874-143000000001
     root: Applications
     category: Personal Finance
     type: Budgeting
     scope: estate
-    # Unlike ordinary Docker applications, Actual's role owns an application-consistent
-    # per-app PBS archive and restore path. Explicit actions keep those jobs local to this
-    # application instead of changing the default action set for every Docker stack app.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   karakeep:
     name: Karakeep
-    job: deploy-karakeep.yaml
+    summary: bookmark and read-later service with its own logins.
+    deploy_uuid: 6f8d4f62-3c25-4f63-9e19-0b9fd65d6e1e
     root: Applications
     category: Search & Discovery
     type: Bookmarks and Read Later
     scope: estate
-    actions: [backup, configure, remove, restart, restore, tail]
     # Karakeep is a multi-container Compose recovery unit; the generic one-image
     # rollback action cannot truthfully converge its web, Chrome, and Meilisearch images.
     exclude: [rollback]
   frigate:
     name: Frigate
-    job: deploy-frigate.yaml
+    summary: camera recorder; name the recording mount, render node and Coral mapping in the instance config first (see the role README).
+    deploy_uuid: 4c6ed4df-7d8c-4ae6-90c6-f3cc6b7ce0e9
     root: Applications
     category: Media & Entertainment
     type: Video Surveillance
     scope: estate
-    extra: [backup, restore]
     # Recordings live on an external retention-sized mount; its dedicated GPU VM owns
     # the iGPU and Coral, so this is not a shared media-stack tenant.
 
   home-assistant:
     name: Home Assistant
-    job: deploy-home-assistant.yaml
+    summary: home automation on its own VM; name the Zigbee coordinator's dedicated USB mapping in the instance config first.
+    deploy_uuid: 8f2e5b1e-3b1a-4e95-8d0f-76ea5d0a0c2f
     root: Applications
     category: Home Automation
     type: Smart Home
@@ -532,33 +538,33 @@ applications:
     # Home Assistant is Docker on its own VM so its Zigbee coordinator can use a dedicated
     # named Proxmox USB resource mapping. Its role owns application-consistent config/state
     # backup and restore in addition to the generic Docker actions.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   ollama:
     name: Ollama
-    job: deploy-ollama.yaml
+    summary: 'local model server on a dedicated GPU; name the PCI address under a `mode: dedicated` entry in config/proxmox.yml first.'
+    deploy_uuid: f976aff7-b985-4251-811a-ff2856282351
     root: Applications
     category: AI and Machine Learning
     type: Model Serving
     scope: estate
     # Ollama owns a GPU-class Docker VM with an exact PCI resource mapping and a large
     # application-consistent model/config archive.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   litellm:
     name: LiteLLM
-    job: deploy-litellm.yaml
+    summary: model gateway on a named PostgreSQL backend; store provider keys in its Vaultwarden item first.
+    deploy_uuid: 8d2b9f5a-5e6a-4d0e-9a11-1451b7f0c2aa
     root: Applications
     category: AI and Machine Learning
     type: Model Gateway
     scope: estate
     # LiteLLM is a stateless Kubernetes proxy. Routing config is a ConfigMap, provider
     # keys are Vaultwarden-only, and virtual-key/usage state belongs to named PostgreSQL.
-    actions: [backup, configure, remove, restore]
 
   open-webui:
     name: Open WebUI
-    job: deploy-open-webui.yaml
+    summary: chat interface; name an already-deployed Ollama or LiteLLM instance in the instance config first.
+    deploy_uuid: 7d6b3f6f-45b2-4de9-9f33-5b0f8a0d1490
     root: Applications
     category: AI and Machine Learning
     type: Chat Interface
@@ -566,15 +572,14 @@ applications:
     # Open WebUI owns a persistent data directory and an application-consistent PBS
     # archive. Its selected Ollama/LiteLLM endpoints are named dependencies; Remove App
     # only stops/removes Open WebUI's Compose project and data path.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   comfyui:
     name: ComfyUI
-    job: deploy-comfyui.yaml
+    summary: 'image-generation workbench on a dedicated GPU; name the PCI address under a `mode: dedicated` entry in config/proxmox.yml first.'
+    deploy_uuid: 2f1f6f4d-94fd-4e7d-a8f1-4f0a3c2a6d71
     root: Applications
     category: AI and Machine Learning
     type: Image Generation
     scope: estate
     # ComfyUI owns a GPU-class Docker VM with an exact PCI resource mapping and a large
     # application-consistent model/config archive.
-    actions: [backup, configure, remove, restart, restore, rollback, tail]

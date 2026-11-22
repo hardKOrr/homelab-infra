@@ -235,14 +235,11 @@ def check_restore_swap(server):
 def check_contract():
     defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/observability.yml").read_text())[
         "observability_defaults"]
-    catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())[
-        "applications"]["observability"]
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"] == {
         "backup_playbook": "backup-app.yml", "restore_playbook": "restore-app.yml"}
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
-    assert {"backup", "restore"} <= set(catalog["extra"])
     upload = next(task for task in all_tasks(backup_source)
                   if task.get("ansible.builtin.include_tasks", "").endswith("pbs-client-backup.yml"))
     assert upload["vars"]["pbs_client_stop_services"] == "{{ observability_stop_services }}"

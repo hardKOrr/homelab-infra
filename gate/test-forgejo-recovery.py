@@ -23,7 +23,6 @@ from restore_swap_inputs import run_hook, swap_inputs
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 defaults_source = yaml.safe_load((repo / "ansible/vars/app-defaults/forgejo.yml").read_text())
-catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
 hook_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup-quiesced.yml").read_text())
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
@@ -163,8 +162,6 @@ def static_contract():
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
     assert defaults["backup"]["application_consistent"] is True
     assert "postgres_client_image" not in defaults["backup"]
-    assert "backup" in catalog_source["applications"]["forgejo"]["actions"]
-    assert "restore" in catalog_source["applications"]["forgejo"]["actions"]
     forward = defaults["firewall"]["inbound"][0]
     assert forward == {
         "name": "forgejo-ssh", "protocol": "TCP", "port": defaults["app"]["ssh_port"],

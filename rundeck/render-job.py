@@ -4,13 +4,18 @@
 Two kinds of source file live in rundeck/jobs/:
 
   a JOB      — one file, one job. Its group is projected from catalog/applications.yml
-               (a Deploy job) or from rundeck/job-groups.yml (a lab-wide operator job).
+               (the Deploy job of an app with its own `job:`) or from
+               rundeck/job-groups.yml (a lab-wide operator job).
 
   a TEMPLATE — one file, one day-2 ACTION, expanded into one job per application the
                action applies to. rundeck/app-actions.yml says which action a template is
-               and which hosting kinds implement it. The expansion answers the instance,
-               app name and stack tag from the catalog and from the app's own defaults, so
-               the operator is not asked for what the platform already knows.
+               and which facts it requires. The expansion answers the instance, app name
+               and stack tag from the catalog and from the app's own defaults, so the
+               operator is not asked for what the platform already knows.
+
+deploy-app.yaml is the DEPLOY TEMPLATE: one Deploy job per catalog application without a
+`job:` of its own, with that entry's `deploy_uuid` and a description built from its
+`summary:` and its defaults.
 
 Both are rendered by the same entry point and imported by the same loop: a template
 renders as a multi-job YAML document, which the Rundeck import endpoint accepts exactly
@@ -47,8 +52,12 @@ UUID_TOKEN = "%UUID%"
 # keeps its execution history across reimports only if this value never moves.
 UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hardKOrr/homelab-infra")
 
+DEPLOY_TEMPLATE = "deploy-app.yaml"
+
 ROOTS = ("Applications", "Platform")
 HOSTING_KINDS = ("native", "docker", "kubernetes", "appliance")
+# Facts an action may require; rundeck/app-actions.yml defines each one.
+FACTS = ("recovery", "docker", "guest", "removable")
 
 
 def secure_option(name: str, path: str, description: str, *, required: bool = True) -> dict:
@@ -242,14 +251,22 @@ def load_applications() -> dict[str, dict]:
     for slug, entry in applications.items():
         if not isinstance(entry, dict):
             raise ValueError(f"{APPLICATION_CATALOG}: applications.{slug} must be a mapping")
-        missing = [f for f in ("name", "job", "root", "category") if not entry.get(f)]
+        missing = [f for f in ("name", "root", "category") if not entry.get(f)]
         if missing:
             raise ValueError(
                 f"{APPLICATION_CATALOG}: applications.{slug} is missing {', '.join(missing)}"
             )
         root, category = entry["root"], entry["category"]
         app_type = entry.get("type") or ""
-        name, job = entry["name"], entry["job"]
+        name, job = entry["name"], entry.get("job")
+        # An app either keeps its own Deploy job file or takes the Deploy template, which
+        # needs the job's identity and one line of operator text.
+        templated = [field for field in ("summary", "deploy_uuid") if entry.get(field)]
+        if bool(job) == bool(templated) or (templated and len(templated) != 2):
+            raise ValueError(
+                f"{APPLICATION_CATALOG}: applications.{slug} needs either job: (its own Deploy"
+                " file) or both summary: and deploy_uuid: (the Deploy template)"
+            )
         if root not in ROOTS:
             raise ValueError(
                 f"{APPLICATION_CATALOG}: applications.{slug}.root must be one of {ROOTS}"
@@ -263,7 +280,8 @@ def load_applications() -> dict[str, dict]:
             raise ValueError(
                 f"{APPLICATION_CATALOG}: {job} is claimed by {seen_jobs[job]} and {slug}"
             )
-        seen_jobs[job] = slug
+        if job:
+            seen_jobs[job] = slug
 
         defaults = app_defaults_of(slug)
         hosting, stack = hosting_of(defaults, slug)
@@ -301,49 +319,85 @@ def load_applications() -> dict[str, dict]:
             "extra": list(entry.get("extra") or []),
             "exclude": list(entry.get("exclude") or []),
             "scope": scope,
-            "actions": entry.get("actions"),
+            "summary": str(entry.get("summary") or ""),
+            "deploy_uuid": str(entry.get("deploy_uuid") or ""),
+            "defaults": defaults,
+            "facts": {
+                "recovery": bool((defaults.get("recovery") or {}).get("methods")),
+                "docker": any(
+                    str(form).startswith("docker-")
+                    for form in (defaults.get("hosting") or {}).get("supported") or []
+                ),
+                "guest": hosting != "appliance",
+            },
         }
+        if "actions" in entry:
+            raise ValueError(
+                f"{APPLICATION_CATALOG}: applications.{slug}.actions is retired — the"
+                " action set is derived from facts (rundeck/app-actions.yml); use exclude:"
+                " with a reason, or extra: for an app-specific action"
+            )
     return resolved
 
 
 def load_actions() -> dict[str, dict]:
-    actions = load_document(APP_ACTIONS, "actions")
+    """Standard verbs (`actions`) and app-specific ones (`app_actions`), by name."""
     resolved: dict[str, dict] = {}
-    for action, entry in actions.items():
-        if not isinstance(entry, dict) or not entry.get("template"):
-            raise ValueError(f"{APP_ACTIONS}: actions.{action} needs a template")
-        hosting = entry.get("hosting") or []
-        unknown = [kind for kind in hosting if kind not in HOSTING_KINDS]
-        if unknown:
-            raise ValueError(f"{APP_ACTIONS}: actions.{action} names unknown hosting {unknown}")
-        resolved[action] = {
-            "action": action,
-            "template": entry["template"],
-            "hosting": list(hosting),
-            "essential_excluded": bool(entry.get("essential_excluded")),
-            "opt_in": bool(entry.get("opt_in")),
-        }
+    for section, standard in (("actions", True), ("app_actions", False)):
+        for action, entry in load_document(APP_ACTIONS, section, version=2).items():
+            if not isinstance(entry, dict) or not entry.get("template"):
+                raise ValueError(f"{APP_ACTIONS}: {section}.{action} needs a template")
+            if action in resolved:
+                raise ValueError(f"{APP_ACTIONS}: {action} is declared twice")
+            requires = list(entry.get("requires") or [])
+            unknown = [fact for fact in requires if fact not in FACTS]
+            if unknown or (requires and not standard):
+                raise ValueError(
+                    f"{APP_ACTIONS}: {section}.{action} requires unknown or misplaced"
+                    f" facts {requires}"
+                )
+            replaces = entry.get("replaces")
+            if replaces is not None and (standard or replaces != "remove"):
+                raise ValueError(
+                    f"{APP_ACTIONS}: only an app_actions entry may declare replaces: remove"
+                )
+            resolved[action] = {
+                "action": action,
+                "template": entry["template"],
+                "standard": standard,
+                "requires": requires,
+                "replaces": replaces,
+            }
     return resolved
 
 
 def actions_for(app: dict, actions: dict[str, dict]) -> list[str]:
     """Which day-2 actions this application gets, in a stable order."""
-    if app["actions"] is not None:
-        selected = list(app["actions"])
-    else:
-        selected = [
-            name
-            for name, action in actions.items()
-            if not action["opt_in"]
-            and app["hosting"] in action["hosting"]
-            and not (action["essential_excluded"] and app["essential"])
-        ]
-        selected += [name for name in app["extra"] if name not in selected]
-        selected = [name for name in selected if name not in app["exclude"]]
-    unknown = [name for name in selected + app["exclude"] if name not in actions]
+    named = app["extra"] + app["exclude"]
+    unknown = [name for name in named if name not in actions]
     if unknown:
         raise ValueError(f"{APPLICATION_CATALOG}: {app['slug']} names unknown action(s) {unknown}")
-    return sorted(selected)
+    standard_extra = [name for name in app["extra"] if actions[name]["standard"]]
+    if standard_extra:
+        raise ValueError(
+            f"{APPLICATION_CATALOG}: {app['slug']} extra: names standard action(s)"
+            f" {standard_extra}; those are derived from facts"
+        )
+    replaced = {actions[name]["replaces"] for name in app["extra"]} - {None}
+    facts = app["facts"] | {"removable": not app["essential"] and "remove" not in replaced}
+    selected = [
+        name
+        for name, action in actions.items()
+        if action["standard"] and all(facts[fact] for fact in action["requires"])
+    ]
+    selected += app["extra"]
+    idle = [name for name in app["exclude"] if name not in selected]
+    if idle:
+        raise ValueError(
+            f"{APPLICATION_CATALOG}: {app['slug']} excludes {idle}, which its facts already"
+            " withhold; delete the exclude"
+        )
+    return sorted(name for name in selected if name not in app["exclude"])
 
 
 def substitute(node, values: dict[str, str]):
@@ -359,8 +413,69 @@ def substitute(node, values: dict[str, str]):
     return node
 
 
+def deploy_facts(app: dict) -> str:
+    """The Deploy description's fact lines, read from the app's defaults."""
+    defaults = app["defaults"]
+    hosting = defaults.get("hosting") or {}
+    method = hosting.get("method") or "native"
+    where = {
+        "docker": f"Docker on the `{app['stack']}` stack" if app["stack"] else "Docker on its own guest",
+        "kubernetes": "Kubernetes (namespace `app-<instance>`)",
+    }.get(method, "native on its own guest")
+    others = [form for form in hosting.get("supported") or []
+              if not form.startswith(method)]
+    hosting_line = f"- **Hosting:** {where} by default"
+    if others:
+        hosting_line += (
+            "; `hosting.method` in `config/apps/<instance>.yml` also allows "
+            + ", ".join(f"`{form}`" for form in others)
+        )
+    routing = defaults.get("routing") or {}
+    proxy = routing.get("proxy") or "none"
+    route = (
+        "none; it serves no web UI" if proxy == "none"
+        else f"`{routing.get('subdomain') or '<instance>'}.<domain>`"
+             + (", internal sources only" if proxy == "internal" else f", {proxy}")
+    )
+    recovery = (
+        f"**Backup {app['name']}** and **Restore {app['name']}** under Maintenance"
+        if app["facts"]["recovery"]
+        else "rebuild-only; a Deploy recreates it"
+    )
+    role = (defaults.get("deploy") or {}).get("role") or app["slug"]
+    return "\n".join([
+        hosting_line + ".",
+        f"- **Route:** {route}.",
+        f"- **Recovery:** {recovery}.",
+        f"- **Details:** `ansible/roles/{role}/`.",
+    ])
+
+
+def expand_deploy(template: list[dict], applications: dict[str, dict]) -> list[dict]:
+    jobs: list[dict] = []
+    estates = estate_context()
+    for slug in sorted(applications):
+        app = applications[slug]
+        if app["job"]:
+            continue
+        job = substitute(copy.deepcopy(template[0]), {
+            "%SLUG%": app["slug"],
+            "%NAME%": app["name"],
+            "%SUMMARY%": app["summary"],
+            "%FACTS%": deploy_facts(app),
+        })
+        job["group"] = app["group"]
+        job["id"] = app["deploy_uuid"]
+        job["uuid"] = app["deploy_uuid"]
+        set_application_options(job, app, estates)
+        jobs.append(job)
+    return jobs
+
+
 def expand_template(template: list[dict], action: str, applications: dict[str, dict],
                     actions: dict[str, dict]) -> list[dict]:
+    if action == "deploy":
+        return expand_deploy(template, applications)
     jobs: list[dict] = []
     estates = estate_context()
     for slug in sorted(applications):
@@ -409,10 +524,11 @@ def classify() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     applications = load_applications()
     actions = load_actions()
 
-    groups = {app["job"]: app["group"] for app in applications.values()}
-    names = {app["job"]: f"Deploy {app['name']}" for app in applications.values()}
+    owned = [app for app in applications.values() if app["job"]]
+    groups = {app["job"]: app["group"] for app in owned}
+    names = {app["job"]: f"Deploy {app['name']}" for app in owned}
 
-    templates: dict[str, str] = {}
+    templates: dict[str, str] = {DEPLOY_TEMPLATE: "deploy"}
     for action in actions.values():
         template = action["template"]
         if template in groups or template in templates:

@@ -1,0 +1,54 @@
+# Deploy <app> — one template, expanded by rundeck/render-job.py into the Deploy job of every
+# catalog application without a `job:` of its own. The job sits in the application's leaf
+# folder, keeps the `deploy_uuid` from its catalog entry, and its description is the
+# entry's `summary:` followed by facts read from the app's defaults (%FACTS%).
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It validates config/ and runs ansible-playbook on the app's shim over
+# playbooks/apps/deploy.yml. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Deploy %NAME%
+  group: '%GROUP%'
+  description: |-
+    Deploy or converge **%NAME%**, %SUMMARY%
+
+    %FACTS%
+
+    A re-run converges the same instance and reuses its credentials and data.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional %NAME% instance. The value names its `config/apps/<instance>.yml`,
+      guest or namespace, route and Vaultwarden item.'
+    required: true
+  - name: recovery_isolated
+    description: 'Set `true` only for a new rebuild target that must stay unwired (no route,
+      sign-in, monitor, DNS or notification) while it is inspected. **Default:** `false`.'
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/%SLUG%.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          # lab-run runs config-doctor and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/%SLUG%.yml \
+            -e "instance=$RD_OPTION_INSTANCE" \
+            -e "recovery_isolated=${RD_OPTION_RECOVERY_ISOLATED:-false}"

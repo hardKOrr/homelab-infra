@@ -14,7 +14,8 @@ cluster itself is built by `ansible/playbooks/apps/k3s-cluster.yml` and configur
   namespace.
 
 `derive-namespace.yml` owns instance-to-namespace conversion. Consumers must use it rather
-than construct namespace names independently.
+than construct namespace names independently. A day-2 action on an existing namespace
+(Restart, Tail) first runs `require-owned-namespace.yml`.
 
 ## Cluster and publishing flow
 

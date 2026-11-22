@@ -87,7 +87,6 @@ def main():
                                     {"_ra_app": app, "_ra_target": instance, "_ra_overwrite": False,
                                      "_ra_recovery_point": f"host/{app}/fixture"})
             config = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
-            assert {"backup", "restore"} <= set(catalog[app]["extra"])
             assert "migrate" in catalog[app]["extra"]
             with tempfile.TemporaryDirectory() as directory:
                 config["app"]["config_path"] = directory

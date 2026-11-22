@@ -82,7 +82,8 @@ Add the application to `catalog/applications.yml`:
 ```yaml
   sonarr:
     name: Sonarr                        # the folder name and the "Deploy Sonarr" job name
-    job: deploy-sonarr.yaml
+    summary: television library automation; run Wire Media Stack afterward.
+    deploy_uuid: 0b6c...                # a new uuid4, never changed: Rundeck keys history on it
     root: Applications                  # Applications | Platform
     category: Media & Entertainment     # the broad purpose an operator recognizes
     type: Library Automation            # the application type; omit for a Platform entry
@@ -106,21 +107,26 @@ Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, o
 execution detail. Add jobs that act on the lab rather than on one application to
 `rundeck/job-groups.yml` instead.
 
-The entry produces the whole folder, not just the Deploy job: `render-job.py` projects the
-group `<root>/<category>/<type>/<name>` and expands every applicable day-2 template into
-`<that group>/Maintenance`. Which actions apply is read from
-`vars/app-defaults/<app>.yml` using `hosting.method`, so **Step 4 is what decides the app's
-Maintenance folder**, and nothing here has to list its jobs.
+The entry produces the whole folder: `render-job.py` projects the group
+`<root>/<category>/<type>/<name>`, renders the Deploy job from `rundeck/jobs/deploy-app.yaml`
+(the `summary:` is its one line of operator text: what the app is and anything to do before
+or after a Deploy), and expands every applicable day-2 template into
+`<that group>/Maintenance`. Which actions apply follows from facts in
+`vars/app-defaults/<app>.yml` (`recovery.methods`, `hosting.supported`), so **Step 4 is what
+decides the app's Maintenance folder**, and nothing here has to list its jobs.
 
-Two optional fields:
+Optional fields:
 
-- `extra: [migrate]` opts into an action no hosting kind selects. Only the Servarr family
-  uses it today.
+- `exclude: [rollback]` withholds a standard action the app cannot implement truthfully,
+  with the reason in a comment beside it.
+- `extra: [migrate]` opts into an app-specific action from `rundeck/app-actions.yml`
+  `app_actions`. Only the Servarr family uses it today.
 - `essential: true` withholds the Remove job, for a service the platform cannot run
   without.
 
 `render-job.py --check` rejects an unclassified job, a source `group:` that has drifted from
-its classification, a template no application selects, and any UUID collision.
+its classification, a template no application selects, an `exclude:` that withholds nothing,
+and any UUID collision.
 
 ---
 

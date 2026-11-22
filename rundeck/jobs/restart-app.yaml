@@ -20,6 +20,8 @@
 
     - **Native LXC:** Runs the app's `lab-restart-app` script.
     - **Docker:** Restarts its Compose service on the resolved stack host.
+    - **Kubernetes:** Rolling restart of the workloads in its namespace, waiting until
+      each is ready.
     - **Notification:** Publishes the result through Ntfy.
   loglevel: INFO
   executionEnabled: true
