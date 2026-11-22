@@ -1,0 +1,10 @@
+---
+# Remove App hook, run after the service stops on a native guest. Native Ollama keeps its
+# models and key in app.storage_path/app.models_path (~/.ollama links there), which
+# Remove's data_path/config_path step does not name; they go with delete_data.
+- name: Ollama remove | Delete the model store
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ [app_config.app.models_path | default(''), app_config.app.storage_path | default('')] | select | unique | list }}"
+  when: _rm_delete_data | bool
