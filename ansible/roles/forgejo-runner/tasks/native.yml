@@ -102,12 +102,12 @@
 # can catch it between attempts; as on Docker, require no restart while Deploy watches.
 - name: Forgejo Runner | Check that the runner service is running
   ansible.builtin.command:
-    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts, --value]
+    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts]
   register: _forgejo_runner_active
   changed_when: false
   retries: 12
   delay: 5
-  until: _forgejo_runner_active.stdout_lines[0] | default('') == 'active'
+  until: "'ActiveState=active' in _forgejo_runner_active.stdout_lines"
 
 - name: Forgejo Runner | Give a failing runner time to restart
   ansible.builtin.wait_for:
@@ -115,19 +115,21 @@
 
 - name: Forgejo Runner | Read the runner service again
   ansible.builtin.command:
-    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts, --value]
+    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts]
   register: _forgejo_runner_active_after
   changed_when: false
 
 - name: Forgejo Runner | Assert the runner service stayed up
   ansible.builtin.assert:
     that:
-      - _forgejo_runner_active_after.stdout_lines[0] | default('') == 'active'
-      - _forgejo_runner_active_after.stdout_lines[1] | default('') == _forgejo_runner_active.stdout_lines[1] | default('')
+      - "'ActiveState=active' in _forgejo_runner_active_after.stdout_lines"
+      - >-
+        _forgejo_runner_active_after.stdout_lines | select('match', '^NRestarts=') | list
+        == _forgejo_runner_active.stdout_lines | select('match', '^NRestarts=') | list
     fail_msg: >-
       The Forgejo runner restarted while Deploy watched it (state/restarts before
-      {{ _forgejo_runner_active.stdout_lines | join('/') }}, after
-      {{ _forgejo_runner_active_after.stdout_lines | join('/') }}). Read
+      {{ _forgejo_runner_active.stdout_lines | join(' ') }}, after
+      {{ _forgejo_runner_active_after.stdout_lines | join(' ') }}). Read
       `journalctl -u {{ instance }}` on the guest.
     quiet: true
 
