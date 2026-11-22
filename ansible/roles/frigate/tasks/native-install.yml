@@ -125,18 +125,23 @@
     replace: "'s/^Types: deb$/Types: deb deb-src/'"
   loop: [build_nginx.sh, build_sqlite_vec.sh]
 
-# Upstream's nginx build (vod module, patched) and sqlite-vec scripts.
+# Upstream's nginx build (vod module, patched) and sqlite-vec scripts. Each script makes
+# its scratch directories under /tmp with a plain mkdir, so a build that failed part way
+# leaves them behind and the next one stops; clear them first.
 - name: Frigate native | Build the pinned nginx with Frigate's modules
-  ansible.builtin.command:
-    cmd: bash {{ frigate_native_src }}/docker/main/build_nginx.sh
+  ansible.builtin.shell:
+    cmd: >-
+      rm -rf /tmp/nginx /tmp/nginx-vod-module /tmp/nginx-secure-token-module
+      /tmp/ngx_devel_kit /tmp/nginx-set-misc-module
+      && bash {{ frigate_native_src }}/docker/main/build_nginx.sh
     chdir: /tmp
     creates: /usr/local/nginx/sbin/nginx
   async: 3600
   poll: 15
 
 - name: Frigate native | Build the sqlite-vec extension
-  ansible.builtin.command:
-    cmd: bash {{ frigate_native_src }}/docker/main/build_sqlite_vec.sh
+  ansible.builtin.shell:
+    cmd: rm -rf /tmp/sqlite_vec && bash {{ frigate_native_src }}/docker/main/build_sqlite_vec.sh
     chdir: /tmp
     creates: /usr/local/lib/vec0.so
   async: 3600
