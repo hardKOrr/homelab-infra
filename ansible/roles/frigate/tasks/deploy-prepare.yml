@@ -4,7 +4,7 @@
 - name: Frigate | Assert an explicit detector and recording-storage contract
   ansible.builtin.assert:
     that:
-      - app_config.stack in ['frigate', 'frigate-lxc']
+      - (app_config.hosting | default({})).method | default('docker') != 'docker' or app_config.stack in ['frigate', 'frigate-lxc']
       - app_config.app.detector in ['cpu', 'coral']
       - app_config.app.retention_days | int > 0
       - >-
@@ -26,7 +26,7 @@
          and app_config.app.igpu_render_node | default('', true) | length > 0
          and app_config.app.coral_usb_mapping | default('', true) | length > 0)
     fail_msg: >-
-      Frigate needs either detector: cpu with no GPU, Coral or hardware-decode device
+      Frigate on Docker runs on the frigate or frigate-lxc stack. It needs either detector: cpu with no GPU, Coral or hardware-decode device
       declarations, or detector: coral with its dedicated GPU, render node and exact
       Coral USB mapping. Both modes need positive retention_days. Camera-enabled
       instances and any configured recordings_path need a declared
