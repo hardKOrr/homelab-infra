@@ -49,7 +49,8 @@ removes the instance with delete_data=true, and destroy_guest=true off Kubernete
 drilled apps do not pile up in node memory; it keeps the integration providers every later Deploy wires
 into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
 cleanup removed. Before the first Deploy the drill deploys the named backends the app's
-defaults declare (app.<key>.provider and .instance); --all cleanup removes them too.
+defaults declare (app.<key>.provider and .instance) and the apps in drill.requires; --all
+cleanup removes them too.
 """
 import json
 import os
@@ -131,6 +132,11 @@ def backends_of(defaults):
     return found
 
 
+def requires_of(defaults):
+    """Apps the drill deploys first, each as the instance named after it (drill.requires)."""
+    return list((defaults.get("drill") or {}).get("requires") or [])
+
+
 def kind_of(app, defaults, backups):
     """(kind, refusal). An app with backups must restore through Backup App and Restore
     App to be drilled: otherwise the stateless variant's Remove would delete data nothing
@@ -209,22 +215,23 @@ class Drill:
         self.summary(True)
         sys.exit(0)
 
-    def pre_deploy(self, name):
+    def pre_deploy(self, name, app=None, instance=None):
         """$HOMELAB_LAB_DIR/drill-hooks/<app>-pre-deploy <instance> <ref>, when present: a
         private input a Deploy consumes, such as a Plex claim token minted from the lab's
         test account minutes before it expires."""
+        app, instance = app or self.app, instance or self.instance
         hook = os.path.join(os.environ.get("HOMELAB_LAB_DIR", ""), "drill-hooks",
-                            f"{self.app}-pre-deploy")
+                            f"{app}-pre-deploy")
         if not os.access(hook, os.X_OK):
             return
         self.step_no += 1
         label = f"{self.step_no:02d}-pre-{name}"
         if self.plan:
-            self.say(f"STEP {label} drill-hooks/{self.app}-pre-deploy")
+            self.say(f"STEP {label} drill-hooks/{app}-pre-deploy")
             return
         log = os.path.join(self.logs, label + ".log")
         with open(log, "wb") as out:
-            rc = subprocess.run([hook, self.instance, self.ref], stdin=subprocess.DEVNULL,
+            rc = subprocess.run([hook, instance, self.ref], stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=subprocess.STDOUT,
                                 env={**os.environ, "LAB_DRILL_TOOLS": os.path.join(REPO, "tools")}
                                 ).returncode
@@ -372,11 +379,15 @@ class Drill:
         if self.destroy_guest:
             remove["destroy_guest"] = "true"
 
-        # Drill step 1: the app's named backends exist. Deploy is idempotent, so a backend
-        # already up converges and one that is absent is created.
+        # Drill step 1: the app's named backends and required apps exist. Deploy is
+        # idempotent, so one already up converges and one that is absent is created.
         for provider, backend in backends_of(self.defaults):
             self.playbook(f"backend-{backend}", f"playbooks/apps/{provider}.yml",
                           instance=backend, app=provider)
+        for required in requires_of(self.defaults):
+            self.pre_deploy(f"requires-{required}", required, required)
+            self.playbook(f"requires-{required}", f"playbooks/apps/{required}.yml",
+                          instance=required, app=required)
         self.deploy("deploy")
         if not self.plan:
             backups = self.backups if self.backups is not None else \
@@ -505,6 +516,10 @@ def run_all(ref, plan, start=None, keep=False):
             for provider, backend in backends_of(app_defaults(app)):
                 cleanup(ref, provider, backend, "",
                         os.path.join(jobs, f"drill-all-{stamp}-{backend}-remove.log"))
+            for required in requires_of(app_defaults(app)):
+                if required not in KEEP:
+                    cleanup(ref, required, required, "",
+                            os.path.join(jobs, f"drill-all-{stamp}-{required}-remove.log"))
         with open(table, "w") as out:
             out.write("\n".join(rows) + "\n")
     if not plan:

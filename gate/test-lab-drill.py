@@ -26,8 +26,11 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "deploy-final", "wiring-deploy-final", "canary-final"]
 
 out = plan("tautulli")
-if steps(out) != STATEFUL:
+if steps(out) != ["requires-plex"] + STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
+immich = steps(plan("immich"))
+if immich[:3] != ["backend-postgresql-immich", "backend-redis-immich", "deploy"]:
+    failures.append(f"the app's named backends deploy before the app: {immich[:3]}")
 if "canary=marker" not in out:
     failures.append("Tautulli's drill.canary_path selects the marker canary")
 if "expect=absent" not in out.split("wiring-remove", 1)[-1].splitlines()[0]:
@@ -102,7 +105,7 @@ with tempfile.TemporaryDirectory() as lab:
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
     off = drill("tautulli", "False")
     ran = [line.split()[1].split("-", 1)[1] for line in off.stdout.splitlines() if line.startswith("STEP ")]
-    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[2:6] != [
+    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[3:7] != [
             "deploy-repeat", "wiring-deploy-repeat", "remove", "wiring-remove"]:
         failures.append(f"an instance with backups off runs the stateless drill: {off.stdout[-400:]}")
     wordpress = drill("wordpress", "False")
