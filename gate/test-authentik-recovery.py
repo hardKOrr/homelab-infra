@@ -197,7 +197,6 @@ def check_contract_and_secret_continuity():
     assert defaults["backup"]["retention_days"] >= 2
 
     catalog = read_yaml(ROOT / "catalog/applications.yml")["applications"]["authentik"]
-    assert set(catalog["extra"]) >= {"backup", "restore"}
     assert "rollback" in catalog["exclude"]
 
     main = task_parts.inline(ROOT / "ansible/roles/authentik/tasks/main.yml")

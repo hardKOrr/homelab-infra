@@ -40,9 +40,11 @@ def check_jobs_and_instances(work):
             render_job.INFRASTRUCTURE_CONFIG = current
 
     render_job.INFRASTRUCTURE_CONFIG = multi_estate
-    deploy_radarr = render_job.render(repo / "rundeck" / "jobs" / "deploy-radarr.yaml")[
-        0
-    ]
+    deploy_radarr = next(
+        job
+        for job in render_job.render(repo / "rundeck" / "jobs" / "deploy-app.yaml")
+        if job["name"] == "Deploy Radarr"
+    )
     radarr_instance = next(
         (option for option in deploy_radarr["options"] if option["name"] == "instance")
     )
@@ -77,7 +79,7 @@ def check_jobs_and_instances(work):
     )
     assert not missing, (
         f"declare recovery.methods but render no Backup/Restore job: {missing}; "
-        "add `extra: [backup, restore]` in catalog/applications.yml"
+        "drop the backup/restore exclude in catalog/applications.yml"
     )
     catalog_text = (repo / "catalog" / "applications.yml").read_text(encoding="utf-8")
     try:
@@ -149,6 +151,30 @@ def check_jobs_and_instances(work):
     assert (
         "app=radarr" in rollback_script and "stack=" not in rollback_script
     ), "'app=radarr' in rollback_script and 'stack=' not in rollback_script"
+    # Restart and Tail work on Kubernetes, so a Kubernetes-default app has them; the k3s
+    # cluster is node VMs, not one guest, and an ISO appliance has no guest interface.
+    restart_names = {
+        job["name"]
+        for job in render_job.render(repo / "rundeck" / "jobs" / "restart-app.yaml")
+    }
+    assert "Restart Jellyseerr" in restart_names, restart_names
+    assert "Restart k3s Cluster" not in restart_names, restart_names
+    assert "Restart OPNsense" not in restart_names, restart_names
+    # Every catalog app without its own Deploy file gets Deploy from the template, under
+    # its catalog UUID, with the instance passed through the environment.
+    catalog = yaml.safe_load((repo / "catalog" / "applications.yml").read_text())["applications"]
+    deploys = {
+        job["name"]: job
+        for job in render_job.render(repo / "rundeck" / "jobs" / "deploy-app.yaml")
+    }
+    templated = {slug: entry for slug, entry in catalog.items() if "deploy_uuid" in entry}
+    assert len(deploys) == len(templated), (len(deploys), len(templated))
+    for slug, entry in templated.items():
+        job = deploys[f"Deploy {entry['name']}"]
+        assert job["uuid"] == job["id"] == entry["deploy_uuid"], slug
+        script = job["sequence"]["commands"][0]["script"]
+        assert f"lab-run playbooks/apps/{slug}.yml" in script, slug
+        assert '"instance=$RD_OPTION_INSTANCE"' in script, slug
     multi_estate.write_text(
         "domains:\n  personal: {domain: personal.example.test}\n  foxglove: {domain: foxglove.example.test}\n",
         encoding="utf-8",

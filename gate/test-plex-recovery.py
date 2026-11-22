@@ -44,8 +44,6 @@ def main():
                         "_ra_recovery_point": "host/plex/fixture"})
     config = yaml.safe_load((repo / "ansible/vars/app-defaults/plex.yml").read_text())["plex_defaults"]
     assert config["routing"]["identity"] == "none"
-    catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
-    assert {"backup", "restore"} <= set(catalog["applications"]["plex"]["actions"])
     server = HTTPServer(("127.0.0.1", 0), Certificate)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

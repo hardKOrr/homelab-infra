@@ -216,9 +216,11 @@ Three files own classification:
 - `../catalog/applications.yml` classifies every deployable application by human purpose and
   application type. The renderer projects each one to a leaf folder named after the
   application: `<root>/<category>[/<type>]/<name>`.
-- `app-actions.yml` names the day-2 action templates and the hosting kinds each is
-  implemented for. The renderer expands each template into one job per application it
-  applies to, under `<that application's folder>/Maintenance`.
+- `app-actions.yml` names the day-2 action templates and the facts each requires. The
+  renderer expands each template into one job per application it applies to, under
+  `<that application's folder>/Maintenance`. `jobs/deploy-app.yaml` is the Deploy job of
+  every application except the five with their own file (Caddy, k3s Cluster, PBS,
+  OPNsense, PDM).
 - `job-groups.yml` classifies the jobs that act on the lab rather than on one application.
 
 The source job keeps the projected `group:` for reviewability; a template declares the
@@ -259,19 +261,15 @@ The renderer resolves values the platform already knows from
 | `stack` (Rollback) | resolved from the instance override over application defaults |
 | `source_config_path` (Migrate) | defaulted to `/var/lib/<app>` |
 
-`app-actions.yml` declares which actions apply to each hosting kind and any application
-exceptions. The renderer reads `hosting.method` from app defaults. ISO-installed native
-appliances keep their existing appliance action family because they do not expose the
-ordinary guest interface. Catalog `extra:` entries opt an application into an action that
-hosting kind alone does not select.
-
-An action absent from a folder is absent because it is not implemented safely. Most Docker
-apps rely on the shared guest's PBS backup and therefore get no per-application Backup or
-Restore action. An application may explicitly replace the derived action set when its role
-owns a truthful recovery seam — Actual Budget archives and restores its quiesced /data
-mount without touching sibling services. There is no Rollback for a Kubernetes workload.
-Authentik and Observability also exclude Rollback: each is a multi-service Compose project,
-while the generic rollback seam pins one image.
+Every application gets the standard actions (`app-actions.yml` `actions`) except where a
+fact rules one out: no `recovery.methods` means no Backup or Restore, no Docker form in
+`hosting.supported` means no Rollback, an ISO appliance gets no Restart or Tail, and
+`essential` means no Remove. A catalog `exclude:` withholds an action one application
+cannot implement truthfully, with its reason beside it: Authentik, Plane, Karakeep and
+other multi-service Compose projects exclude Rollback, which pins one image. A job offered
+for every method refuses, before it changes anything, on an instance whose method lacks it:
+Rollback on a native or Kubernetes instance, for example. Catalog `extra:` adds an
+app-specific action (`app_actions`), such as Migrate or the k3s cluster's own Remove.
 
 An application marked `essential:` in the catalog gets no Remove job. The platform does not
 offer a one-click removal of the reverse proxy or the vault every other job depends on.

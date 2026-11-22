@@ -52,6 +52,6 @@ homepage_defaults:
 
   # Homepage owns no user data. ConfigMaps are regenerated on every deploy from facts, so
   # a backup would contain only reconstructible configuration and a restore would add no
-  # recovery capability. The catalog excludes the corresponding day-2 actions.
+  # recovery capability. It declares no `recovery.methods`, so no Backup or Restore job renders.
   backup:
     enabled: false

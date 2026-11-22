@@ -15,7 +15,9 @@
 #
 # A native LXC app owns its guest and is restarted through the lab-restart-app script its
 # role installed. A Docker app is a Compose project under /opt/<instance> on a shared stack
-# host, and is restarted there. tasks/maintenance/resolve-app-target.yml decides which,
+# host, and is restarted there. A Kubernetes app's Deployments, StatefulSets and DaemonSets
+# in its namespace get a rolling restart through the cluster API node, which waits until
+# each one is ready again. tasks/maintenance/resolve-app-target.yml decides which,
 # and its header records why targeting the instance name directly was wrong for ten of the
 # sixteen catalogued applications.
 
@@ -35,6 +37,8 @@
 
     - name: Resolve which host holds this instance
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        resolve_app_target_kinds: [native, docker, kubernetes]
 
 # The default() can only fire during --syntax-check: Play 1 has already
 # resolved `instance` by the time this play's pattern is resolved.
@@ -56,12 +60,47 @@
       register: _restart_compose
       when: app_target_kind | default('native') == 'docker'
 
+    - name: List the Kubernetes app's workloads
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", get,
+               "deployment,statefulset,daemonset", --output, name]
+      register: _restart_k8s_workloads
+      changed_when: false
+      when: app_target_kind | default('native') == 'kubernetes'
+
+    - name: Require a workload to restart
+      ansible.builtin.assert:
+        that: _restart_k8s_workloads.stdout_lines | length > 0
+        fail_msg: >-
+          Namespace {{ app_target_namespace }} holds no Deployment, StatefulSet or
+          DaemonSet; deploy {{ app_target_instance }} first.
+      when: app_target_kind | default('native') == 'kubernetes'
+
+    - name: Restart the Kubernetes app's workloads
+      ansible.builtin.command:
+        argv: "{{ ['k3s', 'kubectl', '--namespace', app_target_namespace, 'rollout', 'restart']
+                  + _restart_k8s_workloads.stdout_lines }}"
+      changed_when: true
+      register: _restart_k8s
+      when: app_target_kind | default('native') == 'kubernetes'
+
+    - name: Wait for each workload to be ready again
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", rollout, status,
+               "{{ item }}", --timeout=300s]
+      loop: "{{ _restart_k8s_workloads.stdout_lines | default([]) }}"
+      changed_when: false
+      when: app_target_kind | default('native') == 'kubernetes'
+
     # One fact the notification play can read whichever branch ran. Deliberately not
     # named `_restart`: a set_fact that reads the registered variable of the same name
     # is a recursive template, not an assignment.
     - name: Record the outcome
       ansible.builtin.set_fact:
-        _restart_result: "{{ _restart if _restart is not skipped else _restart_compose }}"
+        _restart_result: >-
+          {{ _restart if _restart is not skipped
+             else _restart_compose if _restart_compose is not skipped
+             else _restart_k8s }}
 
 # Runs even when the restart play failed (localhost is still healthy), so the
 # outcome is read back from the target's hostvars to word the message honestly.

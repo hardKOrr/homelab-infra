@@ -62,9 +62,10 @@ def main():
                         if task.get("name") == "k8s unwire | Resolve the cluster")
     assert allow_remove["vars"]["k8s_resolve_allow_removing"] is True, allow_remove
 
-    actions = read_yaml("rundeck/app-actions.yml")["actions"]
+    actions = read_yaml("rundeck/app-actions.yml")["app_actions"]
     catalog = read_yaml("catalog/applications.yml")["applications"]["k3s-cluster"]
-    assert "remove_k3s_cluster" in catalog["actions"], catalog
+    assert "remove_k3s_cluster" in catalog["extra"], catalog
+    assert actions["remove_k3s_cluster"]["replaces"] == "remove", actions
     assert actions["remove_k3s_cluster"]["template"] == "remove-k3s-cluster.yaml", actions
     job = read_yaml("rundeck/jobs/remove-k3s-cluster.yaml")[0]
     confirm = next(option for option in job["options"] if option["name"] == "confirm")

@@ -13,7 +13,9 @@
 #   lines    — how many lines to show (default 50)
 #
 # A native LXC app is read through the lab-tail-applog script its role installed. A Docker
-# app's logs come from its Compose project on the stack host. See
+# app's logs come from its Compose project on the stack host. A Kubernetes app's logs come
+# from every container of each Deployment, StatefulSet and DaemonSet in its namespace,
+# read through the cluster API node. See
 # tasks/maintenance/resolve-app-target.yml for why the target is resolved rather than
 # assumed to be the instance name.
 
@@ -30,6 +32,8 @@
 
     - name: Resolve which host holds this instance
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        resolve_app_target_kinds: [native, docker, kubernetes]
 
 # The default() can only fire during --syntax-check: Play 1 has already
 # resolved `instance` by the time this play's pattern is resolved.
@@ -56,8 +60,28 @@
       failed_when: false
       when: app_target_kind | default('native') == 'docker'
 
+    - name: List the Kubernetes app's workloads
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", get,
+               "deployment,statefulset,daemonset", --output, name]
+      register: _logs_k8s_workloads
+      changed_when: false
+      when: app_target_kind | default('native') == 'kubernetes'
+
+    - name: Fetch log output from a Kubernetes app
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", logs, "{{ item }}",
+               --all-containers, --prefix, "--tail={{ lines | default('50') }}"]
+      loop: "{{ _logs_k8s_workloads.stdout_lines | default([]) }}"
+      register: _logs_k8s
+      changed_when: false
+      failed_when: false
+      when: app_target_kind | default('native') == 'kubernetes'
+
     - name: Print log output
       ansible.builtin.debug:
         msg: >-
-          {{ (_logs_native if _logs_native is not skipped else _logs_docker).stdout_lines
-             | default(['(no output — the app produced no log lines)']) }}
+          {{ (_logs_k8s.results | map(attribute='stdout_lines') | flatten
+              if app_target_kind | default('native') == 'kubernetes'
+              else (_logs_native if _logs_native is not skipped else _logs_docker).stdout_lines)
+             | default(['(no output — the app produced no log lines)'], true) }}

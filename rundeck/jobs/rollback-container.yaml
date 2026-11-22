@@ -19,7 +19,8 @@
 
     Use the prior version named in the Watchtower notification. The pin prevents Watchtower
     from updating this container again until **Deploy %NAME%** is re-run. The result is
-    published through Ntfy.
+    published through Ntfy. Docker instances only: an instance on another hosting method
+    refuses before anything changes.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

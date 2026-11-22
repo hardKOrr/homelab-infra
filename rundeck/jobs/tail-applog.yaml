@@ -19,6 +19,7 @@
 
     - **Native LXC:** Reads through `lab-tail-applog`.
     - **Docker:** Reads Compose service logs on the resolved stack host.
+    - **Kubernetes:** Reads every container of the workloads in its namespace.
     - **Safety:** Read-only; no service is restarted or changed.
   loglevel: INFO
   executionEnabled: true

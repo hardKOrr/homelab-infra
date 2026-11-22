@@ -18,7 +18,6 @@ from restore_swap_inputs import run_hook, swap_inputs
 
 repo = Path(__file__).resolve().parents[1]
 defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_text())
-catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 replaced_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore-replaced.yml").read_text())
 deploy_source = (yaml.safe_load((repo / "ansible/roles/mautic/tasks/config.yml").read_text())
@@ -149,7 +148,6 @@ def static_contract():
         "impossible": {}}
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
-    assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])
     for transport in ["EMAIL", "HIT", "FAILED"]:
         assert f"MAUTIC_MESSENGER_DSN_{transport}: doctrine://default" in compose_template
 

@@ -162,9 +162,7 @@ def main():
     assert any(item["protocol"] == "TCP" and item["port"] == 80
                for item in config["firewall"]["egress"])
     catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
-    actions = catalog["applications"]["karakeep"]["actions"]
-    assert {"backup", "restore"} <= set(actions)
-    assert "rollback" not in actions
+    assert "rollback" in catalog["applications"]["karakeep"]["exclude"]
     backup_task = next(task for task in all_tasks(backup_source)
                        if task.get("name") == "Karakeep backup | Stop only this instance's services and push one data archive")
     assert backup_task["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")

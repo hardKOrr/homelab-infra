@@ -44,7 +44,7 @@
 # FlareSolverr holds no configuration and no database — everything it has is the
 # in-memory browser session for whichever request it is currently serving. There is
 # nothing to back up and nothing a restore would recover that a redeploy does not already
-# give back. catalog/applications.yml excludes `backup` and `restore` for this reason.
+# give back. Declaring no `recovery.methods` is what renders no Backup or Restore job.
 
 flaresolverr_defaults:
   vault:
