@@ -1,7 +1,8 @@
 ---
-# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the `apps` registry
-# entry named AI consumers (Open WebUI, LiteLLM) read: the guest's port, or the cluster
-# route on Kubernetes.
+# Deploy hook (playbooks/apps/deploy.yml, localhost, after wiring, never for an isolated
+# restore target, so consumers never find a target whose archive is unverified): the `apps`
+# registry entry named AI consumers (Open WebUI, LiteLLM) read: the guest's port, or the
+# cluster route on Kubernetes.
 - name: Ollama | Record the endpoint for named AI consumers
   ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
   vars:

@@ -22,6 +22,9 @@
                   else ('http://' ~ _forgejo_guest_ip ~ ':' ~ (app_config.app.port | string) ~ '/'),
            'ssh_port': app_config.app.ssh_node_port if _forgejo_k8s | bool else app_config.app.ssh_port
          }} }}
+  # A restore target stays out of the registry until it verifies, so no runner is pointed
+  # at it.
+  when: not (recovery_isolated | default(false) | bool)
 
 - name: Forgejo | Note the Git SSH port in the deploy notification
   ansible.builtin.set_fact:

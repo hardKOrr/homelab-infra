@@ -2300,12 +2300,12 @@ ollama:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/stack/compose-deploy.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
     kubernetes:
@@ -2318,12 +2318,12 @@ ollama:
     - tasks/kubernetes/ensure-namespace.yml
     - tasks/kubernetes/apply-manifest.yml
     - tasks/kubernetes/recovery-backup.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
     native:
@@ -2341,12 +2341,12 @@ ollama:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
   backup:
@@ -2375,12 +2375,12 @@ open-webui:
     - tasks/stack/compose-deploy.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/backup/pbs-client-script.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
     kubernetes:
@@ -2396,12 +2396,12 @@ open-webui:
     - tasks/kubernetes/sync-secret.yml
     - tasks/kubernetes/apply-manifest.yml
     - tasks/kubernetes/recovery-backup.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
     native:
@@ -2423,12 +2423,12 @@ open-webui:
     - tasks/backup/pbs-client-install.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/backup/pbs-client-script.yml
-    - tasks/bootstrap/write-generated-facts.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
     - tasks/wiring/uptime-kuma.yml
     - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
     - tasks/proxmox/record-app-on-guest.yml
+    - tasks/bootstrap/write-generated-facts.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
   backup:

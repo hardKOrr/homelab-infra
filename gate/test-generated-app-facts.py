@@ -35,13 +35,13 @@ def app_producers_publish_named_instance_keys():
     normalize = named_task(writer, "Generated facts | Resolve dynamic app instance key")
     normalize_expression = normalize["ansible.builtin.set_fact"]["_generated_facts_data"]
 
-    # Each role's deploy-record hook writes its `apps` entry from its guest's address, or
+    # Each role's deploy-wire hook writes its `apps` entry from its guest's address, or
     # from the cluster route on Kubernetes (playbooks/apps/deploy.yml).
     def hook_entry(app, method):
         task = named_task(
-            yaml.safe_load((ROOT / f"ansible/roles/{app}/tasks/deploy-record.yml").read_text()),
+            yaml.safe_load((ROOT / f"ansible/roles/{app}/tasks/deploy-wire.yml").read_text()),
             next(t["name"] for t in yaml.safe_load(
-                (ROOT / f"ansible/roles/{app}/tasks/deploy-record.yml").read_text())
+                (ROOT / f"ansible/roles/{app}/tasks/deploy-wire.yml").read_text())
                 if "write-generated-facts.yml" in str(t.get("ansible.builtin.include_tasks"))),
         )
         port = {"ollama": 11434, "open-webui": 8080}[app]

@@ -8,9 +8,12 @@
 observability_platform: "{{ instance == 'observability' }}"
 observability_vault_item: >-
   {{ 'homelab-infra/metrics' if observability_platform | bool else 'homelab-infra/apps/' ~ instance }}
+# app_config.app carries the instance's item on Deploy; the drill canary's config does not,
+# so read the item itself too.
 observability_stored: >-
   {{ ((homelabinfra_infra | default({})).get('metrics', {}))
-     if observability_platform | bool else app_config.app }}
+     if observability_platform | bool
+     else app_config.app | combine((homelabinfra_vault | default({})).get('apps', {}).get(instance, {})) }}
 observability_project_dir: "/opt/{{ instance }}"
 observability_env_file: "/opt/{{ instance }}/.env"
 observability_datasource_name: Prometheus
