@@ -9,7 +9,8 @@ from ansible.template import Templar
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PLAYBOOK = ROOT / "ansible/playbooks/apps/home-assistant.yml"
+PREPARE = ROOT / "ansible/roles/home-assistant/tasks/deploy-prepare.yml"
+PROVISION = ROOT / "ansible/roles/home-assistant/tasks/deploy-provision.yml"
 ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/credentials.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
@@ -81,13 +82,11 @@ def main():
             f"{section} must be omitted or a mapping so instance config preserves defaults"
         )
 
-    plays = load_yaml(PLAYBOOK)[0]
-    provision = next(play for play in plays if play["name"] == "Home Assistant | Provision")
-    provision_assertion = task_named(
-        provision["pre_tasks"], "Assert the explicit VM and optional USB contract"
-    )["ansible.builtin.assert"]["that"]
+    prepare = load_yaml(PREPARE)[0]
+    vm_task = task_named(prepare, "Home Assistant | Assert the explicit VM and optional USB contract")
+    assert vm_task["when"] == "app_config.hosting.method == 'docker'"
+    provision_assertion = vm_task["ansible.builtin.assert"]["that"]
     vm_contract = " ".join(provision_assertion)
-    assert "app_config.hosting.method == 'docker'" in vm_contract
     assert "app_config.proxmox.vm is mapping" in vm_contract
     assert "app_config.app.usb_mapping | default('', true) | length == 0" in vm_contract
 
@@ -113,25 +112,42 @@ def main():
         {"app_config": {"app": {"usb_mapping": "coordinator", "usb_device_path": "ttyUSB0"}}},
     ) is False
 
-    attach = task_named(provision["tasks"], "Attach the optional Zigbee USB resource mapping")
-    assert attach["ansible.builtin.include_tasks"] == "../../tasks/proxmox/attach-usb-passthrough.yml"
-    assert condition_result(attach["when"], {"app_config": {"app": {"usb_mapping": ""}}}) is False
+    block = load_yaml(PROVISION)[0][0]
+    usb_value = block["vars"]["_ha_usb"]
     null_mapping_vars = {"app_config": {"app": {"usb_mapping": None}}}
-    assert condition_result(attach["when"], null_mapping_vars) is False
-    assert condition_result(
-        attach["when"], {"app_config": {"app": {"usb_mapping": "coordinator"}}}
-    ) is True
-    mapping_value = attach["vars"]["usb_passthrough_device"]["mapping"]
-    assert render(mapping_value, null_mapping_vars) == ""
+    assert render(usb_value, null_mapping_vars) == ""
 
-    # A default VM with a USB mapping must not reach the stack host lookup.
-    stack_tasks = load_yaml(ROLE_TASKS.parent / "provision-stack.yml")[0]
-    lxc_attach = task_named(stack_tasks, "Bind the optional USB coordinator into the stack LXC")
-    vm_usb = {"app_config": {"app": {"usb_mapping": "coordinator"}}, "hostvars": {}}
-    assert all(
-        condition_result(c, vm_usb) is False for c in lxc_attach["when"][:1]
-    ), "the stack guard must be evaluated first and be false for a VM"
-    assert lxc_attach["when"][0].startswith("app_config.stack")
+    def when_all(task, variables):
+        conditions = task["when"] if isinstance(task["when"], list) else [task["when"]]
+        return all(condition_result(c, variables) for c in conditions)
+
+    def guest(method, stack="", vmtype="qemu", usb="coordinator", native_type=""):
+        app_config = {"hosting": {"method": method}, "stack": stack, "app": {"usb_mapping": usb}}
+        variables = {
+            "app_config": app_config, "instance": "ha",
+            "groups": {"deploy_ha": ["ha-guest"]},
+            "hostvars": {"ha-guest": {"proxmox_vmtype": vmtype}},
+            "_native_guest_guest_type": native_type,
+        }
+        variables["_ha_usb"] = render(usb_value, variables)
+        variables["_ha_on_stack"] = render(block["vars"]["_ha_on_stack"], variables)
+        return variables
+
+    attach = task_named(block["block"], "Home Assistant | Attach the Zigbee USB resource mapping to the VM")
+    assert attach["ansible.builtin.include_tasks"] == "../../../tasks/proxmox/attach-usb-passthrough.yml"
+    bind = task_named(block["block"], "Home Assistant | Bind the Zigbee USB device into the LXC")
+    # Its own Docker VM takes the mapping; no mapping means no passthrough.
+    assert when_all(attach, guest("docker")) and not when_all(bind, guest("docker"))
+    assert not when_all(attach, guest("docker", usb="")) and not when_all(attach, guest("docker", usb=None))
+    # The home-assistant-lxc stack binds the device node; a stack VM gets neither.
+    lxc_stack = guest("docker", stack="home-assistant-lxc", vmtype="lxc")
+    assert when_all(bind, lxc_stack) and not when_all(attach, lxc_stack)
+    vm_stack = guest("docker", stack="home-assistant-lxc", vmtype="qemu")
+    assert not when_all(bind, vm_stack) and not when_all(attach, vm_stack)
+    # Native follows its guest type.
+    assert when_all(attach, guest("native", native_type="vm"))
+    native_lxc = guest("native", vmtype="lxc", native_type="lxc")
+    assert when_all(bind, native_lxc) and not when_all(attach, native_lxc)
 
     role_tasks = load_yaml(ROLE_TASKS)[0]
     role_assertion = task_named(

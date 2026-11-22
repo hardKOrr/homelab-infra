@@ -1,0 +1,48 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): Frigate's
+# detector, device and recording-storage contract, and the narrower native scope.
+- name: Frigate | Assert an explicit detector and recording-storage contract
+  ansible.builtin.assert:
+    that:
+      - (app_config.hosting | default({})).method | default('docker') != 'docker' or app_config.stack in ['frigate', 'frigate-lxc']
+      - app_config.app.detector in ['cpu', 'coral']
+      - app_config.app.retention_days | int > 0
+      - >-
+        (app_config.app.cameras | default({}) | length == 0)
+        or app_config.app.recordings_path | default('', true) | length > 0
+      - >-
+        app_config.app.recordings_path | default('', true) | length == 0
+        or (app_config.recording_storage.mounts | default([]) | length > 0
+            and app_config.recording_storage.owner | default({}) | length > 0)
+      - >-
+        (app_config.app.detector == 'cpu'
+         and app_config.app.gpu_device | default('', true) | length == 0
+         and app_config.app.igpu_render_node | default('', true) | length == 0
+         and app_config.app.coral_usb_mapping | default('', true) | length == 0
+         and app_config.app.hwaccel_args | default('', true) | length == 0)
+        or
+        (app_config.app.detector == 'coral'
+         and app_config.app.gpu_device | default('', true) | length > 0
+         and app_config.app.igpu_render_node | default('', true) | length > 0
+         and app_config.app.coral_usb_mapping | default('', true) | length > 0)
+    fail_msg: >-
+      Frigate on Docker runs on the frigate or frigate-lxc stack. It needs either detector: cpu with no GPU, Coral or hardware-decode device
+      declarations, or detector: coral with its dedicated GPU, render node and exact
+      Coral USB mapping. Both modes need positive retention_days. Camera-enabled
+      instances and any configured recordings_path need a declared
+      infrastructure.frigate_storage mount with owner. Deploy never discovers
+      or adopts devices or storage.
+
+- name: Frigate | Assert the native method's CPU-only, camera-less scope
+  ansible.builtin.assert:
+    that:
+      - app_config.app.detector == 'cpu'
+      - app_config.app.cameras | default({}) | length == 0
+      - app_config.app.mqtt.username | default('', true) | length == 0
+      - app_config.app.recordings_path | default('', true) | length == 0
+    fail_msg: >-
+      Native Frigate is CPU-only without cameras, MQTT user or recording mount: set
+      app.detector: cpu and leave the GPU, render node, Coral, hardware-decode and
+      recordings_path values empty. Devices and external storage do not reach native
+      guests yet.
+  when: app_config.hosting.method == 'native'

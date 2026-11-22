@@ -216,7 +216,11 @@ def main() -> int:
                 results[instance] = got
                 if loader is None:
                     continue
-                platform = {key: INFRA.get(key, {}) for key in defaults.get("platform_layers", [])}
+                platform = {
+                    (layer["name"] if isinstance(layer, dict) else layer):
+                    INFRA.get(layer["from"] if isinstance(layer, dict) else layer, {})
+                    for layer in defaults.get("platform_layers", [])
+                }
                 layer = merge(platform, templar.template(inputs.get("load_config_layer", {})))
                 want = merge(merge(defaults, layer), instance_file(app, kubernetes))
                 methods = vault_methods(app, steps)

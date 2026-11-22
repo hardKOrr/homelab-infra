@@ -1,10 +1,21 @@
-{% if app_config.app.initial_configuration | default({}) | length > 0 %}
-{{ app_config.app.initial_configuration | to_nice_yaml }}
+{#- Seed configuration.yaml for a fresh instance. Behind a proxy Home Assistant refuses
+    forwarded requests unless the proxy is trusted, so the proxy's addresses
+    (_ha_trusted_proxies) are added to an initial_configuration that forwards, and the
+    default seed trusts them. -#}
+{% set seed = app_config.app.initial_configuration | default({}, true) %}
+{% if seed | length > 0 %}
+{% if (seed.http | default({})).use_x_forwarded_for | default(false) %}
+{% set seed = seed | combine({'http': {'trusted_proxies':
+     ((seed.http.trusted_proxies | default([])) + _ha_trusted_proxies) | unique | list}}, recursive=True) %}
+{% endif %}
+{{ seed | to_nice_yaml }}
 {% else %}
 default_config: {}
+{% if _ha_trusted_proxies | length > 0 %}
 http:
   use_x_forwarded_for: true
-  trusted_proxies: {{ app_config.app.kubernetes_trusted_proxies | to_json }}
+  trusted_proxies: {{ _ha_trusted_proxies | to_json }}
+{% endif %}
 # The automation editor writes this file; default_config does not load it itself.
 automation: !include automations.yaml
 {% endif %}

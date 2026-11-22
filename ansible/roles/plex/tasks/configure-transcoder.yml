@@ -27,11 +27,28 @@
     headers:
       X-Plex-Token: "{{ _plex_server_token }}"
     status_code: 200
+  register: _plex_hardware_put
+  # Right after its first claim Plex restarts its server and refuses calls for a moment.
+  until: _plex_hardware_put.status | default(0) == 200
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  failed_when: false
   when: >-
     _plex_hardware_codecs_current != _plex_hardware_transcoding_value
     or _plex_hardware_encoders_current != _plex_hardware_transcoding_value
   changed_when: true
   no_log: true
+
+# The call above hides its token; this prints how it ended.
+- name: Assert Plex accepted the hardware transcoding preferences
+  ansible.builtin.assert:
+    that: _plex_hardware_put.status | default(0) == 200
+    fail_msg: >-
+      Plex answered HTTP {{ _plex_hardware_put.status | default('none') }}
+      ({{ _plex_hardware_put.msg | default('') | regex_replace('X-Plex-Token=[^&\s]+', 'X-Plex-Token=<hidden>') }})
+      when setting HardwareAcceleratedCodecs/Encoders.
+    quiet: true
+  when: _plex_hardware_put is not skipped
 
 - name: Read Plex preferences after configuring hardware transcoding
   ansible.builtin.slurp:

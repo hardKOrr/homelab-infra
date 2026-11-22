@@ -37,7 +37,8 @@
     - _load_config_instance.failed | default(false)
 
 # The platform layer: each infrastructure.yml key the app's defaults name in
-# `platform_layers` (e.g. media_storage), under the same key, then load_config_layer.
+# `platform_layers` (e.g. media_storage), under the same key or, for an entry
+# {name: <key>, from: <infrastructure key>}, under `name`; then load_config_layer.
 - name: Merge the defaults and the instance config
   ansible.builtin.set_fact:
     "{{ load_config_fact | default('app_config') }}": >-
@@ -53,8 +54,12 @@
     _load_config_platform: >-
       {%- set infra = (homelabinfra_config | default({})).infrastructure | default({}) -%}
       {%- set out = {} -%}
-      {%- for key in _load_config_defaults.platform_layers | default([]) -%}
-      {%- set _ = out.update({key: infra[key] | default({})}) -%}
+      {%- for layer in _load_config_defaults.platform_layers | default([]) -%}
+      {%- if layer is mapping -%}
+      {%- set _ = out.update({layer.name: infra[layer.from] | default({})}) -%}
+      {%- else -%}
+      {%- set _ = out.update({layer: infra[layer] | default({})}) -%}
+      {%- endif -%}
       {%- endfor -%}
       {{ out }}
 

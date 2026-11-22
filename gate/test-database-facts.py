@@ -29,18 +29,6 @@ def read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def database_fact_task(path):
-    for document in yaml.safe_load_all(read(path)):
-        for play in document if isinstance(document, list) else [document]:
-            for task in play.get("tasks", []):
-                if task.get("ansible.builtin.import_tasks", "").endswith(
-                    "tasks/bootstrap/write-generated-facts.yml"
-                ):
-                    if task.get("vars", {}).get("generated_facts_service") == "databases":
-                        return task
-    raise AssertionError(f"database fact writer not found in {path}")
-
-
 def pg_tasks_file():
     return yaml.safe_load(read("ansible/tasks/database/provision-postgresql.yml"))
 
@@ -92,13 +80,10 @@ def database_producers_resolve_instance_keys():
             **base, "host": "192.0.2.10", "runtime": "kubernetes",
             "kubernetes": {"namespace": f"app-{engine}-app"}}}, cluster
 
-    task = database_fact_task("ansible/playbooks/apps/influxdb.yml")
-    actual = render(
-        task["vars"]["generated_facts_data"],
-        {"instance": "influxdb-app",
-         "_influxdb_host": {"app_config": {"app": {"port": 8086}}, "ansible_host": "192.0.2.45"}},
-    )
-    assert actual == {"influxdb-app": {"provider": "influxdb", "host": "192.0.2.45", "port": 8086}}
+    influx = backend_record("influxdb", "influxdb-app", "native", {"port": 8086})
+    assert influx == {"influxdb-app": {
+        "provider": "influxdb", "host": "192.0.2.41", "port": 8086,
+        "runtime": "native", "kubernetes": ""}}, influx
 
 
 def database_vault_upsert_skips_check_mode():

@@ -1415,20 +1415,28 @@ def mail_consumers_open_smtp_egress():
 
 
 def wireguard_opens_its_udp_forward_before_deploy():
-    plays = yaml.safe_load(read("ansible/playbooks/apps/wireguard.yml"))
-    names = [play["name"] for play in plays]
-    assert names.index("WireGuard | Open network access") < names.index("WireGuard | Deploy"), names
-    fw_play = plays[names.index("WireGuard | Open network access")]
+    # deploy.yml opens the declared access in its provision play, before the guest play;
+    # WireGuard's deploy-prepare hook names the forwarded port.
     defaults = yaml.safe_load(read("ansible/vars/app-defaults/wireguard.yml"))["wireguard_defaults"]
-    host = {"ansible_host": "192.0.2.20", "app_config": defaults}
-    variables = {"instance": "wireguard", "groups": {"deploy_wireguard": ["wg"]}, "hostvars": {"wg": host}}
-    firewall = render(fw_play["vars"]["wiring_firewall"], {**variables, "_wg_fw_host": host})
-    assert firewall.get("egress", []) == [], firewall
-    assert firewall["inbound"] == [{"name": "wireguard", "protocol": "UDP",
-                                    "port": defaults["app"]["port"], "enabled": True}], firewall
-    task = task_named(fw_play["tasks"], "Open the app's network access")
-    assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", task
-    ports = render(task["vars"]["firewall_inbound_ports"], {**variables, "_wg_fw_host": host})
+    assert defaults["firewall"].get("egress", []) == [], defaults["firewall"]
+    assert defaults["firewall"]["inbound"] == [{"name": "wireguard", "protocol": "UDP",
+                                                "port": defaults["app"]["port"], "enabled": True}]
+    assert not defaults["firewall"].get("after_deploy", False)
+    hook = yaml.safe_load(read("ansible/roles/wireguard/tasks/deploy-prepare.yml"))
+    # A Docker WireGuard refuses a stack another app's defaults deploy to, read from every
+    # app's defaults file, not only its own.
+    refuse = task_named(hook, "WireGuard | Refuse a stack another app deploys to")
+    from ansible.plugins.loader import init_plugin_loader
+    init_plugin_loader()
+    for stack, shared in (("media", True), ("services-lxc", False)):
+        names = render(refuse["vars"]["_wg_shared_with"],
+                       {"_wg_defaults_dir": str(ROOT / "ansible/vars/app-defaults"),
+                        "app_config": {"stack": stack}})
+        assert (len(names) > 0) is shared, (stack, names)
+        assert not shared or "plex" in names, names
+    task = task_named(hook, "WireGuard | Hand deploy.yml the forwarded port")
+    ports = render(task["ansible.builtin.set_fact"]["firewall_inbound_ports"],
+                   {"app_config": defaults, "instance": "wireguard"})
     assert ports == {"wireguard": str(defaults["app"]["port"])}, ports
 
 
@@ -1478,23 +1486,18 @@ def apps_open_access_through_the_shared_task():
                         {"_fw_forward": forward, "firewall_inbound_ports": {"listen": port}})
         assert result is ok, (forward, port, result)
 
-    ports = {"plex": ("_plex_fw_host", "plex-remote-access", "port"),
-             "wireguard": ("_wg_fw_host", "wireguard", "port")}
-    for app in ("plex", "wireguard"):
-        plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
-        names = [play["name"] for play in plays]
-        opened = next(i for i, n in enumerate(names) if n.endswith("| Open network access"))
-        deployed = next(i for i, n in enumerate(names) if n.endswith("| Deploy"))
-        assert opened < deployed, (app, names)
-        task = task_named(plays[opened]["tasks"], "Open the app's network access")
-        assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", app
-        host, forward, key = ports[app]
+    # deploy.yml opens the declared access before the guest play, with the forwarded port
+    # each app's deploy-prepare hook names.
+    ports = {"plex": ("Plex | Hand deploy.yml the media paths and the remote-access port",
+                      "plex-remote-access"),
+             "wireguard": ("WireGuard | Hand deploy.yml the forwarded port", "wireguard")}
+    for app, (task_name, forward) in ports.items():
+        task = task_named(yaml.safe_load(read(f"ansible/roles/{app}/tasks/deploy-prepare.yml")), task_name)
         defaults = yaml.safe_load(read(f"ansible/vars/app-defaults/{app}.yml"))[f"{app}_defaults"]
         declared = {f["name"]: f["port"] for f in defaults["firewall"]["inbound"]}
-        rendered = render(task["vars"]["firewall_inbound_ports"],
-                          {host: {"app_config": defaults}, "instance": app,
-                           "homelabinfra_config": {}})
-        assert rendered == {forward: str(defaults["app"][key])} and declared[forward] == defaults["app"][key], (
+        rendered = render(task["ansible.builtin.set_fact"]["firewall_inbound_ports"],
+                          {"app_config": defaults, "instance": app, "homelabinfra_config": {}})
+        assert rendered == {forward: str(defaults["app"]["port"])} and declared[forward] == defaults["app"]["port"], (
             app, rendered, declared)
 
 def qbittorrent_enforces_peer_ports_before_start():
@@ -1789,8 +1792,6 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         },
     ) == "60"
 
-    playbook = yaml.safe_load(read("ansible/playbooks/apps/comfyui.yml"))
-
     def find_task(tasks, name):
         for task in tasks:
             if task.get("name") == name:
@@ -1801,17 +1802,25 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
                     return found
         return None
 
-    provision = yaml.safe_load(read("ansible/roles/comfyui/tasks/provision-vm.yml"))
-    assert playbook[0]["tasks"][0]["ansible.builtin.include_role"]["tasks_from"] == "provision-vm"
+    # ComfyUI's deploy-provision hook hands the shared own-VM tasks its accelerator choice.
+    hook = yaml.safe_load(read("ansible/roles/comfyui/tasks/deploy-provision.yml"))
+    gpu_flag = hook[0]["vars"]["app_vm_gpu"]
+    provision = yaml.safe_load(read("ansible/tasks/proxmox/provision-app-vm.yml"))
     cloud_template = find_task(provision, "Ensure the Debian cloud-init template exists")
-    clone = find_task(provision, "Clone the ComfyUI VM from the cloud-init template")
-    attach = find_task(provision, "Attach the named ComfyUI PCI device")
+    clone = find_task(provision, "Clone the {{ app_vm_display }} VM from the cloud-init template")
+    attach = find_task(provision, "Attach the named {{ app_vm_display }} PCI device")
     assert cloud_template and clone and attach
     placement = cloud_template["vars"]["proxmox_placement_class"]
-    assert render(placement, {"app_config": {"app": {"accelerator": "cpu"}}}) == "floating_vm"
-    assert render(placement, {"app_config": {"app": {"accelerator": "cuda"}}}) == "gpu_vm"
+
+    def context(accelerator):
+        app_config = {"app": {"accelerator": accelerator}}
+        return {"app_config": app_config, "app_vm_gpu": render(gpu_flag, {"app_config": app_config})}
+
+    assert render(placement, context("cpu")) == "floating_vm"
+    assert render(placement, context("cuda")) == "gpu_vm"
     assert clone["vars"]["proxmox_placement_class"] == placement
-    assert attach["when"] == "app_config.app.accelerator | default('cuda') == 'cuda'"
+    assert render("{{ " + attach["when"] + " }}", context("cuda"))
+    assert not render("{{ " + attach["when"] + " }}", context("cpu"))
 
 
 def immich_task_defaults_missing_gpu_device_to_empty():

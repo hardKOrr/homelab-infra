@@ -37,6 +37,10 @@
           is search('PlexOnlineToken="[^"]+"')) }}
   no_log: true
 
+- name: Remember whether this run claims Plex
+  ansible.builtin.set_fact:
+    _plex_claimed_before: "{{ _plex_claimed }}"
+
 - name: Require a Vaultwarden claim token for an unclaimed Plex server
   ansible.builtin.assert:
     that: _plex_claim_token | length > 0
@@ -137,11 +141,15 @@
     vault_item_secret_fields: [token]
   no_log: true
 
+# Apply the claimed Compose project in this run, so the container leaves the claim
+# environment now and a repeat Deploy finds nothing to change.
 - name: Remove the consumed claim token from the Compose project
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ plex_project_dir }}/docker-compose.yml"
-    mode: "0640"
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
   vars:
+    compose_project_dir: "{{ plex_project_dir }}"
+    compose_owner: "{{ app_config.app.puid | default(1313) }}"
+    compose_group: "{{ app_config.app.pgid | default(1313) }}"
+    # The file being replaced still holds the token; keep it masked in the diff.
+    compose_secrets: "{{ [_plex_claim_token | default('')] | select | list }}"
     _plex_claimed: true
-  no_log: true
+  when: not (_plex_claimed_before | bool)

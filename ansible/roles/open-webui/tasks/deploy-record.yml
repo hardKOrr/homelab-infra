@@ -1,0 +1,8 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before wiring): the selected backends
+# for the notification.
+- name: Open WebUI | Name the selected backends in the notification
+  ansible.builtin.set_fact:
+    deploy_notify_note: >-
+      Selected Ollama={{ open_webui_ollama_instance | default('none', true) }};
+      LiteLLM={{ open_webui_litellm_instance | default('none', true) }}.

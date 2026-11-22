@@ -5,6 +5,7 @@
 # This file is git-managed — git pull may update these defaults.
 
 jellyfin_defaults:
+  platform_layers: [media_storage]
   hosting:
     method: docker
     supported: [docker-vm]
@@ -74,6 +75,7 @@ jellyfin_defaults:
     pgid: 1313
 
   routing:
+    monitor_path: /health
     subdomain: jellyfin                    # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal

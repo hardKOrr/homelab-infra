@@ -1,0 +1,29 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): the runner
+# registers against a named Forgejo instance, which must be deployed first; its URL and
+# the method's labels join app_config before the guest or cluster gets it.
+- name: Forgejo Runner | Resolve the named Forgejo endpoint
+  ansible.builtin.set_fact:
+    _forgejo_endpoint: >-
+      {{ (homelabinfra_infra.apps | default({})).get(app_config.app.forgejo.instance, {}) }}
+  no_log: true
+
+- name: Forgejo Runner | Assert the named Forgejo instance is deployed first
+  ansible.builtin.assert:
+    that:
+      - _forgejo_endpoint.provider | default('') == 'forgejo'
+      - _forgejo_endpoint.url | default('') | length > 0
+    fail_msg: >-
+      Forgejo instance {{ app_config.app.forgejo.instance }} is not registered.
+      Deploy that named Forgejo instance before deploying {{ instance }}.
+    quiet: true
+
+- name: Forgejo Runner | Add the Forgejo endpoint to the runner config
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'app': {
+        'forgejo_url': _forgejo_endpoint.url,
+        'forgejo_instance': app_config.app.forgejo.instance,
+        'labels': app_config.app.native_labels if app_config.hosting.method == 'native' else app_config.app.labels
+      }}, recursive=True) }}
+  no_log: true

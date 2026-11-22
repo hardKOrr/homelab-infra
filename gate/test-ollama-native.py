@@ -29,7 +29,7 @@ assert "tasks/recovery/restore-swap.yml" in restore
 assert "recovery_swap_runtime: \"{{ app_config.hosting.method" in restore
 
 shared = (role / "tasks/storage-contained.yml").read_text()
-assert "storage-contained.yml" in native and "storage-contained.yml" in (role / "tasks/main.yml").read_text()
+assert "storage-contained.yml" in native and "storage-contained.yml" in (role / "tasks/docker.yml").read_text()
 assert "app.models_path" in shared and "regex_escape" in shared
 
 condition = yaml.safe_load(shared)[0]["ansible.builtin.assert"]["that"][0]

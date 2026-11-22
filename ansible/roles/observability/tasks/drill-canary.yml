@@ -16,7 +16,7 @@
     _obs_canary_auth: >-
       {{ drill_app_headers | combine({'Authorization': 'Basic ' ~
            ((app_config.app.admin_user | default('admin')) ~ ':'
-            ~ homelabinfra_infra.metrics.admin_password) | b64encode}) }}
+            ~ observability_stored.admin_password) | b64encode}) }}
   no_log: true
 
 - name: Observability drill canary | Read the folder, dashboard and alert rule

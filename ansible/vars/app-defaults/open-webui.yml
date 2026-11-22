@@ -58,6 +58,7 @@ open_webui_defaults:
       litellm: ""
 
   routing:
+    monitor_path: /health
     subdomain: open-webui
     proxy: internal
     access: internal

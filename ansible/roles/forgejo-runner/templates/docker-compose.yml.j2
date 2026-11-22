@@ -12,8 +12,9 @@ services:
       - "{{ app_config.app.data_path }}/docker:/var/lib/docker"
     # The runner exits when it cannot reach this daemon, so it starts only once the daemon
     # answers (depends_on below); otherwise a first boot crash-loops until dockerd is up.
+    # Check the TCP listener the runner uses: dockerd answers on its socket well before it.
     healthcheck:
-      test: ["CMD", "docker", "info"]
+      test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]
       interval: 2s
       timeout: 5s
       retries: 60

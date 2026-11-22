@@ -114,7 +114,7 @@
 - name: Resolve the Grafana admin password
   ansible.builtin.set_fact:
     _observability_admin_password: >-
-      {{ homelabinfra_infra.metrics.admin_password
+      {{ observability_stored.admin_password | default('')
          | default(_observability_env_existing.GF_ADMIN_PASSWORD
                    | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true),
                    true) }}
@@ -123,7 +123,8 @@
 - name: Store the Grafana password before applying it
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
-    vault_item_name: homelab-infra/metrics
+    vault_item_name: "{{ observability_vault_item | trim }}"
+    vault_item_merge: "{{ not (observability_platform | bool) }}"
     vault_item_fields:
       provider: prometheus_grafana
       instance: "{{ instance }}"

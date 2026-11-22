@@ -1,0 +1,32 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). A dedicated GPU
+# is passed to Ollama's own Docker VM only; every other form runs in CPU mode.
+- name: Ollama | Assert the VM, optional PCI, and model-storage contract
+  when: app_config.hosting.method == 'docker'
+  ansible.builtin.assert:
+    that:
+      - app_config.proxmox.vm is mapping
+      - app_config.app.storage_path | default('') | length > 0
+      - app_config.app.models_path | default('') | length > 0
+    fail_msg: >-
+      Ollama requires its own Docker-capable VM and an explicit persistent model-storage
+      path. GPU mode additionally requires an exact PCI device declared dedicated in
+      proxmox.devices.
+    quiet: true
+
+- name: Ollama | Refuse a GPU off its own Docker VM
+  ansible.builtin.assert:
+    that: >-
+      app_config.app.gpu_device | default('', true) | trim | length == 0
+      or (app_config.hosting.method == 'docker' and app_config.stack | default('', true) | length == 0)
+    fail_msg: >-
+      A dedicated GPU is passed to Ollama's own Docker VM only. Clear app.gpu_device to run
+      Ollama in CPU mode on a stack, natively or on Kubernetes.
+    quiet: true
+
+- name: Ollama | Refuse a stack for native Ollama
+  when: app_config.hosting.method == 'native'
+  ansible.builtin.assert:
+    that: app_config.stack | default('', true) | length == 0
+    fail_msg: Native Ollama runs on its own guest; leave stack unset.
+    quiet: true

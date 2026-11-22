@@ -64,64 +64,34 @@ def main():
     assert "--vmid" in withdraw_cmd and "hostvars[item].proxmox_vmid" in withdraw_cmd
     assert "--guest" in withdraw_cmd and "hostvars[item].proxmox_name" in withdraw_cmd
 
-    ha_plays = yaml.safe_load(
-        (ROOT / "ansible/playbooks/apps/home-assistant.yml").read_text()
-    )
-    ha_provision = next(play for play in ha_plays if play["name"] == "Home Assistant | Provision")
-    unique_target = task_named(ha_provision["tasks"], "Refuse ambiguous existing Home Assistant VMs")
-    assert unique_target["ansible.builtin.assert"]["that"] == [
-        "_ha_existing_hosts | length <= 1"
-    ]
-    existing_add_host = task_named(ha_provision["tasks"], "Add the existing VM to the deploy group")[
-        "ansible.builtin.add_host"
-    ]
-    assert existing_add_host["proxmox_vmid"] == "{{ hostvars[_ha_existing_hosts[0]].proxmox_vmid }}"
-    ha_vm_tasks = yaml.safe_load(
-        (ROOT / "ansible/roles/home-assistant/tasks/provision-vm.yml").read_text()
-    )
-    add_host = task_named(ha_vm_tasks, "Add the new VM to the deploy group")[
-        "ansible.builtin.add_host"
-    ]
-    assert add_host["proxmox_vmid"] == "{{ homelabinfra_instance.vm.vmid }}"
-
     # tasks/proxmox/resolve-instance-guest.yml itself is exercised by
-    # gate/test-instance-guest-reuse.py.
-    for app, display in (("ollama", "Ollama"), ("comfyui", "ComfyUI")):
-        plays = yaml.safe_load((ROOT / f"ansible/playbooks/apps/{app}.yml").read_text())
-        provision = next(play for play in plays if play["name"] == f"{display} | Provision")
-        if True:  # dedicated-VM provisioning lives in a role task file
-            provision = {"tasks": yaml.safe_load(
-                (ROOT / f"ansible/roles/{app}/tasks/provision-vm.yml").read_text()
-            )}
-        task_named(provision["tasks"], f"Resolve the tagged or uniquely named owned {display} VM")
-        existing_host = task_named(
-            provision["tasks"], "Add the existing VM to the deploy group"
-        )["ansible.builtin.add_host"]
-        assert "proxmox_vmid" in existing_host
-        predeploy_record = task_named(
-            provision["tasks"], f"Record {display} VM identity before application deployment"
-        )
-        assert predeploy_record["ansible.builtin.include_tasks"].endswith(
-            "tasks/proxmox/record-app-on-guest.yml"
-        )
-        assert predeploy_record["vars"]["record_guest_kind"] == "docker"
-        assert predeploy_record["vars"]["record_guest_require_success"] is True
-        assert predeploy_record["when"] == f"_{app}_needs_identity_record"
-
-        create_identity = task_named(
-            provision["tasks"], f"Set the {display} VM identity and ownership tags"
-        )["ansible.builtin.set_fact"]["homelabinfra_config"]
-        assert "['_' ~ instance]" in create_identity
-
-        wire = next(play for play in plays if play["name"] == f"{display} | Wire")
-        wire_record = task_named(wire["tasks"], f"Record {display} on its Docker guest")
-        assert wire_record["vars"]["record_guest_kind"] == (
-            "{{ _ollama_deploy_host.app_config.hosting.method }}" if app == "ollama" else
-            "docker" if app != "comfyui" else
-            "{{ 'native' if _comfyui_cfg.hosting.method == 'native' else 'docker' }}"
-        )
-        # ComfyUI also runs on Kubernetes; its Docker record is skipped there only.
-        assert wire_record.get("when") == ("not (_comfyui_k8s | bool)" if app == "comfyui" else None)
+    # gate/test-instance-guest-reuse.py. The own-VM apps (Ollama, ComfyUI, Home Assistant)
+    # share tasks/proxmox/provision-app-vm.yml.
+    vm_tasks = yaml.safe_load((ROOT / "ansible/tasks/proxmox/provision-app-vm.yml").read_text())
+    task_named(vm_tasks, "Resolve the tagged or uniquely named owned {{ app_vm_display }} VM")
+    existing_host = task_named(vm_tasks, "Add the existing VM to the deploy group")[
+        "ansible.builtin.add_host"
+    ]
+    assert existing_host["proxmox_vmid"] == "{{ hostvars[_app_vm_existing_hosts[0]].proxmox_vmid }}"
+    new_vm = task_named(vm_tasks, "Provision a new {{ app_vm_display }} VM")["block"]
+    add_host = task_named(new_vm, "Add the new VM to the deploy group")["ansible.builtin.add_host"]
+    assert add_host["proxmox_vmid"] == "{{ homelabinfra_instance.vm.vmid }}"
+    predeploy_record = task_named(
+        vm_tasks, "Record {{ app_vm_display }} VM identity before application deployment"
+    )
+    assert predeploy_record["ansible.builtin.include_tasks"].endswith("record-app-on-guest.yml")
+    assert predeploy_record["vars"]["record_guest_kind"] == "docker"
+    assert predeploy_record["vars"]["record_guest_require_success"] is True
+    assert predeploy_record["when"] == "_app_vm_needs_identity_record"
+    for app in ("ollama", "comfyui", "home-assistant"):
+        hook = (ROOT / f"ansible/roles/{app}/tasks/deploy-provision.yml").read_text()
+        assert "tasks/proxmox/provision-app-vm.yml" in hook, app
+    create_identity = task_named(new_vm, "Set the {{ app_vm_display }} VM identity and ownership tags")[
+        "ansible.builtin.set_fact"
+    ]["homelabinfra_config"]
+    assert "['_' ~ instance]" in create_identity
+    unique_target = task_named(vm_tasks, "Refuse ambiguous existing {{ app_vm_display }} VMs")
+    assert unique_target["ansible.builtin.assert"]["that"] == ["_app_vm_existing_hosts | length <= 1"]
 
     helper = load_helper()
     resources = [

@@ -35,21 +35,8 @@ assert defaults["app"]["grafana_storage"] > 0 and defaults["app"]["prometheus_st
 assert defaults["backup"]["client"]["image"]
 assert {"name": "node-exporter", "protocol": "TCP", "port": 9100} in defaults["firewall"]["egress"]
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/observability.yml"))
-provision = playbook[0]["tasks"]
-assert any(
-    task.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and task.get("when") == "app_config.hosting.method == 'kubernetes'"
-    for task in provision
-)
-assert any(
-    task.get("ansible.builtin.import_tasks") == "../../tasks/stack/find-or-create-host.yml"
-    and task.get("when") == "app_config.hosting.method == 'docker'"
-    for task in provision
-)
-assert "homelabinfra_infra.kubernetes.ingress_vip" in read(
-    "ansible/playbooks/apps/observability.yml"
-)
+# Deploy is the shared deploy.yml; only the instance named observability records metrics.
+assert "observability_platform | bool" in read("ansible/roles/observability/tasks/deploy-wire.yml")
 
 environment = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
 environment.filters["to_json"] = json.dumps
@@ -133,14 +120,14 @@ assert recovery["after_restore_tasks"].endswith("/tasks/restore-kubernetes-crede
 assert "recovery-restore.yml" in restore[0]["ansible.builtin.include_tasks"]
 assert not (ROLE / "templates/kubernetes").exists()
 
-# An isolated recovery target must not repoint the shared metrics registration.
+# An isolated recovery target must not repoint the shared metrics registration, and only
+# the platform instance writes it. The registry key is written by the deploy-wire hook,
+# which deploy.yml never runs for an isolated target.
 isolated = "not (recovery_isolated | default(false) | bool)"
 registry = next(t for t in deploy if "metrics registry" in t["name"])
-assert registry["when"] == isolated
-facts = next(
-    t for t in playbook[2]["pre_tasks"] if t["name"] == "Record metrics facts"
-)
-assert facts["when"] == isolated
+assert registry["when"] == ["observability_platform | bool", isolated]
+facts = yaml.safe_load(read("ansible/roles/observability/tasks/deploy-wire.yml"))[0]
+assert facts["when"] == "observability_platform | bool"
 
 # Restoring between instances with different credentials: the reset Job runs against the
 # TARGET's volume and reads the TARGET's Secret, never the source's.

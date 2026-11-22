@@ -35,75 +35,57 @@ def app_producers_publish_named_instance_keys():
     normalize = named_task(writer, "Generated facts | Resolve dynamic app instance key")
     normalize_expression = normalize["ansible.builtin.set_fact"]["_generated_facts_data"]
 
-    fixtures = (
-        (
-            "ansible/playbooks/apps/ollama.yml",
-            "Record Ollama endpoint for named AI consumers",
-            "ollama",
-            "_ollama_deploy_host",
-            "ollama",
-            11434,
-        ),
-        (
-            "ansible/playbooks/apps/open-webui.yml",
-            "Record Open WebUI endpoint for app-to-app consumers",
-            "open-webui",
-            "_open_webui_host",
-            "open-webui",
-            8080,
-        ),
-    )
+    # Each role's deploy-wire hook writes its `apps` entry from its guest's address, or
+    # from the cluster route on Kubernetes (playbooks/apps/deploy.yml).
+    def hook_entry(app, method):
+        task = named_task(
+            yaml.safe_load((ROOT / f"ansible/roles/{app}/tasks/deploy-wire.yml").read_text()),
+            next(t["name"] for t in yaml.safe_load(
+                (ROOT / f"ansible/roles/{app}/tasks/deploy-wire.yml").read_text())
+                if "write-generated-facts.yml" in str(t.get("ansible.builtin.include_tasks"))),
+        )
+        port = {"ollama": 11434, "open-webui": 8080}[app]
+        variables = dict(task["vars"])
+        variables.update({
+            "instance": app,
+            "_deploy_fqdn": f"{app}.example.test",
+            "groups": {f"deploy_{app}": ["guest"]},
+            "hostvars": {"guest": {"ansible_host": "192.0.2.80"}},
+            "homelabinfra_infra": {"kubernetes": {"ingress_vip": "192.0.2.90"}},
+            "app_config": {"hosting": {"method": method}, "app": {"port": port}},
+        })
+        # The hook keys the entry by the instance itself, so the writer's legacy
+        # "{{ instance }}" key normalization has nothing to do.
+        data = render(task["vars"]["generated_facts_data"], variables)
+        assert list(data) == [app], data
+        return data[app]
 
-    for path, task_name, instance, host_var, provider, port in fixtures:
-        task = named_task(list(read_tasks(path)), task_name)
-        input_data = render(
-            task["vars"]["generated_facts_data"],
-            {
-                "instance": instance,
-                host_var: {
-                    "ansible_host": "192.0.2.80",
-                    "app_config": {"app": {"port": port}},
-                },
-            },
-        )
-        assert "{{ instance }}" in input_data, input_data
-        resolved = render(
-            normalize_expression,
-            {"_generated_facts_data": input_data, "instance": instance},
-        )
-        assert "{{ instance }}" not in resolved, resolved
-        assert resolved[instance] == {
-            "provider": provider,
-            "instance": instance,
+    for app in ("ollama", "open-webui"):
+        port = {"ollama": 11434, "open-webui": 8080}[app]
+        got = hook_entry(app, "docker")
+        assert got == {
+            "provider": app,
+            "instance": app,
             "host": "http://192.0.2.80",
             "port": str(port),
             "url": f"http://192.0.2.80:{port}/",
-        }, resolved
+        }, got
 
-    k8s_task = named_task(
-        list(read_tasks("ansible/playbooks/apps/open-webui.yml")),
-        "Record the Kubernetes Open WebUI endpoint for app-to-app consumers",
-    )
-    k8s_input = render(
-        k8s_task["vars"]["generated_facts_data"],
-        {
-            "instance": "open-webui",
-            "wiring_upstream_host": "192.0.2.80",
-            "wiring_upstream_port": 80,
-            "hostvars": {"localhost": {"open_webui_fqdn": "open-webui.example.test"}},
-        },
-    )
-    k8s_resolved = render(
-        normalize_expression,
-        {"_generated_facts_data": k8s_input, "instance": "open-webui"},
-    )
-    assert k8s_resolved["open-webui"] == {
+    assert hook_entry("ollama", "kubernetes") == {
+        "provider": "ollama",
+        "instance": "ollama",
+        "host": "https://ollama.example.test",
+        "port": "443",
+        "url": "https://ollama.example.test/",
+    }
+    k8s = hook_entry("open-webui", "kubernetes")
+    assert k8s == {
         "provider": "open-webui",
         "instance": "open-webui",
-        "host": "http://192.0.2.80",
+        "host": "http://192.0.2.90",
         "port": "80",
         "url": "https://open-webui.example.test/",
-    }, k8s_resolved
+    }, k8s
 
     # A rerun merges an already-resolved entry and preserves unrelated app records.
     collision = {

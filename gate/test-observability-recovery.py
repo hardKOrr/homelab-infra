@@ -208,9 +208,21 @@ def check_restore_swap(server):
         result = run_hook("observability", "staged", variables)
         assert result.returncode == 0, result.stdout + result.stderr
 
+    # The password reset runs in the app's runtime: Docker through the container's own
+    # environment, native through systemd, which expands the EnvironmentFile without a shell.
+    verified = yaml.safe_load((repo / "ansible/roles/observability/tasks/restore-verified.yml").read_text())
+    reset = next(t for t in verified if t.get("name") == "Observability restore | Reapply the target's administrator password")
+    assert "reset-admin-password" in reset["vars"]["_obs_reset_docker"]
+    native = reset["vars"]["_obs_reset_native"]
+    assert native[0] == "systemd-run" and "--property=EnvironmentFile=/etc/default/grafana-server" in native
+    assert native[-1] == "${GF_SECURITY_ADMIN_PASSWORD}" and "sh" not in native
+    assert reset["no_log"] is True and reset["failed_when"] is False
+
     def stub(tasks):
         for task in tasks:
             task.update(retries=1, delay=0)
+            if task.get("name") == reset["name"]:
+                task["ansible.builtin.command"] = {"argv": ["true"]}
         return tasks
 
     for status, ok in [(503, False), (200, True)]:

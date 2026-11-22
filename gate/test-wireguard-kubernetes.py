@@ -32,29 +32,16 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/wireguard.yml"))[
 ]
 assert defaults["hosting"]["method"] == "native"
 assert defaults["hosting"]["supported"] == [
-    "native-lxc", "docker-lxc", "docker-vm", "kubernetes",
+    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
 ]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["init_image"]
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/wireguard.yml"))
-kube_when = "app_config.hosting.method | default('native') == 'kubernetes'"
-provision = playbook[0]["tasks"]
-assert any(
-    t.get("ansible.builtin.include_role", {}).get("tasks_from") == "kubernetes"
-    and t.get("when") == kube_when
-    for t in provision
-)
-assert any(
-    "provision-native.yml" in str(t.get("ansible.builtin.include_tasks", ""))
-    and t.get("when") == "app_config.hosting.method | default('native') == 'native'"
-    for t in provision
-)
-assert any(
-    str(t.get("ansible.builtin.include_tasks", "")).endswith("kubernetes/open-app-access.yml")
-    for t in provision
-)
-assert "homelabinfra_infra.kubernetes.ingress_vip" in read("ansible/playbooks/apps/wireguard.yml")
+# Deploy is the shared deploy.yml; WireGuard's DNS name and ping monitor point at the
+# guest or the cluster VIP (deploy-wire.yml), and native uses the shared native guest.
+wire = read("ansible/roles/wireguard/tasks/deploy-wire.yml")
+assert "wiring_monitor_type: ping" in wire and "wiring_upstream_host" in wire
+assert defaults["proxmox"]["guest_type"] == "lxc"
 
 traefik = read("ansible/roles/k3s_cluster/templates/traefik-config.yaml.j2")
 assert "metallb.io/allow-shared-ip" in traefik

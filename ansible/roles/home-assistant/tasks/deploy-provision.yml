@@ -1,0 +1,75 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, provisioning): every guest form of Home
+# Assistant gets its optional Zigbee coordinator here, so this hook provisions the guest
+# too: Docker on its own VM (placed with the coordinator) or on the home-assistant-lxc
+# stack, or a native LXC or VM. Kubernetes takes deploy.yml's shared steps.
+- name: Home Assistant | Provision the guest and attach the coordinator
+  when: app_config.hosting.method in ['docker', 'native']
+  vars:
+    _ha_usb: "{{ app_config.app.usb_mapping | default('', true) }}"
+    _ha_on_stack: >-
+      {{ app_config.hosting.method == 'docker' and app_config.stack | default('', true) | length > 0 }}
+  block:
+    - name: Home Assistant | Provision its own Docker VM
+      ansible.builtin.include_tasks: ../../../tasks/proxmox/provision-app-vm.yml
+      vars:
+        app_vm_display: Home Assistant
+        app_vm_network_app: home-assistant
+        app_vm_gpu: false
+        app_vm_placement_devices: >-
+          {{ (homelabinfra_config.proxmox.devices | default({}) | dict2items
+              | selectattr('value.identifiers', 'defined')
+              | selectattr('value.identifiers', 'contains', _ha_usb)
+              | map(attribute='key') | list)
+             if _ha_usb | length > 0 else [] }}
+      when: app_config.hosting.method == 'docker' and not (_ha_on_stack | bool)
+
+    - name: Home Assistant | Find or create the home-assistant-lxc stack host
+      ansible.builtin.include_tasks: ../../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+      when: _ha_on_stack | bool
+
+    - name: Home Assistant | Provision or reuse the native guest
+      ansible.builtin.include_role:
+        name: _template-native
+        tasks_from: provision
+      vars:
+        native_guest_network_app: home-assistant
+      when: app_config.hosting.method == 'native'
+
+    # A VM takes the Proxmox USB mapping; the shared task preflights it before any qm set.
+    - name: Home Assistant | Attach the Zigbee USB resource mapping to the VM
+      ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-usb-passthrough.yml
+      vars:
+        usb_passthrough_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        usb_passthrough_device:
+          mapping: "{{ _ha_usb }}"
+      when:
+        - _ha_usb | length > 0
+        - hostvars[groups['deploy_' ~ instance][0]].proxmox_vmtype | default('qemu') == 'qemu'
+        - >-
+          not (_ha_on_stack | bool)
+          and (app_config.hosting.method == 'docker' or _native_guest_guest_type | default('') == 'vm')
+
+    # An LXC cannot take a USB mapping as a VM does; the shared LXC seam binds the mapped
+    # device node instead (declared mode: shared in config/proxmox.yml).
+    - name: Home Assistant | Bind the Zigbee USB device into the LXC
+      ansible.builtin.include_tasks: ../../../tasks/proxmox/attach-usb-passthrough-lxc.yml
+      vars:
+        usb_lxc_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        usb_lxc_device:
+          mapping: "{{ _ha_usb }}"
+          serial_path: "{{ app_config.app.usb_device_path }}"
+      when:
+        - _ha_usb | length > 0
+        - >-
+          (_ha_on_stack | bool
+           and hostvars[groups['deploy_' ~ instance][0]].proxmox_vmtype | default('') == 'lxc')
+          or (app_config.hosting.method == 'native' and _native_guest_guest_type | default('') == 'lxc')
+
+    - name: Home Assistant | Skip deploy.yml's stack and native guest steps
+      ansible.builtin.set_fact:
+        deploy_guest_provided: true

@@ -46,6 +46,7 @@ plex_defaults:
         port: 32400
         enabled: false
   routing:
+    monitor_path: /identity
     subdomain: plex
     proxy: internal
     access: internal

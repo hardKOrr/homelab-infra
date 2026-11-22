@@ -1,0 +1,15 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): the GPU check,
+# the media paths for the stack host, and the port behind the opt-in remote-access forward.
+- name: Plex | Check the GPU placement declaration
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/assert-dedicated-igpu.yml
+  vars:
+    igpu_app_display: Plex
+
+- name: Plex | Hand deploy.yml the media paths and the remote-access port
+  ansible.builtin.set_fact:
+    deploy_host_mounts: "{{ app_config.app.mounts | default([], true) }}"
+    deploy_host_mounts_owner: >-
+      {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
+    firewall_inbound_ports:
+      plex-remote-access: "{{ app_config.app.port }}"

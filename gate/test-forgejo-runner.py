@@ -99,7 +99,7 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_removal(registration_scope, token_field, include_admin_fallback=False):
+def run_removal(registration_scope, token_field, include_admin_fallback=False, fail_scopes=None):
     token = f"fixture-{token_field.removesuffix('_api_token')}-token"
     secrets = {token}
     vault_fields = {token_field: token}
@@ -112,7 +112,7 @@ def run_removal(registration_scope, token_field, include_admin_fallback=False):
         "admin": ([{"id": 41, "name": "forgejo-runner"}, {"id": 42, "name": "other-runner"}]
                   if registration_scope == "admin" else []),
     }
-    state = RunnerApiState(registrations_by_scope)
+    state = RunnerApiState(registrations_by_scope, fail_scopes=fail_scopes)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RunnerApi)
     server.state = state
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -151,7 +151,14 @@ def run_removal(registration_scope, token_field, include_admin_fallback=False):
             )
         expected = f"/api/v1/{registration_scope}/actions/runners/41"
         assert state.deletes == [expected], state.deletes
-        if registration_scope == "admin" and token_field == "runner_api_token":
+        if fail_scopes:
+            # The refused user listing falls through to the admin listing and delete.
+            expected_authorizations = [
+                f"token {token}",
+                "token fixture-admin-token",
+                "token fixture-admin-token",
+            ]
+        elif registration_scope == "admin" and token_field == "runner_api_token":
             expected_authorizations = [
                 f"token {token}",
                 "token fixture-admin-token",
@@ -469,7 +476,7 @@ def check_registration_reconciliation():
 
 def check_non_root_entrypoint_access():
     role_tasks = yaml.safe_load(
-        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+        (repo / "ansible/roles/forgejo-runner/tasks/docker.yml").read_text()
     )
     entrypoint = next(
         task["ansible.builtin.copy"]
@@ -489,10 +496,10 @@ def check_non_root_entrypoint_access():
 def check_runner_service_running_retries():
     """The runner waits for a healthy Docker daemon, and Deploy catches a crash loop."""
     compose = (repo / "ansible/roles/forgejo-runner/templates/docker-compose.yml.j2").read_text()
-    assert 'test: ["CMD", "docker", "info"]' in compose
+    assert 'test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]' in compose
     assert "condition: service_healthy" in compose
     role_tasks = yaml.safe_load(
-        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+        (repo / "ansible/roles/forgejo-runner/tasks/docker.yml").read_text()
     )
     names = [task.get("name") for task in role_tasks]
     first = names.index("Forgejo Runner | Read the runner's state")
@@ -514,6 +521,8 @@ def main():
     run_removal("user", "runner_api_token", include_admin_fallback=True)
     run_removal("admin", "admin_api_token")
     run_removal("admin", "runner_api_token", include_admin_fallback=True)
+    # A user token from an earlier Forgejo is refused; the admin token still removes it.
+    run_removal("admin", "runner_api_token", include_admin_fallback=True, fail_scopes={"user"})
     print("Forgejo Runner registration and removal checks passed")
 
 

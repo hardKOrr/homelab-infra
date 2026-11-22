@@ -68,10 +68,11 @@ def test_compose_template_cpu_and_gpu_modes():
 
 
 def test_playbook_selects_cpu_or_dedicated_gpu_placement():
-    playbook = read_yaml("ansible/playbooks/apps/ollama.yml")
-    provision_role = next(t for t in playbook[0]["tasks"] if t.get("ansible.builtin.include_role", {}).get("tasks_from") == "provision-vm")
-    assert provision_role["ansible.builtin.include_role"]["name"] == "ollama"
-    provision = {"tasks": read_yaml("ansible/roles/ollama/tasks/provision-vm.yml")}
+    # Ollama's deploy-provision hook hands the shared own-VM tasks its GPU choice.
+    hook = read_yaml("ansible/roles/ollama/tasks/deploy-provision.yml")
+    own_vm = next(t for t in hook if "provision-app-vm.yml" in str(t.get("ansible.builtin.include_tasks")))
+    gpu_flag = own_vm["vars"]["app_vm_gpu"]
+    provision = {"tasks": read_yaml("ansible/tasks/proxmox/provision-app-vm.yml")}
     placement_tasks = [
         task
         for task in walk_tasks(provision)
@@ -81,38 +82,34 @@ def test_playbook_selects_cpu_or_dedicated_gpu_placement():
     ]
     assert len(placement_tasks) == 2
 
+    def context(gpu_device):
+        app_config = {"app": {"gpu_device": gpu_device}}
+        return {"app_config": app_config, "app_vm_gpu": render(gpu_flag, {"app_config": app_config})}
+
     for task in placement_tasks:
         expression = task["vars"]["proxmox_placement_class"]
-        assert (
-            render(expression, {"app_config": {"app": {"gpu_device": ""}}}).strip()
-            == "floating_vm"
-        )
-        assert (
-            render(expression, {"app_config": {"app": {"gpu_device": "ollama-gpu"}}}).strip()
-            == "gpu_vm"
-        )
+        assert render(expression, context("")).strip() == "floating_vm"
+        assert render(expression, context("ollama-gpu")).strip() == "gpu_vm"
         device = task["vars"]["proxmox_placement_device"]
-        assert render(device, {"app_config": {"app": {"gpu_device": ""}}}) == ""
+        assert render(device, context("")) == ""
 
     attach = next(
         task
         for task in walk_tasks(provision)
-        if task.get("name") == "Attach the named Ollama PCI device"
+        if task.get("name") == "Attach the named {{ app_vm_display }} PCI device"
     )
-    cpu_context = {"app_config": {"app": {"gpu_device": ""}}}
-    gpu_context = {"app_config": {"app": {"gpu_device": "ollama-gpu"}}}
-    assert not render("{{ " + attach["when"] + " }}", cpu_context)
-    assert render("{{ " + attach["when"] + " }}", gpu_context)
+    assert not render("{{ " + attach["when"] + " }}", context(""))
+    assert render("{{ " + attach["when"] + " }}", context("ollama-gpu"))
 
     contract = next(
-        task for task in playbook[0]["pre_tasks"]
-        if task.get("name") == "Assert the VM, optional PCI, and model-storage contract"
+        task for task in read_yaml("ansible/roles/ollama/tasks/deploy-prepare.yml")
+        if task.get("name") == "Ollama | Assert the VM, optional PCI, and model-storage contract"
     )
     assert all("gpu_device" not in condition for condition in contract["ansible.builtin.assert"]["that"])
 
 
 def test_gpu_health_checks_only_run_for_declared_gpu():
-    tasks = read_yaml("ansible/roles/ollama/tasks/main.yml")
+    tasks = read_yaml("ansible/roles/ollama/tasks/docker.yml")
     gpu_tasks = [
         task
         for task in tasks

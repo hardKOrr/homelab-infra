@@ -38,21 +38,11 @@ assert defaults["backup"]["client"] == {
 assert defaults["backup"]["timeout_seconds"] > 0 and defaults["backup"]["scratch_size"] > 0
 assert defaults["backup"]["encryption"] == "none"
 
-playbook = yaml.safe_load(read("ansible/playbooks/apps/frigate.yml"))
-provision = playbook[0]
-by_name = {task["name"]: task for task in provision["tasks"]}
-kubernetes = by_name["Deploy Frigate on Kubernetes"]
-assert kubernetes["when"] == "app_config.hosting.method == 'kubernetes'"
-assert kubernetes["ansible.builtin.include_role"]["tasks_from"] == "kubernetes"
-for name in ("Find or create the dedicated Frigate Docker host (VM, or LXC with frigate-lxc)",
-             "Provision Frigate recording storage, devices and guest inputs"):
-    assert by_name[name]["when"] == "app_config.hosting.method == 'docker'"
-deploy = playbook[1]
-assert all("docker'" in str(task.get("when", "")) for task in deploy["tasks"]
-           if task.get("ansible.builtin.include_role"))
-wire = playbook[-1]
-assert "homelabinfra_infra.kubernetes.ingress_vip" in str(wire["vars"]["wiring_upstream_host"])
-assert "80 if" in str(wire["vars"]["wiring_upstream_port"])
+# Deploy is the shared deploy.yml; only Docker Frigate provisions its own host and devices.
+provision = yaml.safe_load(read(f"{ROLE}/tasks/deploy-provision.yml"))
+assert provision[0]["when"] == "app_config.hosting.method == 'docker'"
+assert any("provision-docker.yml" in str(t.get("ansible.builtin.include_tasks"))
+           for t in provision[0]["block"])
 
 cpu = dict(defaults["app"], detector="cpu", gpu_device="", igpu_render_node="",
            coral_usb_mapping="", hwaccel_args="", cameras={})
@@ -83,8 +73,8 @@ assert "test -f /config/config.yml" in pod["initContainers"][0]["command"][-1]
 assert objects[("Ingress", "frigate")]["spec"]["rules"][0]["host"] == "frigate.example.test"
 
 tasks = yaml.safe_load(read(f"{ROLE}/tasks/kubernetes.yml"))
-assert any(t.get("ansible.builtin.include_tasks") == "../../../tasks/kubernetes/open-app-access.yml"
-           for t in tasks)
+# deploy.yml opens the declared cluster access before the role runs; the role keeps no copy.
+assert not any("open-app-access.yml" in str(t.get("ansible.builtin.include_tasks")) for t in tasks)
 backup = next(t for t in tasks if "recovery-backup.yml" in t.get("ansible.builtin.include_tasks", ""))
 assert backup["vars"]["k8s_recovery"]["archives"] == [{"name": "data", "claim": "{{ instance }}-config"}]
 assert backup["vars"]["k8s_recovery"]["stop"] == ["{{ instance }}"]

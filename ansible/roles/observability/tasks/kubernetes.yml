@@ -9,9 +9,6 @@
 - name: Observability Kubernetes | Resolve the cluster and API host
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 
-- name: Observability Kubernetes | Open node_exporter egress through the cluster node alias
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/open-app-access.yml
-
 - name: Observability Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
@@ -39,10 +36,13 @@
       admin_password: "{{ _observability_admin_password }}"
     vault_item_secret_fields: [admin_password]
 
-# Skipped for an isolated recovery target: the shared metrics registration must keep
-# pointing at the live source until the restore is verified.
+# Only the platform instance writes the shared item, and never as an isolated recovery
+# target: the shared metrics registration keeps pointing at the live source until the
+# restore is verified.
 - name: Observability Kubernetes | Store the Grafana password for the metrics registry
-  when: not (recovery_isolated | default(false) | bool)
+  when:
+    - observability_platform | bool
+    - not (recovery_isolated | default(false) | bool)
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: homelab-infra/metrics

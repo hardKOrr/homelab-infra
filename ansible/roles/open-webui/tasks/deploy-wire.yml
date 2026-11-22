@@ -1,0 +1,23 @@
+---
+# Deploy hook (playbooks/apps/deploy.yml, localhost, after wiring, never for an isolated
+# restore target, so consumers never find a target whose archive is unverified): the `apps`
+# registry entry app-to-app consumers read.
+- name: Open WebUI | Record the endpoint for app-to-app consumers
+  ansible.builtin.include_tasks: ../../../tasks/bootstrap/write-generated-facts.yml
+  vars:
+    _owui_k8s: "{{ app_config.hosting.method == 'kubernetes' }}"
+    _owui_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _owui_k8s | bool
+         else hostvars[groups['deploy_' ~ instance][0]].ansible_host }}
+    _owui_port: "{{ '80' if _owui_k8s | bool else (app_config.app.port | string) }}"
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_service: apps
+    generated_facts_data: >-
+      {{ {instance: {
+           'provider': 'open-webui',
+           'instance': instance,
+           'host': 'http://' ~ _owui_host,
+           'port': _owui_port,
+           'url': ('https://' ~ _deploy_fqdn ~ '/') if _owui_k8s | bool
+                  else ('http://' ~ _owui_host ~ ':' ~ _owui_port ~ '/')
+         }} }}
