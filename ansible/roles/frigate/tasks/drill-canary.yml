@@ -67,10 +67,17 @@
         drill_exec_stdin: "{{ {'config_data': {'ui': {'time_format': '24hour'}}, 'requires_restart': 0} | to_json }}"
         drill_exec_changes: true
 
+# Frigate queues its database writes, so a user it just accepted can take a few seconds
+# to list; after a create, read until it does (up to 30 s).
 - name: Frigate drill canary | Read the users
   ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
   vars:
-    drill_exec_argv: [curl, -fsS, "{{ _fg_api }}/users"]
+    drill_exec_argv: >-
+      {{ ['sh', '-c', _fg_wait_listed, '_', _fg_api, _fg_canary]
+         if drill_canary_action == 'create' else ['curl', '-fsS', _fg_api ~ '/users'] }}
+    _fg_wait_listed: >-
+      for i in $(seq 30); do out=$(curl -fsS "$1/users") || exit 1;
+      case "$out" in *"$2"*) break;; esac; sleep 1; done; printf %s "$out"
 
 - name: Frigate drill canary | Keep the canary user
   ansible.builtin.set_fact:
