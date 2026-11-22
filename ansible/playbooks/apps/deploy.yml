@@ -187,6 +187,11 @@
         name: docker
       when: hostvars['localhost'].app_config.hosting.method == 'docker'
 
+    # A new stack host's daemon settings restart dockerd; do it before the app starts, or
+    # the restart takes the app's freshly started containers down with it.
+    - name: Apply Docker's pending restart before the app starts
+      ansible.builtin.meta: flush_handlers
+
     - name: Publish the hostname on the guest under the names the role reads
       ansible.builtin.set_fact:
         "{{ item | replace('-', '_') }}_fqdn": "{{ hostvars['localhost']._deploy_fqdn }}"
