@@ -3,7 +3,7 @@
 
   tools/lab-start drill-tautulli -- tools/lab-drill [options] <instance>
   tools/lab-wait drill-tautulli
-  tools/lab-start drill-all -- tools/lab-drill --all [--ref <git-ref>]
+  tools/lab-start drill-all -- tools/lab-drill --all [--ref <git-ref>] [--from <app>] [--keep]
 
 Options:
   --ref <git-ref>     candidate checkout the runner uses (default master)
@@ -41,7 +41,11 @@ the instance named after the app, else the first configured one the runner publi
 it. It skips essential apps (no Remove) and the apps with their own playbook and drill
 (OWN_DRILL). The table (instance, method, canary, result, minutes, first failed step) is
 printed row by row and written to $LAB_JOB_DIR/drill-all-<id>.md. Exit 0 when every
-drilled row passes.
+drilled row passes. --from <app> starts at that catalog app. After a row passes, --all
+removes the instance with delete_data=true and destroy_guest=true, so the drilled apps do
+not pile up in node memory; it keeps the integration providers every later Deploy wires
+into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
+cleanup removed.
 """
 import json
 import os
@@ -58,6 +62,8 @@ RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
 OWN_DRILL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
+# Kept after a passing --all row: later Deploys wire their SSO entry and monitor into these.
+KEEP = {"authentik", "uptime-kuma"}
 # Read on the runner by --all: the published instance lists and the instance files.
 INVENTORY = r"""
 import glob, json, os
@@ -368,7 +374,19 @@ class Drill:
         self.summary(True)
 
 
-def run_all(ref, plan):
+def cleanup(ref, app, instance, log):
+    """Remove a passed instance and its own guest, freeing node memory for the next row."""
+    argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), ref,
+            "playbooks/apps/remove.yml", "-e", f"instance={instance}", "-e", f"app={app}",
+            "-e", "delete_data=true", "-e", "destroy_guest=true"]
+    with open(log, "wb") as out:
+        rc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out,
+                            stderr=subprocess.STDOUT).returncode
+    print(f"CLEANUP {instance} {'removed' if rc == 0 else f'FAILED exit {rc}'} log={log}",
+          flush=True)
+
+
+def run_all(ref, plan, start=None, keep=False):
     if not os.environ.get("HOMELAB_LAB_DIR"):
         die("HOMELAB_LAB_DIR is not set")
     catalog = load_yaml(os.path.join(REPO, "catalog", "applications.yml"))["applications"]
@@ -384,6 +402,8 @@ def run_all(ref, plan):
     rows = ["| Instance | Method | Canary | Result | Minutes | First failed step |",
             "| --- | --- | --- | --- | --- | --- |"]
     failed = 0
+    if start and start not in catalog:
+        die(f"--from {start}: not a catalog app")
 
     def row(*cells):
         rows.append("| " + " | ".join(str(c) for c in cells) + " |")
@@ -391,6 +411,10 @@ def run_all(ref, plan):
 
     print("\n".join(rows), flush=True)
     for app, entry in catalog.items():
+        if start:
+            if app != start:
+                continue
+            start = None
         if (entry or {}).get("essential") or app in OWN_DRILL:
             reason = "essential, no Remove" if (entry or {}).get("essential") else "own drill"
             row(app, "", "", f"skipped: {reason}", "", "")
@@ -420,6 +444,8 @@ def run_all(ref, plan):
         failed += rc != 0
         row(instance, method.group(1) if method else "?", tier, result, minutes,
             at.group(1) if at else "")
+        if rc == 0 and not keep and app not in KEEP:
+            cleanup(ref, app, instance, os.path.join(jobs, f"drill-all-{stamp}-{instance}-remove.log"))
         with open(table, "w") as out:
             out.write("\n".join(rows) + "\n")
     if not plan:
@@ -428,9 +454,9 @@ def run_all(ref, plan):
 
 
 def main(argv):
-    opts = {"--ref": "master", "--app": None, "--url": None}
+    opts = {"--ref": "master", "--app": None, "--url": None, "--from": None}
     flags = {"--destroy-guest": False, "--plan": False, "--seed-wrong-point": False,
-             "--all": False}
+             "--all": False, "--keep": False}
     instance = None
     while argv:
         arg = argv.pop(0)
@@ -449,8 +475,10 @@ def main(argv):
     if flags["--all"]:
         if instance or opts["--app"] or opts["--url"] or flags["--seed-wrong-point"] \
                 or flags["--destroy-guest"]:
-            die("--all takes only --ref and --plan")
-        return run_all(opts["--ref"], flags["--plan"])
+            die("--all takes only --ref, --from, --keep and --plan")
+        return run_all(opts["--ref"], flags["--plan"], opts["--from"], flags["--keep"])
+    if opts["--from"] or flags["--keep"]:
+        die("--from and --keep go with --all")
     if instance is None:
         die("name the instance")
     url = (opts["--url"] or "").rstrip("/") or None
