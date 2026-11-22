@@ -9,3 +9,32 @@
   retries: 30
   delay: 5
   changed_when: false
+
+# Grafana keeps its administrator password in its database (GF_SECURITY_ADMIN_PASSWORD only
+# seeds a first run), so a restored database carries the SOURCE's password. Reset it to the
+# target's own, which its environment already holds, as the Kubernetes restore's reset Job
+# does; a restore into the same instance sets the password it already has.
+- name: Observability restore | Reapply the target's administrator password
+  ansible.builtin.command:
+    argv: >-
+      {{ ['docker', 'exec', instance ~ '-grafana', 'sh', '-c',
+          'grafana cli --homepath /usr/share/grafana admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"']
+         if app_config.hosting.method | default('docker') == 'docker'
+         else ['runuser', '-u', 'grafana', '--', 'sh', '-c',
+               'set -a; . /etc/default/grafana-server; set +a; grafana cli --homepath "$GRAFANA_HOME"
+                --config "$CONF_FILE" --configOverrides "cfg:default.paths.data=$DATA_DIR"
+                admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"'] }}
+  register: _observability_restore_password_reset
+  changed_when: true
+  failed_when: false
+  no_log: true
+
+# The call above hides its result; this prints how it ended.
+- name: Observability restore | Require the administrator password reset
+  ansible.builtin.assert:
+    that: _observability_restore_password_reset.rc | default(1) == 0
+    fail_msg: >-
+      Resetting Grafana's administrator password to the target's exited
+      {{ _observability_restore_password_reset.rc | default('none') }}:
+      {{ _observability_restore_password_reset.stderr | default('') | truncate(300) }}
+    quiet: true
