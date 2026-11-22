@@ -1,6 +1,6 @@
 # Adding a New App
 
-Six steps. Most of the work is step 4.
+Six steps. Most of the work is step 4: the app's defaults and its role.
 
 ---
 
@@ -36,34 +36,42 @@ through Docker or Kubernetes.
 
 ---
 
-## Step 2 — Copy the templates
+## Step 2 — Copy the templates and add the shim
 
-The committed templates cover Docker on LXC and native LXC:
+An app is four files plus its catalog entry (Step 3). `playbooks/apps/deploy.yml` provisions,
+deploys, wires and notifies for every app; the app supplies only data and its role.
 
 ```bash
-# App defaults (resource sizes, stack, port)
+# App defaults: hosting methods, resources, port, routing
 cp ansible/vars/app-defaults/_template.yml ansible/vars/app-defaults/sonarr.yml
 
-# Role (the actual deployment logic)
+# Role: what runs on the guest or cluster
 cp -r ansible/roles/_template-docker/ ansible/roles/sonarr/
-# or for native LXC:
+# or, for the native methods:
 cp -r ansible/roles/_template-native/ ansible/roles/sonarr/
-
-# App playbook (entry point)
-cp ansible/playbooks/apps/_template.yml ansible/playbooks/apps/sonarr.yml
 
 # User-facing config example
 cp config.example/apps/_template.example.yml config.example/apps/sonarr.example.yml
 ```
 
-Replace `APP_NAME` with the application slug throughout the copied files.
+Replace `APP_NAME` with the application slug throughout the copied files. Then write the
+entry point, `playbooks/apps/sonarr.yml`, as a shim on Deploy:
 
-Kubernetes has a different play shape; read
-[`../../tasks/kubernetes/README.md`](../../tasks/kubernetes/README.md) and use the existing
-Kubernetes application as the current implementation reference. Home Assistant is the
-Docker-on-VM reference: it uses `vm-clone.yml`, the ordinary `docker` role, and the dedicated
-USB passthrough seam. A future Docker-on-VM application should reuse those seams rather than
-forcing a VM through the LXC stack template.
+```yaml
+---
+# Deploy one sonarr instance: playbooks/apps/deploy.yml does the work, per-app behavior is in
+# roles/sonarr and vars/app-defaults/sonarr.yml.
+- name: Deploy sonarr
+  ansible.builtin.import_playbook: deploy.yml
+  vars:
+    app: sonarr
+```
+
+Deploy provisions every native guest through `roles/_template-native/tasks/provision.yml`;
+delete `tasks/provision.yml` from your copy. Kubernetes runs the role's `kubernetes.yml` instead of
+`main.yml`; read [`../../tasks/kubernetes/README.md`](../../tasks/kubernetes/README.md) and
+copy a role that already supports it. A role that serves several apps (the Servarr family)
+is named in `role_aliases` in `gate/structure.yml` and in `deploy.role` in each app's defaults.
 
 ---
 
@@ -118,8 +126,6 @@ its classification, a template no application selects, and any UUID collision.
 
 ## Step 4 — Fill in the blanks
 
-For the current Docker-on-VM stack and native-LXC paths:
-
 **`vars/app-defaults/sonarr.yml`**
 - Set `cores`, `memory` to realistic values for this app
 - Set `stack: media` (Docker) or fill in the `proxmox:` block (native LXC)
@@ -141,16 +147,9 @@ For the current Docker-on-VM stack and native-LXC paths:
 - Add volumes for config and data paths
 - Add any peer services the app talks to internally (e.g. a database sidecar)
 
-**`playbooks/apps/sonarr.yml`**
-- In Play 1: uncomment PATH A (Docker) or PATH B (native LXC) and delete the other
-- In Play 2: leave `hosts: "deploy_{{ instance }}"` alone — it is correct for both
-  hosting types. Play 1 adds the guest to that per-instance group on every path
-  (PATH B's `add_host` directly, PATH A via `find-or-create-host.yml`'s
-  `deploy_group`). Do NOT target a shared group or a `lab_stack_<name>` pattern:
-  `add_host` groups persist for a whole run and `bootstrap.yml` chains app
-  playbooks with `import_playbook`, so a shared group accumulates every earlier
-  app's guest and the role would run on all of them.
-- In Play 3 (Wire): add any app-to-app wiring in the commented section at the bottom
+**`roles/sonarr/tasks/*.yml` hooks**
+- Add a Deploy, Remove or Restore hook (Step 5) only for a step Deploy cannot do from the
+  defaults. Never add a shared step to the role that Deploy already runs.
 
 **`config.example/apps/sonarr.example.yml`**
 - Expose only the knobs a user might legitimately want to change
@@ -228,8 +227,9 @@ python rundeck/render-job.py --check rundeck/jobs
 
 ## Wiring Contract Reference
 
-Play 3 of every app playbook sets these variables before calling wiring tasks.
-**Do not change the variable names** — all wiring tasks depend on them.
+Deploy's record-and-wire play sets these variables before calling the wiring tasks, from the
+app's defaults and the resolved estate. **Do not change the variable names** — all wiring
+tasks depend on them.
 
 | Variable | Value | Used by |
 |---|---|---|
@@ -244,6 +244,6 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 | `wiring_identity_mode` | `routing.identity`, default `catalog` | Authentik mode dispatch and reverse-proxy `forward_auth` enforcement |
 | `wiring_access` | `routing.access`, default `internal` | reverse-proxy access policy |
 
-Play 3 also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
+Deploy also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
 `routing.estate` domain/sso/dns facts onto `homelabinfra_infra`, so wiring tasks
 stay estate-agnostic.

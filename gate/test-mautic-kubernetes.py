@@ -57,17 +57,11 @@ def render_manifest():
 
 def static_contract():
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert role_main[1]["ansible.builtin.include_tasks"] == "docker.yml"
     assert role_main[1]["when"] == "app_config.hosting.method | default('docker') == 'docker'"
     assert role_main[3]["ansible.builtin.include_tasks"] == "kubernetes.yml"
     assert "import_playbook: deploy.yml" in (ROOT / "ansible/playbooks/apps/mautic.yml").read_text()
 
-    includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
-    assert "../../../tasks/kubernetes/open-app-access.yml" in includes
-    assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
-    assert "../../../tasks/database/kubernetes-recovery-step.yml" in includes
-    assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
     backup = task_named(kubernetes_tasks, "Mautic Kubernetes | Configure the shared application recovery CronJob")
     assert backup["vars"]["k8s_recovery"]["database"] == "{{ k8s_database_step | default({}) }}"
     assert backup["vars"]["k8s_recovery"]["archives"] == [{

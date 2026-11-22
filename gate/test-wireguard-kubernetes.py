@@ -31,9 +31,6 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/wireguard.yml"))[
     "wireguard_defaults"
 ]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["init_image"]
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 

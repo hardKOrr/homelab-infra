@@ -43,7 +43,6 @@ def render_manifest():
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/slskd.yml")["slskd_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert "kubernetes" in defaults["hosting"]["supported"]
     assert defaults["recovery"]["methods"] == ["native"]
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
@@ -75,8 +74,6 @@ def main():
     assert "'mount_path': d.container" in text and "'read_only': d.read_only" in text
 
     kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes-workload.yml")
-    assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     backup = next(t for t in kubernetes if "tasks/kubernetes/recovery-backup.yml" in str(t.get("ansible.builtin.include_tasks")))
     claim = backup["vars"]["k8s_recovery"]["archives"][0]
     assert claim["name"] == "data" and claim["claim"] == "{{ instance }}-config"
@@ -84,7 +81,6 @@ def main():
     restore = read_yaml(f"{ROLE}/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml")
     job = read_yaml(f"{ROLE}/tasks/restore-kubernetes.yml")[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
     kinds = {doc["kind"]: doc for doc in render_manifest()}

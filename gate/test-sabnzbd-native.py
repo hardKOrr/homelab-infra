@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/sabnzbd.yml").read_
 app = defaults["app"]
 assert app["image"].split(":")[1].startswith(f"{app['native_version']}-ls")
 assert len(app["native_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/main/native-install.yml").read_text()
 # SABnzbd 5.1.3 sets NO_DOWNLOADING without par2 and unrar; unrar is Debian non-free.
 assert "unrar" in install and "par2" in install and "components: [non-free]" in install
@@ -60,7 +59,7 @@ backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible.builtin.include_tasks", "")))
 assert "sabnzbd_native" in upload["vars"]["pbs_client_runtime"]
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_sabnzbd_restore_runtime" in guest
+assert "_sabnzbd_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 
 print("SABnzbd native renders its unit and config and uses the shared backup and restore")

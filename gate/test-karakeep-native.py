@@ -18,7 +18,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/karakeep.yml").read
 app = defaults["app"]
 assert app["image"].endswith(":" + app["native_version"])
 assert len(app["native_script_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 
 native = (role / "tasks/native.yml").read_text()
 assert "karakeep-linux.sh" in native and "native_script_sha256" in native

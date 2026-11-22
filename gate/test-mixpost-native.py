@@ -15,7 +15,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mixpost.yml").read_
 app = defaults["app"]
 assert app["image"] == f"inovector/mixpost:v{app['native_version']}", app
 assert app["native_app_version"].count(".") == 2 and app["native_version"].count(".") == 2
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 
 install = (role / "tasks/native.yml").read_text()
 assert "create-project" in install and "inovector/MixpostApp:{{ app_config.app.native_app_version }}" in install

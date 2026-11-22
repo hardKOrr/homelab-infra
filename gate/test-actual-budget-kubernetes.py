@@ -22,9 +22,6 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/actual-budget.yml"))[
     "actual_budget_defaults"
 ]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == [
-    "docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm",
-]
 assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"]

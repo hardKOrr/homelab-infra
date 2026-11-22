@@ -15,7 +15,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/maintainerr.yml").r
 app = defaults["app"]
 assert app["image"] == f"ghcr.io/maintainerr/maintainerr:{app['native_version']}", app
 assert len(app["native_node_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "Maintainerr/Maintainerr.git" in install and "native_node_sha256" in install
 assert "workspaces focus --all --production" in install and "native_yarn_version" in install

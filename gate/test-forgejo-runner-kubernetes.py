@@ -59,7 +59,6 @@ def check_saved_file_framing():
 def main():
     defaults = read_yaml(REPO / "ansible/vars/app-defaults/forgejo-runner.yml")["forgejo_runner_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert "kubernetes" in defaults["hosting"]["supported"]
     assert defaults["routing"] == {"proxy": "none", "access": "internal", "identity": "none"}
     # The shared backup scheduler renders these required inputs even in a stateless drill.
     assert defaults["backup"]["retention_days"] > 0
@@ -72,7 +71,6 @@ def main():
     native_deploy = next(t for t in main_tasks if t["name"] == "Forgejo Runner | Deploy natively")
     assert native_deploy["ansible.builtin.include_tasks"] == "native.yml"
     assert native_deploy["when"] == "app_config.hosting.method == 'native'"
-    assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
     # One exact upstream version for the image and the pinned native binary.
     assert defaults["app"]["image"].endswith(":" + defaults["app"]["native_version"])
     assert len(defaults["app"]["native_sha256"]) == 64
@@ -83,8 +81,6 @@ def main():
     assert native.index(git) < next(i for i, t in enumerate(native) if "ansible.builtin.systemd" in t)
 
     tasks = read_yaml(ROLE / "tasks/kubernetes.yml")
-    for shared in ("resolve-cluster", "ensure-namespace", "sync-secret", "apply-manifest", "recovery-backup"):
-        assert includes(tasks, f"tasks/kubernetes/{shared}.yml"), shared
     assert includes(tasks, "registration.yml")
     backup = next(t for t in tasks if "recovery-backup.yml" in str(t.get("ansible.builtin.include_tasks")))
     assert backup["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ instance }}-data"

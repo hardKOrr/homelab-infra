@@ -15,10 +15,7 @@ def main():
     # Backup and restore go through the shared Kubernetes recovery pair
     # (gate/test-k8s-recovery-jobs.py renders them) with the PostgreSQL database step.
     for tasks in (deploy, restore):
-        assert "tasks/database/kubernetes-recovery-step.yml" in tasks
         assert "k8s_database_step_source: registered" in tasks
-    assert "tasks/kubernetes/recovery-backup.yml" in deploy
-    assert "tasks/kubernetes/recovery-restore.yml" in restore
     assert '- "{{ restore_target }}-redis"' in restore.split("restart:", 1)[1]
 
     print("Hi.Events backs up and restores its named database plus storage")

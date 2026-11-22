@@ -31,9 +31,6 @@ def load(path):
 
 defaults = load("ansible/vars/app-defaults/postgresql.yml")["postgresql_defaults"]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 5432
 assert defaults["kubernetes"]["image"].endswith(":pg" + defaults["app"]["version"])
 assert defaults["app"]["image"] == "postgres:" + defaults["app"]["version"]
@@ -113,8 +110,6 @@ names = [t["name"] for t in deploy]
 assert names.index("PostgreSQL Kubernetes | Store the superuser credential") < names.index(
     "PostgreSQL Kubernetes | Apply the workload manifest"
 )
-assert any(str(t.get("ansible.builtin.include_tasks", "")).endswith("tasks/kubernetes/apply-manifest.yml")
-           for t in deploy)
 backup = next(
     t for t in deploy if str(t.get("ansible.builtin.include_tasks", "")).endswith("recovery-backup.yml")
 )

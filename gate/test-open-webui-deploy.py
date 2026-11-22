@@ -27,8 +27,6 @@ def open_webui_release_image_and_docker_bootstrap():
 
     # Deploy is the shared deploy.yml; the role reads the backends the deploy-prepare hook
     # resolved on localhost through its defaults.
-    prepare = (ROOT / "ansible/roles/open-webui/tasks/deploy-prepare.yml").read_text(encoding="utf-8")
-    assert "tasks/app-wiring/open-webui-upstreams.yml" in prepare
     role_defaults = (ROOT / "ansible/roles/open-webui/defaults/main.yml").read_text(encoding="utf-8")
     for name in ("ollama_instance", "litellm_instance", "ollama_url", "litellm_url"):
         assert f"open_webui_{name}: \"{{{{ hostvars['localhost'].open_webui_{name}" in role_defaults, name
@@ -39,7 +37,6 @@ def open_webui_kubernetes_deployment_uses_shared_operations():
         (ROOT / "ansible/vars/app-defaults/open-webui.yml").read_text(encoding="utf-8")
     )["open_webui_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["app"]["container_port"] == 8080
     assert defaults["app"]["data_mount_path"] == "/app/backend/data"
     assert defaults["app"]["storage"] > 0

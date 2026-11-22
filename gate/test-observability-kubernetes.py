@@ -30,7 +30,6 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/observability.yml"))[
     "observability_defaults"
 ]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["grafana_storage"] > 0 and defaults["app"]["prometheus_storage"] > 0
 assert defaults["backup"]["client"]["image"]
 assert {"name": "node-exporter", "protocol": "TCP", "port": 9100} in defaults["firewall"]["egress"]

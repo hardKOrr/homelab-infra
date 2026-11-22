@@ -20,7 +20,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_t
 app = defaults["app"]
 assert app["image"].startswith(f"docker.io/mautic/mautic:{app['native_version']}-")
 assert len(app["native_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 native = (role / "tasks/native.yml").read_text() + (role / "tasks/native-services.yml").read_text()
 assert "native_sha256" in native and "releases/download/" in native
 

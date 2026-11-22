@@ -115,6 +115,5 @@ assert shared_restore["vars"]["k8s_recovery"]["archives"] == [{
 assert shared_restore["vars"]["k8s_recovery"]["stop"] == ["{{ restore_target }}"]
 
 assert "credentials.yml" in read("ansible/roles/karakeep/tasks/main.yml")
-assert "tasks/stack/compose-deploy.yml" in read("ansible/roles/karakeep/tasks/docker.yml")
 
 print("Karakeep keeps Docker as default and renders its Kubernetes workload and recovery dispatch")

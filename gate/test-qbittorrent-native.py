@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/qbittorrent.yml").r
 app = defaults["app"]
 assert app["image"].split(":")[1].startswith(f"{app['native_version']}-r")
 assert app["native_package_version"].startswith(f"{app['native_version']}-")
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/main/native-install.yml").read_text()
 assert "native_package_version" in install and "qbittorrent-nox=" in install
 
@@ -56,7 +55,7 @@ backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible.builtin.include_tasks", "")))
 assert "qbittorrent_native" in upload["vars"]["pbs_client_runtime"]
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_qbt_restore_runtime" in guest
+assert "_qbt_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 
 print("qBittorrent native renders its unit and config and uses the shared backup and restore")

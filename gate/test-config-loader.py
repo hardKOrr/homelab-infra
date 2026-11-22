@@ -32,7 +32,7 @@ from ansible.template import Templar
 
 REPO = Path(__file__).resolve().parents[1]
 APPS = REPO / "ansible/playbooks/apps"
-NOT_DEPLOY = {"deploy", "remove", "remove-k3s-cluster", "migrate-servarr", "_template"}
+NOT_DEPLOY = {"deploy", "remove", "remove-k3s-cluster", "migrate-servarr"}
 LOADER = "tasks/apps/load-config.yml"
 BASE = yaml.safe_load((REPO / "ansible/vars/app-defaults/_base.yml").read_text())["_base_defaults"]
 INFRA = {"media_storage": {"library": "/gate/library"},

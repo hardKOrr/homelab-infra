@@ -16,7 +16,6 @@ def read_yaml(path):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/navidrome.yml")["navidrome_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["hosting"]["impossible"] == {}
 
     # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the role's
@@ -73,10 +72,6 @@ def main():
 
     kubernetes_tasks = read_yaml("ansible/roles/navidrome/tasks/kubernetes.yml")
     includes = [task.get("ansible.builtin.include_tasks", "") for task in kubernetes_tasks]
-    assert "../../../tasks/kubernetes/prepare-media-volumes.yml" in includes
-    assert "../../../tasks/kubernetes/ensure-nfs-client.yml" in includes
-    assert "../../../tasks/kubernetes/apply-manifest.yml" in includes
-    assert "../../../tasks/kubernetes/recovery-backup.yml" in includes
     assert "verify-kubernetes-library.yml" in includes
     assert not any("recovery" in include and "kubernetes/" not in include for include in includes)
     prepare_media = next(

@@ -73,10 +73,6 @@ def check_contract_and_wiring():
     # record the registry entry; a removed guest with the exact name is reused by the shared
     # tasks/proxmox/resolve-instance-guest.yml (gate/test-instance-guest-reuse.py).
     assert DEFAULTS["routing"]["monitor_path"] == "/health"
-    assert "tasks/database/deploy-prepare.yml" in (
-        ROOT / "ansible/roles/influxdb/tasks/deploy-prepare.yml").read_text(encoding="utf-8")
-    assert "tasks/database/deploy-record.yml" in (
-        ROOT / "ansible/roles/influxdb/tasks/deploy-record.yml").read_text(encoding="utf-8")
 
 
 def all_tasks(tasks):

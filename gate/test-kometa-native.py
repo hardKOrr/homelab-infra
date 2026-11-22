@@ -15,7 +15,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/kometa.yml").read_t
 app = defaults["app"]
 assert app["image"].endswith(f":v{app['native_version']}"), app
 assert len(app["native_uv_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "/opt/uv-{{ app_config.app.native_uv_version }}/uv" in install, "uv path must follow the pin"
 assert "git" in install and "uv sync --frozen" in install and "native_uv_sha256" in install

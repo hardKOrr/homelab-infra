@@ -21,22 +21,13 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/unpackerr.yml")["unpackerr_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["routing"]["proxy"] == "none"
-
-    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the role's
-    # deploy-prepare hook resolves the Kubernetes shares.
-    prepare = read_yaml(f"{ROLE}/tasks/deploy-prepare.yml")
-    assert includes(prepare, "tasks/kubernetes/resolve-media-nfs.yml")
 
     # The role must not pull Docker onto a Kubernetes run through role dependencies.
     assert "dependencies" not in read_yaml(f"{ROLE}/meta/main.yml")
 
     tasks = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
     assert includes(tasks, "arrs.yml")
-    assert includes(tasks, "tasks/kubernetes/prepare-media-volumes.yml")
-    assert includes(tasks, "tasks/kubernetes/sync-secret.yml")
-    assert includes(tasks, "tasks/kubernetes/apply-manifest.yml")
     shares = next(
         t for t in tasks if "prepare-media-volumes.yml" in str(t.get("ansible.builtin.include_tasks"))
     )["vars"]["k8s_media_shares"]

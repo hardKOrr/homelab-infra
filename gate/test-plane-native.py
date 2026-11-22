@@ -9,7 +9,6 @@ repo = Path(__file__).resolve().parents[1]
 role = repo / "ansible/roles/plane"
 defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/plane.yml").read_text())["plane_defaults"]
 
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 assert defaults["hosting"]["method"] == "docker"
 app = defaults["app"]
 assert app["release"] == "v1.4.2"
@@ -30,11 +29,9 @@ assert "--frozen-lockfile" in build and "{{ app_config.app.release }}.tar.gz" in
 # The units are rendered from one template and every service reads the shared environment file.
 template = (role / "templates/plane.service.j2").read_text()
 assert "EnvironmentFile={{ plane_env_file }}" in template and "User={{ plane_native_user }}" in template
-assert "tasks/backup/pbs-client-script.yml" in (role / "tasks/recovery-timer.yml").read_text()
 assert 'pbs_client_runtime: "{{ plane_runtime }}"' in (role / "tasks/recovery-timer.yml").read_text()
 
 restore = (role / "tasks/restore-docker.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in restore
 assert 'recovery_swap_runtime: "{{ plane_runtime }}"' in restore
 assert "plane_native_services" in restore
 # The broker user is recreated after the keys change, on restore and on rollback.

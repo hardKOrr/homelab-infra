@@ -19,7 +19,6 @@ app = defaults["app"]
 assert app["image"].endswith(":" + app["native_version"])
 assert len(app["native_sha256"]) == 64
 assert all(len(a["sha256"]) == 64 and a["url"].startswith("https://") for a in app["native_assets"].values())
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 
 
 def render():

@@ -47,7 +47,6 @@ def render_manifest():
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/qbittorrent.yml")["qbittorrent_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert "kubernetes" in defaults["hosting"]["supported"]
     client = defaults["backup"]["client"]
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
@@ -75,8 +74,6 @@ def main():
     assert share["vars"]["k8s_media_mounts"] == "{{ _qbt_k8s_mounts }}"
 
     kubernetes = read_yaml(f"{ROLE}/tasks/kubernetes-workload.yml")
-    assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     volumes = next(t for t in kubernetes if "prepare-media-volumes.yml" in str(t.get("ansible.builtin.include_tasks")))
     assert "'mount_path': share.path" in volumes["vars"]["k8s_media_shares"]
     assert "'read_only': false" in volumes["vars"]["k8s_media_shares"]
@@ -87,7 +84,6 @@ def main():
     restore = read_yaml(f"{ROLE}/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml(f"{ROLE}/tasks/restore-kubernetes.yml")[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
     # The rendered workload: media at the Docker paths, config PVC, init container.

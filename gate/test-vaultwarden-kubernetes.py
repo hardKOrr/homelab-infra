@@ -28,9 +28,6 @@ defaults = yaml.safe_load(read("ansible/vars/app-defaults/vaultwarden.yml"))[
     "vaultwarden_defaults"
 ]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]

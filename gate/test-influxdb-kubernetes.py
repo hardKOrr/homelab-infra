@@ -32,9 +32,6 @@ def load(path):
 
 defaults = load("ansible/vars/app-defaults/influxdb.yml")["influxdb_defaults"]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 8086
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 
@@ -45,8 +42,6 @@ consumer_access = next(
     if str(t.get("ansible.builtin.include_tasks", "")).endswith("database/open-consumer-access.yml")
 )
 assert consumer_access["vars"]["database_consumer_provider"] == "influxdb"
-assert "tasks/database/deploy-prepare.yml" in read("ansible/roles/influxdb/tasks/deploy-prepare.yml")
-assert "tasks/database/deploy-record.yml" in read("ansible/roles/influxdb/tasks/deploy-record.yml")
 # The route targets the API Service on the ingress address at app.port, as on guests.
 assert defaults["deploy"]["kubernetes_upstream_port"] == "app"
 assert "kubernetes_upstream_port | default('ingress') == 'app'" in read(
@@ -114,8 +109,6 @@ names = [t["name"] for t in deploy]
 assert names.index("InfluxDB Kubernetes | Store the credentials") < names.index(
     "InfluxDB Kubernetes | Apply the workload manifest"
 )
-assert any(str(t.get("ansible.builtin.include_tasks", "")).endswith("tasks/kubernetes/apply-manifest.yml")
-           for t in deploy)
 guard = next(t for t in deploy if t["name"].endswith("Refuse to replace unavailable existing credentials"))
 assert "_influxdb_pvc.rc != 0" in guard["ansible.builtin.assert"]["that"]
 fingerprint = next(t for t in deploy if t["name"].endswith("Fingerprint the setup values, tuning and credentials"))

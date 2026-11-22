@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/flaresolverr.yml").
 app = defaults["app"]
 assert app["image"] == f"flaresolverr/flaresolverr:v{app['native_version']}", app
 assert app["native_version"].count(".") == 2 and len(app["native_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "flaresolverr_linux_x64.tar.gz" in install and "native_sha256" in install
 

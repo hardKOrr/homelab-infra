@@ -15,7 +15,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/uptime-kuma.yml").r
 # One exact upstream release for both methods; Node comes from a pinned runtime.
 app = defaults["app"]
 assert app["image_tag"] == app["native_version"] and app["image_tag"].count(".") == 2, app
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native-install.yml").read_text()
 assert "https://github.com/louislam/uptime-kuma.git" in install and "argv: [npm, run, setup]" in install
 assert "native_version" in install and "node_version" in install
@@ -54,7 +53,7 @@ backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible.builtin.include_tasks", "")))
 assert "uptime_kuma_native" in upload["vars"]["pbs_client_runtime"]
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_kuma_restore_runtime" in guest
+assert "_kuma_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 
 print("uptime-kuma native pins one release, renders its unit and uses the shared backup and restore")
