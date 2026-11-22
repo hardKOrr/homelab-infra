@@ -42,8 +42,8 @@ it. It skips essential apps (no Remove) and the apps with their own playbook and
 (OWN_DRILL). The table (instance, method, canary, result, minutes, first failed step) is
 printed row by row and written to $LAB_JOB_DIR/drill-all-<id>.md. Exit 0 when every
 drilled row passes. --from <app> starts at that catalog app. After a row passes, --all
-removes the instance with delete_data=true and destroy_guest=true, so the drilled apps do
-not pile up in node memory; it keeps the integration providers every later Deploy wires
+removes the instance with delete_data=true, and destroy_guest=true off Kubernetes, so the
+drilled apps do not pile up in node memory; it keeps the integration providers every later Deploy wires
 into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
 cleanup removed.
 """
@@ -374,11 +374,14 @@ class Drill:
         self.summary(True)
 
 
-def cleanup(ref, app, instance, log):
-    """Remove a passed instance and its own guest, freeing node memory for the next row."""
+def cleanup(ref, app, instance, method, log):
+    """Remove a passed instance, and its own guest unless it runs on Kubernetes (whose pods
+    live in the fixed k3s VMs), freeing memory for the next row."""
     argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), ref,
             "playbooks/apps/remove.yml", "-e", f"instance={instance}", "-e", f"app={app}",
-            "-e", "delete_data=true", "-e", "destroy_guest=true"]
+            "-e", "delete_data=true"]
+    if method != "kubernetes":
+        argv += ["-e", "destroy_guest=true"]
     with open(log, "wb") as out:
         rc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out,
                             stderr=subprocess.STDOUT).returncode
@@ -445,7 +448,8 @@ def run_all(ref, plan, start=None, keep=False):
         row(instance, method.group(1) if method else "?", tier, result, minutes,
             at.group(1) if at else "")
         if rc == 0 and not keep and app not in KEEP:
-            cleanup(ref, app, instance, os.path.join(jobs, f"drill-all-{stamp}-{instance}-remove.log"))
+            cleanup(ref, app, instance, method.group(1) if method else "",
+                    os.path.join(jobs, f"drill-all-{stamp}-{instance}-remove.log"))
         with open(table, "w") as out:
             out.write("\n".join(rows) + "\n")
     if not plan:
