@@ -24,9 +24,9 @@ frigate_defaults:
     # the source release (https://github.com/blakeblackshear/frigate). native_sha256
     # verifies that tag's source archive; native_assets are the prebuilt pieces the
     # upstream image build downloads (docker/main/Dockerfile and install_deps.sh at the tag).
-    image: "ghcr.io/blakeblackshear/frigate:0.18.2"
-    native_version: "0.18.2"
-    native_sha256: e6af192d610f6f5fd26677aa509412620b2bc60216f6105b509ad57ec8dcf0c0
+    image: "ghcr.io/blakeblackshear/frigate:0.18.3"
+    native_version: "0.18.3"
+    native_sha256: 3b335b1d4a694d436e5302b0206675365805671955ecdf51f5a1939a2d348f54
     native_assets:
       python:
         url: https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz

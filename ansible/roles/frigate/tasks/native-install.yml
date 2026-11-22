@@ -125,7 +125,7 @@
     replace: "'s/^Types: deb$/Types: deb deb-src/'"
   loop: [build_nginx.sh, build_sqlite_vec.sh]
 
-# Upstream's nginx build (vod and secure-token modules, patched) and sqlite-vec scripts.
+# Upstream's nginx build (vod module, patched) and sqlite-vec scripts.
 - name: Frigate native | Build the pinned nginx with Frigate's modules
   ansible.builtin.command:
     cmd: bash {{ frigate_native_src }}/docker/main/build_nginx.sh
