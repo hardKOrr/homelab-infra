@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/searxng.yml").read_
 app = defaults["app"]
 assert app["image"] == f"searxng/searxng:{app['native_version']}-{app['native_commit'][:9]}", app
 assert len(app["native_commit"]) == 40 and app["native_version"].count(".") == 2
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "ansible.builtin.git:" in install and "native_commit" in install and "searxng_venv" in install
 

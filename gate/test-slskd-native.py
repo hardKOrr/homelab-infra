@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/slskd.yml").read_te
 app = defaults["app"]
 assert app["image"] == f"slskd/slskd:{app['native_version']}"
 assert len(app["native_sha256"]) == 64
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native-install.yml").read_text()
 assert "native_sha256" in install and "linux-x64.zip" in install
 
@@ -58,7 +57,7 @@ backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible.builtin.include_tasks", "")))
 assert "slskd_native" in upload["vars"]["pbs_client_runtime"]
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_slskd_restore_runtime" in guest
+assert "_slskd_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 
 # A restore into a differently named instance swaps the target's directory, not the source's.

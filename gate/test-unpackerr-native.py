@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/unpackerr.yml").rea
 app = defaults["app"]
 assert app["native_version"].startswith(app["image"].rsplit(":v", 1)[1] + "-"), app
 assert "latest" not in app["image"]
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "packagecloud.io/golift/pkgs" in install and "unpackerr={{ app_config.app.native_version }}" in install
 

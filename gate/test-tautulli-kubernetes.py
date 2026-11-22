@@ -21,7 +21,6 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/tautulli.yml")["tautulli_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert "kubernetes" in defaults["hosting"]["supported"]
     assert defaults["app"]["storage"] == 2
     assert defaults["firewall"]["egress"][0]["name"] == "plex"
     for key in ("image", "key_url", "repository", "suite", "component"):
@@ -36,8 +35,6 @@ def main():
     assert prepare[0]["when"] == "app_config.hosting.method == 'kubernetes'"
 
     tasks = read_yaml(f"{ROLE}/tasks/kubernetes.yml")
-    assert includes(tasks, "tasks/kubernetes/single-container.yml")
-    assert includes(tasks, "tasks/kubernetes/sync-secret.yml")
     # No media shares: Tautulli's Docker stack mounts none.
     assert not includes(tasks, "prepare-media-volumes.yml")
     order = [str(t.get("ansible.builtin.include_tasks")) for t in tasks]
@@ -62,7 +59,6 @@ def main():
     restore = read_yaml(f"{ROLE}/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml(f"{ROLE}/tasks/restore-kubernetes.yml")[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
     verify = (REPO / f"{ROLE}/tasks/verify.yml").read_text()

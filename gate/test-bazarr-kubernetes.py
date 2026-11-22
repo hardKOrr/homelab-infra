@@ -20,21 +20,11 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/bazarr.yml")["bazarr_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     client = defaults["backup"]["client"]
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert client.get(key), f"backup.client.{key} missing"
 
-    # Deploy runs through playbooks/apps/deploy.yml (gate/app-matrix.yml); the Kubernetes
-    # shares are resolved by the role's deploy-prepare hook.
-    prepare = read_yaml("ansible/roles/bazarr/tasks/deploy-prepare.yml")
-    assert includes(prepare, "tasks/kubernetes/resolve-media-nfs.yml")
-    record = read_yaml("ansible/roles/bazarr/tasks/deploy-record.yml")
-    assert includes(record, "tasks/bootstrap/write-generated-facts.yml")
-
     kubernetes = read_yaml("ansible/roles/bazarr/tasks/kubernetes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     backup = next(
         task for task in kubernetes
         if "tasks/kubernetes/recovery-backup.yml" in str(task.get("ansible.builtin.include_tasks"))
@@ -53,7 +43,6 @@ def main():
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     shared = read_yaml("ansible/roles/bazarr/tasks/restore-kubernetes.yml")
     restore_job = shared[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in restore_job["ansible.builtin.include_tasks"]
     assert restore_job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
     # A fresh target has a different canonical key. Restore must publish the archived
@@ -69,7 +58,6 @@ def main():
     verify = next(t for t in key if "ansible.builtin.uri" in t)
     assert verify["ansible.builtin.uri"]["headers"]["Host"] == "{{ bazarr_key_fqdn | default(bazarr_fqdn) }}"
     store = key[-1]
-    assert "tasks/bitwarden/upsert-item.yml" in store["ansible.builtin.include_tasks"]
     assert store["vars"]["vault_item_name"] == "homelab-infra/media/{{ bazarr_key_instance | default(instance) }}"
     assert key.index(verify) < key.index(store)
 

@@ -22,19 +22,16 @@ def includes(tasks, target):
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/comfyui.yml")["comfyui_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["app"]["storage"] > 0
     for key in ("image", "key_url", "repository", "suite", "component"):
         assert defaults["backup"]["client"].get(key), f"backup.client.{key} missing"
 
     # Deploy is the shared deploy.yml; only Docker without a stack takes ComfyUI's own VM.
     own_vm = read_yaml("ansible/roles/comfyui/tasks/deploy-provision.yml")
-    assert includes(own_vm, "tasks/proxmox/provision-app-vm.yml")
     assert all("app_config.hosting.method == 'docker'" in task["when"] for task in own_vm)
 
     tasks = read_yaml("ansible/roles/comfyui/tasks/kubernetes.yml")
     assert "cpu" in str(tasks[0]["ansible.builtin.assert"]["that"])
-    assert includes(tasks, "tasks/kubernetes/apply-manifest.yml")
     backup = next(t for t in tasks if "tasks/kubernetes/recovery-backup.yml" in str(t.get("ansible.builtin.include_tasks")))
     archive = backup["vars"]["k8s_recovery"]["archives"][0]
     assert archive == {"name": "data", "claim": "{{ instance }}-storage"}, archive
@@ -42,7 +39,6 @@ def main():
     restore = read_yaml("ansible/roles/comfyui/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml("ansible/roles/comfyui/tasks/restore-kubernetes.yml")[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-storage"
 
     env = Environment(undefined=StrictUndefined, keep_trailing_newline=True)

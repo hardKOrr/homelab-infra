@@ -58,7 +58,6 @@ def check_defaults_and_dispatch():
         (ROOT / "ansible/vars/app-defaults/wordpress.yml").read_text(encoding="utf-8")
     )["wordpress_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert defaults["hosting"]["impossible"] == {}
     assert defaults["backup"]["client"]["image"] == "python:3.12-bookworm"
 
@@ -224,8 +223,6 @@ def check_shared_recovery_inputs():
 
     restore = tasks("ansible/roles/wordpress/tasks/restore-kubernetes.yml")
     restore_text = str(restore)
-    assert "tasks/database/kubernetes-recovery-step.yml" in restore_text
-    assert "tasks/kubernetes/recovery-restore.yml" in restore_text
     # Restore App requires the target's recent safety point for every Kubernetes overwrite
     # of an existing target, before anything changes; the shared Job does not check it.
     validate = tasks("ansible/tasks/recovery/restore-app-validate.yml")

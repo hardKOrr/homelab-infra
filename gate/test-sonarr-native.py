@@ -18,7 +18,6 @@ assert app["image"].split(":")[1].startswith(f"{app['native_version']}-ls")
 assert len(app["native_sha256"]) == 64
 assert app["native_url"] == "https://api.github.com/repos/Sonarr/Sonarr/releases/assets/568369830"
 assert app["native_headers"] == {"Accept": "application/octet-stream"}
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 native_text = (role / "tasks/native.yml").read_text()
 native = native_text
 assert "native_sha256" in native and "native_url" in native
@@ -78,6 +77,6 @@ upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible
 assert "servarr_native" in upload["vars"]["pbs_client_runtime"]
 assert "restore-guest.yml" in (role / "tasks/restore.yml").read_text()
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_servarr_restore_runtime" in guest
+assert "_servarr_restore_runtime" in guest
 
 print("Sonarr native renders its unit and config and uses the shared backup and restore")

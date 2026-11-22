@@ -157,8 +157,6 @@ def main():
     defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/karakeep.yml").read_text())
     config = defaults["karakeep_defaults"]
     assert config["hosting"]["method"] == "docker"
-    assert config["hosting"]["supported"] == [
-        "docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert any(item["protocol"] == "TCP" and item["port"] == 80

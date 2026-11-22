@@ -16,7 +16,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/tautulli.yml").read
 app = defaults["app"]
 assert app["image"] == f"ghcr.io/tautulli/tautulli:{app['native_version']}"
 assert app["native_version"].startswith("v") and "latest" not in app["image"]
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native-install.yml").read_text()
 assert "https://github.com/Tautulli/Tautulli.git" in install and "native_version" in install
 assert "tautulli_native_dir: /opt/Tautulli" in (role / "defaults/main.yml").read_text()
@@ -56,7 +55,7 @@ backup = yaml.safe_load((role / "tasks/backup.yml").read_text())
 upload = next(t for t in backup if "pbs-client-backup.yml" in str(t.get("ansible.builtin.include_tasks", "")))
 assert "tautulli_native" in upload["vars"]["pbs_client_runtime"]
 guest = (role / "tasks/restore-guest.yml").read_text()
-assert "tasks/recovery/restore-swap.yml" in guest and "_tautulli_restore_runtime" in guest
+assert "_tautulli_restore_runtime" in guest
 assert "'native'" in (role / "tasks/restore.yml").read_text()
 hook = (role / "tasks/restore-config.yml").read_text()
 assert "tasks/recovery/rebase-target-path.yml" in hook and "restore_rebase_key: config_path" in hook

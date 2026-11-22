@@ -46,8 +46,9 @@ templates; each suite's docstring (header comment for a shell suite) says what i
 `app-matrix.yml` is the app matrix: for every catalog app and hosting method, the shared
 task files its Deploy, Backup and Restore reach. `test-app-matrix.py` recomputes it from the
 tree and fails on any difference; `--update` prints the new table for a change that is
-intended, and that change is named in the PR body. It runs beside the per-app suites; a
-Deploy conversion moves an app's per-app assertions about playbook and task text into it.
+intended, and that change is named in the PR body. It is the one home for which shared
+files an app's runs include and which methods it supports; a per-app suite checks only what
+the table cannot see: pins, rendered files and the inputs a shared file is given.
 
 When stdout is not a terminal and `CI` is unset (an LLM agent's tool call), the gate runs
 quiet: a passing lint prints one summary line per check, a passing test run prints

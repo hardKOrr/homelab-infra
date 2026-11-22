@@ -100,7 +100,6 @@ def main():
     check_registered_credential_guard()
     defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/authentik.yml").read_text())["authentik_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert set(defaults["hosting"]["supported"]) == {"docker-vm", "docker-lxc", "kubernetes"}
     # Exercise Ansible's eager defaults rendering: a self-reference here breaks
     # Deploy and maintenance before their hosting dispatch even runs.
     with tempfile.TemporaryDirectory(prefix="authentik-k8s-defaults-") as temporary:

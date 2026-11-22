@@ -40,7 +40,7 @@ assert "/data/caddy/certificates" in pod_certificates["ansible.builtin.command"]
 assert "stdout | length > 0" in pod_certificates["until"]
 routes = read(f"{ROLE}/tasks/main/routes.yml")
 assert routes.count("ansible.builtin.include_tasks: ../certificate-files.yml") == 2
-assert defaults["hosting"]["method"] == "native" and "kubernetes" in defaults["hosting"]["supported"]
+assert defaults["hosting"]["method"] == "native"
 assert defaults["app"]["storage"] > 0 and defaults["backup"]["enabled"] is True
 
 # Service: one LoadBalancer carrying the edge listeners and the admin API, client IP kept.

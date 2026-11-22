@@ -26,7 +26,6 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/home-assistant.yml"))["home_assistant_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["config_storage"] > 0
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["encryption"] == "none"
 

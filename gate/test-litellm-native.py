@@ -14,7 +14,6 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/litellm.yml").read_
 
 app = defaults["app"]
 assert app["image"].endswith(f":v{app['native_version']}"), app
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 # prisma lives in extra_proxy, not proxy; the proxy exits without it when DATABASE_URL is set.
 assert 'litellm[proxy,extra_proxy]=={{ app_config.app.native_version }}' in install

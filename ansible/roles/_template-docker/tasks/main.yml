@@ -1,10 +1,10 @@
 ---
 # APP_NAME role — Docker deployment.
-# This role is called from Play 2 of playbooks/apps/APP_NAME.yml.
+# Deploy (playbooks/apps/deploy.yml) runs this main.yml on the guest.
 # Target host: the stack host (already exists, Docker already installed).
 #
 # Variables available:
-#   app_config        — merged defaults + user config (from Play 1)
+#   app_config        — merged defaults + user config (loaded by Deploy)
 #   instance          — the instance name (e.g. sonarr-anime)
 #   homelabinfra_infra — infrastructure facts (Vaultwarden, Caddy, etc.)
 

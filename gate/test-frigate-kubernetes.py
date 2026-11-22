@@ -26,7 +26,6 @@ def render(text, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/frigate.yml"))["frigate_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert "kubernetes" in defaults["hosting"]["supported"]
 assert defaults["app"]["config_storage"] > 0 and defaults["app"]["media_storage"] > 0
 assert defaults["backup"]["client"] == {
     "image": "buildpack-deps:bookworm-curl",

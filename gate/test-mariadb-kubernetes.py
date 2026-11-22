@@ -27,9 +27,6 @@ def load(path):
 
 defaults = load("ansible/vars/app-defaults/mariadb.yml")["mariadb_defaults"]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 3306
 assert defaults["kubernetes"]["root_host"] == "10.42.%"
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]

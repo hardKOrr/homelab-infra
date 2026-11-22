@@ -30,9 +30,6 @@ def load(path):
 
 defaults = load("ansible/vars/app-defaults/redis.yml")["redis_defaults"]
 assert defaults["hosting"]["method"] == "native"
-assert defaults["hosting"]["supported"] == [
-    "native-lxc", "native-vm", "docker-lxc", "docker-vm", "kubernetes",
-]
 assert defaults["app"]["storage"] > 0 and defaults["app"]["port"] == 6379
 assert defaults["backup"]["client"]["image"] and defaults["backup"]["schedule"]
 assert defaults["routing"] == {"proxy": "none", "identity": "none"}
@@ -96,8 +93,6 @@ names = [t["name"] for t in deploy]
 assert names.index("Redis Kubernetes | Store the backend password") < names.index(
     "Redis Kubernetes | Apply the workload manifest"
 )
-assert any(str(t.get("ansible.builtin.include_tasks", "")).endswith("tasks/kubernetes/apply-manifest.yml")
-           for t in deploy)
 backup = next(
     t for t in deploy if str(t.get("ansible.builtin.include_tasks", "")).endswith("recovery-backup.yml")
 )

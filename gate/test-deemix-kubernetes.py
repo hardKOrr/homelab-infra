@@ -38,8 +38,6 @@ def main():
     assert share["vars"]["k8s_media_mounts"][0]["path"] == "/downloads"
 
     kubernetes = read_yaml("ansible/roles/deemix/tasks/kubernetes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/prepare-media-volumes.yml")
-    assert includes(kubernetes, "tasks/kubernetes/apply-manifest.yml")
     prepare_volumes = next(
         t for t in kubernetes if "prepare-media-volumes.yml" in str(t.get("ansible.builtin.include_tasks"))
     )["vars"]["k8s_media_shares"]
@@ -73,7 +71,6 @@ def main():
     restore = read_yaml("ansible/roles/deemix/tasks/restore.yml")
     assert includes(restore, "restore-kubernetes.yml") and includes(restore, "restore-guest.yml")
     job = read_yaml("ansible/roles/deemix/tasks/restore-kubernetes.yml")[0]
-    assert "tasks/kubernetes/recovery-restore.yml" in job["ansible.builtin.include_tasks"]
     assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 
 

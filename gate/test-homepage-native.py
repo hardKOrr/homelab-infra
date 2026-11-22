@@ -16,7 +16,6 @@ app = defaults["app"]
 assert app["image"].endswith(f":v{app['native_version']}"), app
 for key in ("native_node_sha256", "native_pnpm_sha256"):
     assert len(app[key]) == 64, key
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "git" in install and "--frozen-lockfile" in install and "native_pnpm_sha256" in install
 

@@ -16,7 +16,6 @@ app = defaults["app"]
 assert app["image"].endswith(f":v{app['native_version']}"), app
 for key in ("native_sha256", "native_node_sha256", "native_yarn_sha256"):
     assert len(app[key]) == 64, key
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 
 build = (role / "tasks/native-build.yml").read_text()
 assert "native_sha256" in build and "--frozen-lockfile" in build and "--no-dev" in build

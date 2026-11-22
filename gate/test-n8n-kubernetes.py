@@ -26,7 +26,6 @@ def render(path, context):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/n8n.yml"))["n8n_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["hosting"]["impossible"] == {}
 assert defaults["app"]["storage"] > 0
 assert defaults["firewall"]["egress"][0]["backend"] == "database"
@@ -117,6 +116,5 @@ assert key_tasks == [
 ]
 # Docker hosting restores through the shared swap with Compose (gate/test-n8n-restore.py).
 assert "'docker'" in swap_inputs("n8n", "restore-guest.yml")["recovery_swap_runtime"]
-assert "tasks/stack/compose-deploy.yml" in read("ansible/roles/n8n/tasks/main.yml")
 
 print("n8n keeps Docker as default and renders its Kubernetes workload and paired PBS restore")

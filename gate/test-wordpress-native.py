@@ -18,7 +18,6 @@ app = defaults["app"]
 assert app["native_version"] == "6.9.4" and app["image"].startswith(f"wordpress:{app['native_version']}-"), app
 assert len(app["native_sha256"]) == 64 and len(app["native_cli_sha256"]) == 64
 assert app["cli_image"].startswith(f"wordpress:cli-{app['native_cli_version']}-"), app
-assert {"native-lxc", "native-vm"} <= set(defaults["hosting"]["supported"])
 install = (role / "tasks/native.yml").read_text()
 assert "https://wordpress.org/wordpress-{{ app_config.app.native_version }}.tar.gz" in install
 assert "native_sha256" in install and "native_cli_sha256" in install
@@ -62,7 +61,7 @@ assert "REMOTE_ADDR} in { 'proxy.example.invalid' }" in site
 
 # Backup and restore go through the shared operations with the method's runtime.
 backup = (role / "tasks/backup-native.yml").read_text()
-assert "tasks/backup/pbs-client-backup.yml" in backup and "pbs_client_runtime: native" in backup
+assert "pbs_client_runtime: native" in backup
 assert "database.pxar" in backup and "content.pxar" in backup
 assert "tasks/database/dump.yml" in (role / "tasks/backup-quiesced.yml").read_text()
 schedule = (role / "tasks/recovery-schedule.yml").read_text()
@@ -78,6 +77,6 @@ assert "groups['lab_managed']" in str(check["ansible.builtin.assert"]["that"])
 select = next(t for t in target if t.get("name") == "Resolve app target | Select the native guest")
 assert select["ansible.builtin.set_fact"]["_rat_host"] == "{{ resolve_guest_hosts[0] }}"
 restore = (role / "tasks/restore-guest.yml").read_text()
-assert "wordpress_native | bool" in restore and "tasks/recovery/restore-swap.yml" in restore
+assert "wordpress_native | bool" in restore
 
 print("wordpress native pins one release, renders its config and site and uses the shared backup and restore")
