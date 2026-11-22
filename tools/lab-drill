@@ -164,6 +164,7 @@ class Drill:
                                  f"drill-{instance}-{self.id}")
         self.step_no, self.repeat_changes, self.points, self.method = 0, [], {}, ""
         self.backups = None
+        self.owner_made = False
 
     # ── plumbing ────────────────────────────────────────────────────────────────
     def say(self, line):
@@ -311,6 +312,14 @@ class Drill:
                           "no canary on this hosting method to catch the wrong point")
             return
         if self.tier == "browser":
+            with open(self.canary) as handle:
+                item = f"{self.app}-drill-owner" if "drill-owner" in handle.read() else self.instance
+            if (item != self.instance and not self.owner_made
+                    and (self.defaults.get("routing") or {}).get("identity") == "forward_auth"):
+                # The owner is an Authentik account; Authentik's own drill deletes it.
+                self.playbook("canary-owner", "playbooks/maintenance/drill-canary.yml",
+                              drill_action="owner", drill_id=self.id, drill_epoch=self.epoch)
+                self.owner_made = True
             self.step_no += 1
             label = f"{self.step_no:02d}-canary-{step}"
             if self.plan:
@@ -318,8 +327,6 @@ class Drill:
                 return
             if not self.url:
                 self.fail(label, "no URL for the browser canary; pass --url")
-            with open(self.canary) as handle:
-                item = f"{self.app}-drill-owner" if "drill-owner" in handle.read() else self.instance
             log = os.path.join(self.logs, label + ".log")
             with open(log, "wb") as out:
                 rc = subprocess.run(

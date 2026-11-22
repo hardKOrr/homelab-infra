@@ -9,7 +9,8 @@
 # Inputs:
 #   instance       the instance (required); app when it differs from instance
 #   drill_action  create (write it), fresh (require it absent), verify (require it
-#                  exactly as written)
+#                  exactly as written); owner makes the Authentik login a browser
+#                  canary signs in with (tasks/drill/sso-owner.yml) and writes no canary
 #   drill_id      the drill run's id; the same value for all three actions
 #   drill_epoch   the drill run's start time in seconds, for canaries that need a time
 #   drill_final   true on the last verify, after the final Deploy: only then is a marker
@@ -36,15 +37,24 @@
     - name: Validate the canary inputs
       ansible.builtin.assert:
         that:
-          - drill_action | default('') in ['create', 'fresh', 'verify']
+          - drill_action | default('') in ['create', 'fresh', 'verify', 'owner']
           - drill_id | default('') is match('^[A-Za-z0-9-]{1,40}$')
           - drill_epoch | default('0') | int > 0
-        fail_msg: Pass drill_action=create|fresh|verify, a plain drill_id and drill_epoch.
+        fail_msg: Pass drill_action=create|fresh|verify|owner, a plain drill_id and drill_epoch.
 
     - name: Resolve the instance's target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
         resolve_app_target_kinds: [native, docker, kubernetes]
+
+    - name: Make the browser canary's Authentik login
+      when: drill_action == 'owner'
+      block:
+        - name: Make the drill owner
+          ansible.builtin.include_tasks: ../../tasks/drill/sso-owner.yml
+
+        - name: Stop before the canary
+          ansible.builtin.meta: end_playbook
 
     - name: Resolve the canary
       ansible.builtin.set_fact:

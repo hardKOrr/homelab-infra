@@ -47,6 +47,10 @@ if "canary=hook" not in plan("influxdb"):
 radarr = plan("radarr")
 if "role=servarr" not in radarr or "radarr-recovery.js" not in radarr:
     failures.append("a role alias finds the app's own browser spec")
+if steps(radarr)[2:4] != ["canary-owner", "canary-create"] or steps(radarr).count("canary-owner") != 1:
+    failures.append("a forward_auth browser canary makes its Authentik drill owner once, first")
+if "canary-owner" in steps(plan("mixpost")):
+    failures.append("only a forward_auth route's drill owner is an Authentik account")
 
 stateless = plan("homepage")
 if steps(stateless) != ["deploy", "wiring-deploy", "deploy-repeat", "wiring-deploy-repeat",

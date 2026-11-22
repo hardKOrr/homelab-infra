@@ -13,7 +13,7 @@ role must use for each common operation.
 | `bootstrap/` | One-time platform setup: PBS, its second copy, unattended upgrades, generated facts |
 | `config/` | Config Doctor run and writing user config files |
 | `database/` | Database backends, per-app provisioning, dump, restore, drop and the drill canary (`database/scripts/`) |
-| `drill/` | Recovery drill canary helpers: a command in the app's runtime, the app's URL from the runner, a marker file inside a pod |
+| `drill/` | Recovery drill canary helpers: a command in the app's runtime, the app's URL from the runner, a marker file inside a pod, the Authentik drill owner a browser canary signs in as |
 | `decommission/` | Whole-lab decommission phases |
 | `firewall/` | OPNsense base rules, per-app access and the k3s node alias |
 | `hosting/` | Hosting-method validation against an app's declared support |
