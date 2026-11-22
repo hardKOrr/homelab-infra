@@ -67,8 +67,9 @@ RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
 OWN_DRILL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
-# Kept after a passing --all row: later Deploys wire their SSO entry and monitor into these.
-KEEP = {"authentik", "uptime-kuma"}
+# Kept after a passing --all row: later Deploys wire their SSO entry and monitor into these,
+# and later backups publish their notification to ntfy.
+KEEP = {"authentik", "ntfy", "uptime-kuma"}
 # Read on the runner by --all: the published instance lists and the instance files.
 INVENTORY = r"""
 import glob, json, os
