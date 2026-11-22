@@ -496,7 +496,7 @@ def check_non_root_entrypoint_access():
 def check_runner_service_running_retries():
     """The runner waits for a healthy Docker daemon, and Deploy catches a crash loop."""
     compose = (repo / "ansible/roles/forgejo-runner/templates/docker-compose.yml.j2").read_text()
-    assert 'test: ["CMD", "docker", "info"]' in compose
+    assert 'test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]' in compose
     assert "condition: service_healthy" in compose
     role_tasks = yaml.safe_load(
         (repo / "ansible/roles/forgejo-runner/tasks/docker.yml").read_text()
