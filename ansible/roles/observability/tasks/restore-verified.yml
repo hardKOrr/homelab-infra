@@ -19,18 +19,34 @@
     argv: >-
       {{ ['docker', 'exec', instance ~ '-grafana', 'sh', '-c', _obs_reset_docker]
          if app_config.hosting.method | default('docker') == 'docker'
-         else ['runuser', '-u', 'grafana', '--', 'sh', '-c', _obs_reset_native] }}
-    # The grafana user cannot read root's home, and Grafana's CLI reads its working directory.
+         else _obs_reset_native }}
+    # Grafana's CLI reads its working directory, which must not be root's home.
     chdir: /
   vars:
     _obs_reset_docker: >-
       grafana cli --homepath /usr/share/grafana admin reset-admin-password
       "$GF_SECURITY_ADMIN_PASSWORD"
-    _obs_reset_native: >-
-      set -a; . /etc/default/grafana-server; set +a;
-      grafana cli --homepath "$GRAFANA_HOME" --config "$CONF_FILE"
-      --configOverrides "cfg:default.paths.data=$DATA_DIR"
-      admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD"
+    # systemd reads the unit's EnvironmentFile and expands each ${VAR} as one word, with no
+    # shell evaluation of the password.
+    _obs_reset_native:
+      - systemd-run
+      - --wait
+      - --pipe
+      - --quiet
+      - --property=EnvironmentFile=/etc/default/grafana-server
+      - --property=User=grafana
+      - --working-directory=/
+      - /usr/share/grafana/bin/grafana
+      - cli
+      - --homepath
+      - ${GRAFANA_HOME}
+      - --config
+      - ${CONF_FILE}
+      - --configOverrides
+      - cfg:default.paths.data=${DATA_DIR}
+      - admin
+      - reset-admin-password
+      - ${GF_SECURITY_ADMIN_PASSWORD}
   register: _observability_restore_password_reset
   changed_when: true
   failed_when: false
