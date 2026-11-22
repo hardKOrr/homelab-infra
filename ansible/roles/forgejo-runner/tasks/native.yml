@@ -98,14 +98,38 @@
 - name: Forgejo Runner | Apply pending restart
   ansible.builtin.meta: flush_handlers
 
-- name: Forgejo Runner | Check that the runner service stays running
+# A runner whose registration fails exits and systemd restarts it, so `is-active` alone
+# can catch it between attempts; as on Docker, require no restart while Deploy watches.
+- name: Forgejo Runner | Check that the runner service is running
   ansible.builtin.command:
-    argv: [systemctl, is-active, "{{ instance }}"]
+    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts, --value]
   register: _forgejo_runner_active
   changed_when: false
   retries: 12
   delay: 5
-  until: _forgejo_runner_active.rc == 0
+  until: _forgejo_runner_active.stdout_lines[0] | default('') == 'active'
+
+- name: Forgejo Runner | Give a failing runner time to restart
+  ansible.builtin.wait_for:
+    timeout: 15
+
+- name: Forgejo Runner | Read the runner service again
+  ansible.builtin.command:
+    argv: [systemctl, show, "{{ instance }}", --property=ActiveState, --property=NRestarts, --value]
+  register: _forgejo_runner_active_after
+  changed_when: false
+
+- name: Forgejo Runner | Assert the runner service stayed up
+  ansible.builtin.assert:
+    that:
+      - _forgejo_runner_active_after.stdout_lines[0] | default('') == 'active'
+      - _forgejo_runner_active_after.stdout_lines[1] | default('') == _forgejo_runner_active.stdout_lines[1] | default('')
+    fail_msg: >-
+      The Forgejo runner restarted while Deploy watched it (state/restarts before
+      {{ _forgejo_runner_active.stdout_lines | join('/') }}, after
+      {{ _forgejo_runner_active_after.stdout_lines | join('/') }}). Read
+      `journalctl -u {{ instance }}` on the guest.
+    quiet: true
 
 - name: Forgejo Runner | Install native restart helper
   ansible.builtin.copy:

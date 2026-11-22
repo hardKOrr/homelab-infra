@@ -58,14 +58,30 @@
     status_code: 200
     return_content: true
   register: _runner_remove_listing
+  failed_when: false
   no_log: true
+
+# The call above hides its token; this prints how it ended. A user listing Forgejo refuses
+# (a user token left from an earlier Forgejo) falls through to the admin listing below.
+- name: Forgejo Runner removal | Require the runner listing
+  ansible.builtin.assert:
+    that: >-
+      _runner_remove_listing.status | default(0) == 200
+      or (_runner_remove_api_scope == 'user' and _runner_remove_admin_token | length > 0)
+    fail_msg: >-
+      Forgejo answered HTTP {{ _runner_remove_listing.status | default('none') }} listing
+      {{ _runner_remove_api_scope }}-scope runners for {{ runner_remove_instance }}. Check the
+      {{ 'runner_api_token' if _runner_remove_api_scope == 'user' else 'admin_api_token' }}
+      in homelab-infra/apps/{{ runner_remove_forgejo_instance }}.
+    quiet: true
 
 - name: Forgejo Runner removal | Select only the exact runner name
   ansible.builtin.set_fact:
     _runner_remove_matches: >-
-      {{ ((_runner_remove_listing.json.runners
-           if (_runner_remove_listing.json is mapping and _runner_remove_listing.json.runners is defined)
-           else _runner_remove_listing.json) | default([]))
+      {{ (((_runner_remove_listing.json.runners
+            if (_runner_remove_listing.json is mapping and _runner_remove_listing.json.runners is defined)
+            else _runner_remove_listing.json) | default([]))
+          if _runner_remove_listing.status | default(0) == 200 else [])
          | selectattr('name', 'equalto', runner_remove_instance)
          | map(attribute='id') | list }}
   no_log: true
@@ -79,11 +95,22 @@
     status_code: 200
     return_content: true
   register: _runner_remove_admin_listing
+  failed_when: false
   when:
     - _runner_remove_api_scope == 'user'
     - _runner_remove_matches | length == 0
     - _runner_remove_admin_token | length > 0
   no_log: true
+
+- name: Forgejo Runner removal | Require the global runner listing
+  ansible.builtin.assert:
+    that: _runner_remove_admin_listing.status | default(0) == 200
+    fail_msg: >-
+      Forgejo answered HTTP {{ _runner_remove_admin_listing.status | default('none') }} listing
+      global runners for {{ runner_remove_instance }}. Check the admin_api_token in
+      homelab-infra/apps/{{ runner_remove_forgejo_instance }}.
+    quiet: true
+  when: _runner_remove_admin_listing is not skipped
 
 - name: Forgejo Runner removal | Select exact global runner registrations
   ansible.builtin.set_fact:
@@ -119,5 +146,14 @@
     status_code: [204, 404]
   loop: "{{ _runner_remove_matches }}"
   register: _runner_remove_result
+  failed_when: false
   changed_when: _runner_remove_result.status | default(0) == 204
   no_log: true
+
+- name: Forgejo Runner removal | Require each registration deleted
+  ansible.builtin.assert:
+    that: (_runner_remove_result.results | default([])) | rejectattr('status', 'in', [204, 404]) | list | length == 0
+    fail_msg: >-
+      Forgejo refused to delete runner {{ runner_remove_instance }}: HTTP
+      {{ (_runner_remove_result.results | default([])) | map(attribute='status') | list }}.
+    quiet: true
