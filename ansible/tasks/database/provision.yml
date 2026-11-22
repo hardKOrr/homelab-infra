@@ -34,16 +34,6 @@
     _database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(database_provision_config.instance, {}) }}
 
-- name: Database | Assert requested backend major version is registered
-  ansible.builtin.assert:
-    that:
-      - database_provision_config.version | default('') | length == 0
-        or _database_backend.version | default('') | string == database_provision_config.version | string
-    fail_msg: >-
-      Backend {{ database_provision_config.instance }} does not advertise the requested
-      PostgreSQL major version {{ database_provision_config.version }}.
-  when: database_provision_config.version | default('') | length > 0
-
 - name: Database | Assert requested backend is registered
   ansible.builtin.assert:
     that:
@@ -53,6 +43,16 @@
     fail_msg: >-
       {{ database_provision_config.provider }} backend {{ database_provision_config.instance }} is not registered.
       Deploy that backend before deploying {{ database_provision_app_instance }}.
+
+- name: Database | Assert requested backend major version is registered
+  ansible.builtin.assert:
+    that:
+      - database_provision_config.version | default('') | length == 0
+        or _database_backend.version | default('') | string == database_provision_config.version | string
+    fail_msg: >-
+      Backend {{ database_provision_config.instance }} does not advertise the requested
+      PostgreSQL major version {{ database_provision_config.version }}.
+  when: database_provision_config.version | default('') | length > 0
 
 - name: Database | Refuse a database or login another application uses
   ansible.builtin.include_tasks: guard-other-consumers.yml

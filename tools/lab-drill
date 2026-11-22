@@ -45,7 +45,8 @@ drilled row passes. --from <app> starts at that catalog app. After a row passes,
 removes the instance with delete_data=true, and destroy_guest=true off Kubernetes, so the
 drilled apps do not pile up in node memory; it keeps the integration providers every later Deploy wires
 into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
-cleanup removed.
+cleanup removed. Before the first Deploy the drill deploys the named backends the app's
+defaults declare (app.<key>.provider and .instance); --all cleanup removes them too.
 """
 import json
 import os
@@ -111,6 +112,20 @@ def canary_of(app, role, defaults):
     if (defaults.get("drill") or {}).get("canary_path"):
         return "marker", defaults["drill"]["canary_path"]
     return "none", ""
+
+
+BACKEND_APPS = {"postgresql", "mariadb", "mysql", "redis", "influxdb"}
+
+
+def backends_of(defaults):
+    """[(provider, instance)]: the named backends the app's defaults say to deploy first
+    (app.<key>.provider and .instance, e.g. app.database). An instance file that names
+    other backends is not read; --all drills the app-named instances."""
+    found = []
+    for spec in ((defaults.get("app") or {}).values()):
+        if isinstance(spec, dict) and spec.get("provider") in BACKEND_APPS and spec.get("instance"):
+            found.append((spec["provider"], spec["instance"]))
+    return found
 
 
 def kind_of(app, defaults, backups):
@@ -330,6 +345,11 @@ class Drill:
         if self.destroy_guest:
             remove["destroy_guest"] = "true"
 
+        # Drill step 1: the app's named backends exist. Deploy is idempotent, so a backend
+        # already up converges and one that is absent is created.
+        for provider, backend in backends_of(self.defaults):
+            self.playbook(f"backend-{backend}", f"playbooks/apps/{provider}.yml",
+                          instance=backend, app=provider)
         self.deploy("deploy")
         if not self.plan:
             backups = self.backups if self.backups is not None else \
@@ -376,15 +396,20 @@ class Drill:
 
 def cleanup(ref, app, instance, method, log):
     """Remove a passed instance, and its own guest unless it runs on Kubernetes (whose pods
-    live in the fixed k3s VMs), freeing memory for the next row."""
+    live in the fixed k3s VMs), freeing memory for the next row. With the method unknown
+    (a backend), a destroy_guest refusal changes nothing, so a plain Remove follows it."""
     argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), ref,
             "playbooks/apps/remove.yml", "-e", f"instance={instance}", "-e", f"app={app}",
             "-e", "delete_data=true"]
-    if method != "kubernetes":
-        argv += ["-e", "destroy_guest=true"]
+    attempts = [argv] if method == "kubernetes" else [argv + ["-e", "destroy_guest=true"]]
+    if not method:
+        attempts.append(argv)
     with open(log, "wb") as out:
-        rc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out,
-                            stderr=subprocess.STDOUT).returncode
+        for attempt in attempts:
+            rc = subprocess.run(attempt, stdin=subprocess.DEVNULL, stdout=out,
+                                stderr=subprocess.STDOUT).returncode
+            if rc == 0:
+                break
     print(f"CLEANUP {instance} {'removed' if rc == 0 else f'FAILED exit {rc}'} log={log}",
           flush=True)
 
@@ -450,6 +475,9 @@ def run_all(ref, plan, start=None, keep=False):
         if rc == 0 and not keep and app not in KEEP:
             cleanup(ref, app, instance, method.group(1) if method else "",
                     os.path.join(jobs, f"drill-all-{stamp}-{instance}-remove.log"))
+            for provider, backend in backends_of(app_defaults(app)):
+                cleanup(ref, provider, backend, "",
+                        os.path.join(jobs, f"drill-all-{stamp}-{backend}-remove.log"))
         with open(table, "w") as out:
             out.write("\n".join(rows) + "\n")
     if not plan:
