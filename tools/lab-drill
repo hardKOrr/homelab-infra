@@ -25,6 +25,9 @@ entry exactly once, or not at all. After each Deploy and the Restore the URL (th
 monitor's, else the route's that check-wiring reports) must answer over HTTPS. Running
 it authorizes Remove with delete_data=true and overwrite Restore on this instance only.
 
+Before each Deploy an executable $HOMELAB_LAB_DIR/drill-hooks/<app>-pre-deploy runs with
+<instance> <ref>, for a private input the Deploy consumes (Plex's claim token).
+
 The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
 (URL query drill=create|fresh|verify, id=<drill id>, final=1 on the last verify), else a
 task hook roles/<role>/tasks/drill-canary.yml or a marker file in the app-defaults'
@@ -206,7 +209,31 @@ class Drill:
         self.summary(True)
         sys.exit(0)
 
+    def pre_deploy(self, name):
+        """$HOMELAB_LAB_DIR/drill-hooks/<app>-pre-deploy <instance> <ref>, when present: a
+        private input a Deploy consumes, such as a Plex claim token minted from the lab's
+        test account minutes before it expires."""
+        hook = os.path.join(os.environ.get("HOMELAB_LAB_DIR", ""), "drill-hooks",
+                            f"{self.app}-pre-deploy")
+        if not os.access(hook, os.X_OK):
+            return
+        self.step_no += 1
+        label = f"{self.step_no:02d}-pre-{name}"
+        if self.plan:
+            self.say(f"STEP {label} drill-hooks/{self.app}-pre-deploy")
+            return
+        log = os.path.join(self.logs, label + ".log")
+        with open(log, "wb") as out:
+            rc = subprocess.run([hook, self.instance, self.ref], stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=subprocess.STDOUT,
+                                env={**os.environ, "LAB_DRILL_TOOLS": os.path.join(REPO, "tools")}
+                                ).returncode
+        self.say(f"STEP {label} {'PASS' if rc == 0 else 'FAIL'} log={log}")
+        if rc != 0:
+            self.fail(label, f"pre-deploy hook exit {rc}")
+
     def deploy(self, name, repeat=False):
+        self.pre_deploy(name)
         text, changed = self.playbook(name, f"playbooks/apps/{self.app}.yml")
         if self.plan:
             self.wiring(name, "present")
