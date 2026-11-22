@@ -44,7 +44,9 @@
     home_assistant_fqdn: >-
       {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
     _ha_usb_node: "{{ k8s_api_host }}"
-    _ha_seed_configuration: "{{ lookup('ansible.builtin.template', 'configuration.yaml.j2') }}"
+    _ha_seed_configuration: >-
+      {{ lookup('ansible.builtin.template', 'configuration.yaml.j2',
+                template_vars={'_ha_trusted_proxies': app_config.app.kubernetes_trusted_proxies}) }}
 
 - name: Home Assistant | Render the Kubernetes workload
   ansible.builtin.set_fact:

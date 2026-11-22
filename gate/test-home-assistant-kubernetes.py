@@ -66,7 +66,8 @@ seed_command = pod["initContainers"][0]["command"][-1]
 assert "test -f /config/automations.yaml ||" in seed_command
 assert "printf '[]\\n' > /config/automations.yaml" in seed_command
 # The editor persists automations in a separate file that Home Assistant must load.
-seed = render(read(f"{ROLE}/templates/configuration.yaml.j2"), {"instance": "home-assistant", "app_config": {"app": defaults["app"]}})
+proxies = defaults["app"]["kubernetes_trusted_proxies"]
+seed = render(read(f"{ROLE}/templates/configuration.yaml.j2"), {"instance": "home-assistant", "app_config": {"app": defaults["app"]}, "_ha_trusted_proxies": proxies})
 nodes = dict(yaml.compose(seed).value)
 seed_fields = {key.value: value for key, value in nodes.items()}
 assert seed_fields["automation"].tag == "!include"
@@ -74,8 +75,18 @@ assert seed_fields["automation"].value == "automations.yaml"
 http_fields = {key.value: value for key, value in seed_fields["http"].value}
 assert http_fields["use_x_forwarded_for"].value == "true"
 custom = {"default_config": {}, "automation": []}
-assert yaml.safe_load(render(read(f"{ROLE}/templates/configuration.yaml.j2"), {
-    "instance": "home-assistant", "app_config": {"app": dict(defaults["app"], initial_configuration=custom)}})) == custom
+def seeded(initial, trusted):
+    return yaml.safe_load(render(read(f"{ROLE}/templates/configuration.yaml.j2"), {
+        "instance": "home-assistant", "_ha_trusted_proxies": trusted,
+        "app_config": {"app": dict(defaults["app"], initial_configuration=initial)}}))
+assert seeded(custom, proxies) == custom
+# An initial_configuration that forwards also trusts the current proxy; a stale address stays.
+forwarding = {"default_config": {}, "http": {"use_x_forwarded_for": True, "trusted_proxies": ["192.0.2.1"]}}
+assert seeded(forwarding, ["192.0.2.9"])["http"]["trusted_proxies"] == ["192.0.2.1", "192.0.2.9"]
+# Without a reverse proxy the default seed has no http block.
+assert "http" not in yaml.safe_load(render(read(f"{ROLE}/templates/configuration.yaml.j2"), {
+    "instance": "home-assistant", "_ha_trusted_proxies": [],
+    "app_config": {"app": defaults["app"]}}).replace("!include", ""))
 assert plain[("Ingress", "home-assistant")]["spec"]["rules"][0]["host"] == "home-assistant.example.test"
 
 usb = objects_for(True)[("Deployment", "home-assistant")]["spec"]["template"]["spec"]

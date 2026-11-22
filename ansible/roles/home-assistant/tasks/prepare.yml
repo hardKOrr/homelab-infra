@@ -16,17 +16,32 @@
     - "{{ home_assistant_project_dir }}"
     - "{{ app_config.app.config_path }}"
 
-# Home Assistant owns this file after initialization, including after a restore.
-- name: Home Assistant | Seed optional initial configuration
+- name: Home Assistant | Resolve the reverse proxy's source addresses
+  ansible.builtin.include_tasks: ../../../tasks/wiring/proxy-sources.yml
+
+# Home Assistant owns this file after initialization, including after a restore. The seed
+# trusts the platform reverse proxy (configuration.yaml.j2).
+- name: Home Assistant | Seed the initial configuration
   ansible.builtin.copy:
-    content: "{{ app_config.app.initial_configuration | to_nice_yaml }}"
+    content: >-
+      {{ lookup('ansible.builtin.template', 'configuration.yaml.j2',
+                template_vars={'_ha_trusted_proxies': wiring_proxy_sources}) }}
     dest: "{{ app_config.app.config_path }}/configuration.yaml"
     owner: root
     group: root
     mode: "0640"
     force: false
-  when: app_config.app.initial_configuration | default({}) | length > 0
   register: _ha_seed_written
+
+# The default seed includes the automation editor's file, which must exist before start.
+- name: Home Assistant | Create the automation editor's file
+  ansible.builtin.copy:
+    content: "[]\n"
+    dest: "{{ app_config.app.config_path }}/automations.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+    force: false
   notify: Restart Home Assistant
 
 - name: Home Assistant | Render the hidden integration secrets

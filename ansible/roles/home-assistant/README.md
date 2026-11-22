@@ -19,10 +19,12 @@ Integration credentials are read from the hidden `integration_credentials` JSON 
 `homelab-infra/apps/<instance>` and rendered to a root-only `secrets.yaml`. They are never
 accepted in `config/apps/<instance>.yml` or printed by Ansible.
 
-`app.initial_configuration` optionally seeds `configuration.yaml` on a fresh instance.
-Include `default_config: {}` and, behind Caddy, `http.use_x_forwarded_for: true` with
-`http.trusted_proxies` listing the proxy's address. Deploy never replaces an existing
-file; subsequent configuration belongs to Home Assistant and travels in its backup.
+`app.initial_configuration` optionally seeds `configuration.yaml` on a fresh instance;
+without it the seed is `default_config`, the automation editor's file and an `http` block
+trusting the reverse proxy. Include `default_config: {}` and, behind Caddy,
+`http.use_x_forwarded_for: true`; Deploy adds the proxy's current addresses
+(`tasks/wiring/proxy-sources.yml`) to `http.trusted_proxies`. Deploy never replaces an
+existing file; subsequent configuration belongs to Home Assistant and travels in its backup.
 
 ## Native
 
