@@ -14,7 +14,7 @@
 #
 # A native LXC app is read through the lab-tail-applog script its role installed. A Docker
 # app's logs come from its Compose project on the stack host. A Kubernetes app's logs come
-# from every container of each Deployment, StatefulSet and DaemonSet in its namespace,
+# from every container of each Deployment, StatefulSet, DaemonSet and Job in its namespace,
 # read through the cluster API node. See
 # tasks/maintenance/resolve-app-target.yml for why the target is resolved rather than
 # assumed to be the instance name.
@@ -60,10 +60,17 @@
       failed_when: false
       when: app_target_kind | default('native') == 'docker'
 
+    - name: Require the instance's own namespace
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/require-owned-namespace.yml
+      vars:
+        k8s_owned_namespace: "{{ app_target_namespace }}"
+      when: app_target_kind | default('native') == 'kubernetes'
+
+    # Jobs too: a CronJob-only app (Kometa) leaves its recent runs as Jobs.
     - name: List the Kubernetes app's workloads
       ansible.builtin.command:
         argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", get,
-               "deployment,statefulset,daemonset", --output, name]
+               "deployment,statefulset,daemonset,job", --output, name]
       register: _logs_k8s_workloads
       changed_when: false
       when: app_target_kind | default('native') == 'kubernetes'

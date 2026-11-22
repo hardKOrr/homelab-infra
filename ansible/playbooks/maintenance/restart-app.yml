@@ -60,6 +60,12 @@
       register: _restart_compose
       when: app_target_kind | default('native') == 'docker'
 
+    - name: Require the instance's own namespace
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/require-owned-namespace.yml
+      vars:
+        k8s_owned_namespace: "{{ app_target_namespace }}"
+      when: app_target_kind | default('native') == 'kubernetes'
+
     - name: List the Kubernetes app's workloads
       ansible.builtin.command:
         argv: [k3s, kubectl, --namespace, "{{ app_target_namespace }}", get,
@@ -72,8 +78,9 @@
       ansible.builtin.assert:
         that: _restart_k8s_workloads.stdout_lines | length > 0
         fail_msg: >-
-          Namespace {{ app_target_namespace }} holds no Deployment, StatefulSet or
-          DaemonSet; deploy {{ app_target_instance }} first.
+          Namespace {{ app_target_namespace }} runs no Deployment, StatefulSet or
+          DaemonSet, so nothing long-running can be restarted; a CronJob-only app such as
+          Kometa runs on its schedule.
       when: app_target_kind | default('native') == 'kubernetes'
 
     - name: Restart the Kubernetes app's workloads

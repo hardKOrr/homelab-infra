@@ -1,0 +1,26 @@
+---
+# Refuse a day-2 action on a namespace homelab-infra did not create. ensure-namespace.yml
+# marks every namespace it creates `app.kubernetes.io/managed-by: homelab-infra`; an
+# `app-<instance>` namespace without that mark, or none at all, is not this instance's.
+# Run on the cluster API node (the apptarget host of tasks/maintenance/resolve-app-target.yml).
+#
+# Inputs: k8s_owned_namespace — the namespace to act on.
+
+- name: k8s owned namespace | Read the namespace's ownership label
+  ansible.builtin.command:
+    argv: [k3s, kubectl, get, namespace, "{{ k8s_owned_namespace }}", -o,
+           'jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}']
+  register: _k8s_owned_label
+  failed_when: false
+  changed_when: false
+
+- name: k8s owned namespace | Require a namespace homelab-infra created
+  ansible.builtin.assert:
+    that:
+      - _k8s_owned_label.rc == 0
+      - (_k8s_owned_label.stdout | trim) == 'homelab-infra'
+    fail_msg: >-
+      {{ ('Namespace ' ~ k8s_owned_namespace ~ ' does not exist; deploy the instance first.')
+         if _k8s_owned_label.rc != 0
+         else ('Namespace ' ~ k8s_owned_namespace ~ ' is not labelled'
+               ~ ' app.kubernetes.io/managed-by: homelab-infra, so homelab-infra will not act on it.') }}
