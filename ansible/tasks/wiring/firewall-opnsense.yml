@@ -56,6 +56,9 @@
       {{ found | to_json }}
     _fw_interfaces: "{{ _fw_interfaces_json | from_json }}"
   block:
+    - name: Firewall account | Ensure the owned API credential before firewall access
+      ansible.builtin.include_tasks: opnsense-firewall-account.yml
+
     - name: Wire firewall | Assert wiring contract vars
       ansible.builtin.assert:
         that:

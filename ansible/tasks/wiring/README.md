@@ -16,7 +16,7 @@ random, unusable interactive password on OPNsense and never reads or writes that
 
 Account management uses the separate canonical Vaultwarden item
 `homelab-infra/firewall-admin` (`api_key`, `api_secret`). That admin API key is used only by
-this task. The existing `homelab-infra/firewall` item remains the credential for firewall
+the shared account lifecycle. The existing `homelab-infra/firewall` item remains the credential for firewall
 rules and aliases. Unbound records use `homelab-infra/dns` (`api_key`, `api_secret`). The
 `firewall-admin` item must be seeded before any Deploy: this task consumes that pair but
 does not create it or seed it into OPNsense. On the existing green firewall, create the
@@ -46,3 +46,24 @@ An app that trusts `X-Forwarded-Proto` only from the platform proxy includes
 [`proxy-sources.yml`](proxy-sources.yml) before rendering its web server configuration and
 reads `wiring_proxy_sources`, from the `source_addresses` Caddy's Deploy records in the
 `reverse_proxy` registry entry.
+
+## OPNsense firewall account
+
+Firewall reconciliation includes [`opnsense-firewall-account.yml`](opnsense-firewall-account.yml)
+before app rules, base rules or the k3s node alias. It uses the shared
+[`opnsense-account.yml`](opnsense-account.yml) lifecycle to create `homelab-infra-firewall`
+with description `Owned by homelab-infra`. Its exact direct privileges come from the
+[privilege contract](../../vars/opnsense-firewall-account.yml); missing privileges are
+added and extras removed, with no groups, shell or SSH keys.
+Per-app rule wiring skips account management when neither egress nor inbound access is declared.
+
+Only account management authenticates with `homelab-infra/firewall-admin`. The generated
+pair is stored as hidden `api_key` and `api_secret` fields in `homelab-infra/firewall`,
+then recursively overlaid in memory for the current Deploy. The firewall key must read
+filter rules and must be denied Unbound access. Other accounts and existing rules remain
+untouched. A foreign description refuses adoption. Repeat runs preserve the pair;
+a mismatch fails until an operator requests `-e opnsense_firewall_rotate_key=true`.
+Rotation recreates only this owned user and revokes its old keys before storing a new pair.
+A failed vault write requires that explicit recovery input because OPNsense returns the
+secret only once. The prior hand-made firewall account can be removed after app and alias
+reconciliation has been validated with the new credential.
