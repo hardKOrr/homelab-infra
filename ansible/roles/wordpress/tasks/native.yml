@@ -133,7 +133,8 @@
         state: absent
 
 # The release's own wp-content (default themes) seeds the durable directory once; an
-# existing one, such as a restored point, is never overwritten.
+# existing one, such as a restored point, is never overwritten. A link whose target is
+# gone (Remove with delete_data keeps the guest's release tree) gets the directory back.
 - name: WordPress native | Link wp-content to the durable directory
   ansible.builtin.shell:
     cmd: |
@@ -141,7 +142,7 @@
       link="{{ wordpress_native_root }}/wp-content"
       target="{{ wordpress_content_path }}"
       if [ -L "$link" ]; then
-        [ "$(readlink "$link")" = "$target" ] && exit 0
+        [ "$(readlink "$link")" = "$target" ] && [ -d "$target" ] && exit 0
         rm "$link"
       elif [ -e "$link" ]; then
         mkdir -p "$target"
