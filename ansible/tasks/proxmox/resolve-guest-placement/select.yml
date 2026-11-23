@@ -1,7 +1,7 @@
 ---
 # Phase of resolve-guest-placement.yml: keep the candidates that carry the guest's bridge
-# and VLAN, select the one with the most available memory and publish the VM or LXC target
-# settings. Inputs are listed in resolve-guest-placement.yml.
+# and VLAN and have the guest's vCPUs, select the one with the most available memory and
+# publish the VM or LXC target settings. Inputs are listed in resolve-guest-placement.yml.
 
 - name: Guest placement | Read candidate node networks
   ansible.builtin.command:
@@ -71,6 +71,16 @@
   loop: "{{ _guest_placement_memory_results.results }}"
   loop_control:
     label: "{{ item.item }}"
+  # Proxmox refuses to start a VM with more vCPUs than its node has.
+  when: (item.stdout | from_json).cpuinfo.cpus | default(0) | int >= guest_placement_cores | default(0) | int
+
+- name: Guest placement | Require a node with the guest's vCPUs
+  ansible.builtin.assert:
+    that: _guest_placement_memory_candidates | length > 0
+    fail_msg: >-
+      No eligible node ({{ _guest_placement_network_nodes | join(', ') }}) has the
+      {{ guest_placement_cores | default(0) }} vCPUs this guest is configured for. Lower its
+      cores in the instance config.
 
 - name: Guest placement | Select the node with the most available memory
   ansible.builtin.set_fact:

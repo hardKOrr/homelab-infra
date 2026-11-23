@@ -1,11 +1,41 @@
 ---
 # Registration steps shared by the Docker and Kubernetes methods: the token from
 # Vaultwarden, reconciliation against Forgejo, then the item's registration metadata.
-- name: Forgejo Runner | Read the registration token from Vaultwarden
+# Forgejo's own current token wins: one stored for a Forgejo since deployed fresh is
+# refused ("runner registration token not found"). Forgejo Deploy keeps admin_api_token.
+- name: Forgejo Runner | Ask Forgejo for the instance registration token
+  ansible.builtin.uri:
+    url: "{{ app_config.app.forgejo_url | regex_replace('/+$', '') }}/api/v1/admin/runners/registration-token"
+    headers:
+      Authorization: "token {{ _forgejo_runner_admin_token }}"
+    status_code: [200, 401, 403, 404]
+  register: _forgejo_runner_token_api
+  changed_when: false
+  no_log: true
+  vars:
+    _forgejo_runner_admin_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.forgejo.instance, {}).admin_api_token
+         | default('', true) }}
+  when:
+    - app_config.app.registration_scope | default('admin') == 'admin'
+    - _forgejo_runner_admin_token | length > 0
+
+- name: Forgejo Runner | Report a registration token Forgejo would not give
+  ansible.builtin.debug:
+    msg: >-
+      Forgejo answered HTTP {{ _forgejo_runner_token_api.status }} for its registration token;
+      using runner_token from Vaultwarden item homelab-infra/apps/{{ instance }}.
+  when:
+    - _forgejo_runner_token_api is not skipped
+    - _forgejo_runner_token_api.status != 200
+
+- name: Forgejo Runner | Read the registration token
   ansible.builtin.set_fact:
     _forgejo_runner_token: >-
-      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).runner_token
-         | default('', true) }}
+      {{ _forgejo_runner_token_api.json.token
+         if _forgejo_runner_token_api is not skipped and _forgejo_runner_token_api.status == 200
+         else ((homelabinfra_vault.apps | default({})).get(instance, {}).runner_token
+               | default('', true)) }}
   no_log: true
 
 - name: Forgejo Runner | Assert the registration token is from Vaultwarden

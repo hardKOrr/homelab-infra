@@ -286,6 +286,22 @@ _vault_preflight() {
         _vault_edge_fallback
         return
       fi
+      # Vaultwarden's own backup stops it for a few seconds every night. Wait a bounded
+      # time for it to answer again and retry the login once; it stays fail-closed.
+      if [ "$_vault_reachable" -eq 0 ] && [ -z "${_vault_waited:-}" ]; then
+        _vault_waited=1
+        _vault_wait="${LAB_VAULT_OUTAGE_WAIT:-90}"
+        echo "[lab-run] Vaultwarden at $BW_SERVER did not answer; waiting up to ${_vault_wait}s for it" >&2
+        while [ "$_vault_wait" -gt 0 ]; do
+          sleep 5
+          _vault_wait=$((_vault_wait - 5))
+          if curl -fsS --max-time 10 -o /dev/null "${BW_SERVER%/}/alive" >/dev/null 2>&1; then
+            _vault_reachable=1
+            break
+          fi
+        done
+        [ "$_vault_reachable" -eq 0 ] || continue
+      fi
       [ "$_vault_reachable" -eq 1 ] \
         || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
       die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"

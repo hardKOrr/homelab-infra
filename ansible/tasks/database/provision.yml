@@ -34,16 +34,6 @@
     _database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(database_provision_config.instance, {}) }}
 
-- name: Database | Assert requested backend major version is registered
-  ansible.builtin.assert:
-    that:
-      - database_provision_config.version | default('') | length == 0
-        or _database_backend.version | default('') | string == database_provision_config.version | string
-    fail_msg: >-
-      Backend {{ database_provision_config.instance }} does not advertise the requested
-      PostgreSQL major version {{ database_provision_config.version }}.
-  when: database_provision_config.version | default('') | length > 0
-
 - name: Database | Assert requested backend is registered
   ansible.builtin.assert:
     that:
@@ -53,6 +43,16 @@
     fail_msg: >-
       {{ database_provision_config.provider }} backend {{ database_provision_config.instance }} is not registered.
       Deploy that backend before deploying {{ database_provision_app_instance }}.
+
+- name: Database | Assert requested backend major version is registered
+  ansible.builtin.assert:
+    that:
+      - database_provision_config.version | default('') | length == 0
+        or _database_backend.version | default('') | string == database_provision_config.version | string
+    fail_msg: >-
+      Backend {{ database_provision_config.instance }} does not advertise the requested
+      PostgreSQL major version {{ database_provision_config.version }}.
+  when: database_provision_config.version | default('') | length > 0
 
 - name: Database | Refuse a database or login another application uses
   ansible.builtin.include_tasks: guard-other-consumers.yml
@@ -110,6 +110,28 @@
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
     groups: database_delegates
   changed_when: false
+
+# A registry entry outlives its guest when the backend went away without a Remove, and
+# its address can then belong to another guest. A native backend's guest answers with
+# its instance name, so SQL never runs on a guest that is not the named backend.
+- name: Database | Read the native backend guest's name
+  ansible.builtin.command: hostname
+  delegate_to: database_backend_target
+  register: _database_backend_hostname
+  changed_when: false
+  when: &database_native_guest
+    - _database_backend.runtime | default('') == 'native'
+    - _database_backend.kubernetes | default('') | length == 0
+
+- name: Database | Require the named backend at the registered address
+  ansible.builtin.assert:
+    that: _database_backend_hostname.stdout | trim == database_provision_config.instance
+    fail_msg: >-
+      {{ _database_backend.host }}, registered for {{ database_provision_config.instance }},
+      answers as '{{ _database_backend_hostname.stdout | trim }}': the backend registry entry
+      is stale. Deploy {{ database_provision_config.instance }} again, or point
+      {{ database_provision_app_instance }} at a backend that exists.
+  when: *database_native_guest
 
 - name: Database | Create the PostgreSQL role, database and extensions on a guest backend
   ansible.builtin.include_tasks: provision-postgresql.yml

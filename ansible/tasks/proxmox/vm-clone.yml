@@ -73,6 +73,13 @@
   failed_when: false
   changed_when: false
 
+- name: VM clone | Check the node's CPUs before cloning the VM
+  ansible.builtin.include_tasks: check-node-cpus.yml
+  vars:
+    proxmox_cpus_node: "{{ _vmc_api.node }}"
+    proxmox_cpus_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
+    proxmox_guest_cores: "{{ homelabinfra_config.proxmox.vm.cores | default(2) | int }}"
+
 - name: VM clone | Check node memory before cloning the VM
   ansible.builtin.include_tasks: check-node-free-memory.yml
   vars:

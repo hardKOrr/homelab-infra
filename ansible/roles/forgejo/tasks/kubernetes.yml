@@ -112,6 +112,12 @@
   changed_when: false
   no_log: true
 
+- name: Forgejo Kubernetes | Keep a working admin API token
+  ansible.builtin.include_tasks: admin-token.yml
+  vars:
+    forgejo_api: "http://{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    forgejo_api_headers: {Host: "{{ forgejo_fqdn }}"}
+
 - name: Forgejo Kubernetes | Describe the recovery inputs
   ansible.builtin.include_tasks: recovery-inputs.yml
 

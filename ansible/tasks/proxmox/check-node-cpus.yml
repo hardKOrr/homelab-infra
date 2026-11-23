@@ -1,0 +1,24 @@
+---
+# Refuse a VM with more vCPUs than its Proxmox node has before anything is created: Proxmox
+# accepts the config and only `qm start` fails ("MAX n vcpus allowed per VM on this node").
+# Inputs:
+#   proxmox_cpus_node   — node that will own the guest
+#   proxmox_cpus_guest  — guest name shown in the failure
+#   proxmox_guest_cores — configured vCPUs (cores × sockets)
+
+- name: Proxmox CPUs | Read the target node's CPU count
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ proxmox_cpus_node }}/status", --output-format, json]
+  delegate_to: "{{ proxmox_cpus_node }}"
+  register: _proxmox_cpus_status
+  changed_when: false
+
+- name: Proxmox CPUs | Require no more vCPUs than the node has
+  ansible.builtin.assert:
+    that: proxmox_guest_cores | int <= _proxmox_cpus_available | int
+    fail_msg: >-
+      Guest '{{ proxmox_cpus_guest }}' is configured for {{ proxmox_guest_cores }} vCPUs and
+      Proxmox node '{{ proxmox_cpus_node }}' has {{ _proxmox_cpus_available }}. Lower
+      proxmox.vm.cores in the instance config or place the guest on a larger node.
+  vars:
+    _proxmox_cpus_available: "{{ (_proxmox_cpus_status.stdout | from_json).cpuinfo.cpus | default(0) }}"

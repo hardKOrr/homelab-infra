@@ -161,7 +161,6 @@
             '--allow-root'] }}
   register: _wordpress_theme_install
   changed_when: true
-  no_log: true
   when:
     - not _wordpress_theme_marker.stat.exists
     - _wordpress_core_ready | bool
@@ -178,7 +177,6 @@
             '--skip-themes',
             '--allow-root'] }}
   changed_when: true
-  no_log: true
   when:
     - not _wordpress_theme_marker.stat.exists
     - _wordpress_core_ready | bool
@@ -192,7 +190,6 @@
             app_config.app.default_theme,
             '--allow-root'] }}
   changed_when: false
-  no_log: true
   when:
     - not _wordpress_theme_marker.stat.exists
     - _wordpress_core_ready | bool

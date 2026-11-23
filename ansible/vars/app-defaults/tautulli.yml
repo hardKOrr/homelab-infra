@@ -29,9 +29,11 @@ tautulli_defaults:
       restore_playbook: restore-app.yml
 
   # tools/lab-drill writes its marker canary in app.config_path, the directory the backup
-  # archives (a name without a leading / is an app key; see drill-canary.yml).
+  # archives (a name without a leading / is an app key; see drill-canary.yml). It deploys
+  # the lab Plex first: Deploy waits for Tautulli to import Plex's admin.
   drill:
     canary_path: config_path
+    requires: [plex]
 
   app:
     service_name: tautulli   # native systemd unit — Remove stops it whatever the instance is named

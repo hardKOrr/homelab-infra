@@ -26,8 +26,15 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "deploy-final", "wiring-deploy-final", "canary-final"]
 
 out = plan("tautulli")
-if steps(out) != STATEFUL:
+if steps(out) != ["requires-plex"] + STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
+if steps(plan("maintainerr"))[:3] != ["requires-plex", "requires-plex-canary", "deploy"]:
+    failures.append("drill.requires_canary creates the required app's canary before the Deploy")
+if steps(plan("forgejo-runner"))[:3] != ["backend-postgresql-forgejo", "requires-forgejo", "deploy"]:
+    failures.append("a required app's named backends deploy before it")
+immich = steps(plan("immich"))
+if immich[:3] != ["backend-postgresql-immich", "backend-redis-immich", "deploy"]:
+    failures.append(f"the app's named backends deploy before the app: {immich[:3]}")
 if "canary=marker" not in out:
     failures.append("Tautulli's drill.canary_path selects the marker canary")
 if "expect=absent" not in out.split("wiring-remove", 1)[-1].splitlines()[0]:
@@ -44,6 +51,10 @@ if "canary=hook" not in plan("influxdb"):
 radarr = plan("radarr")
 if "role=servarr" not in radarr or "radarr-recovery.js" not in radarr:
     failures.append("a role alias finds the app's own browser spec")
+if steps(radarr)[2:4] != ["canary-owner", "canary-create"] or steps(radarr).count("canary-owner") != 1:
+    failures.append("a forward_auth browser canary makes its Authentik drill owner once, first")
+if "canary-owner" in steps(plan("mixpost")):
+    failures.append("only a forward_auth route's drill owner is an Authentik account")
 
 stateless = plan("homepage")
 if steps(stateless) != ["deploy", "wiring-deploy", "deploy-repeat", "wiring-deploy-repeat",
@@ -102,7 +113,7 @@ with tempfile.TemporaryDirectory() as lab:
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
     off = drill("tautulli", "False")
     ran = [line.split()[1].split("-", 1)[1] for line in off.stdout.splitlines() if line.startswith("STEP ")]
-    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[2:6] != [
+    if off.returncode != 0 or "KIND stateless" not in off.stdout or ran[3:7] != [
             "deploy-repeat", "wiring-deploy-repeat", "remove", "wiring-remove"]:
         failures.append(f"an instance with backups off runs the stateless drill: {off.stdout[-400:]}")
     wordpress = drill("wordpress", "False")
@@ -137,6 +148,32 @@ with tempfile.TemporaryDirectory() as lab:
     broken = seeded(True)
     if broken.returncode == 0 or "as seeded" in broken.stdout:
         failures.append("a seeded drill fails when the app cannot be checked at all")
+    # A hooked Deploy that fails (its claim token expired while a guest was built) gets a
+    # fresh hook run and one retry; a Deploy without a hook fails at once.
+    hooks = os.path.join(lab, "drill-hooks")
+    os.makedirs(hooks, exist_ok=True)
+    hook = os.path.join(hooks, "plex-pre-deploy")
+    with open(hook, "w") as handle:
+        handle.write(f"#!/bin/sh\necho x >> {lab}/hook-runs\n")
+    os.chmod(hook, 0o755)
+    runner = os.path.join(lab, "runner-lab-run.sh")
+    failed_once = os.path.join(lab, "failed-once")
+    with open(runner, "w") as handle:
+        handle.write("#!/bin/sh\n"
+                     "case \"$*\" in\n"
+                     f"  *apps/plex.yml*) [ -e {failed_once} ] || {{ touch {failed_once}; exit 2; }};;\n"
+                     "  *check-wiring*) echo 'WIRING x method=native-lxc backup=False expect=present';;\n"
+                     "esac\n"
+                     "echo 'HOMELAB_RUN result=SUCCEEDED changed=0 failed=0'\n")
+    os.chmod(runner, 0o755)
+    env = dict(os.environ, HOMELAB_LAB_DIR=lab, LAB_JOB_DIR=os.path.join(lab, "jobs"))
+    retried = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "tautulli"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
+    if "requires-plex-retry PASS" not in retried.stdout \
+            or open(os.path.join(lab, "hook-runs")).read().count("x") < 2:
+        failures.append(f"a failed hooked Deploy reruns its hook and retries once: {retried.stdout[-400:]}")
+    os.remove(hook)
+
     on = drill("homepage", "True")
     if on.returncode == 0 or "recovery.methods" not in on.stdout or "-remove " in on.stdout:
         failures.append(f"an instance with backups on and no recovery.methods stops before Remove: "

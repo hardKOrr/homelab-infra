@@ -38,3 +38,9 @@
     status_code: 200
   changed_when: false
   no_log: true
+
+- name: Forgejo | Keep a working admin API token
+  ansible.builtin.include_tasks: admin-token.yml
+  vars:
+    forgejo_api: "http://localhost:{{ app_config.app.port }}"
+    forgejo_api_headers: {}

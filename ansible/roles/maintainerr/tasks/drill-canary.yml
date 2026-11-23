@@ -70,10 +70,10 @@
           {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/app-defaults/plex.yml') | from_yaml).plex_defaults.routing
              | combine(((lookup('ansible.builtin.file', _instance_file, errors='ignore') | default('', true) | from_yaml)
                         | default({}, true)).routing | default({}), recursive=True) }}
-      when: _mtc_plex_host | length == 0
 
     # Maintainerr saves the Plex server only once it holds a Plex token, and the token
-    # only through its own route.
+    # only through its own route. Create always connects with the Plex's current token: a
+    # saved connection can hold the token of a Plex deployed fresh since.
     - name: Maintainerr drill canary | Connect the lab Plex
       delegate_to: "{{ drill_app_delegate }}"
       ansible.builtin.uri:
@@ -99,7 +99,6 @@
             plex_port: 443
             plex_ssl: 1
             plex_manual_mode: 1
-      when: _mtc_plex_host | length == 0
 
     - name: Maintainerr drill canary | Require the Plex connection saved
       ansible.builtin.assert:
@@ -110,7 +109,6 @@
           {{ _mtc_connect.results | map(attribute='status') | list }}
           {{ _mtc_connect.results | map(attribute='json', default={}) | map(attribute='message', default='') | list }}
           for the token, then the server.
-      when: _mtc_connect is not skipped
 
     - name: Maintainerr drill canary | Read the Plex libraries
       delegate_to: "{{ drill_app_delegate }}"

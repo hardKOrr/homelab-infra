@@ -151,12 +151,18 @@
             {{ [_caddy_deploy_host.ansible_host]
                if groups.get('deploy_' ~ instance, []) | length > 0
                else homelabinfra_infra.kubernetes.nodes | map(attribute='ip_address') | list }}
-          # The fallback skips networks that declare no cidr of their own.
+          # The fallback skips networks that declare no cidr of their own. A Caddy on
+          # Kubernetes sees in-cluster clients (Maintainerr reaching Plex) from the pod
+          # network, so that network is internal too (k3s's default for a cluster recorded
+          # before its facts carried pod_cidr).
           internal_cidrs: >-
-            {{ _caddy_deploy_host.homelabinfra_config.infrastructure.reverse_proxy.internal_cidrs
-               | default(_caddy_deploy_host.homelabinfra_config.networks.values()
-                         | selectattr('cidr', 'defined')
-                         | map(attribute='cidr') | unique | list, true) }}
+            {{ ((_caddy_deploy_host.homelabinfra_config.infrastructure.reverse_proxy.internal_cidrs
+                 | default(_caddy_deploy_host.homelabinfra_config.networks.values()
+                           | selectattr('cidr', 'defined')
+                           | map(attribute='cidr') | unique | list, true))
+                + ([homelabinfra_infra.kubernetes.pod_cidr | default('10.42.0.0/16', true)]
+                   if groups.get('deploy_' ~ instance, []) | length == 0 else []))
+               | unique | list }}
 
     # Belt-and-braces only: set_fact (from write-generated-facts.yml) outranks this include_vars.
 

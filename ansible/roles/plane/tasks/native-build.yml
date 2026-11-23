@@ -30,6 +30,23 @@
     path: "{{ plane_native_src }}/.built"
   register: _plane_native_built
 
+# The frontend build runs out of memory on a small guest only after many minutes, as a
+# bare exit 137; refuse it up front instead.
+- name: Plane native build | Read the guest's memory
+  ansible.builtin.command: awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
+  register: _plane_native_memory
+  changed_when: false
+  when: not _plane_native_built.stat.exists
+
+- name: Plane native build | Require memory for the frontend build
+  ansible.builtin.assert:
+    that: _plane_native_memory.stdout | int >= plane_native_build_memory_mb | int
+    fail_msg: >-
+      {{ inventory_hostname }} has {{ _plane_native_memory.stdout }} MiB; building Plane's
+      frontends needs {{ plane_native_build_memory_mb }} MiB. Raise proxmox.memory (or
+      proxmox.vm.memory) in the instance config and recreate the guest.
+  when: not _plane_native_built.stat.exists
+
 - name: Plane native build | Download the pinned source
   ansible.builtin.get_url:
     url: "https://github.com/makeplane/plane/archive/refs/tags/{{ app_config.app.release }}.tar.gz"
