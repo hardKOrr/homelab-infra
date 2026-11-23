@@ -22,6 +22,8 @@
 #   ensure_guest_host — inventory hostname of the existing guest. Its proxmox_*
 #                       hostvars (vmid, node, status, vmtype) come from the dynamic
 #                       inventory with want_facts: true.
+#   ensure_guest_wait_for_exec — default true; false for API-only appliances whose
+#                       caller proves readiness through their authenticated API.
 #   app_config         — optional merged app config; a configured VM balloon minimum
 #                       converges its memory maximum and balloon value on deploy.
 #
@@ -179,4 +181,6 @@
   delay: 2
   until: _egr_exec.rc == 0
   changed_when: false
-  when: _egr_status != 'running'
+  when:
+    - _egr_status != 'running'
+    - ensure_guest_wait_for_exec | default(true) | bool

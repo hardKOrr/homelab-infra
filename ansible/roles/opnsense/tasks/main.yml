@@ -1,0 +1,82 @@
+---
+- name: OPNsense | Validate bootstrap inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: OPNsense | Load the firewall privilege contract
+  ansible.builtin.include_vars: "{{ role_path }}/../../vars/opnsense-firewall-account.yml"
+
+- name: OPNsense | Register Proxmox delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: OPNsense | Resolve the appliance identity
+  ansible.builtin.set_fact:
+    appliance_vm: >-
+      {{ app_config.proxmox.vm | combine(app_config.proxmox.installer, recursive=True)
+         | combine({'name': instance,
+                    'storage': app_config.proxmox.vm.storage | default(homelabinfra_config.proxmox.storage | default('local')),
+                    'tags': ((app_config.proxmox.vm.tags | default([])) + ['_+lab', '_' ~ instance]) | unique,
+                    'net0': 'virtio,bridge=' ~ app_config.proxmox.installer.wan_bridge,
+                    'net1': 'virtio,bridge=' ~ app_config.proxmox.installer.lan_bridge}, recursive=True) }}
+
+- name: OPNsense | Inspect or create the owned disk appliance
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/disk-appliance-create.yml
+
+- name: OPNsense | Preserve or generate bootstrap credentials
+  ansible.builtin.include_tasks: credential.yml
+  loop: [firewall-admin, firewall, dns]
+  loop_control:
+    loop_var: opnsense_service
+
+- name: OPNsense | Capture one stable instance administrator password
+  ansible.builtin.set_fact:
+    _opn_root_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']), true) }}
+  no_log: true
+
+- name: OPNsense | Preserve the instance administrator password
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_password: "{{ _opn_root_password }}"
+    vault_item_secret_fields: [admin_password]
+
+- name: OPNsense | Seed and import a new boot disk
+  ansible.builtin.include_tasks: seed.yml
+  when: _disk_appliance_config.scsi0 is not defined
+
+- name: OPNsense | Grow the imported boot disk if needed
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/disk-appliance-resize.yml
+
+- name: OPNsense | Read current appliance power state
+  ansible.builtin.command:
+    argv: [qm, status, "{{ appliance_vm.vmid | string }}"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _opn_power
+  changed_when: false
+
+- name: OPNsense | Register the appliance for the shared start operation
+  ansible.builtin.add_host:
+    name: "opnsense-{{ instance }}"
+    proxmox_name: "{{ instance }}"
+    proxmox_vmid: "{{ appliance_vm.vmid }}"
+    proxmox_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_vmtype: qemu
+    proxmox_status: "{{ 'running' if 'status: running' in _opn_power.stdout else 'stopped' }}"
+  changed_when: false
+
+- name: OPNsense | Start through the shared guest operation
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/ensure-guest-running.yml
+  vars:
+    ensure_guest_host: "opnsense-{{ instance }}"
+    ensure_guest_wait_for_exec: false
+
+- name: OPNsense | Prove bootstrap API access and reconcile this appliance
+  ansible.builtin.import_tasks: configure.yml
+
+- name: OPNsense | Refresh the managed PBS backup guest list
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/refresh-backup-job.yml
+  vars:
+    backup_job_create_if_missing: false

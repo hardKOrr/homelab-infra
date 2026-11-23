@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<opnsense>
+  <theme>opnsense</theme>
+  <system>
+    <hostname>{{ instance | e }}</hostname>
+    <domain>{{ app_config.bootstrap.domain | e }}</domain>
+    <timezone>Etc/UTC</timezone>
+    <optimization>normal</optimization>
+    <webgui><protocol>https</protocol><interfaces>lan</interfaces></webgui>
+    <group>
+      <name>admins</name><description>System Administrators</description>
+      <scope>system</scope><gid>1999</gid><member>0</member><priv>page-all</priv>
+    </group>
+    <user>
+      <name>root</name><descr>System Administrator</descr><scope>system</scope>
+      <groupname>admins</groupname><uid>0</uid>
+      <password>{{ _opn_boot_hashes.root | e }}</password>
+    </user>
+{% for service, name, uid, privileges in [
+  ('firewall-admin', 'homelab-infra-admin', 2000, ['page-all']),
+  ('firewall', 'homelab-infra-firewall', 2001, opnsense_firewall_account_privileges),
+  ('dns', 'homelab-infra-dns', 2002, ['page-services-unbound'])] %}
+    <user>
+      <name>{{ name }}</name><descr>Owned by homelab-infra</descr>
+      <scope>user</scope><uid>{{ uid }}</uid><password>*</password>
+{% for privilege in privileges %}
+      <priv>{{ privilege | e }}</priv>
+{% endfor %}
+      <apikeys><item>
+        <key>{{ homelabinfra_vault[service].api_key | e }}</key>
+        <secret>{{ _opn_boot_hashes[service] | e }}</secret>
+      </item></apikeys>
+    </user>
+{% endfor %}
+    <nextuid>2003</nextuid><nextgid>2000</nextgid>
+    <disableconsolemenu/>
+  </system>
+  <interfaces>
+    <wan><enable>1</enable><if>vtnet0</if><ipaddr>dhcp</ipaddr></wan>
+    <lan>
+      <enable>1</enable><if>vtnet1</if>
+      <ipaddr>{{ app_config.bootstrap.lan_address | e }}</ipaddr>
+      <subnet>{{ app_config.bootstrap.lan_prefix | int }}</subnet>
+    </lan>
+  </interfaces>
+  <unbound><enable>1</enable></unbound>
+  <nat><outbound><mode>automatic</mode></outbound></nat>
+  <filter/>
+</opnsense>

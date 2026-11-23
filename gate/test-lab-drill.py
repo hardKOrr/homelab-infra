@@ -26,9 +26,9 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "deploy-final", "wiring-deploy-final", "canary-final"]
 
 out = plan("tautulli")
-if steps(out) != ["requires-plex"] + STATEFUL:
+if steps(out) != ["pre-requires-plex", "requires-plex"] + STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
-if steps(plan("maintainerr"))[:3] != ["requires-plex", "requires-plex-canary", "deploy"]:
+if steps(plan("maintainerr"))[:4] != ["pre-requires-plex", "requires-plex", "requires-plex-canary", "deploy"]:
     failures.append("drill.requires_canary creates the required app's canary before the Deploy")
 if steps(plan("forgejo-runner"))[:3] != ["backend-postgresql-forgejo", "requires-forgejo", "deploy"]:
     failures.append("a required app's named backends deploy before it")

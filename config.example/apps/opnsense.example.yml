@@ -10,9 +10,9 @@ proxmox:
     # Attach these to distinct Proxmox bridges. WAN and LAN must never be the same.
     wan_bridge: vmbr0
     lan_bridge: vmbr1
-    # Update all three values together when selecting another official OPNsense ISO.
-    # iso_url: "https://pkg.opnsense.org/releases/<version>/OPNsense-<version>-dvd-amd64.iso.bz2"
-    # iso_sha256: "<64-hex checksum from the matching official checksums file>"
-    # iso_name: "OPNsense-<version>-dvd-amd64.iso"
-    # The installer ISO always uses node-local `local` storage. The appliance
-    # system disk may use a separate proxmox.vm.storage value.
+    # To change release, override image_url, image_sha256 and image_name together
+    # from the official nano release. Its imported disk uses proxmox.vm.storage.
+bootstrap:
+  # The runner must reach the new VM here; use isolated bridges for a drill.
+  lan_address: 192.0.2.1
+  lan_prefix: 24

@@ -42,7 +42,13 @@ creation path. The clone task finds an existing VM's live Proxmox node before se
 the node for its updates, so a k3s VM moved by HA is reused in place on the next Deploy.
 It starts only a new or stopped VM; an already-running guest is left unchanged.
 
-Shared LXC/VM create seams, the OPNsense installer VM task and new-target PBS restores
+`disk-appliance-create.yml` validates or creates an owned empty VM for a preinstalled
+disk; `disk-appliance-resize.yml` grows its imported boot disk without shrinking it.
+The caller prepares and imports the disk, then uses `ensure-guest-running.yml` to start
+it. API-only appliances set `ensure_guest_wait_for_exec: false` and prove readiness
+through their API instead of the guest agent.
+
+Shared LXC/VM create seams, the [OPNsense role](../../roles/opnsense/README.md) and new-target PBS restores
 refresh the managed PBS vzdump job's VMID list from current `_+lab` guests after the guest
 is ready. The shared owned-guest destroy seams refresh it after Proxmox confirms the guest
 is gone. PBS configuration uses the same task and creates the job when needed, so Deploy

@@ -1,0 +1,21 @@
+---
+- name: OPNsense | Require a VM identity and distinct bridges
+  ansible.builtin.assert:
+    that:
+      - app_config.proxmox.vm.vmid | int > 0
+      - app_config.proxmox.vm.disk_size | int >= 4
+      - app_config.proxmox.installer.wan_bridge is match('^[A-Za-z0-9_.-]+$')
+      - app_config.proxmox.installer.lan_bridge is match('^[A-Za-z0-9_.-]+$')
+      - app_config.proxmox.installer.wan_bridge != app_config.proxmox.installer.lan_bridge
+      - app_config.bootstrap.lan_address | ansible.utils.ipv4('address') != false
+      - app_config.bootstrap.lan_prefix | int > 0
+      - app_config.bootstrap.lan_prefix | int <= 30
+      - app_config.bootstrap.domain is match('^[A-Za-z0-9.-]+$')
+      - app_config.proxmox.installer.image_url is match('^https://')
+      - app_config.proxmox.installer.image_sha256 is match('^[a-f0-9]{64}$')
+      - app_config.proxmox.installer.image_name is match('^[A-Za-z0-9_.-]+[.]img$')
+      - app_config.bootstrap.editor_url is match('^https://')
+      - app_config.bootstrap.editor_sha256 is match('^[a-f0-9]{64}$')
+    fail_msg: >-
+      Configure proxmox.vm.vmid, distinct installer.wan_bridge/lan_bridge and
+      bootstrap.lan_address; keep the image and editor HTTPS downloads checksum-pinned.

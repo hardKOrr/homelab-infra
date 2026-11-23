@@ -1,0 +1,59 @@
+---
+# Scope reconciliation to this VM, never to the estate's existing firewall host.
+- name: OPNsense | Wait for authenticated API readiness with the saved admin key
+  ansible.builtin.uri:
+    url: "https://{{ app_config.bootstrap.lan_address }}/api/auth/user/search"
+    method: POST
+    body_format: json
+    body: {current: 1, rowCount: 1, searchPhrase: homelab-infra-admin}
+    url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+    url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ app_config.bootstrap.validate_certs }}"
+    status_code: 200
+    timeout: 10
+  register: _opn_boot_api
+  until: _opn_boot_api.status | default(0) == 200 and _opn_boot_api.json.rows is defined
+  retries: 60
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: OPNsense | Save the estate registry before targeting this appliance
+  ansible.builtin.set_fact:
+    _opn_original_infra: "{{ homelabinfra_infra }}"
+  no_log: true
+
+- name: OPNsense | Build an instance-scoped reconciliation registry
+  ansible.builtin.set_fact:
+    _opn_target_infra: >-
+      {{ _opn_original_infra | combine({
+           'firewall': _opn_original_infra.firewall | combine({'provider': 'opnsense',
+                        'host': app_config.bootstrap.lan_address,
+                        'validate_certs': app_config.bootstrap.validate_certs}, recursive=True),
+           'dns': _opn_original_infra.dns | combine({'host': app_config.bootstrap.lan_address,
+                   'validate_certs': app_config.bootstrap.validate_certs}, recursive=True)}, recursive=True) }}
+  no_log: true
+
+- name: OPNsense | Reconcile only this appliance
+  block:
+    - name: OPNsense | Reconcile the owned firewall and DNS accounts
+      ansible.builtin.include_tasks: "{{ role_path }}/../../../tasks/wiring/{{ opnsense_account_tasks }}.yml"
+      loop: [opnsense-firewall-account, opnsense-dns-account]
+      loop_control:
+        loop_var: opnsense_account_tasks
+      vars:
+        homelabinfra_infra: "{{ _opn_target_infra }}"
+        _opn_base: "https://{{ app_config.bootstrap.lan_address }}"
+        _opn_validate: "{{ app_config.bootstrap.validate_certs }}"
+
+    - name: OPNsense | Reconcile the enabled base firewall contract
+      ansible.builtin.include_tasks: ../../../tasks/firewall/opnsense-base.yml
+      vars:
+        homelabinfra_infra: "{{ _opn_target_infra }}"
+      when: (homelabinfra_config.infrastructure.firewall.base | default({})).enabled | default(false) | bool
+  always:
+    - name: OPNsense | Restore the estate registry after scoped reconciliation
+      ansible.builtin.set_fact:
+        homelabinfra_infra: "{{ homelabinfra_infra | combine(_opn_original_infra, recursive=True) }}"
+      no_log: true
