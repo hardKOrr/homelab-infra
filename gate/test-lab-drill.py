@@ -30,6 +30,8 @@ if steps(out) != ["requires-plex"] + STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
 if steps(plan("maintainerr"))[:3] != ["requires-plex", "requires-plex-canary", "deploy"]:
     failures.append("drill.requires_canary creates the required app's canary before the Deploy")
+if steps(plan("forgejo-runner"))[:3] != ["backend-postgresql-forgejo", "requires-forgejo", "deploy"]:
+    failures.append("a required app's named backends deploy before it")
 immich = steps(plan("immich"))
 if immich[:3] != ["backend-postgresql-immich", "backend-redis-immich", "deploy"]:
     failures.append(f"the app's named backends deploy before the app: {immich[:3]}")
