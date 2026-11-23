@@ -1,0 +1,56 @@
+---
+# Keep a working admin-scoped API token in the instance's Vaultwarden item
+# (admin_api_token), which Forgejo Runner uses to reconcile a global registration. A token
+# missing, or refused because Forgejo was deployed fresh since, is replaced by a new one the
+# administrator mints. Inputs: forgejo_api (base URL, no trailing slash) and
+# forgejo_api_headers (a Host header on Kubernetes, else {}).
+- name: Forgejo | Check the stored admin API token
+  ansible.builtin.uri:
+    url: "{{ forgejo_api }}/api/v1/admin/users?limit=1"
+    headers: "{{ forgejo_api_headers | combine({'Authorization': 'token ' ~ _forgejo_stored_token}) }}"
+    status_code: [200, 401, 403]
+  register: _forgejo_token_check
+  changed_when: false
+  no_log: true
+  vars:
+    _forgejo_stored_token: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_api_token | default('', true) }}"
+  when: _forgejo_stored_token | length > 0
+
+- name: Forgejo | Mint and store a new admin API token
+  when: _forgejo_token_check is skipped or _forgejo_token_check.status != 200
+  block:
+    # Hidden because the response holds the token; the assert below prints the status.
+    - name: Forgejo | Mint an admin API token
+      ansible.builtin.uri:
+        url: "{{ forgejo_api }}/api/v1/users/{{ app_config.app.admin_user }}/tokens"
+        method: POST
+        headers: "{{ forgejo_api_headers }}"
+        url_username: "{{ app_config.app.admin_user }}"
+        url_password: "{{ _forgejo_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "homelab-infra-{{ now(utc=true).strftime('%Y%m%d%H%M%S') }}"
+          scopes: [write:admin]
+        status_code: [201, 400, 401, 403, 422]
+      register: _forgejo_token_minted
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: Forgejo | Require the minted token
+      ansible.builtin.assert:
+        that: _forgejo_token_minted.status | default(-1) == 201
+        fail_msg: >-
+          Forgejo refused to mint an admin API token for {{ app_config.app.admin_user }}:
+          HTTP {{ _forgejo_token_minted.status | default(-1) }}
+          {{ (_forgejo_token_minted.json | default({})).message | default(_forgejo_token_minted.msg | default('')) }}
+
+    - name: Forgejo | Store the admin API token
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          admin_api_token: "{{ _forgejo_token_minted.json.sha1 }}"
+        vault_item_secret_fields: [admin_api_token]
