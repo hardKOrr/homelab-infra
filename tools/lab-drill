@@ -64,6 +64,7 @@ ANSIBLE = os.path.join(REPO, "ansible")
 POINT = re.compile(r"host/[A-Za-z0-9._-]+/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 MONITOR = re.compile(r"monitor\s+for\s+(\S+)\s+on\s+(https://[^\s/\x1b]+)([^\s\x1b]*)")
 RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
+BACKEND_IN_USE = re.compile(r"Refusing to remove \S+ with delete_data=true: (.+?) (?:is|are) deployed")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
 OWN_DRILL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
@@ -456,8 +457,12 @@ def cleanup(ref, app, instance, method, log):
                                 stderr=subprocess.STDOUT).returncode
             if rc == 0:
                 break
-    print(f"CLEANUP {instance} {'removed' if rc == 0 else f'FAILED exit {rc}'} log={log}",
-          flush=True)
+    with open(log, errors="replace") as handle:
+        users = BACKEND_IN_USE.search(handle.read())
+    # Remove's backend guard refuses a backend another deployed app still uses: keep it.
+    verdict = ("removed" if rc == 0 else f"kept: still the backend of {users.group(1)}"
+               if users else f"FAILED exit {rc}")
+    print(f"CLEANUP {instance} {verdict} log={log}", flush=True)
 
 
 def run_all(ref, plan, start=None, keep=False):
