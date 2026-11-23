@@ -26,7 +26,9 @@ monitor's, else the route's that check-wiring reports) must answer over HTTPS. R
 it authorizes Remove with delete_data=true and overwrite Restore on this instance only.
 
 Before each Deploy an executable $HOMELAB_LAB_DIR/drill-hooks/<app>-pre-deploy runs with
-<instance> <ref>, for a private input the Deploy consumes (Plex's claim token).
+<instance> <ref>, for a private input the Deploy consumes (Plex's claim token). A hooked
+Deploy that fails gets the hook again and one more run: the input can expire while the
+Deploy builds a guest first.
 
 The canary is the best the app has: a browser spec roles/<role>/browser/[<app>-]recovery.js
 (URL query drill=create|fresh|verify, id=<drill id>, final=1 on the last verify), else a
@@ -176,8 +178,9 @@ class Drill:
         self.summary(False)
         sys.exit(1)
 
-    def playbook(self, name, playbook, expect_fail=False, **extra):
-        """Run one playbook on the runner; return (log text, changed count)."""
+    def playbook(self, name, playbook, expect_fail=False, soft=False, **extra):
+        """Run one playbook on the runner; return (log text, changed count), or None when
+        soft and it failed."""
         self.step_no += 1
         label = f"{self.step_no:02d}-{name}"
         if self.app != self.instance:
@@ -203,6 +206,8 @@ class Drill:
         self.say(f"STEP {label} {verdict} changed={changed} {took}s log={log}")
         if expect_fail:
             self.seeded_result(label, rc != 0)
+        if rc != 0 and soft:
+            return None
         if rc != 0:
             self.fail(label, f"exit {rc}; " + (found[-1][0] if found else "no HOMELAB_RUN line"))
         return text, changed
@@ -226,12 +231,12 @@ class Drill:
         hook = os.path.join(os.environ.get("HOMELAB_LAB_DIR", ""), "drill-hooks",
                             f"{app}-pre-deploy")
         if not os.access(hook, os.X_OK):
-            return
+            return False
         self.step_no += 1
         label = f"{self.step_no:02d}-pre-{name}"
         if self.plan:
             self.say(f"STEP {label} drill-hooks/{app}-pre-deploy")
-            return
+            return True
         log = os.path.join(self.logs, label + ".log")
         with open(log, "wb") as out:
             rc = subprocess.run([hook, instance, self.ref], stdin=subprocess.DEVNULL,
@@ -241,10 +246,23 @@ class Drill:
         self.say(f"STEP {label} {'PASS' if rc == 0 else 'FAIL'} log={log}")
         if rc != 0:
             self.fail(label, f"pre-deploy hook exit {rc}")
+        return True
+
+    def hooked_deploy(self, name, playbook, hook_app=None, hook_instance=None, **extra):
+        """The pre-deploy hook, then the Deploy. A hooked input can expire while the Deploy
+        builds a guest first (a Plex claim token lasts minutes), so a failed hooked Deploy
+        gets a fresh input and one more run, the recovery its failure message names."""
+        hooked = self.pre_deploy(name, hook_app, hook_instance)
+        if not hooked or self.plan:
+            return self.playbook(name, playbook, **extra)
+        result = self.playbook(name, playbook, soft=True, **extra)
+        if result is not None:
+            return result
+        self.pre_deploy(name + "-retry", hook_app, hook_instance)
+        return self.playbook(name + "-retry", playbook, **extra)
 
     def deploy(self, name, repeat=False):
-        self.pre_deploy(name)
-        text, changed = self.playbook(name, f"playbooks/apps/{self.app}.yml")
+        text, changed = self.hooked_deploy(name, f"playbooks/apps/{self.app}.yml")
         if self.plan:
             self.wiring(name, "present")
             return
@@ -394,9 +412,8 @@ class Drill:
             self.playbook(f"backend-{backend}", f"playbooks/apps/{provider}.yml",
                           instance=backend, app=provider)
         for required in requires_of(self.defaults):
-            self.pre_deploy(f"requires-{required}", required, required)
-            self.playbook(f"requires-{required}", f"playbooks/apps/{required}.yml",
-                          instance=required, app=required)
+            self.hooked_deploy(f"requires-{required}", f"playbooks/apps/{required}.yml",
+                               required, required, instance=required, app=required)
         self.deploy("deploy")
         if not self.plan:
             backups = self.backups if self.backups is not None else \

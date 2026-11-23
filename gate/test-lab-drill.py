@@ -144,6 +144,32 @@ with tempfile.TemporaryDirectory() as lab:
     broken = seeded(True)
     if broken.returncode == 0 or "as seeded" in broken.stdout:
         failures.append("a seeded drill fails when the app cannot be checked at all")
+    # A hooked Deploy that fails (its claim token expired while a guest was built) gets a
+    # fresh hook run and one retry; a Deploy without a hook fails at once.
+    hooks = os.path.join(lab, "drill-hooks")
+    os.makedirs(hooks, exist_ok=True)
+    hook = os.path.join(hooks, "plex-pre-deploy")
+    with open(hook, "w") as handle:
+        handle.write(f"#!/bin/sh\necho x >> {lab}/hook-runs\n")
+    os.chmod(hook, 0o755)
+    runner = os.path.join(lab, "runner-lab-run.sh")
+    failed_once = os.path.join(lab, "failed-once")
+    with open(runner, "w") as handle:
+        handle.write("#!/bin/sh\n"
+                     "case \"$*\" in\n"
+                     f"  *apps/plex.yml*) [ -e {failed_once} ] || {{ touch {failed_once}; exit 2; }};;\n"
+                     "  *check-wiring*) echo 'WIRING x method=native-lxc backup=False expect=present';;\n"
+                     "esac\n"
+                     "echo 'HOMELAB_RUN result=SUCCEEDED changed=0 failed=0'\n")
+    os.chmod(runner, 0o755)
+    env = dict(os.environ, HOMELAB_LAB_DIR=lab, LAB_JOB_DIR=os.path.join(lab, "jobs"))
+    retried = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "tautulli"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env)
+    if "requires-plex-retry PASS" not in retried.stdout \
+            or open(os.path.join(lab, "hook-runs")).read().count("x") < 2:
+        failures.append(f"a failed hooked Deploy reruns its hook and retries once: {retried.stdout[-400:]}")
+    os.remove(hook)
+
     on = drill("homepage", "True")
     if on.returncode == 0 or "recovery.methods" not in on.stdout or "-remove " in on.stdout:
         failures.append(f"an instance with backups on and no recovery.methods stops before Remove: "
