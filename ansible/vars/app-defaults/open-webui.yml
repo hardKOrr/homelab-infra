@@ -60,6 +60,7 @@ open_webui_defaults:
   # tools/lab-drill deploys these apps first: Open WebUI talks to the named Ollama instance.
   drill:
     requires: [ollama]
+    requires_canary: [ollama]   # a fresh Ollama has no model; its canary pulls a small one
 
   routing:
     monitor_path: /health
