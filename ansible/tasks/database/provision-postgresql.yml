@@ -15,7 +15,6 @@
   delegate_to: database_backend_target
   become: true
   become_user: postgres
-  no_log: true
   changed_when: false
   register: _database_role_status
 
