@@ -1,6 +1,7 @@
 ---
-# The registration token is intentionally absent. An operator creates it for this
-# named runner in Forgejo and stores it in Vaultwarden under the runner app item.
+# The registration token is intentionally absent. A global runner's Deploy reads it from
+# Forgejo with the admin API token Forgejo's Deploy keeps; otherwise an operator creates
+# it in Forgejo and stores it in Vaultwarden under the runner app item (runner_token).
 forgejo_runner_defaults:
   hosting:
     method: docker
