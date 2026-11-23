@@ -64,6 +64,7 @@ maintainerr_defaults:
   # Plex.
   drill:
     requires: [plex]
+    requires_canary: [plex]   # a fresh Plex has no library; its canary makes one
 
   app:
     # Docker and Kubernetes run the image of the same release the native install builds

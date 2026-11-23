@@ -51,8 +51,8 @@ removes the instance with delete_data=true, and destroy_guest=true off Kubernete
 drilled apps do not pile up in node memory; it keeps the integration providers every later Deploy wires
 into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
 cleanup removed. Before the first Deploy the drill deploys the named backends the app's
-defaults declare (app.<key>.provider and .instance) and the apps in drill.requires; --all
-cleanup removes them too.
+defaults declare (app.<key>.provider and .instance) and the apps in drill.requires, creating
+the canary of those in drill.requires_canary; --all cleanup removes them too.
 """
 import json
 import os
@@ -139,6 +139,12 @@ def backends_of(defaults):
 def requires_of(defaults):
     """Apps the drill deploys first, each as the instance named after it (drill.requires)."""
     return list((defaults.get("drill") or {}).get("requires") or [])
+
+
+def requires_canary_of(defaults):
+    """Required apps whose canary the drill creates after deploying them, for data the app
+    reads from them (drill.requires_canary: a fresh Plex has no library)."""
+    return list((defaults.get("drill") or {}).get("requires_canary") or [])
 
 
 def kind_of(app, defaults, backups):
@@ -414,6 +420,10 @@ class Drill:
         for required in requires_of(self.defaults):
             self.hooked_deploy(f"requires-{required}", f"playbooks/apps/{required}.yml",
                                required, required, instance=required, app=required)
+            if required in requires_canary_of(self.defaults):
+                self.playbook(f"requires-{required}-canary", "playbooks/maintenance/drill-canary.yml",
+                              instance=required, app=required, drill_action="create",
+                              drill_id=self.id, drill_epoch=self.epoch)
         self.deploy("deploy")
         if not self.plan:
             backups = self.backups if self.backups is not None else \
