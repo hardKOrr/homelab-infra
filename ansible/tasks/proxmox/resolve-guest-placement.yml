@@ -10,6 +10,7 @@
 #   guest_placement_additional_storage — another store the selected node must reach
 #   guest_placement_use_app_config     — false for shared hosts whose owner is not the app
 #   guest_placement_database_backend   — use an explicit node/storage pin without class role maps
+#   guest_placement_cores              — the guest's vCPUs; nodes with fewer CPUs are skipped
 #
 # Per-guest overrides come from the current app config or authored Proxmox config. The
 # global proxmox.node remains the control node used for cluster-wide queries.

@@ -57,6 +57,10 @@ open_webui_defaults:
       ollama: ""
       litellm: ""
 
+  # tools/lab-drill deploys these apps first: Open WebUI talks to the named Ollama instance.
+  drill:
+    requires: [ollama]
+
   routing:
     monitor_path: /health
     subdomain: open-webui

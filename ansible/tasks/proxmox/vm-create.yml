@@ -59,6 +59,15 @@
   failed_when: false
   changed_when: false
 
+- name: Check the node's CPUs before creating the VM
+  ansible.builtin.include_tasks: check-node-cpus.yml
+  vars:
+    proxmox_cpus_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_cpus_guest: "{{ homelabinfra_instance.vm.name }}"
+    proxmox_guest_cores: "{{ (vm_module_args.cores | default(1) | int) * (vm_module_args.sockets | default(1) | int) }}"
+  when: >-
+    _vm_create_status.stdout | default('') | trim != 'status: running'
+
 - name: Check node memory before creating the VM
   ansible.builtin.include_tasks: check-node-free-memory.yml
   vars:

@@ -64,6 +64,7 @@
     guest_placement_storage: "{{ proxmox_placement_storage | default('') }}"
     guest_placement_database_backend: "{{ proxmox_placement_database_backend | default(false) | bool }}"
     guest_placement_use_app_config: "{{ proxmox_placement_use_app_config | default(true) | bool }}"
+    guest_placement_cores: "{{ homelabinfra_config.proxmox.vm.cores | default(2) | int }}"
   when: _vmc_existing_guest | length == 0
 
 # validate_certs is part of the connection, not an afterthought: Proxmox serves a

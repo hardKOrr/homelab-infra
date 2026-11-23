@@ -57,7 +57,8 @@ resource, and VM destruction refuses an unmarked HA resource before the guest ca
 an explicit `proxmox.vm.node`, `proxmox.lxc.node`, or `stacks.<name>.node`, then
 node-local storage or a single-node passthrough device.
 Otherwise it considers online nodes in `node_roles.compute` that expose the requested
-storage and active guest bridge/VLAN, and selects the one with the most available memory.
+storage and active guest bridge/VLAN and have at least the VM's vCPUs, and selects the one
+with the most available memory. `check-node-cpus.yml` refuses a VM bigger than its node.
 Per-guest node and storage overrides are read from that guest's app configuration and the
 authored Proxmox config; placement does not reuse a prior guest's runtime facts. The list
 order breaks a memory tie. The `database_vm` class keeps its `node_roles.storage` pin
