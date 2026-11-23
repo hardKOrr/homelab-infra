@@ -38,6 +38,10 @@ forgejo_runner_defaults:
     disk_volume:
       size: 16
 
+  # tools/lab-drill deploys these apps first: the runner registers with the named Forgejo.
+  drill:
+    requires: [forgejo]
+
   routing:
     proxy: none
     access: internal
