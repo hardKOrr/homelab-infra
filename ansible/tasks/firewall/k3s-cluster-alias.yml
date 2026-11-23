@@ -10,6 +10,9 @@
 # Only an alias with the exact homelab-infra description is managed. Every API request
 # is no_log so OPNsense credentials and response bodies stay out of job output.
 
+- name: Firewall account | Ensure the owned API credential before firewall access
+  ansible.builtin.include_tasks: ../wiring/opnsense-firewall-account.yml
+
 - name: k3s firewall alias | Assert reconciliation inputs
   ansible.builtin.assert:
     that:

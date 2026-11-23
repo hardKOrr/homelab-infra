@@ -19,6 +19,8 @@ import uuid
 
 import yaml
 
+from opnsense_account_fixture import ADMIN_CREDENTIAL, ConfirmedFirewallAccount
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 python = Path.home() / ".venvs/homelab-ansible/bin/python"
@@ -41,7 +43,7 @@ def flatten(rule):
     return flat
 
 
-class FakeOPNsense(http.server.BaseHTTPRequestHandler):
+class FakeOPNsense(ConfirmedFirewallAccount, http.server.BaseHTTPRequestHandler):
     def _auth_role(self, path):
         expected = self.server.admin_auth if path.startswith("/api/core/backup/") else self.server.regular_auth
         authorization = self.headers.get("Authorization", "")
@@ -50,6 +52,8 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
         return role if authorization == expected else None
 
     def do_GET(self):
+        if self.account_request("GET"):
+            return
         role = self._auth_role(self.path)
         self.server.calls.append("core/backup/backups")
         self.server.request_log.append(("GET", self.path, {}, role))
@@ -67,6 +71,8 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                                              for backup in self.server.backup_history]})
 
     def do_POST(self):
+        if self.account_request("POST"):
+            return
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         parts = self.path.strip("/").split("/")
         if parts[:3] == ["api", "core", "backup"]:
@@ -165,7 +171,7 @@ def play_config(server, base, enabled=True, *, retries=12, delay=4):
     return {
         "homelabinfra_config": {"infrastructure": {"firewall": {
             "provider": "opnsense", "base": firewall}}},
-        "homelabinfra_infra": {"firewall": {
+        "homelabinfra_infra": {"firewall-admin": ADMIN_CREDENTIAL, "firewall": {
             "provider": "opnsense",
             "host": f"http://127.0.0.1:{server.server_port}",
             "api_key": "fixture-key",

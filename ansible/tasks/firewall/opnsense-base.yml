@@ -9,6 +9,9 @@
 # Inputs come from config/infrastructure.yml and the homelab-infra/firewall vault item.
 # The caller gates this task on firewall.base.enabled so an unset/false flag is inert.
 
+- name: Firewall account | Ensure the owned API credential before firewall access
+  ansible.builtin.include_tasks: ../wiring/opnsense-firewall-account.yml
+
 - name: Firewall base | Assert OPNsense is configured
   ansible.builtin.assert:
     that:

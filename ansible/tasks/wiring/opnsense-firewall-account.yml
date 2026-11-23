@@ -1,0 +1,19 @@
+---
+- name: OPNsense firewall account | Load the privilege contract
+  ansible.builtin.include_vars: ../../vars/opnsense-firewall-account.yml
+
+- name: OPNsense firewall account | Reconcile the owned API identity
+  ansible.builtin.include_tasks: opnsense-account.yml
+  vars:
+    _opn_account_service: firewall
+    _opn_base: >-
+      {{ homelabinfra_infra.firewall.host if homelabinfra_infra.firewall.host is search('^https?://')
+         else 'https://' ~ homelabinfra_infra.firewall.host }}
+    _opn_validate: "{{ homelabinfra_infra.firewall.validate_certs | default(false) }}"
+    opnsense_account_label: firewall
+    opnsense_account_name: homelab-infra-firewall
+    opnsense_account_privileges: "{{ opnsense_firewall_account_privileges }}"
+    opnsense_account_rotate_key: "{{ opnsense_firewall_rotate_key | default(false) }}"
+    opnsense_account_rotate_input: opnsense_firewall_rotate_key
+    opnsense_account_probe: /api/firewall/filter/searchRule
+    opnsense_account_denial_probe: /api/unbound/settings/searchHostOverride

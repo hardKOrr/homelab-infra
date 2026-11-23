@@ -1,0 +1,6 @@
+---
+# Direct privileges for the owned firewall API account; CONTRACT.md links here.
+opnsense_firewall_account_privileges:
+  - page-filter-api # Firewall: Rules [new]
+  - page-firewall-nat-portforward-edit # Firewall: NAT: Destination NAT
+  - page-firewall-aliases # Firewall: Aliases

@@ -16,6 +16,8 @@ from pathlib import Path
 
 import yaml
 
+from opnsense_account_fixture import ADMIN_CREDENTIAL, ConfirmedFirewallAccount
+
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 failures = []
@@ -37,8 +39,14 @@ def flatten(rule):
     return flat
 
 
-class FakeOPNsense(http.server.BaseHTTPRequestHandler):
+class FakeOPNsense(ConfirmedFirewallAccount, http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if not self.account_request("GET"):
+            self.reply(404, {})
+
     def do_POST(self):
+        if self.account_request("POST"):
+            return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
         parts = self.path.strip("/").split("/")  # api firewall <model> <action> [uuid]
         model, action = parts[2], parts[3]
@@ -97,7 +105,7 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
 
 def run(server, root, task, instance, firewall, extra_vars=None, databases=None):
     server.calls.clear()
-    infra = {"databases": databases or {}, "firewall": {
+    infra = {"firewall-admin": ADMIN_CREDENTIAL, "databases": databases or {}, "firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
         "api_key": "fixture-key", "api_secret": "fixture-secret",
         "interfaces": [{"cidr": "198.51.100.0/24", "interface": "opt4"},
@@ -121,7 +129,7 @@ def run(server, root, task, instance, firewall, extra_vars=None, databases=None)
 
 def run_k3s_alias(server, root, alias_name, state, nodes, *, expect_failure=False):
     server.calls.clear()
-    infra = {"firewall": {
+    infra = {"firewall-admin": ADMIN_CREDENTIAL, "firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
         "api_key": "fixture-key", "api_secret": "fixture-secret"}}
     play = [{
@@ -147,12 +155,12 @@ def run_k3s_alias(server, root, alias_name, state, nodes, *, expect_failure=Fals
               "Refusing to change OPNsense alias" in result.stdout, True)
         check("alias API failure output is scrubbed",
               "fixture-secret" not in result.stdout + result.stderr, True)
-    return [c for c in server.calls if c not in ("alias/searchItem",)]
+    return [c for c in server.calls if c not in ("alias/searchItem", "filter/searchRule")]
 
 
 def run_kubernetes_app_access(server, root, instance, firewall):
     server.calls.clear()
-    infra = {"firewall": {
+    infra = {"firewall-admin": ADMIN_CREDENTIAL, "firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
         "api_key": "fixture-key", "api_secret": "fixture-secret",
         "interfaces": [

@@ -29,6 +29,9 @@ existing_owned_key = "AA>BB?CC"
 account_name = "homelab-infra-dns"
 account_description = "Owned by homelab-infra"
 account_privilege = "page-services-unbound"
+service = "dns"
+allowed_endpoint = ["api", "unbound", "settings", "searchHostOverride"]
+denied_endpoint = ["api", "firewall", "filter", "searchRule"]
 failures = []
 
 
@@ -154,8 +157,7 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 if target is None:
                     self._record(username, 404)
                     return self._reply(404, {"result": "failed"})
-                index = len([item for item in self.server.api_keys
-                             if item["username"] == path[4]]) + 1
+                index = self.server.mutations.count("user/add_api_key") + 1
                 issued = {"username": path[4], "key": f"fixture-new-key-{index}",
                           "secret": f"fixture-new-secret-{index}"}
                 self.server.api_keys.append(issued)
@@ -164,13 +166,13 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
                 return self._reply(200, {"result": "ok", "key": issued["key"],
                                          "secret": issued["secret"]})
 
-        if path == ["api", "unbound", "settings", "searchHostOverride"]:
-            allowed = username and self.server.users.get(username, {}).get("priv") == account_privilege
+        if path == allowed_endpoint:
+            allowed = username and set(self.server.users.get(username, {}).get("priv", "").split(",")) == set(account_privilege.split(","))
             status = 200 if allowed else (403 if username else 401)
             self._record(username, status)
             return self._reply(status, {"rows": [], "total": 0} if status == 200 else {})
 
-        if path == ["api", "firewall", "filter", "searchRule"]:
+        if path == denied_endpoint:
             status = 403 if username and username != "admin" else 401
             self._record(username, status)
             return self._reply(status, {})
@@ -202,7 +204,7 @@ def make_bw_state(item_fields):
     return {
         "items": [{
             "id": "dns-item-id",
-            "name": "homelab-infra/dns",
+            "name": f"homelab-infra/{service}",
             "type": 2,
             "organizationId": "org-id",
             "collectionIds": ["collection-id"],
@@ -302,7 +304,7 @@ def run_account(server, directory, item_fields, *, rotate=False):
     wiring_dir.mkdir()
     (wiring_dir / "opnsense.yml").write_text(yaml.safe_dump([{
         "ansible.builtin.include_tasks": str(
-            repo / "ansible/tasks/wiring/opnsense-dns-account.yml"),
+            repo / f"ansible/tasks/wiring/opnsense-{service}-account.yml"),
     }]))
     play = [
         {
@@ -312,7 +314,7 @@ def run_account(server, directory, item_fields, *, rotate=False):
             "tasks": [{
                 "ansible.builtin.set_fact": {
                     "homelabinfra_infra": {
-                        "dns": {
+                        service: {
                             "provider": "opnsense",
                             "host": f"http://127.0.0.1:{server.server_port}",
                             "api_key": item_fields.get("api_key", ""),
@@ -326,7 +328,7 @@ def run_account(server, directory, item_fields, *, rotate=False):
                     },
                     "_opn_base": f"http://127.0.0.1:{server.server_port}",
                     "_opn_validate": False,
-                    "opnsense_dns_rotate_key": rotate,
+                    f"opnsense_{service}_rotate_key": rotate,
                 },
                 "no_log": True,
                 "changed_when": False,
@@ -339,7 +341,7 @@ def run_account(server, directory, item_fields, *, rotate=False):
             "vars": {"wiring_dir": str(wiring_dir)},
             "tasks": [{
                 "ansible.builtin.include_tasks":
-                    "{{ wiring_dir }}/{{ homelabinfra_infra.dns.provider }}.yml",
+                    "{{ wiring_dir }}/{{ homelabinfra_infra[" + repr(service) + "].provider }}.yml",
             }],
         },
         {
@@ -349,8 +351,8 @@ def run_account(server, directory, item_fields, *, rotate=False):
             "tasks": [{
                 "ansible.builtin.assert": {
                     "that": [
-                        "homelabinfra_infra.dns.api_key == _opn_dns_active_key",
-                        "homelabinfra_infra.dns.api_secret == _opn_dns_active_secret",
+                        f"homelabinfra_infra.{service}.api_key == _opn_dns_active_key",
+                        f"homelabinfra_infra.{service}.api_secret == _opn_dns_active_secret",
                     ],
                 },
                 "no_log": True,
