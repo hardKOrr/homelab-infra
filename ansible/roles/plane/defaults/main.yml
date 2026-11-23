@@ -15,6 +15,8 @@ plane_native_user: plane
 plane_native_src: "{{ plane_project_dir }}/src-{{ app_config.app.release }}-{{ app_config.app.native_source_sha256[:12] }}"
 plane_native_venv: "{{ plane_native_src }}/venv"
 plane_native_node_dir: "/opt/node-v{{ app_config.app.node_version }}-linux-x64"
+# The guest memory the native frontend build needs (native-build.yml checks it first).
+plane_native_build_memory_mb: 6144
 plane_native_object_storage_bin: /usr/local/bin/plane-object-storage
 plane_native_owner: "{{ plane_native_user if plane_native | bool else 'root' }}"
 # Start (and stop) order for the shared restore swap and the recovery helper.
