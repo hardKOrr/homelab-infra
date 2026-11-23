@@ -33,9 +33,6 @@
 # Only rules whose description starts with "homelab-infra: <instance> " are created,
 # changed or removed. The ruleset is applied once, and only when something changed.
 
-- name: Firewall account | Ensure the owned API credential before firewall access
-  ansible.builtin.include_tasks: ../wiring/opnsense-firewall-account.yml
-
 - name: Wire firewall | Open declared access on OPNsense
   when: >-
     (wiring_firewall.egress | default([]) | length > 0)
@@ -59,6 +56,9 @@
       {{ found | to_json }}
     _fw_interfaces: "{{ _fw_interfaces_json | from_json }}"
   block:
+    - name: Firewall account | Ensure the owned API credential before firewall access
+      ansible.builtin.include_tasks: opnsense-firewall-account.yml
+
     - name: Wire firewall | Assert wiring contract vars
       ansible.builtin.assert:
         that:

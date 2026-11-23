@@ -55,6 +55,7 @@ before app rules, base rules or the k3s node alias. It uses the shared
 with description `Owned by homelab-infra`. Its exact direct privileges come from the
 [privilege contract](../../vars/opnsense-firewall-account.yml); missing privileges are
 added and extras removed, with no groups, shell or SSH keys.
+Per-app rule wiring skips account management when neither egress nor inbound access is declared.
 
 Only account management authenticates with `homelab-infra/firewall-admin`. The generated
 pair is stored as hidden `api_key` and `api_secret` fields in `homelab-infra/firewall`,

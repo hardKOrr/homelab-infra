@@ -103,7 +103,8 @@ class FakeOPNsense(ConfirmedFirewallAccount, http.server.BaseHTTPRequestHandler)
         pass
 
 
-def run(server, root, task, instance, firewall, extra_vars=None, databases=None):
+def run(server, root, task, instance, firewall, extra_vars=None, databases=None,
+        *, expect_no_account=False):
     server.calls.clear()
     infra = {"firewall-admin": ADMIN_CREDENTIAL, "databases": databases or {}, "firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
@@ -124,6 +125,10 @@ def run(server, root, task, instance, firewall, extra_vars=None, databases=None)
         capture_output=True, text=True, check=False)
     if result.returncode != 0:
         failures.append(f"{task} for {instance} failed:\n{result.stdout[-3000:]}")
+    if expect_no_account:
+        check("an app without declared access skips the account task",
+              "opnsense-firewall-account.yml" in result.stdout, False)
+        check("an app without declared access makes no API calls", server.calls, [])
     return [c for c in server.calls if not c.endswith("searchRule")]
 
 
@@ -206,6 +211,11 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         wire, unwire = "wiring/firewall-opnsense.yml", "unwiring/firewall-opnsense.yml"
+
+        check("an app without declared access needs no firewall credentials",
+              run(server, root, "firewall/open-app-access.yml", "no-access", {},
+                  extra_vars={"homelabinfra_infra": {"firewall": {"provider": "opnsense"}}},
+                  expect_no_account=True), [])
 
         alias_name = "homelabinfra_k3s_k3s_cluster"
         alias_nodes = [
