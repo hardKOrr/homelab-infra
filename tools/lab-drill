@@ -46,7 +46,7 @@ the instance named after the app, else the first configured one the runner publi
 it. It skips essential apps (no Remove) and the apps with their own playbook and drill
 (OWN_DRILL). The table (instance, method, canary, result, minutes, first failed step) is
 printed row by row and written to $LAB_JOB_DIR/drill-all-<id>.md. Exit 0 when every
-drilled row passes. --from <app> starts at that catalog app. After a row passes, --all
+drilled row passes and every cleanup removed (or Remove's guard kept) what it named. --from <app> starts at that catalog app. After a row passes, --all
 removes the instance with delete_data=true, and destroy_guest=true off Kubernetes, so the
 drilled apps do not pile up in node memory; it keeps the integration providers every later Deploy wires
 into (KEEP) and, with --keep, every instance. A later Deploy recreates any dependency the
@@ -493,6 +493,7 @@ def cleanup(ref, app, instance, method, log):
     verdict = ("removed" if rc == 0 else f"kept: still the backend of {users.group(1)}"
                if users else f"FAILED exit {rc}")
     print(f"CLEANUP {instance} {verdict} log={log}", flush=True)
+    return rc == 0 or bool(users)
 
 
 def run_all(ref, plan, start=None, keep=False):
@@ -554,17 +555,17 @@ def run_all(ref, plan, start=None, keep=False):
         row(instance, method.group(1) if method else "?", tier, result, minutes,
             at.group(1) if at else "")
         if rc == 0 and not keep and app not in KEEP:
-            cleanup(ref, app, instance, method.group(1) if method else "",
+            failed += not cleanup(ref, app, instance, method.group(1) if method else "",
                     os.path.join(jobs, f"drill-all-{stamp}-{instance}-remove.log"))
             for provider, backend in backends_of(app_defaults(app)):
-                cleanup(ref, provider, backend, "",
+                failed += not cleanup(ref, provider, backend, "",
                         os.path.join(jobs, f"drill-all-{stamp}-{backend}-remove.log"))
             for required in requires_of(app_defaults(app)):
                 if required not in KEEP:
-                    cleanup(ref, required, required, "",
+                    failed += not cleanup(ref, required, required, "",
                             os.path.join(jobs, f"drill-all-{stamp}-{required}-remove.log"))
                     for provider, backend in backends_of(app_defaults(required)):
-                        cleanup(ref, provider, backend, "",
+                        failed += not cleanup(ref, provider, backend, "",
                                 os.path.join(jobs, f"drill-all-{stamp}-{backend}-remove.log"))
         with open(table, "w") as out:
             out.write("\n".join(rows) + "\n")

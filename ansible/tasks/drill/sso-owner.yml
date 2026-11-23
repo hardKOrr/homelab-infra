@@ -8,8 +8,13 @@
 # owner. A second run keeps the stored password and sets it again, so a fresh Authentik
 # (its own drill deletes its data) gets the account back.
 #
-# Inputs: instance, app_config and _rat_app from drill-canary.yml; homelabinfra_infra.sso
-# already overlaid for the instance's estate.
+# Inputs: instance, app_config and _rat_app from drill-canary.yml. Every request carries
+# the Authentik token, so each is hidden and an assert after it prints its status.
+- name: Drill SSO owner | Use the instance's estate Authentik
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ (app_config.routing | default({})).estate | default('') }}"
+
 - name: Drill SSO owner | Name the owner and the Authentik API
   ansible.builtin.set_fact:
     _dso_item: "{{ _rat_app }}-drill-owner"
@@ -52,9 +57,19 @@
     return_content: true
   register: _dso_read
   changed_when: false
+  failed_when: false
+  no_log: true
   loop:
     - "core/users/?username={{ _dso_item | urlencode }}"
     - "core/groups/?name={{ _dso_group | urlencode }}"
+
+- name: Drill SSO owner | Require both reads answered
+  ansible.builtin.assert:
+    that: _dso_read.results | map(attribute='status', default=-1) | list == [200, 200]
+    fail_msg: >-
+      Authentik at {{ _dso_api }} answered HTTP
+      {{ _dso_read.results | map(attribute='status', default=-1) | list }} reading the
+      account and the group: {{ _dso_read.results | map(attribute='msg', default='') | list }}
 
 - name: Drill SSO owner | Require the access group
   ansible.builtin.assert:
@@ -77,7 +92,17 @@
     status_code: 201
   register: _dso_created
   changed_when: true
+  failed_when: false
+  no_log: true
   when: _dso_read.results[0].json.results | length == 0
+
+- name: Drill SSO owner | Require the account created
+  ansible.builtin.assert:
+    that: _dso_created.status | default(-1) == 201
+    fail_msg: >-
+      Creating {{ _dso_item }} in Authentik answered HTTP {{ _dso_created.status | default(-1) }}:
+      {{ _dso_created.json | default(_dso_created.msg | default('')) }}
+  when: _dso_created is not skipped
 
 - name: Drill SSO owner | Keep the account
   ansible.builtin.set_fact:
@@ -94,12 +119,22 @@
     body:
       is_active: true
       groups: "{{ (_dso_user.groups | default([])) | union([_dso_read.results[1].json.results[0].pk]) }}"
+  register: _dso_activated
   changed_when: true
-  when: >-
+  failed_when: false
+  no_log: true
+  when: &dso_inactive >-
     not (_dso_user.is_active | default(false))
     or _dso_read.results[1].json.results[0].pk not in (_dso_user.groups | default([]))
 
-# Hidden because the body is the password; the assert below prints the status.
+- name: Drill SSO owner | Require the account active in the group
+  ansible.builtin.assert:
+    that: _dso_activated.status | default(-1) == 200
+    fail_msg: >-
+      Activating {{ _dso_item }} in Authentik answered HTTP {{ _dso_activated.status | default(-1) }}:
+      {{ _dso_activated.json | default(_dso_activated.msg | default('')) }}
+  when: *dso_inactive
+
 - name: Drill SSO owner | Set the stored password
   ansible.builtin.uri:
     url: "{{ _dso_api }}/core/users/{{ _dso_user.pk }}/set_password/"
