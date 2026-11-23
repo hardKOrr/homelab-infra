@@ -349,6 +349,12 @@
   ansible.builtin.command:
     argv: [bw, sync]
   changed_when: false
+  register: _vault_sync
+  # Vaultwarden rate-limits the token refresh a sync makes when many runs overlap
+  # ("Too many login requests"); that clears within a minute, so wait it out.
+  until: _vault_sync.rc == 0 or _vault_sync.stderr is not search('(?i)too many|rate limit|429')
+  retries: 4
+  delay: 20
   delegate_to: localhost
   become: false
   when: _vault_grant_write is changed
@@ -526,6 +532,12 @@
   ansible.builtin.command:
     argv: [bw, sync]
   changed_when: false
+  register: _vault_sync
+  # Vaultwarden rate-limits the token refresh a sync makes when many runs overlap
+  # ("Too many login requests"); that clears within a minute, so wait it out.
+  until: _vault_sync.rc == 0 or _vault_sync.stderr is not search('(?i)too many|rate limit|429')
+  retries: 4
+  delay: 20
   delegate_to: localhost
   become: false
   when: not _vault_item_matches
