@@ -104,6 +104,7 @@ def check_lab_run(work: Path) -> None:
         "LAB_REPO": str(lab_repo),
         "LAB_VENV": str(venv),
         "LAB_STATE_DIR": str(state),
+        "LAB_VAULT_OUTAGE_WAIT": "0",
         "BW_SERVER": "https://127.0.0.1:9",
         "BW_CLIENTID": "from-the-job",
         "ANSIBLE_VAULT_PASSWORD_FILE": str(password),
@@ -156,6 +157,7 @@ def check_login_rate_limit(work: Path) -> None:
         "LAB_VENV": str(Path(sys.executable).parent.parent),
         "LAB_STATE_DIR": str(state),
         "LAB_VAULT_LOGIN_RETRY_DELAY": "0",
+        "LAB_VAULT_OUTAGE_WAIT": "0",
         "BW_SERVER": "https://127.0.0.1:9",
     } | LOGIN
     script = ["bash", str(repo / "ansible" / "scripts" / "lab-run.sh"),
@@ -244,6 +246,7 @@ def check_edge_copy(work: Path) -> None:
         "LAB_VENV": str(venv),
         "LAB_STATE_DIR": str(state),
         "LAB_DOCTOR": "0",
+        "LAB_VAULT_OUTAGE_WAIT": "0",
         "BW_SERVER": "https://127.0.0.1:9",
     }
     lab_run = ["bash", str(repo / "ansible" / "scripts" / "lab-run.sh")]
@@ -301,6 +304,20 @@ def check_edge_copy(work: Path) -> None:
     assert other.returncode == 0, other.stdout + other.stderr
     assert record.read_text(encoding="utf-8").strip() == "unset", \
         "other playbooks must not receive LAB_VAULT_PASSWORD"
+
+    # Vaultwarden is down for a moment (its nightly backup stops it): the preflight waits
+    # for /alive, retries the login once and the run goes ahead.
+    tries = work / "tries"
+    (stub / "curl").write_text(
+        f'#!/bin/bash\necho x >> "{tries}"\n[ "$(wc -l < "{tries}")" -gt 1 ]\n', encoding="utf-8")
+    (stub / "bw").write_text(
+        "#!/bin/bash\n"
+        f'case "$1" in login) [ -s "{tries}" ] && [ "$(wc -l < "{tries}")" -gt 1 ] ;;\n'
+        '  unlock) echo session ;; list) cat "' + str(work / "items.json") + '" ;; esac\n',
+        encoding="utf-8")
+    back = run(lab_run + ["playbooks/maintenance/status.yml"], env | {"LAB_VAULT_OUTAGE_WAIT": "10"})
+    assert back.returncode == 0, back.stdout + back.stderr
+    assert "waiting up to 10s" in back.stderr, back.stderr
     (stub / "bw").write_text("#!/bin/bash\n[ \"$1\" = login ] || exit 0\nexit 1\n", encoding="utf-8")
 
     # Vaultwarden answers but refuses the login: a credential problem, even for Caddy.
