@@ -470,14 +470,13 @@ class Drill:
 
 def cleanup(ref, app, instance, method, log):
     """Remove a passed instance, and its own guest unless it runs on Kubernetes (whose pods
-    live in the fixed k3s VMs), freeing memory for the next row. With the method unknown
-    (a backend), a destroy_guest refusal changes nothing, so a plain Remove follows it."""
+    live in the fixed k3s VMs), freeing memory for the next row. A destroy_guest refusal (a
+    guest another app shares, such as the iGPU stack VM) changes nothing, so a plain Remove
+    follows it."""
     argv = [os.path.join(os.environ["HOMELAB_LAB_DIR"], "runner-lab-run.sh"), ref,
             "playbooks/apps/remove.yml", "-e", f"instance={instance}", "-e", f"app={app}",
             "-e", "delete_data=true"]
-    attempts = [argv] if method == "kubernetes" else [argv + ["-e", "destroy_guest=true"]]
-    if not method:
-        attempts.append(argv)
+    attempts = [argv] if method == "kubernetes" else [argv + ["-e", "destroy_guest=true"], argv]
     with open(log, "wb") as out:
         for attempt in attempts:
             rc = subprocess.run(attempt, stdin=subprocess.DEVNULL, stdout=out,
