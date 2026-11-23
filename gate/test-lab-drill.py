@@ -3,14 +3,18 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
 
 
 def plan(*args):
-    out = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan", *args],
-                         stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    # A workstation's private pre-deploy hooks must not alter the expected plan.
+    with tempfile.TemporaryDirectory(prefix="gate-drill-plan-") as lab:
+        out = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan", *args],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             env=dict(os.environ, HOMELAB_LAB_DIR=lab))
     if out.returncode != 0:
         failures.append(f"{args}: exit {out.returncode}: {out.stderr}")
     return out.stdout
@@ -26,9 +30,9 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "deploy-final", "wiring-deploy-final", "canary-final"]
 
 out = plan("tautulli")
-if steps(out) != ["pre-requires-plex", "requires-plex"] + STATEFUL:
+if steps(out) != ["requires-plex"] + STATEFUL:
     failures.append(f"stateful sequence: {steps(out)}")
-if steps(plan("maintainerr"))[:4] != ["pre-requires-plex", "requires-plex", "requires-plex-canary", "deploy"]:
+if steps(plan("maintainerr"))[:3] != ["requires-plex", "requires-plex-canary", "deploy"]:
     failures.append("drill.requires_canary creates the required app's canary before the Deploy")
 if steps(plan("forgejo-runner"))[:3] != ["backend-postgresql-forgejo", "requires-forgejo", "deploy"]:
     failures.append("a required app's named backends deploy before it")
@@ -98,7 +102,6 @@ for spec in ("mixpost", "wordpress"):
 
 # The instance's own backup.enabled, reported by check-wiring.yml, picks the sequence
 # before anything destructive runs. A fake runner answers every playbook.
-import tempfile
 with tempfile.TemporaryDirectory() as lab:
     def drill(app, backup):
         runner = os.path.join(lab, "runner-lab-run.sh")
