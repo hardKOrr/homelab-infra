@@ -26,13 +26,13 @@ def request(path, token, body=None, method=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         'http://127.0.0.1:8096/' + path, data=data, method=method,
-        headers={'X-Emby-Token': token, 'Content-Type': 'application/json'})
+        headers={'Authorization': 'MediaBrowser Token="' + token + '"', 'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=90) as response:
             raw = response.read()
             return json.loads(raw) if raw and 'json' in response.headers.get('Content-Type', '') else raw
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f'Jellyfin HTTP {exc.code}') from None
+        raise RuntimeError(f'Jellyfin HTTP {exc.code} at {path.split(chr(63))[0]}') from None
 
 
 def hardware_evidence(text):
