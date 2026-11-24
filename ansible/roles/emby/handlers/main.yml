@@ -1,0 +1,9 @@
+---
+# The native service's restart (tasks/native.yml). On Docker, tasks/stack/compose-deploy.yml
+# recreates the project itself when the Compose file changes.
+- name: Restart emby
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ emby_native_service }}"]
+  when: emby_native | bool

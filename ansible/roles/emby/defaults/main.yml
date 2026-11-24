@@ -4,3 +4,10 @@ emby_http_retries: 30
 emby_http_delay: 5
 emby_client_name: homelab-infra
 emby_device_name: homelab-infra Ansible
+
+# Native: Emby runs from the upstream .deb as this user (uid/gid app.puid/pgid, which match
+# media_storage.owner so it can read the library) under the package's emby-server unit.
+emby_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+emby_native_user: emby
+emby_native_service: "{{ app_config.app.service_name }}"
+emby_native_env_file: /etc/emby-server.conf
