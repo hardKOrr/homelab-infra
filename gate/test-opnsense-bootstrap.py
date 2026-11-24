@@ -3,7 +3,9 @@
 import os
 from pathlib import Path
 import secrets
+import shutil
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 
 from ansible.parsing.dataloader import DataLoader
@@ -132,7 +134,60 @@ def ownership():
         assert template('{{ ' + capacity[2]['when'] + ' }}', variables) is grow
 
 
+def reconciliation_scope():
+    """Exercise include resolution and precedence over the loader's set_fact values."""
+    executable = os.environ.get('GATE_ANSIBLE_PLAYBOOK') or shutil.which('ansible-playbook')
+    assert executable, 'ansible-playbook executable is not configured'
+    original = {'infrastructure': {'firewall': {'base': {
+        'enabled': True, 'aliases': {'keep': ['192.0.2.10']},
+        'rules': [{'interface': 'opt4'}]}}}, 'unrelated': 'keep'}
+    infra = {'firewall': {'host': 'estate.invalid'}, 'dns': {'host': 'estate.invalid'}}
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        files = {
+            'roles/opnsense/tasks/main.yml': load('ansible/roles/opnsense/tasks/configure.yml')[1:],
+            'tasks/firewall/opnsense-base.yml': [{
+                'ansible.builtin.assert': {'that': [
+                    "homelabinfra_config.infrastructure.firewall.base.rules[0].interface == expected_interface",
+                    "homelabinfra_config.infrastructure.firewall.base.aliases.keep == ['192.0.2.10']",
+                    "homelabinfra_config.unrelated == 'keep'",
+                    "homelabinfra_infra.firewall.host == '192.0.2.1'",
+                ]}}],
+        }
+        for name in ('opnsense-firewall-account', 'opnsense-dns-account'):
+            files[f'tasks/wiring/{name}.yml'] = [{
+                'ansible.builtin.assert': {'that': [
+                    "homelabinfra_infra.firewall.host == '192.0.2.1'",
+                    "homelabinfra_infra.dns.host == '192.0.2.1'",
+                ]}}]
+        for path, value in files.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(yaml.safe_dump(value, sort_keys=False))
+        for override in (False, True):
+            bootstrap = {'lan_address': '192.0.2.1', 'validate_certs': False}
+            if override:
+                bootstrap['firewall_base'] = {'rules': [{'interface': 'lan'}]}
+            play = [{'hosts': 'localhost', 'gather_facts': False, 'vars': {
+                'app_config': {'bootstrap': bootstrap},
+                'expected_interface': 'lan' if override else 'opt4',
+            }, 'tasks': [
+                {'ansible.builtin.set_fact': {'homelabinfra_config': original, 'homelabinfra_infra': infra}},
+                {'ansible.builtin.include_role': {'name': 'opnsense'}},
+                {'ansible.builtin.assert': {'that': [
+                    'homelabinfra_config == original', 'homelabinfra_infra == original_infra']},
+                 'vars': {'original': original, 'original_infra': infra}},
+            ]}]
+            path = root / 'play.yml'
+            path.write_text(yaml.safe_dump(play, sort_keys=False))
+            result = subprocess.run([executable, '-i', 'localhost,', '-c', 'local', str(path)],
+                                    text=True, capture_output=True, env={**os.environ,
+                                    'ANSIBLE_ROLES_PATH': str(root / 'roles')})
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
 if __name__ == '__main__':
     render_example()
     ownership()
+    reconciliation_scope()
     print('OPNsense bootstrap: example XML, credential hashes, ownership and disk preservation passed')
