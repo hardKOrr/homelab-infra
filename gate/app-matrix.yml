@@ -517,7 +517,7 @@ deemix:
     native: [tasks/recovery/restore-swap.yml]
 emby:
   method: docker
-  supported: [docker-vm]
+  supported: [docker-vm, docker-lxc]
   deploy:
     docker:
     - tasks/load-user-vars.yml

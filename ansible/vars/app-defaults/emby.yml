@@ -5,7 +5,7 @@ emby_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: media
   # Recovery is owned by this deployment slice: the complete Emby config

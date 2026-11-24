@@ -22,8 +22,15 @@ stack: media
 #   # It selects the device's stack VM and adds /dev/dri to Emby's container.
 #   # GPU stack precedence: ansible/vars/contract/app-layering.md.
 #   gpu_device: intel-igpu
+#   # On a Docker LXC stack (see below) leave gpu_device empty and list the host's render
+#   # nodes instead; each must be an identifier of a proxmox.devices entry with mode: shared.
+#   # devices: [/dev/dri/renderD129]
 #   # image: lscr.io/linuxserver/emby:latest
 #   # config_path: /opt/emby/config
+#
+# To use Docker on an LXC, set stack: emby-lxc (any stack name) and
+# infrastructure.stacks.emby-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
 #
 # Shared library mounts are inherited from config/infrastructure.yml's
 # media_storage.mounts. Emby binds each of them read-only; it does not write media.

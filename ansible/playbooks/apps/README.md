@@ -200,7 +200,7 @@ run only when the file exists:
 
 | Hook | Deploy runs it |
 | --- | --- |
-| `deploy-prepare.yml` | on localhost after the hostname is known, before provisioning: may set `deploy_host_mounts` (attached by `tasks/proxmox/attach-host-mounts.yml`), `deploy_host_mounts_owner`, `deploy_host_mounts_own_node` (only the guest's node), `native_guest_database` and `firewall_inbound_ports` |
+| `deploy-prepare.yml` | on localhost after the hostname is known, before provisioning: may set `deploy_host_mounts` (attached by `tasks/proxmox/attach-host-mounts.yml`), `deploy_host_mounts_owner`, `deploy_host_mounts_own_node` (only the guest's node), `deploy_host_shared_devices` (host device nodes bound into an LXC stack host by `tasks/proxmox/attach-shared-device.yml`), `native_guest_database` and `firewall_inbound_ports` |
 | `deploy-provision.yml` | on localhost after the database, before the shared stack or native guest step: provisions a guest of the app's own shape (`tasks/proxmox/provision-app-vm.yml`) into `deploy_<instance>` and sets `deploy_guest_provided` so the shared step skips |
 | `deploy-record.yml` | on localhost before wiring, also while a restore target is isolated: registry entries other jobs read (`media`, `databases`); `deploy_notify_note`, a note computed from `app_config` |
 | `deploy-wire.yml` | on localhost after wiring, never while a restore target is isolated: connections with deployed peers; a failure recorded through `report-degradation.yml` fails the run |

@@ -29,6 +29,7 @@ EXTRA_IMPLEMENTED = {
     "caddy": {"docker-lxc", "docker-vm"},
     "comfyui": {"docker-lxc"},
     "deemix": {"docker-lxc"},
+    "emby": {"docker-lxc"},
     "flaresolverr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo": {"docker-lxc"},
     "frigate": {"docker-lxc"},
