@@ -65,6 +65,10 @@ class NativeForm:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_appliance_has_no_proxy_wiring(self):
+        defaults = yaml.safe_load((ROOT / 'ansible/vars/app-defaults/opnsense.yml').read_text())['opnsense_defaults']
+        self.assertEqual(defaults['routing']['proxy'], 'none')
+
     def test_production_destruction_guards(self):
         production = yaml.safe_load((ROOT / 'ansible/tasks/removal/guard-guest-destruction.yml').read_text())
         assertions = [task for task in production if 'ansible.builtin.assert' in task

@@ -36,4 +36,3 @@
         path: "{{ _opn_backup_dir.path }}"
         state: absent
       when: _opn_backup_dir.path is defined
-

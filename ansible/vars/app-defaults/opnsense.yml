@@ -29,6 +29,7 @@ opnsense_defaults:
       image_name: OPNsense-26.7-nano-amd64.img
   routing:
     identity: none
+    proxy: none
   bootstrap:
     domain: internal
     lan_prefix: 24

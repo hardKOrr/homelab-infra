@@ -7,4 +7,3 @@
       - _ra_destination == 'existing'
       - _ra_target == _ra_source_instance
     fail_msg: OPNsense native restore supports only the existing instance identity.
-
