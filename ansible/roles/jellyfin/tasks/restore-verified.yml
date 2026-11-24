@@ -8,6 +8,11 @@
     return_content: true
     status_code: 200
   register: _jellyfin_restore_health
+  until:
+    - _jellyfin_restore_health.status | default(0) == 200
+    - _jellyfin_restore_health.json.ProductName | default('') | length > 0
+  retries: "{{ jellyfin_http_retries }}"
+  delay: "{{ jellyfin_http_delay }}"
   changed_when: false
 
 - name: Jellyfin restore | Assert the server is configured and healthy

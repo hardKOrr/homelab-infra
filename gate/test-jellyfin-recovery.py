@@ -42,8 +42,12 @@ class JellyfinApi(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/System/Info/Public":
+            if self.server.startup_responses:
+                self.server.startup_responses -= 1
+                self.respond(200, {"Message": "Server is starting"})
+                return
             self.respond(200, {
-                "ProductName": "Jellyfin Server",
+                "ProductName": self.server.product_name,
                 "StartupWizardCompleted": not self.server.unconfigured,
             })
             return
@@ -185,7 +189,14 @@ def check_backup_inputs_and_hook():
 
 
 def run_hook(hook, stage, port):
-    tasks = yaml.safe_load((repo / f"ansible/roles/jellyfin/tasks/restore-{hook}.yml").read_text())
+    if hook == "deploy-readiness":
+        tasks = [task for task in yaml.safe_load(
+            (repo / "ansible/roles/jellyfin/tasks/main.yml").read_text())
+                 if task.get("name") in ["Wait for Jellyfin to answer",
+                                         "Assert the app identifies itself as Jellyfin"]]
+        assert len(tasks) == 2
+    else:
+        tasks = yaml.safe_load((repo / f"ansible/roles/jellyfin/tasks/restore-{hook}.yml").read_text())
     for task in tasks:
         task.pop("no_log", None)
         if str(task.get("ansible.builtin.include_tasks", "")).endswith("upsert-item.yml"):
@@ -199,6 +210,8 @@ def run_hook(hook, stage, port):
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,
             "vars": {"instance": "jellyfin", "recovery_swap_stage": str(stage),
+                     "_jf_base": f"http://127.0.0.1:{port}",
+                     "jellyfin_http_retries": 2, "jellyfin_http_delay": 0,
                      "jellyfin_client_name": "homelab-infra", "jellyfin_device_name": "deploy",
                      "restore_source_jellyfin_user": "admin",
                      "restore_source_jellyfin_password": source_password,
@@ -244,6 +257,18 @@ def check_restore_swap(server):
         assert (result.returncode == 0) == (case == "restored"), case + result.stdout + result.stderr
 
 
+def check_startup_readiness(server):
+    for hook in ["deploy-readiness", "verified"]:
+        server.startup_responses = 1
+        result = run_hook(hook, Path("/nonexistent"), server.server_port)
+        assert result.returncode == 0, hook + result.stdout + result.stderr
+        assert server.startup_responses == 0
+        server.product_name = "Emby Server"
+        result = run_hook(hook, Path("/nonexistent"), server.server_port)
+        assert result.returncode != 0, hook + " accepted a different product"
+        server.product_name = "Jellyfin Server"
+
+
 def check_contract():
     """An existing target needs an independent pre-restore point before anything runs."""
     contract = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore.yml").read_text())[0]
@@ -271,10 +296,13 @@ def main():
     server.auth_failure = False
     server.library_failure = False
     server.unconfigured = False
+    server.startup_responses = 0
+    server.product_name = "Jellyfin Server"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         check_restore_swap(server)
+        check_startup_readiness(server)
     finally:
         server.shutdown()
         server.server_close()
