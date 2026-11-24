@@ -29,4 +29,15 @@ prepare = (role / "tasks/deploy-prepare.yml").read_text()
 assert "Refuse a GPU declaration for native Emby on a VM" in prepare
 assert "app_config.hosting.method in ['docker', 'native']" in prepare
 
+# The unit drop-in renders the resolved DRI groups, and resets them when there are none.
+import jinja2
+
+env = jinja2.Environment(extensions=[], keep_trailing_newline=True)
+env.filters["comment"] = lambda text: "# " + str(text)
+template = env.from_string((role / "templates/emby-native.conf.j2").read_text())
+with_groups = template.render(ansible_managed="m", _emby_dri_group_ids=["44", "104"])
+assert "SupplementaryGroups=44 104" in with_groups and "[Service]" in with_groups
+without = template.render(ansible_managed="m", _emby_dri_group_ids=[])
+assert "SupplementaryGroups=\n" in without and "SupplementaryGroups=4" not in without
+
 print("Emby native pins one release, reuses the shared backup and restore and keeps the iGPU on an LXC")

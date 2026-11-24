@@ -1,1 +1,8 @@
 {{ ansible_managed | comment }}
+[Service]
+# The service user reads the DRI nodes through the numeric group ids the guest sees. The
+# empty assignment resets the list, so a removed device drops its group on the next deploy.
+SupplementaryGroups=
+{% if _emby_dri_group_ids | default([]) | length > 0 %}
+SupplementaryGroups={{ _emby_dri_group_ids | join(' ') }}
+{% endif %}
