@@ -158,7 +158,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
   [forgejo](roles/forgejo/README.md), [forgejo-runner](roles/forgejo-runner/README.md), [frigate](roles/frigate/README.md),
   [home-assistant](roles/home-assistant/README.md), [influxdb](roles/influxdb/README.md), [mariadb](roles/mariadb/README.md), [mysql](roles/mysql/README.md),
   [navidrome](roles/navidrome/README.md), [observability](roles/observability/README.md),
-  [ollama](roles/ollama/README.md), [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md),
+  [ollama](roles/ollama/README.md), [opnsense](roles/opnsense/README.md), [pbs](roles/pbs/README.md), [pdm](roles/pdm/README.md),
   [plex](roles/plex/README.md), [postgresql](roles/postgresql/README.md), [redis](roles/redis/README.md),
   [qbittorrent](roles/qbittorrent/README.md), [sabnzbd](roles/sabnzbd/README.md), [slskd](roles/slskd/README.md),
   [servarr](roles/servarr/README.md), [wireguard](roles/wireguard/README.md).
@@ -197,6 +197,7 @@ workload) still allowlist the roles that carry their own copy until their Deploy
 | Kubernetes external media NFS volumes | `tasks/kubernetes/prepare-media-volumes.yml` ([README](tasks/kubernetes/README.md)) | `k8s_media_shares` entries (`name`, `server`, `path`, `mount_path`, boolean `read_only`); returns `k8s_media_volumes` and `k8s_media_volume_mounts` for workload templates |
 | Kubernetes NodePort claim check | `tasks/kubernetes/claim-node-port.yml` | `k8s_node_port`, `k8s_namespace`, `k8s_api_host`; run before every apply of a NodePort Service |
 | Kubernetes one-shot Job | `tasks/kubernetes/run-job.yml` | `k8s_job_name`, `k8s_namespace` and the rendered Job; returns `k8s_job_succeeded`, `k8s_job_exit_code` and logs, with optional `k8s_job_expected_exit_codes` |
+| Controller-owned appliance recovery | `playbooks/maintenance/backup-app.yml` and `restore-app.yml` | `recovery.native.controller: true` with role-owned `backup.yml` and `restore.yml` hooks; target ownership and shared restore guards still apply |
 | Restore validation | `tasks/recovery/validate-restore.yml` | `recovery_*` plan inputs and the provider's evidence |
 | Restore swap: stage, stop, move aside, install with owner, start, roll back | `tasks/recovery/restore-swap.yml`, running `scripts/restore-swap.sh` | `recovery_swap_runtime`, `recovery_swap_archives`, `recovery_swap_paths` (`path`, `source`, numeric, named or `live` `owner`/`group`, `mode`, `mount`, `allow_empty`), `recovery_swap_stop_services` with `recovery_swap_compose_project`, optional `recovery_swap_pbs_runtime`, `recovery_swap_staging_parent`, `recovery_swap_database` (`config`, `dump`), `recovery_swap_health_url` with its `_status`, `_headers` and `_follow_redirects`, and the `staged`, `stopped`, `replaced`, `verified` and `rollback` hooks |
 | Rebase a source-owned path in the restore target's app_config | `tasks/recovery/rebase-target-path.yml`, from a role's Restore App `restore-config.yml` hook | `restore_rebase_key`, optional `restore_rebase_prefix` (default `/opt/`) and `restore_rebase_instance` |

@@ -106,7 +106,8 @@
           - >-
             (_ba_kind == 'kubernetes' and app_config.backup.enabled | default(false) | bool)
             or
-            (_ba_kind in ['docker', 'native']
+            ((_ba_kind in ['docker', 'native']
+                  or (_ba_kind == 'appliance' and recovery_capability.controller | default(false) | bool))
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
@@ -116,9 +117,38 @@
 
     - name: Resolve the Docker or native-LXC application target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
-      when: _ba_kind in ['docker', 'native']
+      vars:
+        resolve_app_target_register: "{{ _ba_kind != 'appliance' }}"
+        resolve_app_target_kinds: "{{ ['appliance'] if _ba_kind == 'appliance' else ['docker', 'native'] }}"
+      when: _ba_kind in ['docker', 'native', 'appliance']
 
   tasks:
+    - name: Run the declared controller-owned appliance backup
+      ansible.builtin.include_role:
+        name: "{{ recovery_capability.role | default(_ba_app) }}"
+        tasks_from: backup
+      when:
+        - _ba_kind == 'appliance'
+        - recovery_capability.controller | default(false) | bool
+
+    - name: Check controller-owned backup completion
+      ansible.builtin.assert:
+        that: _application_backup_complete | default(false) | bool
+      when: _ba_kind == 'appliance'
+
+    - name: Notify controller-owned appliance backup
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} backed up"
+        notify_message: "The native configuration was exported and verified in PBS."
+      when: _ba_kind == 'appliance'
+
+    - name: Check controller-owned backup degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ instance }} backup"
+      when: _ba_kind == 'appliance'
+
     - name: Resolve the cluster and its API host
       when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml

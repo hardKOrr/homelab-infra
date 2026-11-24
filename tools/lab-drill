@@ -70,7 +70,7 @@ RESULT = re.compile(r"HOMELAB_RUN result=(\S+) changed=(\d+) failed=(\d+)")
 BACKEND_IN_USE = re.compile(r"Refusing to remove \S+ with delete_data=true: (.+?) (?:is|are) deployed")
 UP_CODES = re.compile(r"^(2\d\d|3\d\d|401)$")
 # Platform pieces with their own playbook and drill, outside the app drill (prompt 08).
-OWN_DRILL = {"k3s-cluster", "opnsense", "pbs", "proxmox-datacenter-manager"}
+OWN_DRILL = {"k3s-cluster", "pbs", "proxmox-datacenter-manager"}
 # Kept after a passing --all row: later Deploys wire their SSO entry and monitor into these,
 # and later backups publish their notification to ntfy.
 KEEP = {"authentik", "ntfy", "uptime-kuma"}
@@ -306,8 +306,33 @@ class Drill:
                 self.say(f"CANARY none: no marker path for a {self.method} guest")
 
     def remove(self, **extra):
+        isolation = self.defaults.get("drill", {}).get("verify_remove_isolation", False)
+        before = self.guest_state() if isolation and not self.plan else None
         self.playbook("remove", "playbooks/apps/remove.yml", **extra)
         self.wiring("remove", "absent")
+        if before is not None:
+            after = self.guest_state()
+            targets = [key for key, value in before.items() if value['name'] == self.instance]
+            others = {key: value for key, value in before.items() if key not in targets}
+            if len(targets) != 1 or any(key in after for key in targets) or others != after:
+                self.fail("remove-isolation", "target remains or another owned guest changed")
+            self.say(f"ISOLATION PASS target absent; {len(others)} other owned guests unchanged")
+
+    def guest_state(self):
+        if not self.destroy_guest:
+            self.fail("remove-isolation", "requires --destroy-guest")
+        script = open(os.path.join(REPO, "tools", "lab-guest-state.py")).read()
+        result = subprocess.run([os.path.join(REPO, "tools", "lab-exec"), "--node"],
+                                input="python3 - <<'PROBE'\n" + script + "\nPROBE\n", capture_output=True, text=True)
+        if result.returncode:
+            self.fail("remove-isolation", "cannot read the owned guest baseline")
+        state = json.loads(result.stdout)
+        # State may include private addresses; never put it in the public summary.
+        path = os.path.join(self.logs, f"guest-state-{self.step_no}.json")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as output:
+            json.dump(state, output)
+        return state
 
     def https(self, name):
         """The URL answers over HTTPS; an SSO route may 404 for minutes after a fresh deploy."""

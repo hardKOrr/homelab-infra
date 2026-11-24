@@ -1,0 +1,27 @@
+---
+# Grow an imported appliance boot disk; repeat and interrupted imports are safe.
+# Inputs: appliance_vm.vmid, disk_size (GiB); never shrink a disk.
+- name: Disk appliance | Read the imported disk configuration
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ appliance_vm.vmid }}/config", --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _disk_appliance_after_import
+  changed_when: false
+
+- name: Disk appliance | Read the imported boot disk capacity
+  ansible.builtin.set_fact:
+    _disk_appliance_bytes: >-
+      {{ (_disk_size_parts[0] | int)
+         * {'': 1, 'K': 1024, 'M': 1024 ** 2, 'G': 1024 ** 3, 'T': 1024 ** 4}[_disk_size_parts[1]] }}
+  vars:
+    _disk_size_parts: >-
+      {{ (_disk_appliance_after_import.stdout | from_json).scsi0
+         | regex_search('(?:^|,)size=([0-9]+)([KMGT]?)(?:,|$)', '\1', '\2')
+         | default(['0', ''], true) }}
+
+- name: Disk appliance | Grow the boot disk to the requested capacity
+  ansible.builtin.command:
+    argv: [qm, disk, resize, "{{ appliance_vm.vmid | string }}", scsi0, "{{ appliance_vm.disk_size }}G"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: (_disk_appliance_bytes | int) < (appliance_vm.disk_size | int) * 1024 ** 3
+  changed_when: true

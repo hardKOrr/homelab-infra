@@ -1,0 +1,80 @@
+---
+# Never edit a shared download or an existing boot disk. The directory and all
+# secret-bearing files are root-only and removed even when import fails.
+- name: OPNsense | Install offline image prerequisites
+  ansible.builtin.apt:
+    name: [bzip2, unzip, openssl]
+    state: present
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+- name: OPNsense | Create a private disk staging directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: homelab-opnsense-
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _opn_stage
+  changed_when: false
+- name: OPNsense | Build and import the seeded boot disk
+  block:
+    - name: OPNsense | Prepare bootstrap password hashes
+      ansible.builtin.include_tasks: hashes.yml
+    - name: OPNsense | Download the checksum-pinned nano archive
+      ansible.builtin.get_url:
+        url: "{{ appliance_vm.image_url }}"
+        dest: "{{ _opn_stage.path }}/nano.img.bz2"
+        checksum: "sha256:{{ appliance_vm.image_sha256 }}"
+        mode: '0600'
+    - name: OPNsense | Unpack the private nano disk
+      ansible.builtin.command:
+        argv: [bunzip2, "{{ _opn_stage.path }}/nano.img.bz2"]
+        creates: "{{ _opn_stage.path }}/nano.img"
+    - name: OPNsense | Download the pinned offline UFS editor
+      ansible.builtin.get_url:
+        url: "{{ app_config.bootstrap.editor_url }}"
+        dest: "{{ _opn_stage.path }}/editor.zip"
+        checksum: "sha256:{{ app_config.bootstrap.editor_sha256 }}"
+        mode: '0600'
+    - name: OPNsense | Unpack the self-contained Linux editor
+      ansible.builtin.unarchive:
+        src: "{{ _opn_stage.path }}/editor.zip"
+        dest: "{{ _opn_stage.path }}"
+        remote_src: true
+    - name: OPNsense | Make the offline editor executable
+      ansible.builtin.file:
+        path: "{{ _opn_stage.path }}/linux-x64-selfcontained/UFS2Tool"
+        mode: '0700'
+    - name: OPNsense | Render the first-boot configuration
+      ansible.builtin.template:
+        src: config.xml.j2
+        dest: "{{ _opn_stage.path }}/config.xml"
+        mode: '0600'
+      no_log: true
+    - name: OPNsense | Seed config.xml directly into the offline nano disk
+      ansible.builtin.command:
+        argv: ["{{ _opn_stage.path }}/linux-x64-selfcontained/UFS2Tool", add, "{{ _opn_stage.path }}/nano.img", /conf/config.xml, "{{ _opn_stage.path }}/config.xml"]
+      changed_when: true
+      no_log: true
+    - name: OPNsense | Restrict the seeded configuration inside the image
+      ansible.builtin.command:
+        argv: ["{{ _opn_stage.path }}/linux-x64-selfcontained/UFS2Tool", chmod, "{{ _opn_stage.path }}/nano.img", '600', /conf/config.xml]
+      changed_when: true
+    - name: OPNsense | Read back the offline configuration before importing
+      ansible.builtin.command:
+        argv: ["{{ _opn_stage.path }}/linux-x64-selfcontained/UFS2Tool", extract, "{{ _opn_stage.path }}/nano.img", "{{ _opn_stage.path }}/readback", /conf/config.xml]
+      changed_when: false
+    - name: OPNsense | Verify the seeded file matches the rendered configuration
+      ansible.builtin.command:
+        argv: [cmp, '--', "{{ _opn_stage.path }}/config.xml", "{{ _opn_stage.path }}/readback/config.xml"]
+      changed_when: false
+    - name: OPNsense | Import the seeded disk as the VM boot disk
+      ansible.builtin.command:
+        argv: [qm, set, "{{ appliance_vm.vmid | string }}", --scsi0, "{{ appliance_vm.storage }}:0,import-from={{ _opn_stage.path }}/nano.img", --boot, 'order=scsi0']
+      changed_when: true
+  always:
+    - name: OPNsense | Remove private configuration and seeded disk staging
+      ansible.builtin.file:
+        path: "{{ _opn_stage.path }}"
+        state: absent
+      changed_when: false
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  environment:
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"

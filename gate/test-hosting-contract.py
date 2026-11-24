@@ -303,7 +303,7 @@ def check_unsupported_fails_before_state_change():
         output = result.stdout + result.stderr
         assert result.returncode != 0, "unsupported docker-lxc selection unexpectedly passed"
         assert "docker-lxc" in output, f"failure did not name docker-lxc:\n{output}"
-        assert "official ISO installer boots a complete appliance OS" in output, (
+        assert "nano image boots a complete appliance OS" in output, (
             f"failure did not report the technical impossibility reason:\n{output}"
         )
         assert not marker.exists(), "a state-changing task ran after unsupported hosting was selected"

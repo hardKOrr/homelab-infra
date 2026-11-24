@@ -4,3 +4,4 @@ opnsense_firewall_account_privileges:
   - page-filter-api # Firewall: Rules [new]
   - page-firewall-nat-portforward-edit # Firewall: NAT: Destination NAT
   - page-firewall-aliases # Firewall: Aliases
+  - page-firewall-alias-edit # Firewall: Alias: Edit (26.7 splits reads from writes)

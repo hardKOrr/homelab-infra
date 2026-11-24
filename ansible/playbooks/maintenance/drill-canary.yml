@@ -45,7 +45,7 @@
     - name: Resolve the instance's target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
-        resolve_app_target_kinds: [native, docker, kubernetes]
+        resolve_app_target_kinds: [native, docker, kubernetes, appliance]
 
     - name: Make the browser canary's Authentik login
       when: drill_action == 'owner'

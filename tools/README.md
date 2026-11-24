@@ -8,7 +8,7 @@ options; `<script> --help` prints it.
 | --- | --- |
 | Run anything that takes over a minute (a playbook, a drill, a backup) | `tools/lab-start <name> -- <command...>` |
 | Block until it ends, in one call, then see its exit code, error lines and log tail | `tools/lab-wait <name>`; exit 124 means call it again |
-| A shell command inside the runner, or on a lab node | `tools/lab-exec '<cmd>'`, `tools/lab-exec --node '<cmd>'` |
+| A shell command inside the runner, or on a lab node | `tools/lab-exec '<cmd>'`, `tools/lab-exec --node '<cmd>'` (any node), `--runner-node` (runner host) |
 | A shell command inside one `_+lab` guest (LXC directly, VM through lab-run) | `tools/guest-exec <name or vmid> '<cmd>'` |
 | Run the whole recovery drill on one instance, stopping at the first failure | `tools/lab-start drill-<i> -- tools/lab-drill <instance>`; `--plan` prints the steps |
 | Check an app in a browser: sign in, pages render, a flow works | `tools/lab-browser <instance> <url> ansible/roles/<app>/browser/<spec>.js` |
@@ -24,3 +24,7 @@ the runner if you must, but finish with a spec. The spec format is at the top of
 When a session needs a lab helper that is not here, add it here in the same PR rather
 than writing a private copy under `/tmp`: the next session needs it too.
 `gate/test-lab-tools.py` covers `lab-start` and `lab-wait` without a lab.
+
+`lab-guest-state.py` is lab-drill's read-only node probe for
+`drill.verify_remove_isolation`. With `--destroy-guest`, it checks target absence and
+compares the other owned guests' configuration and power state across Remove.

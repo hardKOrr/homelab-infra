@@ -1,0 +1,19 @@
+---
+- name: OPNsense | Hash bootstrap secrets using the FreeBSD-compatible SHA512 format
+  ansible.builtin.command:
+    argv: [openssl, passwd, '-6', '-stdin']
+    stdin: "{{ item.value }}"
+    stdin_add_newline: false
+  loop: >-
+    {{ [{'key': 'root', 'value': homelabinfra_vault.apps[instance].admin_password},
+        {'key': 'firewall-admin', 'value': homelabinfra_vault['firewall-admin'].api_secret},
+        {'key': 'firewall', 'value': homelabinfra_vault.firewall.api_secret},
+        {'key': 'dns', 'value': homelabinfra_vault.dns.api_secret}] }}
+  register: _opn_hash_results
+  changed_when: false
+  no_log: true
+
+- name: OPNsense | Collect the bootstrap password hashes
+  ansible.builtin.set_fact:
+    _opn_boot_hashes: "{{ dict(_opn_hash_results.results | map(attribute='item.key') | zip(_opn_hash_results.results | map(attribute='stdout'))) }}"
+  no_log: true

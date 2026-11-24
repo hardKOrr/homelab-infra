@@ -6,7 +6,6 @@
 role_aliases:
   k3s-cluster: k3s_cluster
   lidarr: servarr
-  opnsense: null
   prowlarr: servarr
   proxmox-datacenter-manager: pdm
   radarr: servarr

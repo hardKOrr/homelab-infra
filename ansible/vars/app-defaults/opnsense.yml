@@ -1,19 +1,19 @@
 ---
-# OPNsense is an ISO-installed appliance, not a Debian guest.
+# OPNsense boots its preinstalled nano disk, without a Debian guest contract.
 opnsense_defaults:
-  # This native-vm guest is ISO-installed and has no guest-agent or SSH contract.
+  # This native-vm guest has no guest-agent or SSH contract.
   hosting:
     method: native
     supported: [native-vm]
     impossible:
       docker-lxc: >-
-        The official ISO installer boots a complete appliance OS, which Proxmox LXC cannot boot or host as a Docker guest.
+        The nano image boots a complete appliance OS, which LXC cannot host as a Docker guest.
       docker-vm: >-
-        This deploy installs an appliance VM from its official ISO; it does not install Docker or deploy an OCI workload.
+        Deploy imports an appliance disk; it does not install Docker or deploy an OCI workload.
       kubernetes: >-
-        The official ISO installs a standalone appliance VM; this product has no supported Kubernetes workload installer.
+        The nano image runs a standalone appliance VM with no supported Kubernetes workload installer.
       native-lxc: >-
-        The official ISO installer requires a complete VM boot environment and appliance network devices, which an LXC container does not provide.
+        The nano image requires a VM boot environment and network devices that an LXC container cannot provide.
   proxmox:
     vm:
       cores: 2
@@ -24,9 +24,28 @@ opnsense_defaults:
       description: "OPNsense firewall appliance, created by homelab-infra"
       tags: [_+lab, _-opnsense]
     installer:
-      # Update URL, ISO name and checksum together from OPNsense's official release.
-      iso_url: "https://pkg.opnsense.org/releases/26.7/OPNsense-26.7.r1-dvd-amd64.iso.bz2"
-      iso_sha256: "6b8430921316bd1d912a7bf71d02f2e354cd82b644c3fbf2646ab55382b9a758"
-      iso_name: "OPNsense-26.7.r1-dvd-amd64.iso"
+      image_url: https://pkg.opnsense.org/releases/26.7/OPNsense-26.7-nano-amd64.img.bz2
+      image_sha256: 28d5e2f37e40d87468a924e3006ef10e2ddc6de485b85333d9e3958c84d0cb9d
+      image_name: OPNsense-26.7-nano-amd64.img
   routing:
     identity: none
+    proxy: none
+  bootstrap:
+    domain: internal
+    lan_prefix: 24
+    validate_certs: false
+    editor_url: https://github.com/SvenGDK/UFS2Tool/releases/download/v4.1/linux-x64-selfcontained.zip
+    editor_sha256: 5a0cd3f89a9a1255640f19e81eb213bcffbd274e14d4c402189aa3d18bd068af
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: playbooks/maintenance/backup-app.yml
+      restore_playbook: playbooks/maintenance/restore-app.yml
+      controller: true
+      destinations: [existing]
+  drill:
+    verify_remove_isolation: true

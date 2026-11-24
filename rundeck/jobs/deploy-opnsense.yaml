@@ -4,27 +4,27 @@
   name: Deploy OPNsense
   group: Platform/Network/OPNsense
   description: |-
-    Create or start a new **OPNsense** ISO-installer VM.
+    Deploy a new **OPNsense** appliance from its checksum-pinned nano image.
 
-    - Separate from an existing `infrastructure.dns.provider: opnsense` host.
-    - Downloads a checksum-pinned installer ISO on the selected Proxmox node.
-    - First boot is completed through the Proxmox console; no SSH or guest agent is assumed.
+    - Seeds interfaces and API accounts offline before the first boot.
+    - Waits for the saved admin API key to authenticate; no console, SSH or guest agent is needed.
+    - Separate from an existing infrastructure firewall; configure the new instance LAN address and bridges.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
   nodeFilterEditable: false
   multipleExecutions: false
   options:
-  - name: instance
-    description: Enter the appliance instance configured in config/apps/<instance>.yml.
-    required: true
-    value: opnsense
+    - name: instance
+      description: Enter the appliance instance configured in config/apps/<instance>.yml.
+      required: true
+      value: opnsense
   sequence:
     keepgoing: false
     strategy: node-first
     commands:
-    - description: Run playbooks/apps/opnsense.yml
-      script: |-
+      - description: Run playbooks/apps/opnsense.yml
+        script: |-
           #!/bin/bash
           set -euo pipefail
           : "${RD_OPTION_INSTANCE:?instance is required}"

@@ -1,0 +1,26 @@
+---
+- name: OPNsense recovery | Transfer the native configuration without logging secrets
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/files/config-transfer.py') }}"
+    stdin: >-
+      {{ {'action': opn_transfer_action,
+          'path': opn_transfer_path,
+          'instance': opn_transfer_instance,
+          'address': opn_transfer_config.bootstrap.lan_address,
+          'validate_certs': opn_transfer_config.bootstrap.validate_certs,
+          'password': homelabinfra_vault.apps[opn_transfer_instance].admin_password} | to_json }}
+  changed_when: opn_transfer_action == 'restore'
+  register: _opn_transfer
+  failed_when: false
+  no_log: true
+
+- name: OPNsense recovery | Check the sanitized transfer result
+  ansible.builtin.assert:
+    that: _opn_transfer.rc == 0
+    fail_msg: >-
+      Native configuration transfer failed during
+      {{ (_opn_transfer.stdout | from_json).stage if _opn_transfer.rc != 0 else 'completion' }};
+      credentials and response bodies are suppressed.

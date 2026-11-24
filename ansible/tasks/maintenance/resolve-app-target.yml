@@ -18,6 +18,7 @@
 #   app       — the application the instance belongs to. Defaults to `instance`; the
 #               Rundeck jobs always pass it, because a second instance named radarr-4k is
 #               still app radarr and its defaults live in app-defaults/radarr.yml.
+#   resolve_app_target_register — false for controller hooks that only need ownership proof.
 #   resolve_app_target_kinds — allowed hosting kinds; defaults to [native, docker].
 #                              Kubernetes callers opt in and target the cluster API host.
 #
@@ -146,7 +147,7 @@
     - _rat_kind == 'docker'
     - _rat_stack | length == 0
 
-# A native app owns its guest: the `_+lab` guest tagged for the instance, or the one
+# A native app or appliance owns its guest: the `_+lab` guest tagged for the instance, or the one
 # unclaimed owned guest of that exact name. An untagged same-name guest is never used.
 - name: Resolve app target | Resolve the native instance's owned guest
   ansible.builtin.include_tasks: ../proxmox/resolve-instance-guest.yml
@@ -157,7 +158,7 @@
          app_config.get('proxmox', {}).get('type', '')) | string
          if app_config.get('proxmox', {}).get('guest_type',
             app_config.get('proxmox', {}).get('type', '')) | string in ['lxc', 'vm'] else '' }}
-  when: _rat_kind == 'native'
+  when: _rat_kind in ['native', 'appliance']
 
 - name: Resolve app target | Require exactly one owned native guest
   ansible.builtin.assert:
@@ -167,12 +168,12 @@
     fail_msg: >-
       No single _+lab guest belongs to {{ _rat_instance }}; deploy the app or check the
       instance name. Untagged guests are never used.
-  when: _rat_kind == 'native'
+  when: _rat_kind in ['native', 'appliance']
 
 - name: Resolve app target | Select the native guest
   ansible.builtin.set_fact:
     _rat_host: "{{ resolve_guest_hosts[0] }}"
-  when: _rat_kind == 'native'
+  when: _rat_kind in ['native', 'appliance']
 
 - name: Resolve app target | Resolve the Kubernetes cluster
   ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
@@ -213,4 +214,5 @@
     app_target_instance: "{{ _rat_instance }}"
     app_target_project_dir: "/opt/{{ _rat_instance }}"
     app_target_namespace: "{{ k8s_namespace if _rat_kind == 'kubernetes' else '' }}"
+  when: resolve_app_target_register | default(true) | bool
   changed_when: false

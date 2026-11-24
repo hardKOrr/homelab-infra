@@ -3,14 +3,18 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
 
 
 def plan(*args):
-    out = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan", *args],
-                         stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    # A workstation's private pre-deploy hooks must not alter the expected plan.
+    with tempfile.TemporaryDirectory(prefix="gate-drill-plan-") as lab:
+        out = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"), "--plan", *args],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             env=dict(os.environ, HOMELAB_LAB_DIR=lab))
     if out.returncode != 0:
         failures.append(f"{args}: exit {out.returncode}: {out.stderr}")
     return out.stdout
@@ -24,6 +28,10 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "backup", "remove", "wiring-remove", "deploy-fresh", "wiring-deploy-fresh",
             "canary-fresh", "backup-pre-restore", "restore-preview", "restore", "canary-verify",
             "deploy-final", "wiring-deploy-final", "canary-final"]
+
+opnsense = plan("--app", "opnsense", "--destroy-guest", "opnsense-drill")
+if steps(opnsense) != STATEFUL or "destroy_guest=true" not in opnsense or "canary=hook" not in opnsense:
+    failures.append("OPNsense runs the complete stateful drill with guest destruction and API alias")
 
 out = plan("tautulli")
 if steps(out) != ["requires-plex"] + STATEFUL:
@@ -83,6 +91,31 @@ for app in ("wordpress", "bookstack"):
 # No catalog app is refused today; the rule itself stays covered.
 from importlib.machinery import SourceFileLoader
 lab_drill = SourceFileLoader("lab_drill", os.path.join(repo, "tools", "lab-drill")).load_module()
+# Exercise the actual Remove wrapper with no lab access or mutation.
+for after, passed in [({"other": {"name": "other", "status": "running"}}, True),
+                      ({"target": {"name": "opnsense-drill"}, "other": {"name": "other", "status": "running"}}, False),
+                      ({"other": {"name": "other", "status": "stopped"}}, False)]:
+    subject = object.__new__(lab_drill.Drill)
+    subject.defaults = {"drill": {"verify_remove_isolation": True}}
+    subject.plan = False
+    subject.instance = "opnsense-drill"
+    snapshots = iter([{"target": {"name": "opnsense-drill"},
+                       "other": {"name": "other", "status": "running"}}, after])
+    subject.guest_state = lambda: next(snapshots)
+    subject.playbook = lambda *args, **kwargs: None
+    subject.wiring = lambda *args: None
+    subject.say = lambda *args: None
+    def refuse(*args):
+        raise ValueError("isolation refused")
+    subject.fail = refuse
+    try:
+        subject.remove()
+        accepted = True
+    except ValueError:
+        accepted = False
+    if accepted != passed:
+        failures.append("remove isolation rejects a surviving target or another guest's changed state")
+
 kind, refusal = lab_drill.kind_of("example", {"backup": {"enabled": True}}, True)
 if kind is not None or "recovery.methods" not in (refusal or ""):
     failures.append("backups without recovery.methods refuse the drill")
@@ -98,7 +131,6 @@ for spec in ("mixpost", "wordpress"):
 
 # The instance's own backup.enabled, reported by check-wiring.yml, picks the sequence
 # before anything destructive runs. A fake runner answers every playbook.
-import tempfile
 with tempfile.TemporaryDirectory() as lab:
     def drill(app, backup):
         runner = os.path.join(lab, "runner-lab-run.sh")

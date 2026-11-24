@@ -1,6 +1,6 @@
 ---
-# OPNsense uses an interactive ISO installer; this play owns only its Proxmox VM.
-- name: "OPNsense | Provision installer VM"
+# Bootstrap an appliance disk offline; the guest needs neither SSH nor an agent.
+- name: "OPNsense | Deploy appliance VM"
   hosts: localhost
   become: false
   gather_facts: false
@@ -15,30 +15,15 @@
       ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
       vars:
         load_config_app: opnsense
-        load_config_vault_methods: []
+        load_config_vault_methods: [native]
     - name: Validate supported hosting method
       ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
       vars:
         hosting_app_slug: opnsense
   tasks:
-    - name: Assert appliance VMID and bridges are configured
-      ansible.builtin.assert:
-        that:
-          - app_config.proxmox.vm.vmid is defined
-          - app_config.proxmox.installer.wan_bridge is defined
-          - app_config.proxmox.installer.lan_bridge is defined
-        fail_msg: >-
-          Define proxmox.vm.vmid plus proxmox.installer.wan_bridge and lan_bridge
-          in config/apps/{{ instance }}.yml; see config.example/apps/opnsense.example.yml.
-    - name: Build ISO appliance identity
-      ansible.builtin.set_fact:
-        appliance_vm: >-
-          {{ app_config.proxmox.vm | combine(app_config.proxmox.installer, recursive=True)
-             | combine({'name': instance,
-                        'storage': (app_config.proxmox.vm.storage | default(homelabinfra_config.proxmox.storage | default('local'))),
-                        'tags': ((app_config.proxmox.vm.tags | default([])) + ['_' ~ instance]) | unique}, recursive=True) }}
-    - name: Create or start OPNsense installer VM
-      ansible.builtin.include_tasks: ../../tasks/proxmox/iso-appliance-create.yml
+    - name: Deploy OPNsense
+      ansible.builtin.include_role:
+        name: opnsense
     - name: Record OPNsense on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:

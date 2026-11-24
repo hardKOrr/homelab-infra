@@ -4,6 +4,7 @@
   tools-exec 'systemctl is-active rundeckd'
   tools-exec < probe.sh                 # script on stdin runs under bash -s
   tools-exec --node 'pvesh get /cluster/resources --type vm'
+  tools-exec --runner-node '<command>' # on the node hosting the runner LXC
 
 Runs as root. The exit code is the command's. Run long work through lab-start instead.
 """
@@ -17,13 +18,14 @@ args = sys.argv[1:]
 if args[:1] in (["-h"], ["--help"]):
     print(__doc__.strip())
     sys.exit(0)
-on_node = args[:1] == ["--node"]
+runner_node = args[:1] == ["--runner-node"]
+on_node = args[:1] == ["--node"] or runner_node
 if on_node:
     args = args[1:]
 command, script = labaccess.command_or_stdin(args)
 values = labaccess.lab_values()
 if on_node:
-    ip = labaccess.any_node(values)
+    ip = labaccess.runner(values)[0] if runner_node else labaccess.any_node(values)
     remote = "bash -s" if command is None else command
 else:
     ip, vmid = labaccess.runner(values)

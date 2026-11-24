@@ -1,0 +1,100 @@
+---
+- name: OPNsense restore | Register Proxmox delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
+- name: OPNsense restore | Verify the target is an owned appliance
+  ansible.builtin.include_tasks: ../../../tasks/maintenance/resolve-app-target.yml
+  vars:
+    resolve_app_target_instance: "{{ restore_target }}"
+    resolve_app_target_kinds: [appliance]
+    resolve_app_target_register: false
+
+- name: OPNsense restore | Stage and validate through the shared PBS client
+  block:
+    - name: OPNsense restore | Create private controller staging
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -opnsense-restore
+      register: _opn_restore_dir
+
+    - name: OPNsense restore | Create private PBS staging on the owned node
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -opnsense-pbs
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      register: _opn_restore_node_dir
+
+    - name: OPNsense restore | Verify or extract the selected native recovery point
+      ansible.builtin.include_tasks:
+        file: ../../../tasks/backup/pbs-client-restore.yml
+        apply:
+          delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      vars:
+        pbs_client_runtime: native
+        pbs_client_archives:
+          - name: config.pxar
+            path: "{{ _opn_restore_node_dir.path }}"
+
+    - name: OPNsense restore | Fetch the private configuration for native upload
+      ansible.builtin.fetch:
+        src: "{{ _opn_restore_node_dir.path }}/config.xml"
+        dest: "{{ _opn_restore_dir.path }}/config.xml"
+        flat: true
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      no_log: true
+      when: restore_overwrite | bool
+
+    - name: OPNsense restore | Apply the native config and reboot
+      ansible.builtin.include_tasks: config-transfer.yml
+      vars:
+        opn_transfer_action: restore
+        opn_transfer_path: "{{ _opn_restore_dir.path }}/config.xml"
+        opn_transfer_instance: "{{ restore_target }}"
+        opn_transfer_config: "{{ restore_target_config }}"
+      when: restore_overwrite | bool
+
+    - name: OPNsense restore | Observe the appliance reboot
+      ansible.builtin.wait_for:
+        host: "{{ restore_target_config.bootstrap.lan_address }}"
+        port: 443
+        state: stopped
+        timeout: 180
+      when: restore_overwrite | bool
+
+    - name: OPNsense restore | Verify the restored API accepts the saved key
+      ansible.builtin.uri:
+        url: "https://{{ restore_target_config.bootstrap.lan_address }}/api/auth/user/search"
+        method: POST
+        body_format: json
+        body: {current: 1, rowCount: 1}
+        url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+        url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ restore_target_config.bootstrap.validate_certs }}"
+        status_code: 200
+      register: _opn_restore_api
+      until: _opn_restore_api.status | default(0) == 200 and _opn_restore_api.json.rows is defined
+      retries: 90
+      delay: 10
+      no_log: true
+      when: restore_overwrite | bool
+
+    - name: OPNsense restore | Mark completion after authenticated readiness
+      ansible.builtin.set_fact:
+        _application_restore_complete: "{{ restore_overwrite | bool }}"
+
+  always:
+    - name: OPNsense restore | Remove private staging
+      ansible.builtin.file:
+        path: "{{ _opn_restore_dir.path }}"
+        state: absent
+      when: _opn_restore_dir.path is defined
+
+    - name: OPNsense restore | Remove private node staging
+      ansible.builtin.file:
+        path: "{{ _opn_restore_node_dir.path }}"
+        state: absent
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      when: _opn_restore_node_dir.path is defined
