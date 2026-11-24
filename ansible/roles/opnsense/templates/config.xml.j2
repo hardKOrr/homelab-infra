@@ -43,6 +43,12 @@
       <subnet>{{ app_config.bootstrap.lan_prefix | int }}</subnet>
     </lan>
   </interfaces>
+  <sysctl version="1.0.2">
+    <item uuid="{{ ('homelab-infra/' ~ instance ~ '/disable-ktls') | to_uuid }}">
+      <tunable>kern.ipc.tls.enable</tunable><value>0</value>
+      <descr>Prevent OPNsense 26.7 large TLS response corruption (core#10556)</descr>
+    </item>
+  </sysctl>
   <unbound><enable>1</enable></unbound>
   <nat><outbound><mode>automatic</mode></outbound></nat>
   <filter/>

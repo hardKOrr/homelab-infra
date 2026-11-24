@@ -56,6 +56,7 @@ def render_example():
     assert tree.findtext('interfaces/lan/subnet') == str(example['bootstrap']['lan_prefix'])
     assert tree.findtext('system/webgui/interfaces') == 'lan'
     assert tree.find('trigger_initial_wizard') is None
+    assert tree.findtext("sysctl/item[tunable='kern.ipc.tls.enable']/value") == '0'
     root = tree.find("system/user[name='root']")
     assert verify_hash(credentials['apps']['opnsense-drill']['admin_password'], root.findtext('password'))
     for service, name, expected in (
@@ -145,6 +146,7 @@ def reconciliation_scope():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         files = {
+            'roles/opnsense/tasks/tunables.yml': [{'ansible.builtin.meta': 'noop'}],
             'roles/opnsense/tasks/main.yml': load('ansible/roles/opnsense/tasks/configure.yml')[1:],
             'tasks/firewall/opnsense-base.yml': [{
                 'ansible.builtin.assert': {'that': [

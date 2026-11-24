@@ -38,6 +38,9 @@ Backup & Restore form and uploads a private controller staging directory through
 shared PBS client on the owned VM's Proxmox node. The runner does not need local
 root privileges; private controller and node staging are both cleaned up.
 The history-download API does not export current state.
+Deploy seeds and reconciles `kern.ipc.tls.enable=0` because the pinned 26.7 image has
+[large TLS response corruption](https://github.com/opnsense/core/issues/10556).
+HTTPS and native XML identity validation remain enabled.
 `tasks/restore.yml` verifies the selected PBS archive, requires a recent independent
 pre-restore point, and uploads the XML through the same native form. It observes the
 reboot and checks the saved API key before completing. Staging is removed on failure

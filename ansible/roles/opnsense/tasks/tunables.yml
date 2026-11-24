@@ -1,0 +1,58 @@
+---
+# The initial 26.7 image predates the upstream web GUI KTLS fix (core#10556).
+# Disable kernel TLS for new sessions; retain TLS itself and XML identity checks.
+- name: OPNsense | Reconcile the large-response TLS workaround
+  module_defaults:
+    ansible.builtin.uri:
+      url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+      url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+      force_basic_auth: true
+      validate_certs: "{{ app_config.bootstrap.validate_certs }}"
+      status_code: 200
+      body_format: json
+  block:
+    - name: OPNsense | Find the kernel TLS tunable
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/core/tunables/searchItem"
+        method: POST
+        body: {current: 1, rowCount: -1, searchPhrase: kern.ipc.tls.enable}
+      register: _opn_tunables
+      changed_when: false
+      no_log: true
+
+    - name: OPNsense | Resolve the exact kernel TLS setting
+      ansible.builtin.set_fact:
+        _opn_ktls: "{{ _opn_tunables.json.rows | selectattr('tunable', 'equalto', 'kern.ipc.tls.enable') | list }}"
+
+    - name: OPNsense | Refuse ambiguous kernel TLS settings
+      ansible.builtin.assert:
+        that: _opn_ktls | length <= 1
+        fail_msg: Multiple kernel TLS settings exist; refusing an ambiguous update.
+
+    - name: OPNsense | Disable kernel TLS while preserving HTTPS
+      ansible.builtin.uri:
+        url: >-
+          https://{{ app_config.bootstrap.lan_address }}/api/core/tunables/{{
+          'setItem/' ~ _opn_ktls[0].uuid if _opn_ktls | length else 'addItem' }}
+        method: POST
+        body:
+          sysctl:
+            tunable: kern.ipc.tls.enable
+            value: "0"
+            descr: Prevent OPNsense 26.7 large TLS response corruption (core#10556)
+      register: _opn_ktls_update
+      when: not _opn_ktls | length or _opn_ktls[0].value | string != '0'
+      changed_when: _opn_ktls_update.json.result | default('') == 'saved'
+      failed_when: _opn_ktls_update.json.result | default('') != 'saved'
+      no_log: true
+
+    - name: OPNsense | Apply the kernel TLS setting to new sessions
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/core/tunables/reconfigure"
+        method: POST
+        body: {}
+      when: _opn_ktls_update is changed
+      register: _opn_ktls_apply
+      changed_when: true
+      failed_when: _opn_ktls_apply.json.status | default('') != 'ok'
+      no_log: true

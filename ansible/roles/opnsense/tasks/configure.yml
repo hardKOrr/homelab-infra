@@ -19,6 +19,9 @@
   changed_when: false
   no_log: true
 
+- name: OPNsense | Avoid the pinned release's large TLS response corruption
+  ansible.builtin.include_tasks: tunables.yml
+
 - name: OPNsense | Save the estate registry before targeting this appliance
   ansible.builtin.set_fact:
     _opn_original_infra: "{{ homelabinfra_infra }}"
