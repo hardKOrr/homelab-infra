@@ -25,6 +25,8 @@ stack: media
 #   # On a Docker LXC stack (see below) leave gpu_device empty and list the host's render
 #   # nodes instead; each must be an identifier of a proxmox.devices entry with mode: shared.
 #   # devices: [/dev/dri/renderD129]
+#   # Hardware transcoding requires Emby Premiere; false exposes devices without enabling it.
+#   # hardware_transcoding: false
 #   # image: lscr.io/linuxserver/emby:latest
 #   # config_path: /opt/emby/config
 #
