@@ -186,7 +186,10 @@
     return_content: true
     status_code: 200
   register: _jf_public
-  until: _jf_public.status | default(0) == 200
+  # Jellyfin can return HTTP 200 with a startup payload before public info is ready.
+  until:
+    - _jf_public.status | default(0) == 200
+    - _jf_public.json.ProductName | default('') | length > 0
   retries: "{{ jellyfin_http_retries }}"
   delay: "{{ jellyfin_http_delay }}"
   changed_when: false

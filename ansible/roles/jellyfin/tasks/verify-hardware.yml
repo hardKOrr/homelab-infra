@@ -1,0 +1,50 @@
+---
+- name: Resolve Jellyfin's local URL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-url.yml
+  vars:
+    drill_url_from_guest: true
+
+- name: Authenticate the hardware playback check
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.uri:
+    url: "{{ drill_app_url }}/Users/AuthenticateByName"
+    method: POST
+    headers:
+      Authorization: 'MediaBrowser Client="homelab-infra-hardware", Device="lab", DeviceId="lab-hardware", Version="1.0.0"'
+    body_format: json
+    body:
+      Username: "{{ app_config.app.admin_user | default('admin') }}"
+      Pw: "{{ homelabinfra_vault.media[instance].password }}"
+    status_code: 200
+  register: _jfh_auth
+  changed_when: false
+  no_log: true
+
+- name: Force hardware playback and check the transcode log
+  delegate_to: "{{ drill_app_delegate }}"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../tools/lab-jellyfin-transcode') }}"
+      - --inside-guest
+      - "{{ instance }}"
+      - "{{ hardware_check_source }}"
+  environment:
+    JELLYFIN_PROBE_URL: "{{ drill_app_url }}"
+    JELLYFIN_PROBE_CONFIG: "{{ app_config.app.config_path }}"
+    JELLYFIN_PROBE_TOKEN: "{{ _jfh_auth.json.AccessToken }}"
+    JELLYFIN_PROBE_USER: "{{ _jfh_auth.json.User.Id }}"
+  register: _jfh_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Report the credential-free playback evidence
+  ansible.builtin.debug:
+    msg: "{{ _jfh_probe.stdout_lines }}"
+
+- name: Require successful hardware playback
+  ansible.builtin.assert:
+    that: _jfh_probe.rc == 0
+    fail_msg: "{{ _jfh_probe.stderr | default('Hardware playback check failed') }}"

@@ -89,9 +89,8 @@ never declared, and its config-doctor refuses the instance that inherits it.
 For a Docker app whose defaults declare a `stack:`, a non-empty `app.gpu_device` selects
 the stack that owns that device: `proxmox.devices.<device>.stack`, or the device key when
 `stack` is omitted. This applies during Deploy and application recovery/removal. The app's
-default stack is retained when no GPU is declared. An instance file may omit its top-level
-`stack` to inherit the app default and let the GPU select another stack; if it explicitly
-sets `stack`, config-doctor requires that value to match the device's effective stack.
+default stack is retained when no GPU is declared. The GPU selection also overrides an
+explicit instance `stack`, so changing only `app.gpu_device` selects another device's VM.
 Apps deployed as dedicated GPU VMs without a `stack:` use their existing VM placement path.
 
 Media-stack instances may add three optional `app:` keys read only by

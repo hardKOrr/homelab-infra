@@ -19,6 +19,7 @@ that interface.
   media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
   The live [recovery drill and application data port](recovery-drill.md) prove one
   instance's deploy, backup and restore end to end.
+  `verify-app-hardware.yml` dispatches hardware playback checks to the application role.
   `drill-canary.yml` writes and checks the drill canary for `tools/lab-drill`.
   `check-wiring.yml` counts an instance's route, DNS record, monitor and SSO entry for it.
   `influxdb-canary.yml` runs the InfluxDB role's authenticated recovery checks; its

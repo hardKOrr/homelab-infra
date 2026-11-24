@@ -2,6 +2,8 @@
 """GPU-backed stack apps resolve to their device owner's shared VM."""
 
 from pathlib import Path
+import os
+import subprocess
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
@@ -57,11 +59,15 @@ def effective_stack(config, device):
 def test_effective_stack_resolution():
     devices = {
         "intel-igpu": {"stack": "media"},
+        "second-igpu": {"stack": "second-media"},
         "ollama-gpu": {},
     }
     assert effective_stack(
         {"stack": "photos", "app": {"gpu_device": "intel-igpu"}}, devices
     ) == "media"
+    assert effective_stack(
+        {"stack": "photos", "app": {"gpu_device": "second-igpu"}}, devices
+    ) == "second-media"
     assert effective_stack(
         {"stack": "photos", "app": {"gpu_device": "ollama-gpu"}}, devices
     ) == "ollama-gpu"
@@ -123,10 +129,29 @@ def test_removal_keeps_a_gpu_used_by_sibling_apps():
         assert any("_rm_stack_has_other_apps" in condition for condition in conditions)
 
 
+def test_provision_tag_stops_before_app_deployment():
+    result = subprocess.run(
+        [os.environ.get("GATE_ANSIBLE_PLAYBOOK", "ansible-playbook"),
+         "-i", "localhost,", "playbooks/apps/jellyfin.yml",
+         "-e", "instance=jellyfin", "--tags", "provision", "--list-tasks"],
+        cwd=ROOT / "ansible", capture_output=True, text=True,
+        env={**os.environ, "ANSIBLE_NOCOLOR": "1"}, check=True,
+    )
+    assert "Attach the stack's declared GPU" in result.stdout
+    assert "Load the app config" in result.stdout
+    # No application role, registry write or published route may run during staging.
+    plays = read_yaml("ansible/playbooks/apps/deploy.yml")
+    for play in plays[1:]:
+        assert "provision" not in play.get("tags", [])
+    assert "Record the app on its stack host" not in result.stdout
+    assert "Bootstrap guest" not in result.stdout
+
+
 def main():
     test_effective_stack_resolution()
     test_deploy_and_recovery_paths_share_the_resolver()
     test_removal_keeps_a_gpu_used_by_sibling_apps()
+    test_provision_tag_stops_before_app_deployment()
     print("GPU stack resolution, config propagation, and shared-device removal: OK")
 
 

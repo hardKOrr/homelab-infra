@@ -732,16 +732,6 @@ for path in app_files:
             elif proxmox_found and gpu_device not in proxmox_devices:
                 report("ERROR", where, "app.gpu_device",
                        "%r is not declared under proxmox.devices" % gpu_device)
-            elif proxmox_found:
-                device = proxmox_devices[gpu_device]
-                device_stack = (
-                    device.get("stack", gpu_device)
-                    if isinstance(device, dict) else gpu_device
-                )
-                if "stack" in data and data.get("stack") != device_stack:
-                    report("ERROR", where, "stack",
-                           "must match proxmox.devices.%s.stack (%s) when app.gpu_device is set"
-                           % (gpu_device, device_stack))
 
     # The platform reserves the leading-underscore tag grammar: `_+` ownership, `_-` machine
     # facts, `_.` topology, and `_<instance>` for applications. An instance whose name began

@@ -12,6 +12,8 @@ Options:
   --destroy-guest     Remove also destroys the instance's own native guest
   --seed-wrong-point  restore the fresh install's backup instead of the canary's point;
                       the drill passes only when canary verify then fails
+  --gpu-device <id>   after Remove, change only app.gpu_device through Configure App
+  --stop-after-restore stop after restored canaries, leaving them for a planned handoff
   --plan              print the steps and the canary it would use, run nothing
 
 The steps are the procedure in ansible/playbooks/maintenance/recovery-drill.md, through
@@ -160,7 +162,8 @@ def kind_of(app, defaults, backups):
 
 
 class Drill:
-    def __init__(self, instance, app, ref, url, destroy_guest, plan, seed_wrong_point=False):
+    def __init__(self, instance, app, ref, url, destroy_guest, plan, seed_wrong_point=False, gpu_device=None,
+                 stop_after_restore=False):
         self.instance, self.app, self.ref, self.url = instance, app, ref, url
         # The monitor's full URL, which the HTTPS check requests; else the route's root.
         self.probe = ""
@@ -175,6 +178,7 @@ class Drill:
         self.step_no, self.repeat_changes, self.points, self.method = 0, [], {}, ""
         self.backups = None
         self.owner_made = False
+        self.gpu_device, self.stop_after_restore = gpu_device, stop_after_restore
 
     # ── plumbing ────────────────────────────────────────────────────────────────
     def say(self, line):
@@ -430,6 +434,10 @@ class Drill:
                                 bool((self.defaults.get("backup") or {}).get("enabled")))
         if refusal and self.plan:
             die(refusal)
+        if (self.gpu_device or self.stop_after_restore) and (kind != "stateful" or self.tier == "none"):
+            die("migration and restore handoff need a stateful app with a canary")
+        if self.seeded and (self.gpu_device or self.stop_after_restore):
+            die("migration and restore handoff cannot seed a wrong recovery point")
         if self.seeded and (kind == "stateless" or self.tier == "none"):
             die("--seed-wrong-point needs a stateful app with a canary")
         self.say(f"DRILL {self.instance} app={self.app} role={self.role} {kind or 'refused'} "
@@ -463,6 +471,8 @@ class Drill:
             if effective != kind:
                 self.say(f"KIND {effective}: the instance's backup.enabled overrides the app's")
                 kind = effective
+            if (self.gpu_device or self.stop_after_restore) and (kind != "stateful" or self.tier == "none"):
+                self.fail("deploy", "migration and restore handoff need backups and a canary")
             if self.seeded and (kind == "stateless" or self.tier == "none"):
                 self.fail("deploy", "--seed-wrong-point needs a stateful app with a canary")
         if kind == "stateless":
@@ -478,6 +488,9 @@ class Drill:
         self.deploy("deploy-repeat", repeat=True)
         point = self.backup("backup")
         self.remove(**remove)
+        if self.gpu_device:
+            self.playbook("configure-gpu", "playbooks/maintenance/configure-app.yml",
+                          app=self.app, extra_yaml="'{app: {gpu_device: " + self.gpu_device + "}}'")
         self.deploy("deploy-fresh")
         self.canary_step("fresh")
         if self.seeded:
@@ -492,6 +505,9 @@ class Drill:
                       recovery_point=point, overwrite="true", pre_restore_point=pre_restore)
         self.https("restore")
         self.canary_step("verify")
+        if self.stop_after_restore:
+            self.say("HANDOFF restored canaries verified; final Deploy and cleanup remain")
+            return
         self.deploy("deploy-final", repeat=True)
         self.canary_step("final")
         self.summary(True)
@@ -600,9 +616,9 @@ def run_all(ref, plan, start=None, keep=False):
 
 
 def main(argv):
-    opts = {"--ref": "master", "--app": None, "--url": None, "--from": None}
+    opts = {"--ref": "master", "--app": None, "--url": None, "--from": None, "--gpu-device": None}
     flags = {"--destroy-guest": False, "--plan": False, "--seed-wrong-point": False,
-             "--all": False, "--keep": False}
+             "--all": False, "--keep": False, "--stop-after-restore": False}
     instance = None
     while argv:
         arg = argv.pop(0)
@@ -620,18 +636,21 @@ def main(argv):
                 "[--seed-wrong-point] [--plan] <instance> | --all")
     if flags["--all"]:
         if instance or opts["--app"] or opts["--url"] or flags["--seed-wrong-point"] \
-                or flags["--destroy-guest"]:
+                or flags["--destroy-guest"] or opts["--gpu-device"] or flags["--stop-after-restore"]:
             die("--all takes only --ref, --from, --keep and --plan")
         return run_all(opts["--ref"], flags["--plan"], opts["--from"], flags["--keep"])
     if opts["--from"] or flags["--keep"]:
         die("--from and --keep go with --all")
     if instance is None:
         die("name the instance")
+    if opts["--gpu-device"] and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", opts["--gpu-device"]):
+        die("--gpu-device must be a device declaration name")
     url = (opts["--url"] or "").rstrip("/") or None
     if url and not url.startswith("https://"):
         die("--url must start with https://")
     Drill(instance, opts["--app"] or instance, opts["--ref"], url,
-          flags["--destroy-guest"], flags["--plan"], flags["--seed-wrong-point"]).run()
+          flags["--destroy-guest"], flags["--plan"], flags["--seed-wrong-point"],
+          opts["--gpu-device"], flags["--stop-after-restore"]).run()
     return 0
 
 

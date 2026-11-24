@@ -15,6 +15,12 @@ options; `<script> --help` prints it.
 
 `lab-exec` and `guest-exec` take a script on stdin instead of a command string. Exit codes are the command's.
 
+For a GPU migration, `lab-drill --gpu-device <declaration> <instance>` uses Configure App
+after Remove to merge only `app.gpu_device`, then runs the fresh install and restore on
+the selected stack. `--stop-after-restore` verifies the restored canaries and leaves them
+in place at a planned handoff, before final Deploy and canary cleanup; it claims no full
+drill pass. These options require a stateful app with a canary.
+
 Browser checks are specs kept with the app's role (`ansible/roles/<app>/browser/`), so the
 next session reruns them instead of clicking through again. When a change affects what a
 user sees, add or extend the spec in the same PR. Explore by hand with `playwright-cli` on
@@ -24,6 +30,12 @@ the runner if you must, but finish with a spec. The spec format is at the top of
 When a session needs a lab helper that is not here, add it here in the same PR rather
 than writing a private copy under `/tmp`: the next session needs it too.
 `gate/test-lab-tools.py` covers `lab-start` and `lab-wait` without a lab.
+
+`lab-jellyfin-transcode --ref <branch> <instance> <media-file>` requests forced H.264
+playback and requires a produced HLS segment plus a new hardware-encoder log with
+nonzero frames. Run it with `lab-start` and `lab-wait`. The source must already be
+available inside Jellyfin; its temporary library is removed even on failure. The
+provisioned administrator credential stays inside the Ansible/guest execution path.
 
 `lab-guest-state.py` is lab-drill's read-only node probe for
 `drill.verify_remove_isolation`. With `--destroy-guest`, it checks target absence and

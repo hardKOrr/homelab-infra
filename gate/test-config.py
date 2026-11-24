@@ -1345,12 +1345,23 @@ def doctor_and_secret_shape():
             yaml.safe_dump(immich, sort_keys=False), encoding="utf-8"
         )
         result = doctor(target)
-        output = result.stdout + result.stderr
-        assert result.returncode != 0, "an explicit GPU stack conflict was accepted"
-        assert (
-            "apps/immich.yml" in output
-            and "must match proxmox.devices.intel-igpu.stack (media)" in output
-        ), output
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        # Only app.gpu_device changes when moving to a second dedicated iGPU.
+        proxmox["proxmox"]["devices"]["second-igpu"] = {
+            "kind": "igpu", "mode": "dedicated", "node": "fixture-compute-2",
+            "stack": "second-media", "identifiers": ["0000:00:02.0"],
+        }
+        (target / "proxmox.yml").write_text(
+            yaml.safe_dump(proxmox, sort_keys=False), encoding="utf-8"
+        )
+        immich["app"]["gpu_device"] = "second-igpu"
+        (apps / "immich.yml").write_text(
+            yaml.safe_dump(immich, sort_keys=False), encoding="utf-8"
+        )
+        result = doctor(target)
+        assert result.returncode == 0, result.stdout + result.stderr
+        immich["app"]["gpu_device"] = "intel-igpu"
 
         immich["stack"] = "media"
         (apps / "immich.yml").write_text(
@@ -1360,7 +1371,7 @@ def doctor_and_secret_shape():
         assert result.returncode == 0, result.stdout + result.stderr
 
         # An inherited default stack may differ. The runtime resolver replaces that
-        # default with the GPU owner's stack; only an explicit instance override conflicts.
+        # default with the GPU owner's stack, as it does for explicit instance values.
         immich.pop("stack")
         (apps / "immich.yml").write_text(
             yaml.safe_dump(immich, sort_keys=False), encoding="utf-8"
@@ -1377,11 +1388,7 @@ def doctor_and_secret_shape():
             yaml.safe_dump(immich, sort_keys=False), encoding="utf-8"
         )
         result = doctor(target)
-        assert result.returncode != 0, "default device-key stack was ignored"
-        assert (
-            "must match proxmox.devices.intel-igpu.stack (intel-igpu)"
-            in result.stdout + result.stderr
-        )
+        assert result.returncode == 0, result.stdout + result.stderr
     with tempfile.TemporaryDirectory() as directory:
         target = Path(directory)
         (target / "proxmox.yml").write_text(
