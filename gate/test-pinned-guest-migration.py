@@ -141,6 +141,9 @@ def main():
     assert "['--restart', '1']" in direct['ansible.builtin.command']['argv']
     assert any(t.get('ansible.builtin.include_tasks') == 'wait-for-task.yml' for t in block)
     assert 'migrate_guest_target != migrate_guest_source' in tasks[1]['when']
+    create = yaml.safe_load((ROOT / 'ansible/tasks/proxmox/lxc-create.yml').read_text())
+    preserve = next(t for t in create if t.get('ansible.builtin.include_tasks') == 'preserve-existing-guest-node.yml')
+    assert preserve['vars']['guest_existing_reconcile_pin'] is False
     execution_test()
     print('Pinned guest migration: move, keep, HA and refusal paths pass')
 

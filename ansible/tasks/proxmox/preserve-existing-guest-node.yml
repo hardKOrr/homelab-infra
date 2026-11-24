@@ -50,12 +50,16 @@
          or ((app_config | default({})).get('proxmox', {}).get('node', ''))
          or ((_config_proxmox | default({})).get('proxmox', {}).get(guest_existing_config_key, {}).get('node', '')) }}
     migrate_guest_gpu: "{{ proxmox_placement_class | default('') == 'gpu_vm' }}"
-  when: _existing_guest_current_node | length > 0
+  when:
+    - _existing_guest_current_node | length > 0
+    - guest_existing_reconcile_pin | default(true) | bool
 
 - name: Existing guest | Record its reconciled node
   ansible.builtin.set_fact:
     _existing_guest_current_node: "{{ migrate_guest_node }}"
-  when: _existing_guest_current_node | length > 0
+  when:
+    - _existing_guest_current_node | length > 0
+    - guest_existing_reconcile_pin | default(true) | bool
 
 - name: Existing guest | Preserve its current node in the guest config
   ansible.builtin.set_fact:

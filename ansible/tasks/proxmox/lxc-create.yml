@@ -25,6 +25,7 @@
     guest_existing_id: "{{ homelabinfra_config.proxmox.lxc.vmid | default('') }}"
     guest_existing_type: lxc
     guest_existing_config_key: lxc
+    guest_existing_reconcile_pin: false # This seam must refuse collisions without mutation.
 
 - name: Resolve the declared placement for this LXC
   ansible.builtin.include_tasks: resolve-guest-placement.yml

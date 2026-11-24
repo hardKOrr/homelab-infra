@@ -554,6 +554,8 @@ def verify_existing_guest_node_helper():
                 "guest_existing_id": 204,
                 "guest_existing_type": "qemu",
                 "guest_existing_config_key": "vm",
+                "guest_existing_reconcile_pin": False,
+                "_config_proxmox": {"proxmox": {"vm": {"node": "new-pin"}}},
             },
             "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
             "tasks": [
