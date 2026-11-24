@@ -785,7 +785,7 @@ def emby_rendering():
     ), "'\"/srv/fixtures/music:/srv/fixtures/music:ro\"' in compose"
     assert '"18096:8096"' in compose, "'\"18096:8096\"' in compose"
     assert ":/config:ro" not in compose, "':/config:ro' not in compose"
-    role_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/main.yml"))
+    role_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/configure.yml"))
     identity_wait = task_named(
         role_tasks, "Wait for Emby's public system-info endpoint"
     )
@@ -928,14 +928,15 @@ def emby_rendering():
         "passwordless recovery is attempted only when canonical credentials fail"
     )
 
+    resolve_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/resolve.yml"))
     mount_check = task_named(
-        role_tasks,
+        resolve_tasks,
         "Resolve whether each Emby library path is under a declared media mount",
     )
     mount_guard = next(
         (
             task
-            for task in role_tasks
+            for task in resolve_tasks
             if task.get("name") == "Assert each Emby library is inside a declared media mount"
         )
     )

@@ -28,9 +28,8 @@ def include(task_list, target):
     return next(t for t in task_list if target in str(t.get("ansible.builtin.include_tasks", "")))
 
 
-def render(variables):
-    return Templar(loader=DataLoader(), variables=variables).template(
-        read(f"{ROLE}/templates/manifest.yaml.j2"))
+def render(template, variables):
+    return Templar(loader=DataLoader(), variables=variables).template(template)
 
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/emby.yml"))["emby_defaults"]
@@ -69,21 +68,27 @@ assert "Host" in verified["vars"]["_emby_restore_headers"]
 dispatch = tasks("restore.yml")
 assert include(dispatch, "restore-kubernetes.yml") and include(dispatch, "restore-guest.yml")
 
-base = {
-    "instance": "emby", "_deploy_fqdn": "emby.example.test",
-    "homelabinfra_config": {"timezone": "UTC"},
-    "k8s_media_volumes": [{"name": "media-0", "nfs": {
-        "server": "192.0.2.50", "path": "/export/media", "readOnly": True}}],
-    "k8s_media_volume_mounts": [{"name": "media-0", "mountPath": "/mnt/media"}],
-    "_emby_gpu_nodes": [],
-}
+# Emby supplies k8s_app to the shared single-container workload; render both exactly as the
+# play does, with and without an iGPU.
+deploy = next(t for t in kubernetes if t.get("name") == "Emby Kubernetes | Deploy the workload")
+assert deploy["ansible.builtin.include_tasks"].endswith("tasks/kubernetes/single-container.yml")
+shared = read("ansible/templates/kubernetes/single-container.yaml.j2")
 
 
 def workload(gpu):
     app = dict(defaults["app"], gpu_device="intel-igpu-2" if gpu else "")
-    variables = dict(base, app_config=dict(defaults, app=app), _emby_gpu_declared=gpu)
-    variables["_emby_gpu_nodes"] = ["k3s-4"] if gpu else []
-    docs = yaml.safe_load_all(render(variables))
+    variables = {
+        "instance": "emby", "_deploy_fqdn": "emby.example.test",
+        "homelabinfra_config": {"timezone": "UTC"},
+        "app_config": dict(defaults, app=app),
+        "k8s_media_volumes": [{"name": "media-0", "nfs": {
+            "server": "192.0.2.50", "path": "/export/media", "readOnly": True}}],
+        "k8s_media_volume_mounts": [{"name": "media-0", "mountPath": "/mnt/media"}],
+        "_emby_gpu_declared": gpu, "_emby_gpu_nodes": ["k3s-4"] if gpu else [],
+        **deploy["vars"],
+    }
+    variables["k8s_app"] = render(deploy["vars"]["k8s_app"], variables)
+    docs = yaml.safe_load_all(render(shared, variables))
     return {(d["kind"], d["metadata"]["name"]): d for d in docs}
 
 
@@ -98,6 +103,8 @@ nfs = next(v for v in pod["volumes"] if v["name"] == "media-0")["nfs"]
 assert nfs["readOnly"] is True
 assert {"name": "media-0", "mountPath": "/mnt/media"} in pod["containers"][0]["volumeMounts"]
 assert cpu[("Ingress", "emby")]["spec"]["rules"][0]["host"] == "emby.example.test"
+assert cpu[("Service", "emby")]["spec"]["ports"][0] == {"port": 8097, "targetPort": 8096}
+assert pod["containers"][0]["readinessProbe"]["httpGet"]["path"] == "/emby/System/Info/Public"
 
 gpu = workload(True)
 pod = gpu[("Deployment", "emby")]["spec"]["template"]["spec"]
@@ -105,6 +112,7 @@ assert pod["nodeSelector"] == {"kubernetes.io/hostname": "k3s-4"}
 assert pod["containers"][0]["securityContext"] == {"privileged": True}
 assert {"name": "dri", "mountPath": "/dev/dri"} in pod["containers"][0]["volumeMounts"]
 assert next(v for v in pod["volumes"] if v["name"] == "dri")["hostPath"]["path"] == "/dev/dri"
+assert {"name": "ATTACHED_DEVICES_PERMS", "value": "/dev/dri -type c"} in pod["containers"][0]["env"]
 
 # A cluster node passes its declared iGPU through; the role installs a DRM kernel on it.
 node = yaml.safe_load(read("ansible/tasks/kubernetes/provision-node.yml"))

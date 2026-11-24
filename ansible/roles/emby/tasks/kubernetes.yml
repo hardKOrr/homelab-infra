@@ -62,17 +62,41 @@
 - name: Emby Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
-- name: Emby Kubernetes | Render the workload manifest
-  ansible.builtin.set_fact:
-    _emby_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
-
-- name: Emby Kubernetes | Apply the workload
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+- name: Emby Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
   vars:
-    k8s_manifest: "{{ _emby_k8s_manifest }}"
-    k8s_wait_for:
-      - "deployment/{{ instance }}"
     k8s_wait_timeout: 600
+    _emby_k8s_base:
+      name: emby
+      image: "{{ app_config.app.image }}"
+      port: "{{ app_config.app.port }}"
+      container_port: "{{ app_config.app.container_port | default(8096) }}"
+      host: "{{ _deploy_fqdn }}"
+      env: >-
+        {{ [{'name': 'PUID', 'value': app_config.app.puid | default(1313)},
+            {'name': 'PGID', 'value': app_config.app.pgid | default(1313)},
+            {'name': 'TZ', 'value': homelabinfra_config.timezone | default('UTC')}]
+           + ([{'name': 'ATTACHED_DEVICES_PERMS', 'value': '/dev/dri -type c'}]
+              if _emby_gpu_declared | bool else [])
+           + (app_config.app.extra_env | default({}) | dict2items(key_name='name', value_name='value')) }}
+      volumes:
+        - {name: config, mount_path: /config, storage: "{{ app_config.app.storage | default(10) }}"}
+      extra_volumes: >-
+        {{ k8s_media_volumes
+           + ([{'name': 'dri', 'hostPath': {'path': '/dev/dri', 'type': 'Directory'}}]
+              if _emby_gpu_declared | bool else []) }}
+      extra_volume_mounts: >-
+        {{ k8s_media_volume_mounts
+           + ([{'name': 'dri', 'mountPath': '/dev/dri'}] if _emby_gpu_declared | bool else []) }}
+      probe: {path: /emby/System/Info/Public}
+      resources: {requests: {cpu: 250m, memory: 512Mi}}
+    # The iGPU is passed through to one node VM, so only that node has /dev/dri. A hostPath
+    # device node is unusable in an unprivileged container (its device cgroup refuses it);
+    # the image's init adds the device's group to its service user, as on Docker.
+    _emby_k8s_gpu:
+      node_selector: {kubernetes.io/hostname: "{{ _emby_gpu_nodes[0] }}"}
+      container_security_context: {privileged: true}
+    k8s_app: "{{ _emby_k8s_base | combine(_emby_k8s_gpu if _emby_gpu_declared | bool else {}) }}"
 
 - name: Emby Kubernetes | Prove the iGPU path in the pod
   ansible.builtin.include_tasks: kubernetes-gpu.yml
