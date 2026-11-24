@@ -15,6 +15,12 @@ options; `<script> --help` prints it.
 
 `lab-exec` and `guest-exec` take a script on stdin instead of a command string. Exit codes are the command's.
 
+For a GPU migration, `lab-drill --gpu-device <declaration> <instance>` uses Configure App
+after Remove to merge only `app.gpu_device`, then runs the fresh install and restore on
+the selected stack. `--stop-after-restore` verifies the restored canaries and leaves them
+in place at a planned handoff, before final Deploy and canary cleanup; it claims no full
+drill pass. These options require a stateful app with a canary.
+
 Browser checks are specs kept with the app's role (`ansible/roles/<app>/browser/`), so the
 next session reruns them instead of clicking through again. When a change affects what a
 user sees, add or extend the spec in the same PR. Explore by hand with `playwright-cli` on

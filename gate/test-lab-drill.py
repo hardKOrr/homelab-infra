@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -28,6 +29,22 @@ STATEFUL = ["deploy", "wiring-deploy", "canary-create", "deploy-repeat", "wiring
             "backup", "remove", "wiring-remove", "deploy-fresh", "wiring-deploy-fresh",
             "canary-fresh", "backup-pre-restore", "restore-preview", "restore", "canary-verify",
             "deploy-final", "wiring-deploy-final", "canary-final"]
+
+migration = plan("--gpu-device", "intel-igpu-2", "--stop-after-restore", "jellyfin")
+expected = STATEFUL[:8] + ["configure-gpu"] + STATEFUL[8:15]
+if steps(migration) != expected or "extra_yaml='{app: {gpu_device: intel-igpu-2}}'" not in migration:
+    failures.append("migration changes only gpu_device after Remove and stops after restored canaries")
+if "RESULT jellyfin PASS" in migration or "HANDOFF restored canaries verified" not in migration:
+    failures.append("restore handoff must leave final Deploy unclaimed")
+for args in [("--gpu-device", "bad;id", "jellyfin"),
+             ("--gpu-device", "intel-igpu-2", "homepage"),
+             ("--stop-after-restore", "homepage"),
+             ("--seed-wrong-point", "--stop-after-restore", "jellyfin"),
+             ("--all", "--gpu-device", "intel-igpu-2")]:
+    rejected = subprocess.run([sys.executable, os.path.join(repo, "tools", "lab-drill"),
+                               "--plan", *args], capture_output=True, text=True)
+    if rejected.returncode != 2:
+        failures.append(f"unsafe migration combination accepted: {args}")
 
 opnsense = plan("--app", "opnsense", "--destroy-guest", "opnsense-drill")
 if steps(opnsense) != STATEFUL or "destroy_guest=true" not in opnsense or "canary=hook" not in opnsense:
@@ -91,6 +108,23 @@ for app in ("wordpress", "bookstack"):
 # No catalog app is refused today; the rule itself stays covered.
 from importlib.machinery import SourceFileLoader
 lab_drill = SourceFileLoader("lab_drill", os.path.join(repo, "tools", "lab-drill")).load_module()
+# Instance wiring may override the app-default backup setting: refuse before Remove.
+with tempfile.TemporaryDirectory(prefix="gate-migrate-") as scratch, \
+        patch.dict(os.environ, {"HOMELAB_LAB_DIR": scratch}):
+    subject = lab_drill.Drill("jellyfin", "jellyfin", "master", None, False, False,
+                              gpu_device="intel-igpu-2")
+    subject.logs = scratch
+    subject.say = lambda *args: None
+    subject.deploy = lambda *args, **kwargs: setattr(subject, "backups", False)
+    def refuse_migration(*args):
+        raise ValueError("migration refused")
+    subject.fail = refuse_migration
+    try:
+        subject.run()
+        failures.append("migration accepted an instance with backups disabled")
+    except ValueError:
+        pass
+
 # Exercise the actual Remove wrapper with no lab access or mutation.
 for after, passed in [({"other": {"name": "other", "status": "running"}}, True),
                       ({"target": {"name": "opnsense-drill"}, "other": {"name": "other", "status": "running"}}, False),
