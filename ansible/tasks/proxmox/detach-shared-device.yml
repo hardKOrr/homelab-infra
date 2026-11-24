@@ -86,7 +86,7 @@
   vars:
     _dsd_dev_pairs: >-
       {{ (_dsd_config.stdout_lines | select('match', '^dev[0-9]+:') | list)
-         | map('regex_replace', '^dev([0-9]+):\s*path=([^,]+).*$', '\1|\2') | list }}
+         | map('regex_replace', '^dev([0-9]+):\s*(?:path=)?(/[^,]+).*$', '\1|\2') | list }}
     _dsd_index: >-
       {{ (_dsd_dev_pairs
           | select('search', '\|' ~ (item.host | regex_escape) ~ '$')

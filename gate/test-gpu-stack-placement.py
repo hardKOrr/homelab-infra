@@ -155,5 +155,37 @@ def main():
     print("GPU stack resolution, config propagation, and shared-device removal: OK")
 
 
+def shared_device_repeat():
+    attach = read_yaml("ansible/tasks/proxmox/attach-shared-device.yml")
+    state = named(attach, "Shared device | Resolve which devices are already bound")
+    missing = named(attach, "Shared device | Resolve the devices still missing")
+    detach = named(read_yaml("ansible/tasks/proxmox/detach-shared-device.yml"),
+                   "Detach shared device | Resolve bound state, provenance tag, and ownership per device")
+    for prefix in ("path=", ""):
+        context = {"_sd_config": {"stdout_lines": [
+            "dev3: " + prefix + "/dev/dri/renderD128,gid=44,mode=0660",
+            "dev7: " + prefix + "/dev/other",
+        ]}, "shared_device_list": [{"host": "/dev/dri/renderD128"}]}
+        for key, expr in state["vars"].items():
+            context[key] = render(expr, **context)
+        for key, expr in state["ansible.builtin.set_fact"].items():
+            context[key] = render(expr, **context)
+        assert context["_sd_existing_hosts"] == ["/dev/dri/renderD128", "/dev/other"]
+        assert context["_sd_used_indices"] == [3, 7]
+        assert render(missing["ansible.builtin.set_fact"]["_sd_missing"], **context) == []
+        for tagged in (True, False):
+            ctx = {"_dsd_config": context["_sd_config"],
+                   "item": {"host": "/dev/dri/renderD128"},
+                   "_dsd_tags": ["_.dev+dev-dri-renderd128"] if tagged else []}
+            for key, expr in detach["vars"].items():
+                if key != "_dsd_status":
+                    ctx[key] = render(expr, **ctx)
+            assert ctx["_dsd_index"] == "3"
+            status = render(detach["vars"]["_dsd_status"], **ctx)
+            assert status["owned"] == ("yes" if tagged else "no")
+    print("Shared-device repeats recognize PVE path= and preserve unowned bindings: OK")
+
+
 if __name__ == "__main__":
+    shared_device_repeat()
     main()
