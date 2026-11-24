@@ -77,12 +77,14 @@ class RecoveryTest(unittest.TestCase):
                      'register': 'exported'},
                     {'ansible.builtin.assert': {'that': [
                         'exported.stat.mode == "0600"',
-                        'pbs_client_archives[0].path == _opn_backup_node_dir.path']}},
+                        'pbs_client_archives[0].path == _opn_backup_node_dir.path',
+                        'hostvars["node"].ansible_host == "localhost"']}},
                     {'ansible.builtin.set_fact': {'pbs_boundary_reached': True}},
                     {'ansible.builtin.fail': {'msg': 'simulated upload failure'}, 'when': fail_upload}]))
                 # Keep production staging, copy, delegated include and cleanup tasks;
                 # replace only the external native export and PBS service boundary.
-                for task in tasks[0]['block']:
+                tasks[0]['ansible.builtin.import_tasks'] = str(ROOT / 'ansible/tasks/proxmox/register-nodes.yml')
+                for task in tasks[1]['block']:
                     if task['name'].endswith('Export the current config.xml'):
                         task.clear()
                         task['ansible.builtin.copy'] = {
@@ -90,10 +92,12 @@ class RecoveryTest(unittest.TestCase):
                             'mode': '0600'}
                     elif 'ansible.builtin.include_tasks' in task:
                         task['ansible.builtin.include_tasks']['file'] = str(stub)
-                variables = {'_rat_host': 'appliance', 'instance': 'opnsense-drill'}
+                variables = {'_rat_host': 'appliance', 'instance': 'opnsense-drill',
+                             'homelabinfra_config': {'proxmox': {
+                                 'node': 'node', 'nodes': {'node': 'localhost'}}}}
                 inventory = {'all': {'hosts': {
                     'appliance': {'proxmox_node': 'node'},
-                    'node': {'ansible_connection': 'local'}}}}
+                    'node': {'ansible_connection': 'local', 'ansible_host': ''}}}}
                 (directory / 'inventory.yml').write_text(yaml.safe_dump(inventory))
                 check = []
                 for variable in ('_opn_backup_dir', '_opn_backup_node_dir'):

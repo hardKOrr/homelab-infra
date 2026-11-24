@@ -1,4 +1,7 @@
 ---
+- name: OPNsense restore | Register Proxmox delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
 - name: OPNsense restore | Verify the target is an owned appliance
   ansible.builtin.include_tasks: ../../../tasks/maintenance/resolve-app-target.yml
   vars:

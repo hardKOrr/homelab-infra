@@ -1,5 +1,8 @@
 ---
 # Native export is staged only on the controller; the appliance has no Linux client.
+- name: OPNsense backup | Register Proxmox delegation targets
+  ansible.builtin.import_tasks: ../../../tasks/proxmox/register-nodes.yml
+
 - name: OPNsense backup | Export and archive the native configuration
   block:
     - name: OPNsense backup | Create private controller staging
