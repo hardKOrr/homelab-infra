@@ -188,4 +188,5 @@
         {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
            | default(app_config.app.gpu_device) }}
       pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(false) | bool }}"
+      rombar: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].rombar | default(none) }}"
   when: app_vm_gpu | bool

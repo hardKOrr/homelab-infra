@@ -56,6 +56,8 @@ def validate_device_modes(proxmox, report):
                    "%r is not recognised -- one of igpu | gpu | usb | other" % kind)
 
         if mode == "dedicated" and kind in {"igpu", "gpu"}:
+            if "rombar" in declaration and not isinstance(declaration["rombar"], bool):
+                report("%s.rombar" % key, "must be a boolean")
             device_node = declaration.get("node")
             if not isinstance(device_node, str) or not device_node.strip():
                 report("%s.node" % key,

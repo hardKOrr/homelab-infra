@@ -215,6 +215,11 @@ declarations use kind `igpu` or `gpu`, mode `dedicated`, one exact PCI identifie
 declarations and `gpu` for a bare dedicated declaration; a dedicated iGPU must say
 `kind: igpu`, while USB or other entries use `kind: usb` or `kind: other`.
 
+A dedicated GPU declaration may set `rombar: false` when its option ROM blocks headless
+guest boot. Omitting it preserves existing assignments and uses Proxmox's default on a
+new one. An explicit change restarts the guest and updates its existing PCI slot only
+when that assignment already carries this platform's provenance tag.
+
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`
 first, then removes a binding only when its content matches the caller's input AND its
