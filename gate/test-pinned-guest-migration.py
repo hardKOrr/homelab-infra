@@ -46,6 +46,15 @@ if args[0] == 'create':
     assert '--online' in args or '--restart' in args
     state.write_text('moved')
     value = 'UPID:node-a:123:456:789:migrate:204:root@pam:'
+    response = os.environ['MIGRATION_RESPONSE']
+    if response == 'progress':
+        print('2026-11-24 05:30:00 starting migration')
+        print('2026-11-24 05:30:50 migration finished successfully')
+    elif response == 'missing':
+        print('2026-11-24 05:30:50 migration finished successfully')
+        sys.exit(0)
+    elif response == 'ambiguous':
+        print(json.dumps(value.replace(':123:', ':124:')))
 elif args[1].endswith('/config'):
     value = json.loads(os.environ['MIGRATION_CONFIG'])
 elif args[1].endswith('/storage'):
@@ -53,6 +62,8 @@ elif args[1].endswith('/storage'):
 elif args[1] == '/cluster/ha/resources':
     value = ([{'sid': ('vm:' if os.environ['MIGRATION_TYPE'] == 'qemu' else 'ct:') + '204',\n               'comment': 'managed by homelab-infra', 'state': 'started'}]\n             if os.environ['MIGRATION_HA'] == '1' else [])
 elif '/tasks/' in args[1]:
+    assert args[1] == '/nodes/node-a/tasks/UPID:node-a:123:456:789:migrate:204:root@pam:/status'
+    assert os.environ['MIGRATION_RESPONSE'] not in ('missing', 'ambiguous')
     value = {'status': 'stopped', 'exitstatus': 'OK'}
 else:
     value = [{'vmid': 204, 'type': os.environ['MIGRATION_TYPE'],
@@ -69,9 +80,11 @@ print(json.dumps(value))
         inventory = root / 'inventory'
         inventory.write_text('localhost ansible_connection=local\nnode-a ansible_connection=local\nnode-b ansible_connection=local\n')
         for kind in ('qemu', 'lxc'):
-            for target, local, ha in (('node-b', False, False), ('', False, False),
-                                      ('node-a', False, False), ('node-b', True, False),
-                                      ('node-b', False, True)):
+            for target, local, ha, response in (
+                    ('node-b', False, False, 'json'), ('', False, False, 'json'),
+                    ('node-a', False, False, 'json'), ('node-b', True, False, 'json'),
+                    ('node-b', False, True, 'json'), ('node-b', False, False, 'progress'),
+                    ('node-b', False, False, 'missing'), ('node-b', False, False, 'ambiguous')):
                 state = root / 'state'
                 state.unlink(missing_ok=True)
                 config = {'tags': '_+lab', 'scsi0' if kind == 'qemu' else 'rootfs':
@@ -82,6 +95,7 @@ print(json.dumps(value))
                     'environment': {'PATH': str(root) + ':' + os.environ['PATH'],
                                     'MIGRATION_STATE': str(state), 'MIGRATION_TYPE': kind,
                                     'MIGRATION_HA': '1' if ha else '0',
+                                    'MIGRATION_RESPONSE': response,
                                     'MIGRATION_CONFIG': json.dumps(config)},
                     'vars': {'homelabinfra_config': {'proxmox': {'node': 'node-a',
                               'nodes': {'node-a': '127.0.0.1', 'node-b': '127.0.0.1'}}},
@@ -97,6 +111,9 @@ print(json.dumps(value))
                 if local:
                     assert result.returncode != 0 and 'node-local' in output, output
                     assert not state.exists()
+                elif response in ('missing', 'ambiguous'):
+                    assert result.returncode != 0 and 'exactly one migration task identity' in output, output
+                    assert state.exists(), output
                 else:
                     assert result.returncode == 0, output
                     assert state.exists() == (target == 'node-b'), output

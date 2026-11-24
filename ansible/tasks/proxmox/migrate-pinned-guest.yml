@@ -75,11 +75,25 @@
       changed_when: true
       when: _migration_plan.mode != 'ha'
 
+    # CLI workers can print progress before the final JSON-quoted task identity.
+    - name: Guest migration | Normalize the migration task response
+      ansible.builtin.set_fact:
+        _migration_task_upids: >-
+          {{ _migration_task.stdout | default('')
+             | regex_findall('UPID:[^\s"\\]+:') }}
+      when: _migration_plan.mode != 'ha'
+
+    - name: Guest migration | Require exactly one migration task identity
+      ansible.builtin.assert:
+        that: _migration_task_upids | length == 1
+        fail_msg: Proxmox did not return exactly one migration task identity. Inspect live placement before retrying.
+      when: _migration_plan.mode != 'ha'
+
     - name: Guest migration | Wait for Proxmox migration completion
       ansible.builtin.include_tasks: wait-for-task.yml
       vars:
         proxmox_task_node: "{{ migrate_guest_source }}"
-        proxmox_task_upid: "{{ _migration_task.stdout | from_json }}"
+        proxmox_task_upid: "{{ _migration_task_upids | first }}"
       when: _migration_plan.mode != 'ha'
 
     - name: Guest migration | Verify the guest reached its destination
