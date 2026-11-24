@@ -1,0 +1,16 @@
+---
+# Checked before either hosting method mutates the target: PBS, an explicit snapshot for
+# overwrite=true, and the source's app-owned credentials, which the restored server is verified with.
+- name: Emby restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+      - not (restore_overwrite | bool) or restore_source_emby_user | default('') | length > 0
+      - not (restore_overwrite | bool) or restore_source_emby_password | default('') | length > 0
+    fail_msg: >-
+      Emby restore needs PBS, an explicit snapshot for overwrite=true, and the source
+      Emby app-owned credentials in Vaultwarden. Keep overwrite=false to list snapshots.

@@ -1,6 +1,9 @@
 ---
 # Replace the target's config PVC through the shared Kubernetes recovery Job, then prove the
 # restored server like the Docker path does. The NFS media shares are not part of the archive.
+- name: Emby Kubernetes restore | Assert the recovery contract before changing the target
+  ansible.builtin.include_tasks: restore-contract.yml
+
 - name: Emby Kubernetes restore | Restore the config volume
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
   vars:

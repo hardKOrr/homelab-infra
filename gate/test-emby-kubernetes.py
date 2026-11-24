@@ -60,6 +60,13 @@ assert next(t for t in prepare if "deploy_host_mounts" in str(t.get("ansible.bui
 backup = include(kubernetes, "recovery-backup.yml")["vars"]["k8s_recovery"]
 assert backup["archives"][0]["claim"] == "{{ instance }}-config" and backup["stop"] == ["{{ instance }}"]
 restore = tasks("restore-kubernetes.yml")
+# Missing source credentials must fail before the recovery Job empties the PVC.
+assert "restore-contract.yml" in str(restore[0]["ansible.builtin.include_tasks"])
+contract = tasks("restore-contract.yml")[0]["ansible.builtin.assert"]["that"]
+assert any("restore_source_emby_password" in c for c in contract)
+assert any("restore_source_emby_user" in c for c in contract)
+assert include(tasks("restore-guest.yml"), "restore-contract.yml")
+restore = restore[1:]
 assert "tasks/kubernetes/recovery-restore.yml" in str(restore[0]["ansible.builtin.include_tasks"])
 assert restore[0]["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
 verified = include(restore, "restore-verified.yml")
