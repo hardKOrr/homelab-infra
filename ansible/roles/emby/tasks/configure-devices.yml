@@ -14,17 +14,20 @@
       - /dev/dri
       - -maxdepth
       - "1"
-      - -type
-      - c
-      - -printf
-      - "%G\\n"
+      # PVE devN bind mounts can retain a regular-file directory entry. stat reads
+      # the mounted inode instead of find's cached d_type when selecting devices.
+      - -exec
+      - stat
+      - --format=%F:%g
+      - "{}"
+      - "+"
   register: _emby_dri_group_ids_found
   changed_when: false
   when: _emby_dri_device_declared | bool
 
 - name: Assert the stack host exposes DRI device nodes
   ansible.builtin.assert:
-    that: _emby_dri_group_ids_found.stdout_lines | default([]) | length > 0
+    that: _emby_dri_group_ids_found.stdout_lines | default([]) | select('match', '^character special file:') | list | length > 0
     fail_msg: >-
       Emby declares DRI hardware, but the stack host exposes no character devices
       under /dev/dri.
@@ -34,5 +37,7 @@
   ansible.builtin.set_fact:
     _emby_dri_group_ids: >-
       {{ _emby_dri_group_ids_found.stdout_lines
+         | select('match', '^character special file:')
+         | map('regex_replace', '^character special file:', '')
          | map('trim') | map('int') | unique | sort | map('string') | list }}
   when: _emby_dri_device_declared | bool
