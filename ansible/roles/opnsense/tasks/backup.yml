@@ -1,0 +1,39 @@
+---
+# Native export is staged only on the controller; the appliance has no Linux client.
+- name: OPNsense backup | Export and archive the native configuration
+  become: true
+  block:
+    - name: OPNsense backup | Create private controller staging
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -opnsense-backup
+      register: _opn_backup_dir
+
+    - name: OPNsense backup | Export the current config.xml
+      ansible.builtin.include_tasks: config-transfer.yml
+      vars:
+        opn_transfer_action: backup
+        opn_transfer_path: "{{ _opn_backup_dir.path }}/config.xml"
+        opn_transfer_instance: "{{ instance }}"
+        opn_transfer_config: "{{ app_config }}"
+
+    - name: OPNsense backup | Upload and verify through the shared PBS client
+      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      vars:
+        pbs_client_runtime: native
+        pbs_client_archives:
+          - name: config.pxar
+            path: "{{ _opn_backup_dir.path }}"
+
+    - name: OPNsense backup | Mark completion
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+
+  always:
+    - name: OPNsense backup | Remove private staging
+      ansible.builtin.file:
+        path: "{{ _opn_backup_dir.path }}"
+        state: absent
+      when: _opn_backup_dir.path is defined
+

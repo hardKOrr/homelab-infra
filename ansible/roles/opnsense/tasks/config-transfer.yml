@@ -1,0 +1,17 @@
+---
+- name: OPNsense recovery | Transfer the native configuration without logging secrets
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/files/config-transfer.py') }}"
+    stdin: >-
+      {{ {'action': opn_transfer_action,
+          'path': opn_transfer_path,
+          'instance': opn_transfer_instance,
+          'address': opn_transfer_config.bootstrap.lan_address,
+          'validate_certs': opn_transfer_config.bootstrap.validate_certs,
+          'password': homelabinfra_vault.apps[opn_transfer_instance].admin_password} | to_json }}
+  changed_when: opn_transfer_action == 'restore'
+  no_log: true
+

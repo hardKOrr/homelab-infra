@@ -35,3 +35,16 @@ opnsense_defaults:
     validate_certs: false
     editor_url: https://github.com/SvenGDK/UFS2Tool/releases/download/v4.1/linux-x64-selfcontained.zip
     editor_sha256: 5a0cd3f89a9a1255640f19e81eb213bcffbd274e14d4c402189aa3d18bd068af
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: playbooks/maintenance/backup-app.yml
+      restore_playbook: playbooks/maintenance/restore-app.yml
+      controller: true
+      destinations: [existing]
+  drill:
+    verify_remove_isolation: true

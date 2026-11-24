@@ -180,10 +180,26 @@
 - name: Stop an ISO appliance through Proxmox
   ansible.builtin.command:
     argv: [qm, shutdown, "{{ app_config.proxmox.vm.vmid }}"]
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _rm_destroy_guest_node | default(homelabinfra_config.proxmox.node, true) }}"
   register: _rm_appliance_shutdown
   changed_when: _rm_appliance_shutdown.rc == 0
   failed_when:
     - _rm_appliance_shutdown.rc != 0
     - "'not running' not in (_rm_appliance_shutdown.stderr | lower)"
   when: _rm_kind == 'appliance'
+
+# Appliances have no SSH play. Use the same node-side destroy operation as native
+# VMs, with the identity captured by the pre-unwiring ownership/dependency guard.
+- name: Destroy the explicitly selected appliance VM
+  ansible.builtin.include_tasks: ../proxmox/destroy-owned-vm.yml
+  vars:
+    destroy_vm_instance: "{{ instance }}"
+    destroy_vm_name: "{{ _rm_destroy_guest_name }}"
+    destroy_vm_node: "{{ _rm_destroy_guest_node }}"
+    destroy_vm_vmid: "{{ _rm_destroy_guest_vmid }}"
+    destroy_vm_original_tags: "{{ _rm_destroy_guest_tags }}"
+    destroy_vm_owner_tag: "{{ _rm_destroy_guest_owner_tag | default('') }}"
+  when:
+    - _rm_kind == 'appliance'
+    - destroy_guest | default(false) | bool
+    - delete_data | default(false) | bool

@@ -228,7 +228,7 @@ def check_shared_recovery_inputs():
     validate = tasks("ansible/tasks/recovery/restore-app-validate.yml")
     safety = next(task for task in validate
                   if "require-recent-pre-restore-point.yml" in str(task))
-    assert safety["when"] == ["_ra_kind == 'kubernetes'", "_ra_overwrite | bool",
+    assert safety["when"] == ["_ra_kind == 'kubernetes' or (_ra_kind == 'appliance' and recovery_capability.controller | default(false) | bool)", "_ra_overwrite | bool",
                               "recovery_destination_resolved == 'existing'"], \
         "a new target has no earlier backup to require"
     assert "restore_target_config.backup.backup_id" in str(safety["vars"])

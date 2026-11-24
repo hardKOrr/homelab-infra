@@ -1,0 +1,10 @@
+---
+# Native XML carries the appliance's network identity; relocation needs a separate
+# authored conversion, not an implicit rewrite of a firewall's interfaces or keys.
+- name: OPNsense restore | Require the original appliance identity
+  ansible.builtin.assert:
+    that:
+      - _ra_destination == 'existing'
+      - _ra_target == _ra_source_instance
+    fail_msg: OPNsense native restore supports only the existing instance identity.
+

@@ -152,7 +152,7 @@
         restore_pre_restore_point: "{{ _ra_pre_restore_point }}"
         restore_overwrite: "{{ _ra_overwrite }}"
       when:
-        - _ra_kind == 'kubernetes'
+        - _ra_kind == 'kubernetes' or (_ra_kind == 'appliance' and recovery_capability.controller | default(false) | bool)
         - not (recovery_destination_resolved == 'new' and not (_ra_overwrite | bool))
 
     - name: State the read-only new-destination plan
@@ -180,7 +180,7 @@
           taken from {{ instance }}'s backups. Its application-owned durable state was
           replaced. Verify the application before trusting it.
       when:
-        - _ra_kind == 'kubernetes'
+        - _ra_kind == 'kubernetes' or (_ra_kind == 'appliance' and recovery_capability.controller | default(false) | bool)
         - _ra_overwrite | bool
 
     # The last task of the play, and it matters most here: a restore is the single most
@@ -192,7 +192,7 @@
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ _ra_target }} restore"
-      when: _ra_kind == 'kubernetes'
+      when: _ra_kind == 'kubernetes' or (_ra_kind == 'appliance' and recovery_capability.controller | default(false) | bool)
 
 - name: "Restore App | Restore Docker or native-LXC application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"

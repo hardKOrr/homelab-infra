@@ -32,3 +32,13 @@ inherit the estate defaults through a recursive merge.
 `tasks/drill-canary.yml` saves and checks an API alias with a documentation address.
 Its description is `drill-canary-<id>`; its legal alias name uses an underscore prefix
 and a hash because OPNsense limits names to 31 alphanumeric or underscore characters.
+
+`tasks/backup.yml` exports the current native `config.xml` through the authenticated
+Backup & Restore form and uploads a private controller staging directory through the
+shared PBS client. The history-download API does not export current state.
+`tasks/restore.yml` verifies the selected PBS archive, requires a recent independent
+pre-restore point, and uploads the XML through the same native form. It observes the
+reboot and checks the saved API key before completing. Staging is removed on failure
+and success. This restore supports the original instance identity only; the XML's
+hostname and LAN address must match. Run its full drill with `tools/lab-drill --destroy-guest`; its removal isolation
+check proves the VM is gone and other owned guests are unchanged.

@@ -18,6 +18,7 @@
 #   app       — the application the instance belongs to. Defaults to `instance`; the
 #               Rundeck jobs always pass it, because a second instance named radarr-4k is
 #               still app radarr and its defaults live in app-defaults/radarr.yml.
+#   resolve_app_target_register — false for controller hooks that only need ownership proof.
 #   resolve_app_target_kinds — allowed hosting kinds; defaults to [native, docker].
 #                              Kubernetes callers opt in and target the cluster API host.
 #
@@ -213,4 +214,5 @@
     app_target_instance: "{{ _rat_instance }}"
     app_target_project_dir: "/opt/{{ _rat_instance }}"
     app_target_namespace: "{{ k8s_namespace if _rat_kind == 'kubernetes' else '' }}"
+  when: resolve_app_target_register | default(true) | bool
   changed_when: false
