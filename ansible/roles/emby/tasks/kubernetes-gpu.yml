@@ -19,7 +19,11 @@
         [ -n "$node" ] || { echo "no render node under /dev/dri"; exit 3; }
         su -s /bin/sh abc -c "test -r $node && test -w $node" \
           || { echo "$node is not readable by the Emby service user"; exit 4; }
-        su -s /bin/sh abc -c "vainfo --display drm --device $node" 2>&1
+        # The image bundles glibc tools under /app/emby, outside its Alpine runtime.
+        su -s /bin/sh abc -c "LIBVA_DRIVERS_PATH=/app/emby/lib/dri \
+          /app/emby/lib/ld-linux-x86-64.so.2 \
+          --library-path /app/emby/lib:/app/emby/extra/lib \
+          /app/emby/bin/vainfo --display drm --device $node" 2>&1
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _emby_k8s_gpu
