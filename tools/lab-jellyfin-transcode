@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Force H.264 playback through Jellyfin and require hardware-encoded output.
+
+Usage: tools/lab-jellyfin-transcode --ref BRANCH INSTANCE MEDIA_FILE
+Run with lab-start/lab-wait. The source must already exist inside Jellyfin and be
+H.264. Authenticates using the provisioned administrator credential;
+never prints tokens. Creates then removes a uniquely named temporary library,
+leaving the source and existing libraries untouched. Requires the standard
+/opt/jellyfin/config layout and localhost:8096. Logs stay in Jellyfin's log dir.
+"""
+import argparse
+import json
+import pathlib
+import re
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+
+def request(path, token, body=None, method=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        'http://127.0.0.1:8096/' + path, data=data, method=method,
+        headers={'X-Emby-Token': token, 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as response:
+            raw = response.read()
+            return json.loads(raw) if raw and 'json' in response.headers.get('Content-Type', '') else raw
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f'Jellyfin HTTP {exc.code}') from None
+
+
+def hardware_evidence(text):
+    """Require actual frames as well as a hardware encoder, not just its command."""
+    return (bool(re.search(r'(?:h264_vaapi|h264_qsv)', text))
+            and bool(re.search(r'(?:frame=\s*[1-9]\d*|frame:\s*[1-9]\d*)', text))
+            and 'Conversion failed!' not in text)
+
+
+def guest_probe(source):
+    config = pathlib.Path('/opt/jellyfin/config')
+    token = os.environ['JELLYFIN_PROBE_TOKEN']
+    user = os.environ['JELLYFIN_PROBE_USER']
+    probe = json.loads(subprocess.check_output([
+        'docker', 'exec', 'jellyfin', '/usr/lib/jellyfin-ffmpeg/ffprobe', '-v', 'error',
+        '-show_entries', 'stream=codec_type,codec_name', '-of', 'json', source]))
+    if not any(s.get('codec_type') == 'video' and s.get('codec_name') == 'h264' for s in probe['streams']):
+        raise RuntimeError('Source must contain H.264 video')
+    name = 'lab-h264-' + uuid.uuid4().hex
+    play = uuid.uuid4().hex
+    logs = config / 'log'
+    before = set(logs.glob('FFmpeg.Transcode*'))
+    created = False
+    try:
+        request('Library/VirtualFolders?' + urllib.parse.urlencode({
+            'name': name, 'collectionType': 'movies', 'refreshLibrary': 'true'}), token,
+            {'LibraryOptions': {'PathInfos': [{'Path': str(pathlib.PurePosixPath(source).parent)}],
+                                'EnableRealtimeMonitor': False, 'EnableAutomaticSeriesGrouping': False}}, 'POST')
+        created = True
+        deadline = time.monotonic() + 120
+        item = None
+        while time.monotonic() < deadline:
+            items = request('Items?' + urllib.parse.urlencode({
+                'Recursive': 'true', 'IncludeItemTypes': 'Movie', 'Fields': 'Path', 'UserId': user}), token)
+            item = next((x for x in items['Items'] if x.get('Path') == source), None)
+            if item:
+                break
+            time.sleep(2)
+        if item is None:
+            raise RuntimeError('Source was not indexed within 120 seconds')
+        params = {'UserId': user, 'DeviceId': name, 'PlaySessionId': play,
+                  'VideoCodec': 'h264', 'AudioCodec': 'aac', 'VideoBitrate': 300000,
+                  'AudioBitrate': 64000, 'MaxWidth': 640, 'MaxHeight': 360,
+                  'TranscodingMaxAudioChannels': 2, 'SegmentContainer': 'ts',
+                  'MinSegments': 1, 'BreakOnNonKeyFrames': 'true', 'EnableAutoStreamCopy': 'false',
+                  'AllowVideoStreamCopy': 'false', 'AllowAudioStreamCopy': 'false'}
+        base = 'Videos/' + item['Id'] + '/'
+        playlist = request(base + 'master.m3u8?' + urllib.parse.urlencode(params), token).decode()
+        variant = next(x for x in playlist.splitlines() if x and not x.startswith('#'))
+        # Resolve relative HLS URLs, retaining the session's authentication header.
+        def child(parent, value):
+            result = urllib.parse.urljoin('http://127.0.0.1:8096/' + parent, value)
+            parsed = urllib.parse.urlsplit(result)
+            if parsed.netloc != '127.0.0.1:8096':
+                raise RuntimeError('Unexpected HLS origin')
+            return parsed.path.lstrip('/') + ('?' + parsed.query if parsed.query else '')
+        variant_path = child(base + 'master.m3u8', variant)
+        segments = request(variant_path, token).decode()
+        segment = next(x for x in segments.splitlines() if x and not x.startswith('#'))
+        output = request(child(variant_path, segment), token)
+        if len(output) < 188:
+            raise RuntimeError('No playable transport-stream segment')
+        request('Videos/ActiveEncodings?' + urllib.parse.urlencode({'DeviceId': name, 'PlaySessionId': play}), token, method='DELETE')
+        for _ in range(10):
+            evidence = [p for p in set(logs.glob('FFmpeg.Transcode*')) - before
+                        if play in p.read_text(errors='replace') and hardware_evidence(p.read_text(errors='replace'))]
+            if evidence:
+                print('RESULT H264 hardware transcode PASS; source=h264; encoder=VA-API/QSV; output segment bytes=' + str(len(output)))
+                for p in evidence:
+                    print('EVIDENCE ' + p.name + ' hardware encoder and nonzero frames; no conversion failure')
+                return
+            time.sleep(1)
+        raise RuntimeError('No new session log proves hardware encoding and produced frames')
+    finally:
+        try:
+            request('Videos/ActiveEncodings?' + urllib.parse.urlencode({'DeviceId': name, 'PlaySessionId': play}), token, method='DELETE')
+        finally:
+            if created:
+                request('Library/VirtualFolders?' + urllib.parse.urlencode({'name': name, 'refreshLibrary': 'false'}), token, method='DELETE')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--ref', default='master')
+    parser.add_argument('--inside-guest', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('guest')
+    parser.add_argument('source')
+    args = parser.parse_args()
+    if args.inside_guest:
+        try:
+            guest_probe(args.source)
+        except Exception as exc:
+            # Never expose a request URL or a traceback containing authentication.
+            print('FAIL H264 probe: ' + (str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__), file=sys.stderr)
+            return 1
+        return 0
+    return subprocess.run([
+        os.path.join(os.environ['HOMELAB_LAB_DIR'], 'runner-lab-run.sh'), args.ref,
+        'playbooks/maintenance/verify-app-hardware.yml', '-e',
+        json.dumps({'instance': args.guest, 'hardware_check_source': args.source})]).returncode
+
+
+
+if __name__ == '__main__':
+    sys.exit(main())

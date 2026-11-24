@@ -31,6 +31,12 @@ When a session needs a lab helper that is not here, add it here in the same PR r
 than writing a private copy under `/tmp`: the next session needs it too.
 `gate/test-lab-tools.py` covers `lab-start` and `lab-wait` without a lab.
 
+`lab-jellyfin-transcode --ref <branch> <instance> <media-file>` requests forced H.264
+playback and requires a produced HLS segment plus a new hardware-encoder log with
+nonzero frames. Run it with `lab-start` and `lab-wait`. The source must already be
+available inside Jellyfin; its temporary library is removed even on failure. The
+provisioned administrator credential stays inside the Ansible/guest execution path.
+
 `lab-guest-state.py` is lab-drill's read-only node probe for
 `drill.verify_remove_isolation`. With `--destroy-guest`, it checks target absence and
 compares the other owned guests' configuration and power state across Remove.
