@@ -31,6 +31,8 @@
       - "{{ instance }}"
       - "{{ hardware_check_source }}"
   environment:
+    JELLYFIN_PROBE_URL: "{{ drill_app_url }}"
+    JELLYFIN_PROBE_CONFIG: "{{ app_config.app.config_path }}"
     JELLYFIN_PROBE_TOKEN: "{{ _jfh_auth.json.AccessToken }}"
     JELLYFIN_PROBE_USER: "{{ _jfh_auth.json.User.Id }}"
   register: _jfh_probe

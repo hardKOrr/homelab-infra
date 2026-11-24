@@ -58,6 +58,11 @@ def validate_device_modes(proxmox, report):
         if mode == "dedicated" and kind in {"igpu", "gpu"}:
             if "rombar" in declaration and not isinstance(declaration["rombar"], bool):
                 report("%s.rombar" % key, "must be a boolean")
+            if "legacy_igd" in declaration:
+                if not isinstance(declaration["legacy_igd"], bool):
+                    report("%s.legacy_igd" % key, "must be a boolean")
+                elif declaration["legacy_igd"] and (kind != "igpu" or declaration.get("rombar") is False):
+                    report("%s.legacy_igd" % key, "requires kind igpu and an enabled ROM BAR")
             device_node = declaration.get("node")
             if not isinstance(device_node, str) or not device_node.strip():
                 report("%s.node" % key,

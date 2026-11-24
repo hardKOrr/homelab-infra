@@ -22,24 +22,29 @@ def render(value, context):
     return Templar(loader=DataLoader(), variables=context).template(value)
 
 
-def assignment(existing, rombar="absent", tagged=True):
+def assignment(existing, rombar="absent", tagged=True, legacy="absent", guest_lines=None):
     device = {"id": "0000:00:02.0", "mapping": "intel-igpu-2"}
     if rombar != "absent":
         device["rombar"] = rombar
+    if legacy != "absent":
+        device["legacy_igd"] = legacy
     context = {
         "pci_passthrough_device": device, "_pci_vmid": "123",
         "_pci_already_present": bool(existing),
         "_pci_tags": ["_+lab"] + (["_.dev+intel-igpu-2"] if tagged else []),
-        "_pci_all_configs": {"results": [{"item": {"vmid": 123}, "stdout_lines": existing}]},
+        "_pci_all_configs": {"results": [{"item": {"vmid": 123}, "stdout_lines": existing + (guest_lines or [])}]},
     }
     read = task("Read this guest's existing assignment")
     context["_pci_matching_lines"] = render(read["vars"]["_pci_matching_lines"], context)
     context["_pci_existing_line"] = render(read["ansible.builtin.set_fact"]["_pci_existing_line"], context)
     context["_pci_rombar_changed"] = render(task("Resolve whether the option ROM needs updating")["ansible.builtin.set_fact"]["_pci_rombar_changed"], context)
+    legacy_task = task("Resolve legacy IGD settings")
+    context["_pci_guest_lines"] = render(legacy_task["vars"]["_pci_guest_lines"], context)
+    context["_pci_legacy_changed"] = render(legacy_task["ansible.builtin.set_fact"]["_pci_legacy_changed"], context)
     guard = task("Require provenance before updating an existing assignment")
     context["_pci_provenance_tag"] = render(guard["vars"]["_pci_provenance_tag"], context)
     permitted = render("{{ " + guard["ansible.builtin.assert"]["that"] + " }}", context)
-    if context["_pci_rombar_changed"] and not permitted:
+    if (context["_pci_rombar_changed"] or context["_pci_legacy_changed"]) and not permitted:
         return "refused", None
     block = task("Stop, assign, and restart the guest")
     if not render("{{ " + block["when"] + " }}", context):
@@ -83,3 +88,33 @@ for value in (True, False, "false"):
     assert bool(errors) == (value == "false"), errors
 
 print("PCI ROM BAR assignment, repeat, slot preservation, provenance and validation: OK")
+
+assert assignment([], legacy=True)[1][4] == "mapping=intel-igpu-2,legacy-igd=1"
+assert assignment([], legacy=True)[1][-2:] == ["-vga", "none"]
+status, argv = assignment(["hostpci3: mapping=intel-igpu-2,rombar=0,romfile=fixture.rom"], True, legacy=True)
+assert status == "changed" and argv[3:5] == ["-hostpci3", "mapping=intel-igpu-2,romfile=fixture.rom,legacy-igd=1"]
+assert assignment(["hostpci3: mapping=intel-igpu-2,legacy-igd=1"], legacy=True, guest_lines=["vga: none"])[0] == "unchanged"
+assert assignment(["hostpci3: mapping=intel-igpu-2,legacy-igd=1"], legacy=True)[0] == "changed"
+assert assignment(["hostpci3: mapping=intel-igpu-2"], legacy=True, tagged=False)[0] == "refused"
+assert assignment(["hostpci3: mapping=intel-igpu-2,legacy-igd=1"], legacy=False)[1][4] == "mapping=intel-igpu-2"
+assert assignment(["hostpci3: mapping=intel-igpu-2,legacy-igd=1"], False)[1][4] == "mapping=intel-igpu-2,legacy-igd=1,rombar=0"
+for kind, legacy, rombar, valid in [("igpu", True, True, True), ("igpu", False, False, True), ("igpu", "true", True, False), ("gpu", True, True, False), ("igpu", True, False, False)]:
+    errors = []
+    validate_device_modes({"devices": {"fixture": {
+        "kind": kind, "mode": "dedicated", "node": "fixture-node",
+        "identifiers": ["0000:00:02.0"], "rombar": rombar, "legacy_igd": legacy,
+    }}}, lambda key, message: errors.append((key, message)))
+    assert bool(errors) != valid, errors
+print("Legacy IGD assignment, VGA convergence, repeat, omission and device validation: OK")
+
+legacy_guard = task("Require legacy IGD firmware and chipset")["ansible.builtin.assert"]["that"]
+for device, lines, valid in [
+    ({"legacy_igd": True}, [], True),
+    ({"legacy_igd": True, "rombar": False}, [], False),
+    ({"legacy_igd": True, "rombar": True}, ["machine: pc-q35-9.0"], False),
+    ({"legacy_igd": True}, ["bios: ovmf"], False),
+    ({"legacy_igd": True, "pcie": True}, [], False),
+]:
+    ctx = {"pci_passthrough_device": device, "_pci_guest_lines": lines, "_pci_existing_line": ""}
+    assert all(render("{{ " + condition + " }}", ctx) for condition in legacy_guard) == valid
+print("Legacy IGD firmware, chipset, ROM and PCIe guards: OK")

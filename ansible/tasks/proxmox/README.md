@@ -319,3 +319,11 @@ floating placement. Database engines call these same tasks through the adapters 
 `tasks/database/`, preserving their storage-node VM placement, legacy `proxmox.type`, memory
 tuning and network scope. The selected guest memory block overrides shared memory, then 2048
 MiB. An existing guest is reused and started only if needed; Deploy never converts it.
+
+Older Intel iGPUs can require `legacy_igd: true` in their dedicated device declaration.
+This assigns the GPU as the primary display at guest PCI slot 02, with VGA disabled.
+It requires the standard i440fx/SeaBIOS host and an enabled ROM BAR (`rombar: true`);
+q35, OVMF and PCIe declarations are refused. The shared attachment flow updates only
+platform-tagged assignments, retaining their hostpci index and unrelated options.
+Omitted options preserve existing settings. Turning legacy mode off leaves VGA at its
+current value; configure the desired console separately.

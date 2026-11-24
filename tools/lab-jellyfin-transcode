@@ -25,7 +25,7 @@ import uuid
 def request(path, token, body=None, method=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        'http://127.0.0.1:8096/' + path, data=data, method=method,
+        os.environ.get('JELLYFIN_PROBE_URL', 'http://127.0.0.1:8096').rstrip('/') + '/' + path, data=data, method=method,
         headers={'Authorization': 'MediaBrowser Token="' + token + '"', 'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=90) as response:
@@ -39,11 +39,11 @@ def hardware_evidence(text):
     """Require actual frames as well as a hardware encoder, not just its command."""
     return (bool(re.search(r'(?:h264_vaapi|h264_qsv)', text))
             and bool(re.search(r'(?:frame=\s*[1-9]\d*|frame:\s*[1-9]\d*)', text))
-            and 'Conversion failed!' not in text)
+            and not re.search(r'Conversion failed!|Error muxing|Error submitting|Task finished with error code: -', text))
 
 
 def guest_probe(source):
-    config = pathlib.Path('/opt/jellyfin/config')
+    config = pathlib.Path(os.environ.get('JELLYFIN_PROBE_CONFIG', '/opt/jellyfin/config'))
     token = os.environ['JELLYFIN_PROBE_TOKEN']
     user = os.environ['JELLYFIN_PROBE_USER']
     probe = json.loads(subprocess.check_output([
@@ -53,6 +53,7 @@ def guest_probe(source):
         raise RuntimeError('Source must contain H.264 video')
     name = 'lab-h264-' + uuid.uuid4().hex
     play = uuid.uuid4().hex
+    bitrate = 300000 + int(play[:6], 16) % 10000
     logs = config / 'log'
     before = set(logs.glob('FFmpeg.Transcode*'))
     created = False
@@ -73,10 +74,10 @@ def guest_probe(source):
             time.sleep(2)
         if item is None:
             raise RuntimeError('Source was not indexed within 120 seconds')
-        params = {'UserId': user, 'DeviceId': name, 'PlaySessionId': play,
-                  'VideoCodec': 'h264', 'AudioCodec': 'aac', 'VideoBitrate': 300000,
+        params = {'MediaSourceId': item['Id'], 'UserId': user, 'DeviceId': name, 'PlaySessionId': play,
+                  'VideoCodec': 'h264', 'AudioCodec': 'aac', 'VideoBitrate': bitrate,
                   'AudioBitrate': 64000, 'MaxWidth': 640, 'MaxHeight': 360,
-                  'TranscodingMaxAudioChannels': 2, 'SegmentContainer': 'ts',
+                  'TranscodingMaxAudioChannels': 2, 'SegmentContainer': 'mp4',
                   'MinSegments': 1, 'BreakOnNonKeyFrames': 'true', 'EnableAutoStreamCopy': 'false',
                   'AllowVideoStreamCopy': 'false', 'AllowAudioStreamCopy': 'false'}
         base = 'Videos/' + item['Id'] + '/'
@@ -84,9 +85,10 @@ def guest_probe(source):
         variant = next(x for x in playlist.splitlines() if x and not x.startswith('#'))
         # Resolve relative HLS URLs, retaining the session's authentication header.
         def child(parent, value):
-            result = urllib.parse.urljoin('http://127.0.0.1:8096/' + parent, value)
+            origin = os.environ.get('JELLYFIN_PROBE_URL', 'http://127.0.0.1:8096').rstrip('/')
+            result = urllib.parse.urljoin(origin + '/' + parent, value)
             parsed = urllib.parse.urlsplit(result)
-            if parsed.netloc != '127.0.0.1:8096':
+            if (parsed.scheme, parsed.netloc) != (urllib.parse.urlsplit(origin).scheme, urllib.parse.urlsplit(origin).netloc):
                 raise RuntimeError('Unexpected HLS origin')
             return parsed.path.lstrip('/') + ('?' + parsed.query if parsed.query else '')
         variant_path = child(base + 'master.m3u8', variant)
@@ -94,11 +96,21 @@ def guest_probe(source):
         segment = next(x for x in segments.splitlines() if x and not x.startswith('#'))
         output = request(child(variant_path, segment), token)
         if len(output) < 188:
-            raise RuntimeError('No playable transport-stream segment')
+            raise RuntimeError('No media segment')
+        init = re.search(r'#EXT-X-MAP:URI="([^"]+)"', segments)
+        initialization = request(child(variant_path, init.group(1)), token) if init else b''
+        decoded = subprocess.run([
+            'docker', 'exec', '-i', 'jellyfin', '/usr/lib/jellyfin-ffmpeg/ffmpeg',
+            '-v', 'error', '-i', 'pipe:0', '-map', '0:v:0', '-frames:v', '1', '-f', 'framehash', '-'],
+            input=initialization + output, capture_output=True, timeout=30)
+        if decoded.returncode or not any(line and not line.startswith(b'#') for line in decoded.stdout.splitlines()):
+            raise RuntimeError('Returned segment did not decode to a video frame')
         request('Videos/ActiveEncodings?' + urllib.parse.urlencode({'DeviceId': name, 'PlaySessionId': play}), token, method='DELETE')
         for _ in range(10):
             evidence = [p for p in set(logs.glob('FFmpeg.Transcode*')) - before
-                        if play in p.read_text(errors='replace') and hardware_evidence(p.read_text(errors='replace'))]
+                        if json.loads(p.read_text(errors='replace').splitlines()[0]).get('Id') == item['Id']
+                        and f'-b:v {bitrate}' in p.read_text(errors='replace')
+                        and hardware_evidence(p.read_text(errors='replace'))]
             if evidence:
                 print('RESULT H264 hardware transcode PASS; source=h264; encoder=VA-API/QSV; output segment bytes=' + str(len(output)))
                 for p in evidence:
