@@ -135,6 +135,11 @@ def check_resolver():
     # hide a topology tag, including one a future platform feature introduces.
     device_tags = ["_+lab", "_ntfy", "_.dev+dev-dri-renderd128"]
     run_case({"ntfy": guest(tags=device_tags)}, ["ntfy"], native_guard=True)
+    retained_tags = ["_+lab", "_.dev+dev-dri-renderd128"]
+    run_case({"ntfy": guest(tags=retained_tags)}, ["ntfy"], native_guard=True)
+    for claim in ("_another-app", "_.shared", "_.template", "_.stack+media", "_.cluster+k3s", "_.future"):
+        run_case({"ntfy": guest(tags=retained_tags + [claim])},
+                 failure="Refusing to adopt it", native_guard=True)
     for topology in ("_.shared", "_.template", "_.stack+media", "_.cluster+k3s", "_.future"):
         run_case({"ntfy": guest(tags=device_tags + [topology])}, ["ntfy"],
                  failure="Native applications require a dedicated owned guest", native_guard=True)
