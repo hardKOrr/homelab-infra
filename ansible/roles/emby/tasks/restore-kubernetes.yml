@@ -23,6 +23,7 @@
 - name: Emby Kubernetes restore | Verify the restored server and record its account
   ansible.builtin.include_tasks: restore-verified.yml
   vars:
+    _emby_restore_instance: "{{ restore_target }}"
     _emby_restore_base: "http://{{ k8s_cluster_facts.ingress_vip }}/emby"
     _emby_restore_headers:
       Host: >-

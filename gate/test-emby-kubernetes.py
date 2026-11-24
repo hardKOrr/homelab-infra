@@ -65,6 +65,14 @@ assert restore[0]["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore
 verified = include(restore, "restore-verified.yml")
 assert verified["when"] == "_application_restore_complete | default(false) | bool"
 assert "Host" in verified["vars"]["_emby_restore_headers"]
+# The credentials go to the target's item, not the source's (`instance` is the source here).
+assert verified["vars"]["_emby_restore_instance"] == "{{ restore_target }}"
+hook = tasks("restore-verified.yml")
+record = next(t for t in hook if "upsert-item.yml" in str(t.get("ansible.builtin.include_tasks")))
+assert record["vars"]["vault_item_name"] == "homelab-infra/media/{{ _emby_restore_instance }}"
+assert "_emby_restore_instance | default(instance)" in str(hook[0])
+assert "{{ instance }}" not in read(f"{ROLE}/tasks/restore-verified.yml").replace(
+    "default(instance)", "")
 dispatch = tasks("restore.yml")
 assert include(dispatch, "restore-kubernetes.yml") and include(dispatch, "restore-guest.yml")
 
