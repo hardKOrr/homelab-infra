@@ -1,0 +1,85 @@
+---
+# Configuration canary: an API alias, outside the base reconciler's ownership prefix.
+# OPNsense forbids hyphens in alias names; retain the requested ID in the description.
+- name: OPNsense canary | Resolve the alias identity
+  ansible.builtin.set_fact:
+    _opn_canary_name: "drill_canary_{{ drill_canary_id | hash('sha1') | truncate(16, true, '') }}"
+    _opn_canary_description: "drill-canary-{{ drill_canary_id }}"
+
+- name: OPNsense canary | Read and verify the instance configuration
+  module_defaults:
+    ansible.builtin.uri:
+      url_username: "{{ homelabinfra_vault['firewall-admin'].api_key }}"
+      url_password: "{{ homelabinfra_vault['firewall-admin'].api_secret }}"
+      force_basic_auth: true
+      validate_certs: "{{ app_config.bootstrap.validate_certs }}"
+      method: POST
+      body_format: json
+      status_code: 200
+  block:
+    - name: OPNsense canary | Search for the exact alias
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/firewall/alias/searchItem"
+        body: {current: 1, rowCount: 1000, searchPhrase: "{{ _opn_canary_name }}"}
+      register: _opn_canary_search
+      changed_when: false
+      no_log: true
+
+    - name: OPNsense canary | Select exact matches
+      ansible.builtin.set_fact:
+        _opn_canary_rows: "{{ _opn_canary_search.json.rows | selectattr('name', 'equalto', _opn_canary_name) | list }}"
+
+    - name: OPNsense canary | Refuse collisions and require absence on a fresh VM
+      ansible.builtin.assert:
+        that:
+          - _opn_canary_rows | length <= 1
+          - drill_canary_action != 'fresh' or _opn_canary_rows | length == 0
+          - _opn_canary_rows | length == 0 or _opn_canary_rows[0].description == _opn_canary_description
+        fail_msg: The drill alias already exists on a fresh VM or belongs to another caller.
+
+    - name: OPNsense canary | Save the alias through the API
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/firewall/alias/addItem"
+        body:
+          alias:
+            enabled: '1'
+            name: "{{ _opn_canary_name }}"
+            type: host
+            content: 192.0.2.123
+            description: "{{ _opn_canary_description }}"
+      register: _opn_canary_add
+      failed_when: _opn_canary_add.json.result | default('') != 'saved'
+      changed_when: true
+      no_log: true
+      when: drill_canary_action == 'create' and _opn_canary_rows | length == 0
+
+    - name: OPNsense canary | Reload aliases after creating the canary
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/firewall/alias/reconfigure"
+        body: {}
+      register: _opn_canary_reload
+      failed_when: _opn_canary_reload.json.status | default('') | lower != 'ok'
+      changed_when: true
+      no_log: true
+      when: drill_canary_action == 'create' and _opn_canary_rows | length == 0
+
+    - name: OPNsense canary | Read back the saved alias
+      ansible.builtin.uri:
+        url: "https://{{ app_config.bootstrap.lan_address }}/api/firewall/alias/searchItem"
+        body: {current: 1, rowCount: 1000, searchPhrase: "{{ _opn_canary_name }}"}
+      register: _opn_canary_read
+      changed_when: false
+      no_log: true
+      when: drill_canary_action in ['create', 'verify']
+
+    - name: OPNsense canary | Require the exact configuration
+      ansible.builtin.assert:
+        that:
+          - _opn_saved_canary | length == 1
+          - _opn_saved_canary[0].enabled | string == '1'
+          - _opn_saved_canary[0].content | trim == '192.0.2.123'
+          - _opn_saved_canary[0].description == _opn_canary_description
+        fail_msg: The saved drill alias is absent or its configuration differs.
+      vars:
+        _opn_saved_canary: "{{ _opn_canary_read.json.rows | selectattr('name', 'equalto', _opn_canary_name) | list }}"
+      when: drill_canary_action in ['create', 'verify']

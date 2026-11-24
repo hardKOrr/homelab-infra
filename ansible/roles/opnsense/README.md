@@ -23,3 +23,12 @@ The shared guest-start operation skips guest-agent exec readiness for this appli
 `tasks/configure.yml` instead waits for the API to accept the saved admin key. The
 existing account and enabled base-rule reconciles target this instance's LAN address,
 without changing the estate's configured firewall address.
+
+An isolated VM can set `bootstrap.firewall_base` to override the estate's base-rule
+inputs for this Deploy only (for example, rules on `lan` instead of estate-only OPT
+interfaces). The shared reconciler still applies the enabled contract. Omitted fields
+inherit the estate defaults through a recursive merge.
+
+`tasks/drill-canary.yml` saves and checks an API alias with a documentation address.
+Its description is `drill-canary-<id>`; its legal alias name uses an underscore prefix
+and a hash because OPNsense limits names to 31 alphanumeric or underscore characters.

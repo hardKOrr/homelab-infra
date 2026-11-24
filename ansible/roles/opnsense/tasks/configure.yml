@@ -22,6 +22,7 @@
 - name: OPNsense | Save the estate registry before targeting this appliance
   ansible.builtin.set_fact:
     _opn_original_infra: "{{ homelabinfra_infra }}"
+    _opn_original_config: "{{ homelabinfra_config }}"
   no_log: true
 
 - name: OPNsense | Build an instance-scoped reconciliation registry
@@ -36,6 +37,8 @@
   no_log: true
 
 - name: OPNsense | Reconcile only this appliance
+  vars:
+    homelabinfra_config: "{{ _opn_original_config | combine({'infrastructure': {'firewall': {'base': app_config.bootstrap.firewall_base}}}, recursive=True) if app_config.bootstrap.firewall_base is defined else _opn_original_config }}"
   block:
     - name: OPNsense | Reconcile the owned firewall and DNS accounts
       ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/wiring/{{ opnsense_account_tasks }}.yml"
