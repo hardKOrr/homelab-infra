@@ -38,7 +38,7 @@
 - name: OPNsense | Reconcile only this appliance
   block:
     - name: OPNsense | Reconcile the owned firewall and DNS accounts
-      ansible.builtin.include_tasks: "{{ role_path }}/../../../tasks/wiring/{{ opnsense_account_tasks }}.yml"
+      ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/wiring/{{ opnsense_account_tasks }}.yml"
       loop: [opnsense-firewall-account, opnsense-dns-account]
       loop_control:
         loop_var: opnsense_account_tasks
@@ -48,7 +48,7 @@
         _opn_validate: "{{ app_config.bootstrap.validate_certs }}"
 
     - name: OPNsense | Reconcile the enabled base firewall contract
-      ansible.builtin.include_tasks: ../../../tasks/firewall/opnsense-base.yml
+      ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/firewall/opnsense-base.yml"
       vars:
         homelabinfra_infra: "{{ _opn_target_infra }}"
       when: (homelabinfra_config.infrastructure.firewall.base | default({})).enabled | default(false) | bool
