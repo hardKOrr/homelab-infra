@@ -14,8 +14,7 @@
 # The mount host directory must already exist and be authorized for this new Immich
 # instance. The playbook attaches it with media_storage.owner and refuses an empty or
 # ambiguous declaration.
-# Leave `stack` absent when app.gpu_device should choose a stack other than the default
-# `photos`. An explicit stack must equal the GPU device's effective stack.
+# GPU stack precedence: ansible/vars/contract/app-layering.md.
 # stack: photos
 
 app:

@@ -59,11 +59,15 @@ def effective_stack(config, device):
 def test_effective_stack_resolution():
     devices = {
         "intel-igpu": {"stack": "media"},
+        "second-igpu": {"stack": "second-media"},
         "ollama-gpu": {},
     }
     assert effective_stack(
         {"stack": "photos", "app": {"gpu_device": "intel-igpu"}}, devices
     ) == "media"
+    assert effective_stack(
+        {"stack": "photos", "app": {"gpu_device": "second-igpu"}}, devices
+    ) == "second-media"
     assert effective_stack(
         {"stack": "photos", "app": {"gpu_device": "ollama-gpu"}}, devices
     ) == "ollama-gpu"
