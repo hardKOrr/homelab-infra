@@ -1,0 +1,59 @@
+---
+# Resolve Emby's media mounts and libraries from the lab's declared media storage, and check
+# that each library lies under a declared mount. Shared by the Docker path (main.yml) and
+# the Kubernetes path (kubernetes.yml); it reads configuration only, never the stack host.
+- name: Resolve Emby's storage paths
+  ansible.builtin.set_fact:
+    _emby_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+    _emby_library_root: >-
+      {{ ((app_config.media_storage | default({})).library | default('', true))
+         | regex_replace('/+$', '') }}
+
+- name: Assert the lab declares media storage
+  ansible.builtin.assert:
+    that:
+      - _emby_library_root | length > 0
+      - _emby_mounts | length > 0
+    fail_msg: >-
+      Emby needs media_storage.library and media_storage.mounts from the existing
+      media-stack contract; this role does not create or attach media storage.
+
+- name: Resolve Emby's configured libraries
+  ansible.builtin.set_fact:
+    _emby_libraries: >-
+      {{ app_config.app.libraries | default([], true)
+         | map('combine', {'_root': _emby_library_root}) | list }}
+
+- name: Resolve whether each Emby library path is under a declared media mount
+  ansible.builtin.set_fact:
+    _emby_library_mount_valid: "{{ _emby_library_mount_result | trim | bool }}"
+  vars:
+    _emby_library_mount_result: >-
+      {% set library_path = item._root ~ '/' ~ item.subpath %}
+      {% set mounted = namespace(value=false) %}
+      {% for mount in _emby_mounts %}
+      {% set mount_path = mount.path.rstrip('/') %}
+      {% if library_path == mount_path or library_path.startswith(mount_path ~ '/') %}
+      {% set mounted.value = true %}
+      {% endif %}
+      {% endfor %}
+      {{ mounted.value }}
+  loop: "{{ _emby_libraries }}"
+  loop_control:
+    label: "{{ item._root }}/{{ item.subpath }}"
+  register: _emby_library_mount_checks
+  changed_when: false
+
+- name: Assert each Emby library is inside a declared media mount
+  ansible.builtin.assert:
+    that:
+      - item.ansible_facts._emby_library_mount_valid | bool
+    fail_msg: >-
+      Emby library {{ item.item.name }} at {{ item.item._root }}/{{ item.item.subpath }} is not under a
+      declared media_storage.mounts path.
+  loop: "{{ _emby_library_mount_checks.results }}"
+  loop_control:
+    label: "{{ item.item._root }}/{{ item.item.subpath }}"
+

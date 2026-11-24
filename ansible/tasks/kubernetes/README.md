@@ -45,6 +45,14 @@ separators, or trailing separators. Workload templates render both returned list
 task only describes mounts to Kubernetes; the NFS export and its contents remain external
 to homelab-infra and are not included in an application's recovery archives.
 
+### iGPU on a node
+
+A `cluster.nodes` entry may name `gpu_device`, a dedicated iGPU declared in `proxmox.devices`
+for that node's Proxmox host. `provision-node.yml` passes it through to the node VM with the
+shared PCI task, and the `k3s_cluster` role's `gpu.yml` replaces the cloud kernel (which has no
+GPU driver) with the stock one. A workload that needs the device (Emby) selects the node whose
+`gpu_device` matches its own `app.gpu_device`, pins to it and mounts `/dev/dri`.
+
 ### Firewall access
 
 When `firewall.provider: opnsense` is configured, cluster Deploy keeps one host alias named

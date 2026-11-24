@@ -14,7 +14,8 @@
 #
 # Inputs:
 #   k8s_node            — one entry from cluster.nodes: name, proxmox_node, ip_address,
-#                         cores, memory, disk_size (template_vmid optional)
+#                         cores, memory, disk_size (template_vmid and gpu_device optional;
+#                         gpu_device names a dedicated iGPU in proxmox.devices on this node)
 #   k8s_cluster_config  — the merged k3s-cluster config (proxmox.*, cluster.*)
 #
 # Mutates:
@@ -148,6 +149,26 @@
     proxmox_placement_node: "{{ _guest_placement.node }}"
     proxmox_placement_storage: "{{ k8s_cluster_config.proxmox.storage }}"
     proxmox_placement_use_app_config: false
+
+# PCIe passthrough is not hotplugged: the shared task stops the VM, assigns the device and
+# starts it again, and refuses a device another guest holds. The node's kernel gets its GPU
+# driver in the k3s_cluster role (gpu.yml).
+- name: k3s node | Attach the node's declared iGPU
+  ansible.builtin.include_tasks: ../proxmox/attach-pci-passthrough.yml
+  vars:
+    pci_passthrough_guest: "{{ k8s_node.name }}"
+    pci_passthrough_device:
+      id: >-
+        {{ homelabinfra_config.proxmox.devices[k8s_node.gpu_device].identifiers
+           | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+           | list | first }}
+      mapping: >-
+        {{ homelabinfra_config.proxmox.devices[k8s_node.gpu_device].pci_mapping
+           | default(k8s_node.gpu_device) }}
+      pcie: "{{ homelabinfra_config.proxmox.devices[k8s_node.gpu_device].pcie | default(false) | bool }}"
+      rombar: "{{ homelabinfra_config.proxmox.devices[k8s_node.gpu_device].rombar | default(none) }}"
+      legacy_igd: "{{ homelabinfra_config.proxmox.devices[k8s_node.gpu_device].legacy_igd | default(none) }}"
+  when: k8s_node.gpu_device | default('', true) | length > 0
 
 # A CPU model is not hot-pluggable. `qm set --cpu` on a running guest writes the config and
 # changes nothing about the process already running, so a node provisioned before this

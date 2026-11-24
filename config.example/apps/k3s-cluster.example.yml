@@ -68,6 +68,11 @@ cluster:
       # Optional per-node containerd snapshotter. Omit this for K3s's overlayfs default;
       # native is available when this node needs a non-overlay snapshotter.
       # snapshotter: native
+      # Optional iGPU for this node's VM: the key of a proxmox.devices entry with
+      # kind: igpu and mode: dedicated on this node's Proxmox host. Deploy passes it
+      # through and swaps the cloud kernel for the stock one. A Kubernetes app that names
+      # the same key as app.gpu_device (Emby) is pinned to this node.
+      # gpu_device: intel-igpu
 
 ingress:
   # The one address your reverse proxy points at, forever. It must sit OUTSIDE any DHCP

@@ -34,6 +34,10 @@
     fail_msg: >-
       {{ inventory_hostname }} snapshotter must be `overlayfs` or `native`.
 
+- name: k3s | Prepare the node's passed-through iGPU
+  ansible.builtin.include_tasks: gpu.yml
+  when: k8s_node_spec.gpu_device | default('', true) | length > 0
+
 - name: k3s | Establish whether this node founds the cluster
   ansible.builtin.set_fact:
     _k3s_is_founder: "{{ inventory_hostname == k8s_first_node }}"

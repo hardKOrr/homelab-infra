@@ -1,0 +1,177 @@
+---
+# Configure a running Emby through its API: wait for it, finish the first-run wizard,
+# authenticate as its app-owned admin, apply the encoding settings and reconcile the
+# declared libraries. Shared by the Docker path (main.yml) and the Kubernetes path
+# (kubernetes.yml), which differ only in these inputs:
+#   _emby_base          API base URL, ending in /emby
+#   _emby_host_headers  headers every request carries ({} or the routed Host name)
+#   _emby_dri_device_declared  whether the instance declares DRI hardware
+- name: Emby | Build the client authorization headers
+  ansible.builtin.set_fact:
+    _emby_auth_headers: >-
+      {{ _emby_host_headers | combine({'X-Emby-Authorization':
+           'MediaBrowser Client="' ~ emby_client_name ~ '", Device="' ~ emby_device_name
+           ~ '", DeviceId="' ~ emby_client_name ~ '-' ~ instance ~ '", Version="1.0.0"'}) }}
+
+- name: Wait for Emby's public system-info endpoint
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/System/Info/Public"
+    headers: "{{ _emby_host_headers }}"
+    return_content: true
+    status_code: 200
+  register: _emby_public
+  until:
+    - _emby_public.status | default(0) == 200
+    - (_emby_public.json | default({})).Id | default('') | length > 0
+    - (_emby_public.json | default({})).ServerName | default('') | length > 0
+    - (_emby_public.json | default({})).Version | default('') | length > 0
+  retries: "{{ emby_http_retries }}"
+  delay: "{{ emby_http_delay }}"
+  changed_when: false
+
+- name: Assert Emby returns its public system information
+  ansible.builtin.assert:
+    that:
+      - (_emby_public.json | default({})).Id | default('') | length > 0
+      - (_emby_public.json | default({})).ServerName | default('') | length > 0
+      - (_emby_public.json | default({})).Version | default('') | length > 0
+    fail_msg: >-
+      Port {{ app_config.app.port }} is not returning Emby's public system information.
+      Check app.image and whether another application already owns that stack-host port.
+
+- name: Read Emby's unauthenticated startup endpoint state
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/User"
+    headers: "{{ _emby_host_headers }}"
+    status_code: [200, 401]
+  register: _emby_setup_state
+  until: _emby_setup_state.status in [200, 401]
+  retries: "{{ emby_http_retries }}"
+  delay: "{{ emby_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Complete Emby's first-run wizard
+  ansible.builtin.include_tasks: setup-wizard.yml
+  when: _emby_setup_state.status == 200
+
+- name: Try Emby's app-owned admin credentials
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/AuthenticateByName"
+    method: POST
+    headers: "{{ _emby_auth_headers }}"
+    body_format: json
+    body:
+      Username: "{{ _emby_user }}"
+      Pw: "{{ _emby_password }}"
+    status_code: [200, 401]
+  register: _emby_auth_attempt
+  changed_when: false
+  no_log: true
+
+- name: Recover Emby's passwordless administrator after interrupted first run
+  ansible.builtin.include_tasks: set-admin-password.yml
+  when: _emby_auth_attempt.status == 401
+
+- name: Authenticate to Emby with its own admin account
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/AuthenticateByName"
+    method: POST
+    headers: "{{ _emby_auth_headers }}"
+    body_format: json
+    body:
+      Username: "{{ _emby_user }}"
+      Pw: "{{ _emby_password }}"
+    status_code: [200, 401]
+  register: _emby_auth
+  changed_when: false
+  no_log: true
+
+- name: Assert Emby accepts the app-owned admin credentials
+  ansible.builtin.assert:
+    that:
+      - _emby_auth.status == 200
+      - (_emby_auth.json.AccessToken | default('')) | length > 0
+    fail_msg: >-
+      Emby refused the credentials recorded for {{ instance }}. The app owns its user
+      database; put the current Emby credentials in Vaultwarden item
+      homelab-infra/media/{{ instance }} and rerun.
+
+- name: Record Emby API token
+  ansible.builtin.set_fact:
+    _emby_token: "{{ _emby_auth.json.AccessToken }}"
+    _emby_token_header: "{{ _emby_auth.json.AccessToken }}"
+  no_log: true
+
+- name: Configure Emby hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoding.yml
+
+- name: Verify Emby does not expose user API without authentication
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/Query"
+    headers: "{{ _emby_host_headers }}"
+    status_code: [200, 401, 403]
+  register: _emby_unauthenticated
+  changed_when: false
+
+- name: Assert Emby requires its own authentication
+  ansible.builtin.assert:
+    that: _emby_unauthenticated.status in [401, 403]
+    fail_msg: "{{ instance }} exposed Emby's user API to an unauthenticated caller."
+
+- name: Read Emby's configured libraries
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Library/VirtualFolders/Query"
+    headers: "{{ _emby_host_headers | combine({'X-Emby-Token': _emby_token_header}) }}"
+    return_content: true
+    status_code: 200
+  register: _emby_existing_libraries
+  changed_when: false
+  no_log: true
+
+- name: Create each library declared by homelab-infra
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Library/VirtualFolders"
+    method: POST
+    headers: "{{ _emby_host_headers | combine({'X-Emby-Token': _emby_token_header}) }}"
+    body_format: json
+    body:
+      Name: "{{ item.name }}"
+      CollectionType: "{{ item.collection_type }}"
+      Paths:
+        - "{{ item._root }}/{{ item.subpath }}"
+      RefreshLibrary: false
+    status_code: [200, 204]
+  loop: "{{ _emby_libraries }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in ((_emby_existing_libraries.json.Items | default([]))
+                          | map(attribute='Name') | list)
+  register: _emby_library_create
+  no_log: true
+
+- name: Read Emby's libraries after reconciliation
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Library/VirtualFolders/Query"
+    headers: "{{ _emby_host_headers | combine({'X-Emby-Token': _emby_token_header}) }}"
+    return_content: true
+    status_code: 200
+  register: _emby_libraries_now
+  changed_when: false
+  no_log: true
+
+- name: Assert each declared library points at the shared media path
+  ansible.builtin.assert:
+    that:
+      - item.name in ((_emby_libraries_now.json.Items | default([])) | map(attribute='Name') | list)
+      - (item._root ~ '/' ~ item.subpath) in
+        (_emby_libraries_now.json.Items | default([])
+         | selectattr('Name', 'equalto', item.name)
+         | map(attribute='Locations') | flatten | list)
+    fail_msg: >-
+      Emby did not retain library {{ item.name }} at {{ item._root }}/{{ item.subpath }}.
+      Check that this path is visible through a read-only media mount.
+  loop: "{{ _emby_libraries }}"
+  loop_control:
+    label: "{{ item.name }}"
+

@@ -1,9 +1,20 @@
 ---
-# restore-swap.yml verified hook: the restored server is Emby, accepts the source
-# app-owned account and has a media library; the account is then recorded for this instance.
+# restore-swap.yml verified hook (and, on Kubernetes, restore-kubernetes.yml): the restored
+# server is Emby, accepts the source app-owned account and has a media library; the account
+# is then recorded for this instance. Inputs that default to the stack host: _emby_restore_base
+# (API base ending in /emby) and _emby_restore_headers (the routed Host on Kubernetes).
+- name: Emby restore | Resolve the API the restored server answers on
+  ansible.builtin.set_fact:
+    _emby_restore_base: "{{ _emby_restore_base | default('http://localhost:' ~ app_config.app.port ~ '/emby') }}"
+    _emby_restore_headers: "{{ _emby_restore_headers | default({}) }}"
+    _emby_restore_client: >-
+      MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
+      DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+
 - name: Emby restore | Read the restored server identity
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/emby/System/Info/Public"
+    url: "{{ _emby_restore_base }}/System/Info/Public"
+    headers: "{{ _emby_restore_headers }}"
     return_content: true
     status_code: 200
   register: _emby_restore_health
@@ -25,12 +36,9 @@
 
 - name: Emby restore | Authenticate with the source app-owned account
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/emby/Users/AuthenticateByName"
+    url: "{{ _emby_restore_base }}/Users/AuthenticateByName"
     method: POST
-    headers:
-      X-Emby-Authorization: >-
-        MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
-        DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+    headers: "{{ _emby_restore_headers | combine({'X-Emby-Authorization': _emby_restore_client}) }}"
     body_format: json
     body:
       Username: "{{ restore_source_emby_user }}"
@@ -49,9 +57,8 @@
 
 - name: Emby restore | Verify the restored database has a media library
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/emby/Library/VirtualFolders/Query"
-    headers:
-      X-Emby-Token: "{{ _emby_restore_auth.json.AccessToken }}"
+    url: "{{ _emby_restore_base }}/Library/VirtualFolders/Query"
+    headers: "{{ _emby_restore_headers | combine({'X-Emby-Token': _emby_restore_auth.json.AccessToken}) }}"
     return_content: true
     status_code: 200
   register: _emby_restore_libraries
