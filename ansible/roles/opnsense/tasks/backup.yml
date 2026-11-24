@@ -1,7 +1,6 @@
 ---
 # Native export is staged only on the controller; the appliance has no Linux client.
 - name: OPNsense backup | Export and archive the native configuration
-  become: true
   block:
     - name: OPNsense backup | Create private controller staging
       ansible.builtin.tempfile:
@@ -18,13 +17,32 @@
         opn_transfer_instance: "{{ instance }}"
         opn_transfer_config: "{{ app_config }}"
 
+    - name: OPNsense backup | Create private PBS staging on the owned node
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -opnsense-pbs
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      register: _opn_backup_node_dir
+
+    - name: OPNsense backup | Copy the private export to the PBS execution host
+      ansible.builtin.copy:
+        src: "{{ _opn_backup_dir.path }}/config.xml"
+        dest: "{{ _opn_backup_node_dir.path }}/config.xml"
+        mode: "0600"
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      no_log: true
+
     - name: OPNsense backup | Upload and verify through the shared PBS client
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
+      ansible.builtin.include_tasks:
+        file: ../../../tasks/backup/pbs-client-backup.yml
+        apply:
+          delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
       vars:
         pbs_client_runtime: native
         pbs_client_archives:
           - name: config.pxar
-            path: "{{ _opn_backup_dir.path }}"
+            path: "{{ _opn_backup_node_dir.path }}"
 
     - name: OPNsense backup | Mark completion
       ansible.builtin.set_fact:
@@ -36,3 +54,10 @@
         path: "{{ _opn_backup_dir.path }}"
         state: absent
       when: _opn_backup_dir.path is defined
+
+    - name: OPNsense backup | Remove private node staging
+      ansible.builtin.file:
+        path: "{{ _opn_backup_node_dir.path }}"
+        state: absent
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      when: _opn_backup_node_dir.path is defined

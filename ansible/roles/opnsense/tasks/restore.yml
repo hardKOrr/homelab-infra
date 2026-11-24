@@ -7,7 +7,6 @@
     resolve_app_target_register: false
 
 - name: OPNsense restore | Stage and validate through the shared PBS client
-  become: true
   block:
     - name: OPNsense restore | Create private controller staging
       ansible.builtin.tempfile:
@@ -16,13 +15,33 @@
         suffix: -opnsense-restore
       register: _opn_restore_dir
 
+    - name: OPNsense restore | Create private PBS staging on the owned node
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/tmp
+        suffix: -opnsense-pbs
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      register: _opn_restore_node_dir
+
     - name: OPNsense restore | Verify or extract the selected native recovery point
-      ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-restore.yml
+      ansible.builtin.include_tasks:
+        file: ../../../tasks/backup/pbs-client-restore.yml
+        apply:
+          delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
       vars:
         pbs_client_runtime: native
         pbs_client_archives:
           - name: config.pxar
-            path: "{{ _opn_restore_dir.path }}"
+            path: "{{ _opn_restore_node_dir.path }}"
+
+    - name: OPNsense restore | Fetch the private configuration for native upload
+      ansible.builtin.fetch:
+        src: "{{ _opn_restore_node_dir.path }}/config.xml"
+        dest: "{{ _opn_restore_dir.path }}/config.xml"
+        flat: true
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      no_log: true
+      when: restore_overwrite | bool
 
     - name: OPNsense restore | Apply the native config and reboot
       ansible.builtin.include_tasks: config-transfer.yml
@@ -69,3 +88,10 @@
         path: "{{ _opn_restore_dir.path }}"
         state: absent
       when: _opn_restore_dir.path is defined
+
+    - name: OPNsense restore | Remove private node staging
+      ansible.builtin.file:
+        path: "{{ _opn_restore_node_dir.path }}"
+        state: absent
+      delegate_to: "{{ hostvars[_rat_host].proxmox_node }}"
+      when: _opn_restore_node_dir.path is defined

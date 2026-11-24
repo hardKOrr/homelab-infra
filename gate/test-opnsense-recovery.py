@@ -65,6 +65,54 @@ class NativeForm:
 
 
 class RecoveryTest(unittest.TestCase):
+    def test_production_backup_staging_and_cleanup(self):
+        tasks = yaml.safe_load((ROOT / 'ansible/roles/opnsense/tasks/backup.yml').read_text())
+        ansible = Path.home() / '.venvs/homelab-ansible/bin/ansible-playbook'
+        for fail_upload in (False, True):
+            with self.subTest(fail_upload=fail_upload), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                stub = directory / 'pbs.yml'
+                stub.write_text(yaml.safe_dump([
+                    {'ansible.builtin.stat': {'path': '{{ pbs_client_archives[0].path }}/config.xml'},
+                     'register': 'exported'},
+                    {'ansible.builtin.assert': {'that': [
+                        'exported.stat.mode == "0600"',
+                        'pbs_client_archives[0].path == _opn_backup_node_dir.path']}},
+                    {'ansible.builtin.set_fact': {'pbs_boundary_reached': True}},
+                    {'ansible.builtin.fail': {'msg': 'simulated upload failure'}, 'when': fail_upload}]))
+                # Keep production staging, copy, delegated include and cleanup tasks;
+                # replace only the external native export and PBS service boundary.
+                for task in tasks[0]['block']:
+                    if task['name'].endswith('Export the current config.xml'):
+                        task.clear()
+                        task['ansible.builtin.copy'] = {
+                            'content': XML.decode(), 'dest': '{{ _opn_backup_dir.path }}/config.xml',
+                            'mode': '0600'}
+                    elif 'ansible.builtin.include_tasks' in task:
+                        task['ansible.builtin.include_tasks']['file'] = str(stub)
+                variables = {'_rat_host': 'appliance', 'instance': 'opnsense-drill'}
+                inventory = {'all': {'hosts': {
+                    'appliance': {'proxmox_node': 'node'},
+                    'node': {'ansible_connection': 'local'}}}}
+                (directory / 'inventory.yml').write_text(yaml.safe_dump(inventory))
+                check = []
+                for variable in ('_opn_backup_dir', '_opn_backup_node_dir'):
+                    check.extend([
+                        {'ansible.builtin.stat': {'path': '{{ ' + variable + '.path }}'}, 'register': 'staging'},
+                        {'ansible.builtin.assert': {'that': ['not staging.stat.exists']}}])
+                play = [{'hosts': 'localhost', 'connection': 'local', 'gather_facts': False,
+                         'vars': variables, 'tasks': [{
+                             'block': tasks,
+                             'rescue': [{'ansible.builtin.assert': {'that': [fail_upload, 'pbs_boundary_reached | default(false)']}}],
+                             'always': check}]}]
+                (directory / 'play.yml').write_text(yaml.safe_dump(play))
+                result = subprocess.run([str(ansible), '-i', str(directory / 'inventory.yml'),
+                                         str(directory / 'play.yml')], capture_output=True, text=True,
+                                        env=dict(os.environ, ANSIBLE_STDOUT_CALLBACK='default'))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # Restore unmodified task data for the next case.
+            tasks = yaml.safe_load((ROOT / 'ansible/roles/opnsense/tasks/backup.yml').read_text())
+
     def test_appliance_has_no_proxy_wiring(self):
         defaults = yaml.safe_load((ROOT / 'ansible/vars/app-defaults/opnsense.yml').read_text())['opnsense_defaults']
         self.assertEqual(defaults['routing']['proxy'], 'none')

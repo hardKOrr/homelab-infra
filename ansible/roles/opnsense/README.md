@@ -35,7 +35,9 @@ and a hash because OPNsense limits names to 31 alphanumeric or underscore charac
 
 `tasks/backup.yml` exports the current native `config.xml` through the authenticated
 Backup & Restore form and uploads a private controller staging directory through the
-shared PBS client. The history-download API does not export current state.
+shared PBS client on the owned VM's Proxmox node. The runner does not need local
+root privileges; private controller and node staging are both cleaned up.
+The history-download API does not export current state.
 `tasks/restore.yml` verifies the selected PBS archive, requires a recent independent
 pre-restore point, and uploads the XML through the same native form. It observes the
 reboot and checks the saved API key before completing. Staging is removed on failure
