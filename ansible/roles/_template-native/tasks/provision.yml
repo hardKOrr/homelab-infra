@@ -29,6 +29,14 @@
     fail_msg: Native applications require a dedicated owned guest, not a shared guest or template.
   loop: "{{ _existing_hosts }}"
 
+- name: Reconcile the existing guest's explicit pin
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/migrate-inventory-guest.yml
+  vars:
+    migrate_inventory_host: "{{ _existing_hosts[0] }}"
+    migrate_inventory_pin: "{{ app_config.proxmox.get('lxc' if _native_guest_guest_type == 'lxc' else 'vm', {}).get('node', '') or app_config.proxmox.get('node', '') or ((_config_proxmox | default({})).get('proxmox', {}).get('lxc' if _native_guest_guest_type == 'lxc' else 'vm', {}).get('node', '')) }}"
+    migrate_inventory_gpu: "{{ false }}"
+  when: _existing_hosts | length > 0
+
 - name: Native guest | Keep the existing host's node for downstream operations
   ansible.builtin.set_fact:
     homelabinfra_config: >-

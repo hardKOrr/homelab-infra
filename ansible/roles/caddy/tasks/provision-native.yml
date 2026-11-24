@@ -16,6 +16,16 @@
   ansible.builtin.set_fact:
     _existing_hosts: "{{ resolve_guest_hosts }}"
 
+- name: Reconcile the existing instance guest's explicit pin
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/migrate-inventory-guest.yml
+  vars:
+    migrate_inventory_host: "{{ _existing_hosts[0] }}"
+    migrate_inventory_pin: >-
+      {{ app_config.get('proxmox', {}).get('lxc', {}).get('node', '')
+         or app_config.get('proxmox', {}).get('node', '')
+         or ((_config_proxmox | default({})).get('proxmox', {}).get('lxc', {}).get('node', '')) }}
+  when: _existing_hosts | length > 0
+
 - name: Add existing instance host to deploy group
   ansible.builtin.add_host:
     name: "{{ _existing_hosts[0] }}"

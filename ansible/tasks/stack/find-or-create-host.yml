@@ -207,6 +207,14 @@
       }, recursive=True) }}
   when: _stack_hosts | length > 0
 
+- name: Reconcile the existing stack host's explicit pin
+  ansible.builtin.include_tasks: ../proxmox/migrate-inventory-guest.yml
+  vars:
+    migrate_inventory_host: "{{ _stack_hosts[0] }}"
+    migrate_inventory_pin: "{{ _stack_sizing.node | default('') }}"
+    migrate_inventory_gpu: "{{ _stack_placement_class == 'gpu_vm' }}"
+  when: _stack_hosts | length > 0
+
 - name: Resolve the existing stack host's Proxmox node
   ansible.builtin.set_fact:
     _stack_existing_node: "{{ hostvars[_stack_hosts[0]].proxmox_node | default('') }}"

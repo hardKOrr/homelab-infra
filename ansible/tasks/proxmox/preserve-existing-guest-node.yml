@@ -1,5 +1,5 @@
 ---
-# Creation seams call this before placement so a rerun keeps the VMID's current node.
+# Creation seams call this before placement to reconcile an existing VMID's node.
 # Existing guests are never moved just because another node now has more free memory.
 
 - name: Existing guest | Read cluster resources for the requested VMID
@@ -37,6 +37,25 @@
 - name: Existing guest | Record its current node
   ansible.builtin.set_fact:
     _existing_guest_current_node: "{{ (_existing_guest_resources | first | default({})).node | default('') }}"
+
+- name: Existing guest | Honor an explicit placement pin
+  ansible.builtin.include_tasks: migrate-pinned-guest.yml
+  vars:
+    migrate_guest_id: "{{ guest_existing_id }}"
+    migrate_guest_type: "{{ guest_existing_type }}"
+    migrate_guest_source: "{{ _existing_guest_current_node }}"
+    migrate_guest_target: >-
+      {{ proxmox_placement_node | default('', true)
+         or ((app_config | default({})).get('proxmox', {}).get(guest_existing_config_key, {}).get('node', ''))
+         or ((app_config | default({})).get('proxmox', {}).get('node', ''))
+         or ((_config_proxmox | default({})).get('proxmox', {}).get(guest_existing_config_key, {}).get('node', '')) }}
+    migrate_guest_gpu: "{{ proxmox_placement_class | default('') == 'gpu_vm' }}"
+  when: _existing_guest_current_node | length > 0
+
+- name: Existing guest | Record its reconciled node
+  ansible.builtin.set_fact:
+    _existing_guest_current_node: "{{ migrate_guest_node }}"
+  when: _existing_guest_current_node | length > 0
 
 - name: Existing guest | Preserve its current node in the guest config
   ansible.builtin.set_fact:

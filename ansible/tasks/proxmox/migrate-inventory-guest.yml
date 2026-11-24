@@ -1,0 +1,17 @@
+---
+# Deploy reuse adapter. Inputs: migrate_inventory_host, migrate_inventory_pin,
+# optional migrate_inventory_gpu. Refresh the host's node for all downstream operations.
+- name: Guest migration | Reconcile an inventory guest
+  ansible.builtin.include_tasks: migrate-pinned-guest.yml
+  vars:
+    migrate_guest_id: "{{ hostvars[migrate_inventory_host].proxmox_vmid }}"
+    migrate_guest_type: "{{ hostvars[migrate_inventory_host].proxmox_vmtype }}"
+    migrate_guest_source: "{{ hostvars[migrate_inventory_host].proxmox_node }}"
+    migrate_guest_target: "{{ migrate_inventory_pin }}"
+    migrate_guest_gpu: "{{ migrate_inventory_gpu | default(false) | bool }}"
+
+- name: Guest migration | Refresh the inventory node
+  ansible.builtin.add_host:
+    name: "{{ migrate_inventory_host }}"
+    proxmox_node: "{{ migrate_guest_node }}"
+  changed_when: false

@@ -47,6 +47,19 @@
       cluster resources. Refusing to resolve a new placement for it.
   when: _vmc_existing_guest | length > 0
 
+- name: VM clone | Reconcile the existing guest's explicit pin
+  ansible.builtin.include_tasks: ../preserve-existing-guest-node.yml
+  vars:
+    guest_existing_id: "{{ homelabinfra_config.proxmox.vm.vmid }}"
+    guest_existing_type: qemu
+    guest_existing_config_key: vm
+  when: _vmc_existing_guest | length > 0
+
+- name: VM clone | Record the reconciled existing resource
+  ansible.builtin.set_fact:
+    _vmc_existing_guest: "{{ _vmc_existing_guest | combine({'node': _existing_guest_current_node}) }}"
+  when: _vmc_existing_guest | length > 0
+
 - name: VM clone | Keep an existing guest on its current node
   ansible.builtin.set_fact:
     homelabinfra_config: >-
