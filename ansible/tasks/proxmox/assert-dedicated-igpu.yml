@@ -4,7 +4,30 @@
 # proxmox.devices, and /dev/dri is declared only with it, since a Proxmox host's
 # /dev/dri cannot be shared into the stack VM.
 #
+# On an LXC stack host the iGPU is shared instead: app.gpu_device stays empty (a named
+# device would select the dedicated GPU VM) and each /dev/dri entry of app.devices must be
+# a host path under a proxmox.devices declaration with mode: shared, which deploy.yml
+# binds into the LXC.
+#
 # Inputs: app_config, igpu_app_display.
+- name: "{{ igpu_app_display }} | Validate the shared iGPU declaration on an LXC"
+  ansible.builtin.assert:
+    that:
+      - app_config.app.gpu_device | default('', true) | length == 0
+      - >-
+        app_config.app.devices | default([]) | select('match', '^/dev/dri(?:/|$)')
+        | reject('in', _igpu_shared_paths) | list | length == 0
+    fail_msg: >-
+      {{ igpu_app_display }} on an LXC shares the host iGPU: leave app.gpu_device empty and
+      list each /dev/dri node in app.devices, declared in proxmox.devices with mode: shared.
+    quiet: true
+  vars:
+    _igpu_shared_paths: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})).values()
+         | selectattr('mode', 'equalto', 'shared')
+         | map(attribute='identifiers') | flatten | list }}
+  when: _hosting_guest_type | default('vm') == 'lxc'
+
 - name: "{{ igpu_app_display }} | Validate the GPU placement declaration"
   ansible.builtin.assert:
     that:
@@ -21,3 +44,4 @@
       {{ igpu_app_display }} hardware transcoding requires app.gpu_device to name a
       dedicated iGPU declaration. /dev/dri cannot be shared from a Proxmox host into the VM.
     quiet: true
+  when: _hosting_guest_type | default('vm') != 'lxc'

@@ -30,6 +30,8 @@
 | `networks.<name>.ip_offset` | optional | fallback walk only (no pool applies). An index into the host range, not a last octet: at a /20, `10` is `x.0.10` and the range runs to `x.15.254` |
 | `networks.<name>.max_hosts` | optional | fallback walk only: how far past `ip_offset` allocation may walk |
 
+When shared and dedicated iGPUs coexist, every shared declaration must explicitly name a node without a dedicated iGPU. Placement and attachment enforce this boundary; unscoped shared failover is rejected.
+
 **Every named network inherits `networks.default`.** `tasks/network/generate-ip.yml` builds
 the effective config as `networks.default | combine(networks.<selected>, recursive=True)`,
 and `config-doctor.sh` requires the four keys above on that merged result. A band therefore

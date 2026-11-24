@@ -13,8 +13,11 @@
 - name: Resolve Emby's desired hardware encoding settings
   ansible.builtin.set_fact:
     _emby_hardware_acceleration_type: >-
-      {{ 'vaapi' if _emby_dri_device_declared | bool else 'none' }}
-    _emby_hardware_encoding_enabled: "{{ _emby_dri_device_declared | bool }}"
+      {{ 'vaapi' if (_emby_dri_device_declared | bool and
+                     app_config.app.hardware_transcoding | default(true) | bool) else 'none' }}
+    _emby_hardware_encoding_enabled: >-
+      {{ _emby_dri_device_declared | bool and
+         app_config.app.hardware_transcoding | default(true) | bool }}
 
 - name: Resolve Emby's complete desired encoding options
   ansible.builtin.set_fact:

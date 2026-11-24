@@ -9,6 +9,7 @@ actual-budget:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -26,6 +27,7 @@ actual-budget:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -52,6 +54,7 @@ actual-budget:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -83,6 +86,7 @@ authentik:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -103,6 +107,7 @@ authentik:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/resolve-app-database.yml
     - tasks/bitwarden/upsert-item.yml
@@ -139,6 +144,7 @@ bazarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -158,6 +164,7 @@ bazarr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -185,6 +192,7 @@ bazarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -220,6 +228,7 @@ bookstack:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -243,6 +252,7 @@ bookstack:
     - tasks/resolve-estate.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -273,6 +283,7 @@ bookstack:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -380,6 +391,7 @@ comfyui:
     - tasks/proxmox/provision-app-vm.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -396,6 +408,7 @@ comfyui:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -420,6 +433,7 @@ comfyui:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -449,6 +463,7 @@ deemix:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -469,6 +484,7 @@ deemix:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -495,6 +511,7 @@ deemix:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -517,7 +534,7 @@ deemix:
     native: [tasks/recovery/restore-swap.yml]
 emby:
   method: docker
-  supported: [docker-vm]
+  supported: [docker-lxc, docker-vm]
   deploy:
     docker:
     - tasks/load-user-vars.yml
@@ -527,6 +544,7 @@ emby:
     - tasks/proxmox/assert-dedicated-igpu.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -554,6 +572,7 @@ flaresolverr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -566,6 +585,7 @@ flaresolverr:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -586,6 +606,7 @@ flaresolverr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -603,6 +624,7 @@ forgejo-runner:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -616,6 +638,7 @@ forgejo-runner:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -638,6 +661,7 @@ forgejo-runner:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -657,6 +681,7 @@ forgejo:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -676,6 +701,7 @@ forgejo:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -706,6 +732,7 @@ forgejo:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -741,6 +768,7 @@ frigate:
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
     - tasks/proxmox/attach-usb-passthrough.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -757,6 +785,7 @@ frigate:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -781,6 +810,7 @@ frigate:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -811,6 +841,7 @@ hi-events:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -830,6 +861,7 @@ hi-events:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -859,6 +891,7 @@ hi-events:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -894,6 +927,7 @@ home-assistant:
     - tasks/proxmox/attach-usb-passthrough.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -912,6 +946,7 @@ home-assistant:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -940,6 +975,7 @@ home-assistant:
     - tasks/proxmox/attach-usb-passthrough.yml
     - tasks/proxmox/attach-usb-passthrough-lxc.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -971,6 +1007,7 @@ homepage:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -987,6 +1024,7 @@ homepage:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1010,6 +1048,7 @@ homepage:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1032,6 +1071,7 @@ immich:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1058,6 +1098,7 @@ influxdb:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1076,6 +1117,7 @@ influxdb:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/open-consumer-access.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -1106,6 +1148,7 @@ influxdb:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1142,6 +1185,7 @@ jellyfin:
     - tasks/proxmox/assert-dedicated-igpu.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1169,6 +1213,7 @@ jellyseerr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1185,6 +1230,7 @@ jellyseerr:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1209,6 +1255,7 @@ jellyseerr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1238,6 +1285,7 @@ karakeep:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1255,6 +1303,7 @@ karakeep:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1281,6 +1330,7 @@ karakeep:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1311,6 +1361,7 @@ kometa:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1323,6 +1374,7 @@ kometa:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1343,6 +1395,7 @@ kometa:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1360,6 +1413,7 @@ lidarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1380,6 +1434,7 @@ lidarr:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -1408,6 +1463,7 @@ lidarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1440,6 +1496,7 @@ litellm:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1459,6 +1516,7 @@ litellm:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1488,6 +1546,7 @@ litellm:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1521,6 +1580,7 @@ maintainerr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1537,6 +1597,7 @@ maintainerr:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1561,6 +1622,7 @@ maintainerr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1590,6 +1652,7 @@ mariadb:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1604,6 +1667,7 @@ mariadb:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/open-consumer-access.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -1631,6 +1695,7 @@ mariadb:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1670,6 +1735,7 @@ mautic:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1690,6 +1756,7 @@ mautic:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1720,6 +1787,7 @@ mautic:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1762,6 +1830,7 @@ mixpost:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1779,6 +1848,7 @@ mixpost:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1807,6 +1877,7 @@ mixpost:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1839,6 +1910,7 @@ mysql:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1853,6 +1925,7 @@ mysql:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/open-consumer-access.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -1880,6 +1953,7 @@ mysql:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1919,6 +1993,7 @@ n8n:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1937,6 +2012,7 @@ n8n:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -1965,6 +2041,7 @@ n8n:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -1997,6 +2074,7 @@ navidrome:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2014,6 +2092,7 @@ navidrome:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -2040,6 +2119,7 @@ navidrome:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2069,6 +2149,7 @@ ntfy:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2088,6 +2169,7 @@ ntfy:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2115,6 +2197,7 @@ ntfy:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2156,6 +2239,7 @@ observability:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2174,6 +2258,7 @@ observability:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2201,6 +2286,7 @@ observability:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2233,6 +2319,7 @@ odoo:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2252,6 +2339,7 @@ odoo:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2281,6 +2369,7 @@ odoo:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2325,6 +2414,7 @@ ollama:
     - tasks/proxmox/provision-app-vm.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2342,6 +2432,7 @@ ollama:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2367,6 +2458,7 @@ ollama:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2398,6 +2490,7 @@ open-webui:
     - tasks/app-wiring/open-webui-upstreams.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2419,6 +2512,7 @@ open-webui:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/app-wiring/open-webui-upstreams.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2447,6 +2541,7 @@ open-webui:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2484,6 +2579,7 @@ plane:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2505,6 +2601,7 @@ plane:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -2534,6 +2631,7 @@ plane:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2572,6 +2670,7 @@ plex:
     - tasks/proxmox/assert-dedicated-igpu.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2599,6 +2698,7 @@ postgresql:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2613,6 +2713,7 @@ postgresql:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/open-consumer-access.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -2640,6 +2741,7 @@ postgresql:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2670,6 +2772,7 @@ prowlarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2690,6 +2793,7 @@ prowlarr:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -2718,6 +2822,7 @@ prowlarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2749,6 +2854,7 @@ qbittorrent:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2770,6 +2876,7 @@ qbittorrent:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -2798,6 +2905,7 @@ qbittorrent:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2830,6 +2938,7 @@ radarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2850,6 +2959,7 @@ radarr:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -2878,6 +2988,7 @@ radarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2909,6 +3020,7 @@ redis:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2923,6 +3035,7 @@ redis:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/database/open-consumer-access.yml
     - tasks/kubernetes/resolve-cluster.yml
@@ -2949,6 +3062,7 @@ redis:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -2979,6 +3093,7 @@ sabnzbd:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3000,6 +3115,7 @@ sabnzbd:
     - tasks/resolve-estate.yml
     - tasks/kubernetes/resolve-media-nfs.yml
     - tasks/proxmox/register-nodes.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -3028,6 +3144,7 @@ sabnzbd:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3060,6 +3177,7 @@ searxng:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3077,6 +3195,7 @@ searxng:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3102,6 +3221,7 @@ searxng:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3124,6 +3244,7 @@ slskd:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3144,6 +3265,7 @@ slskd:
     - tasks/resolve-estate.yml
     - tasks/kubernetes/resolve-media-nfs.yml
     - tasks/proxmox/register-nodes.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -3172,6 +3294,7 @@ slskd:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3203,6 +3326,7 @@ sonarr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3223,6 +3347,7 @@ sonarr:
     - tasks/resolve-estate.yml
     - tasks/proxmox/register-nodes.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -3251,6 +3376,7 @@ sonarr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3282,6 +3408,7 @@ tautulli:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3301,6 +3428,7 @@ tautulli:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/stack/resolve-existing-host.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3327,6 +3455,7 @@ tautulli:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3358,6 +3487,7 @@ unpackerr:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3371,6 +3501,7 @@ unpackerr:
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
     - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/prepare-media-volumes.yml
@@ -3393,6 +3524,7 @@ unpackerr:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3410,6 +3542,7 @@ uptime-kuma:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3431,6 +3564,7 @@ uptime-kuma:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3460,6 +3594,7 @@ uptime-kuma:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3494,6 +3629,7 @@ vaultwarden:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3513,6 +3649,7 @@ vaultwarden:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3540,6 +3677,7 @@ vaultwarden:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3571,6 +3709,7 @@ wireguard:
     - tasks/resolve-estate.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3587,6 +3726,7 @@ wireguard:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3611,6 +3751,7 @@ wireguard:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3641,6 +3782,7 @@ wordpress:
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
@@ -3663,6 +3805,7 @@ wordpress:
     - tasks/resolve-estate.yml
     - tasks/backup/resolve-pbs-target.yml
     - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/kubernetes/open-app-access.yml
     - tasks/kubernetes/resolve-cluster.yml
     - tasks/kubernetes/ensure-namespace.yml
@@ -3693,6 +3836,7 @@ wordpress:
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
     - tasks/firewall/open-app-access.yml
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml

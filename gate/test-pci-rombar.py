@@ -118,3 +118,18 @@ for device, lines, valid in [
     ctx = {"pci_passthrough_device": device, "_pci_guest_lines": lines, "_pci_existing_line": ""}
     assert all(render("{{ " + condition + " }}", ctx) for condition in legacy_guard) == valid
 print("Legacy IGD firmware, chipset, ROM and PCIe guards: OK")
+
+# Distinct node-scoped iGPUs may use different modes. Unscoped shared failover
+# and a shared declaration on a dedicated node must still be rejected.
+for shared_node, valid in [("fixture-shared", True), (None, False), ("fixture-dedicated", False)]:
+    shared = {"kind": "igpu", "mode": "shared", "identifiers": ["/dev/dri/renderD128"]}
+    if shared_node is not None:
+        shared["node"] = shared_node
+    errors = []
+    validate_device_modes({"node": "fixture-fallback", "devices": {
+        "dedicated": {"kind": "igpu", "mode": "dedicated", "node": "fixture-dedicated",
+                      "identifiers": ["0000:00:02.0"]},
+        "shared": shared,
+    }}, lambda key, message: errors.append((key, message)))
+    assert bool(errors) != valid, errors
+print("Mixed iGPU modes require isolated explicit shared placement: OK")

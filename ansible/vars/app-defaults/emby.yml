@@ -5,7 +5,7 @@ emby_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: media
   # Recovery is owned by this deployment slice: the complete Emby config
@@ -27,9 +27,11 @@ emby_defaults:
     puid: 1313
     pgid: 1313
     # Optional dedicated Proxmox iGPU. Deploy maps /dev/dri, adds its host device
-    # groups and enables VA-API when set; an empty value keeps Emby software-only.
+    # groups and enables VA-API unless hardware_transcoding is false.
     gpu_device: ""
     devices: []
+    # Hardware transcoding requires Emby Premiere. False keeps device access only.
+    hardware_transcoding: true
     libraries:
       - name: Movies
         collection_type: movies

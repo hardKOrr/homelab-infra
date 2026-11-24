@@ -77,6 +77,7 @@
         deploy_host_mounts: []
         deploy_host_mounts_owner: {}
         deploy_host_mounts_own_node: false
+        deploy_host_shared_devices: []
         native_guest_database: false
         firewall_inbound_ports: {}
         deploy_notify_note: ""
@@ -139,6 +140,15 @@
       when:
         - app_config.hosting.method in ['docker', 'native']
         - deploy_host_mounts | default([]) | length > 0
+
+    - name: Bind the shared host devices the deploy-prepare hook named into the LXC
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-shared-device.yml
+      vars:
+        shared_device_guest: "{{ groups['deploy_' ~ instance][0] }}"
+        shared_device_list: "{{ deploy_host_shared_devices }}"
+      when:
+        - _hosting_guest_type | default('') == 'lxc'
+        - deploy_host_shared_devices | default([]) | length > 0
 
     - name: Open the guest's declared network access
       ansible.builtin.include_tasks: ../../tasks/apps/deploy-firewall.yml

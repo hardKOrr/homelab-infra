@@ -7,7 +7,7 @@ DEVICE_MODES = {"shared", "dedicated"}
 
 
 def validate_device_modes(proxmox, report):
-    """Report malformed device declarations and mixed iGPU modes across nodes.
+    """Report malformed devices and unsafe shared iGPU failover declarations.
 
     ``report`` accepts ``(key, message)``.  A declaration without ``kind`` defaults to
     ``igpu`` only for ``mode: shared``; a bare ``mode: dedicated`` declaration is the
@@ -88,31 +88,18 @@ def validate_device_modes(proxmox, report):
             continue
 
         if mode in DEVICE_MODES and kind == "igpu":
-            igpu_declarations.append((name, node, mode))
+            igpu_declarations.append((name, node, mode, declaration.get("node")))
 
-    # This intentionally compares only declarations on DIFFERENT nodes. The existing
-    # per-device mutual-exclusivity check remains responsible for one node; this guard adds
-    # only the cross-node failover invariant. Shared is the reference mode
-    # named by the contract, so each dedicated declaration that conflicts with it is reported
-    # once rather than once per conflicting pair.
-    reference_mode = "shared"
-    for name, node, mode in igpu_declarations:
-        if mode != "dedicated":
+    # Shared failover must never reach a node whose iGPU belongs to a VM. Mixed
+    # modes are safe only when every shared declaration explicitly restricts its
+    # consumer to a different node; attachment and placement enforce that restriction.
+    dedicated_nodes = {node for _, node, mode, _ in igpu_declarations if mode == "dedicated"}
+    for name, node, mode, explicit_node in igpu_declarations:
+        if mode != "shared" or not dedicated_nodes:
             continue
-        reference = next(
-            (
-                declaration
-                for declaration in igpu_declarations
-                if declaration[1] != node and declaration[2] == reference_mode
-            ),
-            None,
-        )
-        if reference is None:
-            continue
-        report(
-            "proxmox.devices.%s.mode" % name,
-            "iGPU mode %r on node %s conflicts with mode %r on node %s; "
-            "all iGPU-mode nodes must use one mode so shared consumers can fail over "
-            "without contending with a dedicated VM"
-            % (mode, node, reference[2], reference[1]),
-        )
+        if not explicit_node or node in dedicated_nodes:
+            report(
+                "proxmox.devices.%s.node" % name,
+                "shared iGPU declarations alongside dedicated iGPUs must name an "
+                "explicit node without a dedicated iGPU; refusing unsafe failover",
+            )

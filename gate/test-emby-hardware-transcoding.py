@@ -55,7 +55,7 @@ class EmbyEncoding(BaseHTTPRequestHandler):
         pass
 
 
-def run_playbook(server, root, devices, gpu_device=""):
+def run_playbook(server, root, devices, gpu_device="", hardware_transcoding=True):
     compose_path = root / "docker-compose.yml"
     playbook_path = root / "configure-emby.yml"
     play = [{
@@ -74,6 +74,7 @@ def run_playbook(server, root, devices, gpu_device=""):
                     "pgid": 1313,
                     "devices": devices,
                     "gpu_device": gpu_device,
+                    "hardware_transcoding": hardware_transcoding,
                 },
             },
             "_emby_base": f"http://127.0.0.1:{server.server_port}/emby",
@@ -99,7 +100,7 @@ def run_playbook(server, root, devices, gpu_device=""):
     fake_find.write_text(
         "#!/bin/sh\n"
         "[ \"${1:-}\" = /dev/dri ] || exit 9\n"
-        "printf '104\\n44\\n104\\n'\n"
+        "printf 'directory:0\\ncharacter special file:104\\ncharacter special file:44\\ncharacter special file:104\\nregular file:999\\n'\n"
     )
     fake_find.chmod(0o755)
     env = os.environ | {
@@ -150,6 +151,8 @@ def main():
             assert changed == 2  # Compose and Emby's encoding settings changed.
             assert gpu_service["devices"] == ["/dev/dri:/dev/dri"]
             assert gpu_service["group_add"] == ["44", "104"]
+            assert any("ATTACHED_DEVICES_PERMS=" in value and "-exec test -c {} ;" in value
+                       for value in gpu_service["environment"])
             assert server.encoding["HardwareAccelerationType"] == "vaapi"
             assert server.encoding["EnableHardwareEncoding"] is True
             assert server.encoding["HardwareDecodingCodecs"] == ["h264"]
@@ -166,6 +169,7 @@ def main():
             assert changed == 2  # DRI access and hardware encoding were removed.
             assert "devices" not in cpu_service
             assert "group_add" not in cpu_service
+            assert not any("ATTACHED_DEVICES_PERMS=" in value for value in cpu_service["environment"])
             assert server.encoding["HardwareAccelerationType"] == "none"
             assert server.encoding["EnableHardwareEncoding"] is False
             assert server.encoding["HardwareDecodingCodecs"] == ["h264"]
@@ -175,12 +179,34 @@ def main():
             changed, _ = run_playbook(server, root, [])
             assert changed == 0
             assert len(server.requests) == 2
+            changed, device_service = run_playbook(
+                server, root, ["/dev/dri/renderD128"], hardware_transcoding=False
+            )
+            assert changed == 1  # Device access changes independently of transcoding.
+            assert device_service["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"]
+            assert device_service["group_add"] == ["44", "104"]
+            assert len(server.requests) == 2
+            changed, _ = run_playbook(server, root, ["/dev/dri/renderD128"])
+            assert changed == 1
+            assert server.encoding["HardwareAccelerationType"] == "vaapi"
+            assert server.encoding["EnableHardwareEncoding"] is True
+            changed, _ = run_playbook(
+                server, root, ["/dev/dri/renderD128"], hardware_transcoding=False
+            )
+            assert changed == 1
+            assert server.encoding["HardwareAccelerationType"] == "none"
+            assert server.encoding["EnableHardwareEncoding"] is False
+            changed, _ = run_playbook(
+                server, root, ["/dev/dri/renderD128"], hardware_transcoding=False
+            )
+            assert changed == 0
+            assert len(server.requests) == 4
     finally:
         server.shutdown()
         server.server_close()
     print(
         "Emby transcoding: declared DRI enables VA-API and hardware encoding, passes unique host groups, "
-        "and empty device disables hardware; both modes converge on repeat runs"
+        "and device-only mode disables hardware; all modes converge on repeat runs"
     )
 
 

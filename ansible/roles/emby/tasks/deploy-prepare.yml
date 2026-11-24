@@ -13,3 +13,11 @@
       {{ app_config.app.mounts
          | default((app_config.media_storage | default({})).mounts | default([]), true) }}
     deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+
+# On an LXC stack host the iGPU nodes in app.devices are bound into the guest as shared.
+- name: Emby | Name the shared DRI nodes to bind into the LXC
+  ansible.builtin.set_fact:
+    deploy_host_shared_devices: >-
+      {{ app_config.app.devices | default([])
+         | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
+  when: _hosting_guest_type | default('vm') == 'lxc'

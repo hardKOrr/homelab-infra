@@ -147,7 +147,7 @@
   ansible.builtin.set_fact:
     _sd_existing_hosts: >-
       {{ _sd_dev_lines
-         | map('regex_replace', '^dev[0-9]+:\s*([^,]+).*$', '\1')
+         | map('regex_replace', '^dev[0-9]+:\s*(?:path=)?(/[^,]+).*$', '\1')
          | list }}
     _sd_used_indices: >-
       {{ _sd_dev_lines | map('regex_replace', '^dev([0-9]+):.*$', '\1')
