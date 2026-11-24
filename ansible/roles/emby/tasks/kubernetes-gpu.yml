@@ -1,0 +1,40 @@
+---
+# Device path only, from inside the running pod: the render node exists, Emby's service user
+# can open it, and VA-API lists the device's H.264 profiles. Emby's own hardware transcoding
+# is a Premiere feature and is not exercised here.
+- name: Emby Kubernetes GPU | Probe the render node as the service user
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - sh
+      - -c
+      - |
+        node=$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)
+        [ -n "$node" ] || { echo "no render node under /dev/dri"; exit 3; }
+        su -s /bin/sh abc -c "test -r $node && test -w $node" \
+          || { echo "$node is not readable by the Emby service user"; exit 4; }
+        # The image bundles glibc tools under /app/emby, outside its Alpine runtime.
+        su -s /bin/sh abc -c "LIBVA_DRIVERS_PATH=/app/emby/lib/dri \
+          /app/emby/lib/ld-linux-x86-64.so.2 \
+          --library-path /app/emby/lib:/app/emby/extra/lib \
+          /app/emby/bin/vainfo --display drm --device $node" 2>&1
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _emby_k8s_gpu
+  until: _emby_k8s_gpu.rc == 0
+  retries: 6
+  delay: 5
+  changed_when: false
+
+- name: Emby Kubernetes GPU | Require H.264 profiles on the device
+  ansible.builtin.assert:
+    that: _emby_k8s_gpu.stdout is search('VAProfileH264')
+    fail_msg: >-
+      vainfo in the Emby pod lists no H.264 profile for the iGPU:
+      {{ _emby_k8s_gpu.stdout | default('') | truncate(400) }}

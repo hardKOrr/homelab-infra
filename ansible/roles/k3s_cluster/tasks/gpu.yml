@@ -1,0 +1,54 @@
+---
+# A node that holds a passed-through iGPU (cluster.nodes[].gpu_device) needs a kernel with the
+# DRM drivers. The Debian genericcloud image ships the cloud kernel, which has none, so no
+# render node appears. Swap it for the stock kernel once and reboot; a node that already runs a
+# kernel with i915 is left alone. The role runs serially, so one node reboots at a time.
+- name: k3s GPU | Look for the i915 driver in the running kernel
+  ansible.builtin.shell: ls /lib/modules/"$(uname -r)"/kernel/drivers/gpu/drm/i915/i915.ko* 2>/dev/null
+  register: _k3s_gpu_driver
+  changed_when: false
+  failed_when: false
+
+- name: k3s GPU | Install the stock kernel and drop the cloud kernel
+  when: _k3s_gpu_driver.rc != 0
+  block:
+    - name: k3s GPU | Install the stock kernel
+      ansible.builtin.apt:
+        name: linux-image-amd64
+        state: present
+        update_cache: true
+
+    - name: k3s GPU | List the installed cloud kernels
+      ansible.builtin.shell: dpkg-query -W -f '${Package}\n' 'linux-image-*cloud-amd64'
+      register: _k3s_gpu_cloud
+      changed_when: false
+      failed_when: false
+
+    # GRUB orders -cloud-amd64 after -amd64, so the cloud kernel would keep booting.
+    - name: k3s GPU | Remove the cloud kernels
+      ansible.builtin.apt:
+        name: "{{ _k3s_gpu_cloud.stdout_lines }}"
+        state: absent
+        purge: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      when: _k3s_gpu_cloud.stdout_lines | length > 0
+
+    - name: k3s GPU | Reboot into the stock kernel
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+
+- name: k3s GPU | Require the render node
+  ansible.builtin.stat:
+    path: /dev/dri
+  register: _k3s_gpu_dri
+  until: _k3s_gpu_dri.stat.exists
+  retries: 12
+  delay: 5
+
+- name: k3s GPU | Assert the node exposes /dev/dri
+  ansible.builtin.assert:
+    that: _k3s_gpu_dri.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} holds gpu_device {{ k8s_node_spec.gpu_device }} but has no
+      /dev/dri after the stock kernel booted. Check the VM's hostpci assignment.

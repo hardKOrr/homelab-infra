@@ -79,6 +79,7 @@ def run_playbook(server, root, devices, gpu_device="", hardware_transcoding=True
             },
             "_emby_base": f"http://127.0.0.1:{server.server_port}/emby",
             "_emby_token_header": "fixture-token",
+            "_emby_host_headers": {},
             "_emby_mounts": [],
             "homelabinfra_config": {"timezone": "UTC"},
         },

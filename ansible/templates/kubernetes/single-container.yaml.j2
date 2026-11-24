@@ -75,6 +75,9 @@ spec:
 {% endif %}
     spec:
       automountServiceAccountToken: false
+{% if app.node_selector is defined %}
+      nodeSelector: {{ app.node_selector | to_json }}
+{% endif %}
 {% if app.security_context is defined %}
       securityContext:
         runAsUser: {{ app.security_context.run_as_user | int }}
@@ -93,6 +96,9 @@ spec:
 {% endif %}
 {% if app.args is defined %}
           args: {{ app.args | to_json }}
+{% endif %}
+{% if app.container_security_context is defined %}
+          securityContext: {{ app.container_security_context | to_json }}
 {% endif %}
 {% if app.env | default([]) | length > 0 %}
           env:

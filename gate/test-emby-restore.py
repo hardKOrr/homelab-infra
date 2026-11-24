@@ -82,7 +82,7 @@ def run_verified(port):
 
 
 def main():
-    swap = swap_inputs("emby")
+    swap = swap_inputs("emby", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}

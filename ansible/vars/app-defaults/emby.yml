@@ -5,7 +5,7 @@ emby_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
   # Recovery is owned by this deployment slice: the complete Emby config
@@ -23,11 +23,14 @@ emby_defaults:
     port: 8097
     container_port: 8096
     config_path: "/opt/{{ instance }}/config"
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 10
     admin_user: admin
     puid: 1313
     pgid: 1313
     # Optional dedicated Proxmox iGPU. Deploy maps /dev/dri, adds its host device
-    # groups and enables VA-API unless hardware_transcoding is false.
+    # groups and enables VA-API unless hardware_transcoding is false. On Kubernetes it
+    # names the iGPU of one k3s node (cluster.nodes[].gpu_device) and pins the pod there.
     gpu_device: ""
     devices: []
     # Hardware transcoding requires Emby Premiere. False keeps device access only.
@@ -57,3 +60,9 @@ emby_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

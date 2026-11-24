@@ -1,0 +1,121 @@
+---
+# Emby on Kubernetes: its /config on a default-StorageClass PVC and its media on the lab's
+# existing NFS shares, read-only at the same container paths as on Docker
+# (deploy-prepare.yml resolved them into k8s_media_nfs). With app.gpu_device the pod is
+# pinned to the cluster node that holds that iGPU (cluster.nodes[].gpu_device) and gets
+# /dev/dri; the API configuration is the Docker path's configure.yml, reached through the
+# ingress VIP with the routed Host name.
+- name: Emby Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Emby Kubernetes | Resolve the media mounts and libraries
+  ansible.builtin.include_tasks: resolve.yml
+
+- name: Emby Kubernetes | Resolve the iGPU node
+  ansible.builtin.set_fact:
+    _emby_gpu_declared: "{{ app_config.app.gpu_device | default('', true) | trim | length > 0 }}"
+    _emby_gpu_nodes: >-
+      {{ k8s_cluster_facts.nodes | selectattr('gpu_device', 'defined')
+         | selectattr('gpu_device', 'equalto', app_config.app.gpu_device | default('', true) | trim)
+         | map(attribute='name') | list }}
+
+- name: Emby Kubernetes | Require exactly one cluster node holding the declared iGPU
+  ansible.builtin.assert:
+    that: _emby_gpu_nodes | length == 1
+    fail_msg: >-
+      app.gpu_device {{ app_config.app.gpu_device }} must be the gpu_device of exactly one
+      node in the k3s cluster's cluster.nodes, and Deploy k3s Cluster must have passed it
+      to that node's VM.
+  when: _emby_gpu_declared | bool
+
+- name: Emby Kubernetes | Resolve the API through the ingress
+  ansible.builtin.set_fact:
+    _emby_base: "http://{{ k8s_cluster_facts.ingress_vip }}/emby"
+    _emby_host_headers: "{{ {'Host': _deploy_fqdn} }}"
+    _emby_dri_device_declared: "{{ _emby_gpu_declared }}"
+
+- name: Emby Kubernetes | Resolve and save the admin credentials
+  ansible.builtin.include_tasks: credentials.yml
+
+- name: Emby Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': true}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: Emby Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ emby_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: emby_k8s_node
+    label: Kubernetes node
+  when: k8s_media_volumes | length > 0
+
+- name: Emby Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Emby Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
+  vars:
+    k8s_wait_timeout: 600
+    _emby_k8s_base:
+      name: emby
+      image: "{{ app_config.app.image }}"
+      port: "{{ app_config.app.port }}"
+      container_port: "{{ app_config.app.container_port | default(8096) }}"
+      host: "{{ _deploy_fqdn }}"
+      env: >-
+        {{ [{'name': 'PUID', 'value': app_config.app.puid | default(1313)},
+            {'name': 'PGID', 'value': app_config.app.pgid | default(1313)},
+            {'name': 'TZ', 'value': homelabinfra_config.timezone | default('UTC')}]
+           + ([{'name': 'ATTACHED_DEVICES_PERMS', 'value': '/dev/dri -type c'}]
+              if _emby_gpu_declared | bool else [])
+           + (app_config.app.extra_env | default({}) | dict2items(key_name='name', value_name='value')) }}
+      volumes:
+        - {name: config, mount_path: /config, storage: "{{ app_config.app.storage | default(10) }}"}
+      extra_volumes: >-
+        {{ k8s_media_volumes
+           + ([{'name': 'dri', 'hostPath': {'path': '/dev/dri', 'type': 'Directory'}}]
+              if _emby_gpu_declared | bool else []) }}
+      extra_volume_mounts: >-
+        {{ k8s_media_volume_mounts
+           + ([{'name': 'dri', 'mountPath': '/dev/dri'}] if _emby_gpu_declared | bool else []) }}
+      probe: {path: /emby/System/Info/Public}
+      resources: {requests: {cpu: 250m, memory: 512Mi}}
+    # The iGPU is passed through to one node VM, so only that node has /dev/dri. A hostPath
+    # device node is unusable in an unprivileged container (its device cgroup refuses it);
+    # the image's init adds the device's group to its service user, as on Docker.
+    _emby_k8s_gpu:
+      node_selector: {kubernetes.io/hostname: "{{ _emby_gpu_nodes[0] }}"}
+      container_security_context: {privileged: true}
+    k8s_app: "{{ _emby_k8s_base | combine(_emby_k8s_gpu if _emby_gpu_declared | bool else {}) }}"
+
+- name: Emby Kubernetes | Prove the iGPU path in the pod
+  ansible.builtin.include_tasks: kubernetes-gpu.yml
+  when: _emby_gpu_declared | bool
+
+- name: Emby Kubernetes | Configure Emby through its API
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Emby Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Emby's complete config database (its users, library definitions and settings) from
+        its config volume; the shared media is not included

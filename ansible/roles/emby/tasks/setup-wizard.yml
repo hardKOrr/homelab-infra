@@ -8,6 +8,7 @@
 - name: First run | Configure the Emby wizard
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/Configuration"
+    headers: "{{ _emby_host_headers }}"
     method: POST
     body_format: json
     body:
@@ -19,6 +20,7 @@
 - name: First run | Read the existing Emby administrator account
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/User"
+    headers: "{{ _emby_host_headers }}"
     return_content: true
     status_code: 200
   register: _emby_startup_user
@@ -50,6 +52,7 @@
 - name: First run | Enable remote access without router port mapping
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/RemoteAccess"
+    headers: "{{ _emby_host_headers }}"
     method: POST
     body_format: json
     body:
@@ -60,12 +63,14 @@
 - name: First run | Complete the Emby wizard
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/Complete"
+    headers: "{{ _emby_host_headers }}"
     method: POST
     status_code: [200, 204]
 
 - name: First run | Confirm Emby's startup endpoint now requires authentication
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/User"
+    headers: "{{ _emby_host_headers }}"
     status_code: [200, 401]
   register: _emby_setup_closed
   until: _emby_setup_closed.status == 401

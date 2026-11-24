@@ -34,6 +34,11 @@ stack: media
 # infrastructure.stacks.emby-lxc.guest_type: lxc in config/infrastructure.yml, with
 # hosting.method: docker.
 #
+# To use Kubernetes, set hosting.method: kubernetes. The pod mounts the same media shares
+# over NFS, read-only at the same paths. With gpu_device, name the iGPU of one k3s node
+# (cluster.nodes[].gpu_device in config/apps/k3s-cluster.yml, a dedicated proxmox.devices
+# entry on that node's Proxmox host): the pod is pinned to that node and gets /dev/dri.
+#
 # Shared library mounts are inherited from config/infrastructure.yml's
 # media_storage.mounts. Emby binds each of them read-only; it does not write media.
 # Do not define alternate writable media mounts here. Generic removal defaults to preserving
