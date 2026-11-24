@@ -2,6 +2,11 @@
 
 Six steps. Most of the work is step 4: the app's defaults and its role.
 
+Deploy accepts `--tags provision` to resolve configuration and prepare the host,
+storage and network access without deploying, recording or wiring the application.
+This can prepare a destination GPU stack before an application's backup and move.
+Run the full Deploy or Restore App afterwards to install the workload.
+
 ---
 
 ## Step 1 — Choose the hosting backend

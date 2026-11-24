@@ -22,6 +22,7 @@
   hosts: localhost
   become: false
   gather_facts: false
+  tags: [provision]
 
   vars:
     _deploy_firewall_methods: >-
