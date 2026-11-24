@@ -38,13 +38,15 @@ def guest(name="ntfy", vmtype="lxc", tags=None):
     }
 
 
-def run_case(guests, expected=None, failure=None, guest_type=""):
+def run_case(guests, expected=None, failure=None, guest_type="", native_guard=False):
     assert ANSIBLE_PLAYBOOK, "ansible-playbook executable is not configured"
     provision = yaml.safe_load(
         (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
     )
     keep_node = next(task for task in provision if task["name"] ==
                      "Native guest | Keep the existing host's node for downstream operations")
+    guard = next(task for task in provision if task["name"] ==
+                 "Native guest | Refuse a shared or template guest")
     with tempfile.TemporaryDirectory(prefix="homelab-instance-guest.") as directory:
         root = Path(directory)
         tagged = {
@@ -77,6 +79,7 @@ def run_case(guests, expected=None, failure=None, guest_type=""):
                 {"ansible.builtin.include_tasks": str(RESOLVER)},
                 {"ansible.builtin.assert": {"that": [f"resolve_guest_hosts == {expected!r}"]}},
                 {"ansible.builtin.set_fact": {"_existing_hosts": "{{ resolve_guest_hosts }}"}},
+                *([guard] if native_guard else []),
                 keep_node,
                 {"ansible.builtin.assert": {"that": [
                     "homelabinfra_config.proxmox.node == "
@@ -128,6 +131,13 @@ def check_resolver():
     run_case({"ntfy": guest(vmtype="qemu")}, failure="Refusing to adopt it", guest_type="lxc")
     run_case({"ntfy": guest(tags=["_+lab", "_another-app"])}, failure="Refusing to adopt it")
     run_case({"ntfy": guest(tags=["_+lab", "_.stack+media"])}, failure="Refusing to adopt it")
+    # Device provenance is compatible with a dedicated native guest. It must not
+    # hide a topology tag, including one a future platform feature introduces.
+    device_tags = ["_+lab", "_ntfy", "_.dev+dev-dri-renderd128"]
+    run_case({"ntfy": guest(tags=device_tags)}, ["ntfy"], native_guard=True)
+    for topology in ("_.shared", "_.template", "_.stack+media", "_.cluster+k3s", "_.future"):
+        run_case({"ntfy": guest(tags=device_tags + [topology])}, ["ntfy"],
+                 failure="Native applications require a dedicated owned guest", native_guard=True)
 
 
 def check_playbooks_use_it():
