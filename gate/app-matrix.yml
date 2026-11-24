@@ -48,6 +48,7 @@ actual-budget:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -180,6 +181,7 @@ bazarr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -267,6 +269,7 @@ bookstack:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -343,6 +346,7 @@ caddy:
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/proxmox/resolve-instance-guest.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/network/resolve-network.yml
     - tasks/network/generate-ip.yml
@@ -412,6 +416,7 @@ comfyui:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -486,6 +491,7 @@ deemix:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -576,6 +582,7 @@ flaresolverr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -627,6 +634,7 @@ forgejo-runner:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -694,6 +702,7 @@ forgejo:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -768,6 +777,7 @@ frigate:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -845,6 +855,7 @@ hi-events:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -923,6 +934,7 @@ home-assistant:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-usb-passthrough.yml
@@ -994,6 +1006,7 @@ homepage:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1089,6 +1102,7 @@ influxdb:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1191,6 +1205,7 @@ jellyseerr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1262,6 +1277,7 @@ karakeep:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1323,6 +1339,7 @@ kometa:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1387,6 +1404,7 @@ lidarr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1466,6 +1484,7 @@ litellm:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1538,6 +1557,7 @@ maintainerr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1607,6 +1627,7 @@ mariadb:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1695,6 +1716,7 @@ mautic:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1781,6 +1803,7 @@ mixpost:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1853,6 +1876,7 @@ mysql:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -1937,6 +1961,7 @@ n8n:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2011,6 +2036,7 @@ navidrome:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2085,6 +2111,7 @@ ntfy:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2170,6 +2197,7 @@ observability:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2249,6 +2277,7 @@ odoo:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2334,6 +2363,7 @@ ollama:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2413,6 +2443,7 @@ open-webui:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2499,6 +2530,7 @@ plane:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2604,6 +2636,7 @@ postgresql:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2681,6 +2714,7 @@ prowlarr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2760,6 +2794,7 @@ qbittorrent:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2839,6 +2874,7 @@ radarr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2909,6 +2945,7 @@ redis:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -2987,6 +3024,7 @@ sabnzbd:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3060,6 +3098,7 @@ searxng:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3129,6 +3168,7 @@ slskd:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3207,6 +3247,7 @@ sonarr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3282,6 +3323,7 @@ tautulli:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3347,6 +3389,7 @@ unpackerr:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3413,6 +3456,7 @@ uptime-kuma:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3492,6 +3536,7 @@ vaultwarden:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3562,6 +3607,7 @@ wireguard:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml
@@ -3643,6 +3689,7 @@ wordpress:
     - tasks/proxmox/resolve-native-type.yml
     - tasks/proxmox/resolve-instance-guest.yml
     - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
     - tasks/proxmox/ensure-guest-running.yml
     - tasks/proxmox/provision-native-guest.yml
     - tasks/proxmox/attach-host-mounts.yml

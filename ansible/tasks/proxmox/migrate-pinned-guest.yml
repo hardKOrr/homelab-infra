@@ -1,0 +1,119 @@
+---
+# Inputs: migrate_guest_{id,type,source,target}; optional migrate_guest_gpu.
+# Output: migrate_guest_node. No pin, an unchanged pin and dedicated GPUs stay put.
+- name: Guest migration | Default to the current node
+  ansible.builtin.set_fact:
+    migrate_guest_node: "{{ migrate_guest_source }}"
+
+- name: Guest migration | Move an explicitly pinned guest
+  when:
+    - migrate_guest_target | default('') | length > 0
+    - migrate_guest_target != migrate_guest_source
+    - not (migrate_guest_gpu | default(false) | bool)
+  block:
+    - name: Guest migration | Register node delegates
+      ansible.builtin.include_tasks: register-nodes.yml
+
+    - name: Guest migration | Require a declared destination
+      ansible.builtin.assert:
+        that: migrate_guest_target in homelabinfra_config.proxmox.nodes
+        fail_msg: Refusing pinned guest migration to an undeclared node.
+
+    - name: Guest migration | Read live guest configuration
+      ansible.builtin.command:
+        argv: [pvesh, get, "/nodes/{{ migrate_guest_source }}/{{ migrate_guest_type }}/{{ migrate_guest_id }}/config", --output-format, json]
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_config
+      changed_when: false
+
+    - name: Guest migration | Read destination storage availability
+      ansible.builtin.command:
+        argv: [pvesh, get, "/nodes/{{ migrate_guest_target }}/storage", --output-format, json]
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_storage
+      changed_when: false
+
+    - name: Guest migration | Read HA ownership
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/ha/resources, --output-format, json]
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_ha
+      changed_when: false
+
+    - name: Guest migration | Validate migration safety
+      ansible.builtin.command:
+        argv: [python3, -c, "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../scripts/guest-migration-plan.py') }}"]
+        stdin: >-
+          {{ {'source': migrate_guest_source, 'target': migrate_guest_target,
+              'type': migrate_guest_type, 'vmid': migrate_guest_id,
+              'config': _migration_config.stdout | from_json,
+              'storages': _migration_storage.stdout | from_json,
+              'ha': _migration_ha.stdout | from_json} | to_json }}
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_plan_raw
+      changed_when: false
+
+    - name: Guest migration | Record the validated plan
+      ansible.builtin.set_fact:
+        _migration_plan: "{{ _migration_plan_raw.stdout | from_json }}"
+
+    - name: Guest migration | Submit migration through HA
+      ansible.builtin.command:
+        argv: [ha-manager, migrate, "{{ _migration_plan.sid }}", "{{ migrate_guest_target }}"]
+      delegate_to: "{{ migrate_guest_source }}"
+      changed_when: true
+      when: _migration_plan.mode == 'ha'
+
+    - name: Guest migration | Submit shared-storage migration
+      ansible.builtin.command:
+        argv: >-
+          {{ ['pvesh', 'create', '/nodes/' ~ migrate_guest_source ~ '/' ~ migrate_guest_type ~ '/' ~ (migrate_guest_id | string) ~ '/migrate',
+              '--target', migrate_guest_target, '--output-format', 'json']
+             + (['--online', '1'] if migrate_guest_type == 'qemu' else ['--restart', '1']) }}
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_task
+      changed_when: true
+      when: _migration_plan.mode != 'ha'
+
+    # CLI workers can print progress before the final JSON-quoted task identity.
+    - name: Guest migration | Normalize the migration task response
+      ansible.builtin.set_fact:
+        _migration_task_upids: >-
+          {{ _migration_task.stdout | default('')
+             | regex_findall('UPID:[^\s"\\]+:') }}
+      when: _migration_plan.mode != 'ha'
+
+    - name: Guest migration | Require exactly one migration task identity
+      ansible.builtin.assert:
+        that: _migration_task_upids | length == 1
+        fail_msg: Proxmox did not return exactly one migration task identity. Inspect live placement before retrying.
+      when: _migration_plan.mode != 'ha'
+
+    - name: Guest migration | Wait for Proxmox migration completion
+      ansible.builtin.include_tasks: wait-for-task.yml
+      vars:
+        proxmox_task_node: "{{ migrate_guest_source }}"
+        proxmox_task_upid: "{{ _migration_task_upids | first }}"
+      when: _migration_plan.mode != 'ha'
+
+    - name: Guest migration | Verify the guest reached its destination
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ migrate_guest_source }}"
+      register: _migration_resources
+      changed_when: false
+      until: >-
+        (_migration_resources.stdout | from_json
+         | selectattr('vmid', 'equalto', migrate_guest_id | int)
+         | selectattr('type', 'equalto', migrate_guest_type)
+         | selectattr('node', 'equalto', migrate_guest_target) | list | length) == 1
+        and (_migration_plan.mode != 'ha' or
+             (_migration_resources.stdout | from_json
+              | selectattr('vmid', 'equalto', migrate_guest_id | int)
+              | selectattr('status', 'equalto', 'running') | list | length) == 1)
+      retries: 180
+      delay: 5
+
+    - name: Guest migration | Export the destination node
+      ansible.builtin.set_fact:
+        migrate_guest_node: "{{ migrate_guest_target }}"

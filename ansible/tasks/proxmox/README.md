@@ -72,8 +72,17 @@ and `storage_ids.database_vm`; floating VMs use `storage_ids.floating_vm`, and f
 LXCs use `storage_ids.floating_lxc`. `gpu_vm` uses the iSCSI VM store and the common
 migratable CPU model, and stays on its dedicated device's declared node and PCI mapping.
 The memory preflight runs on the selected node and never retries creation elsewhere.
-VM and LXC create paths check cluster resources first and keep an existing guest on its
-current node. A new clone stays on a node that can reach both its local template and the
+Deploy reconciles existing guest placement through `migrate-pinned-guest.yml`. Without an
+explicit guest or stack node pin it preserves the current node, including after removing
+a pin. A changed pin retains VMID, disks and data: shared-storage VMs migrate online,
+LXCs use restart migration, and owned HA resources move through HA. The destination must
+expose every attached volume's shared storage as active. Preflight refuses with
+`Refusing pinned guest migration:` and the reason when node-local or unknown storage,
+a device, a bind mount or virtiofs pins the guest; locked guests and unowned guests or
+HA resources are also refused. Dedicated-GPU VMs keep their separate device placement
+path: changing a general node pin does not move them.
+
+Creation paths check cluster resources before choosing placement. A new clone stays on a node that can reach both its local template and the
 target VM storage because Proxmox cannot clone a local template across nodes. Placement
 facts carry the selected storage to the one guest being created, so another guest in the
 same play keeps its own storage configuration.
