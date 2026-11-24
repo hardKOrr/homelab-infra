@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise native form sessions, XML export and fail-closed restore uploads."""
 import importlib.util
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -116,6 +117,17 @@ class RecoveryTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # Restore unmodified task data for the next case.
             tasks = yaml.safe_load((ROOT / 'ansible/roles/opnsense/tasks/backup.yml').read_text())
+
+    def test_failure_reports_only_a_fixed_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.xml'
+            path.write_text('private-invalid-configuration')
+            result = subprocess.run(
+                ['python3', str(ROOT / 'ansible/roles/opnsense/files/config-transfer.py')],
+                input=json.dumps(self.settings(path, 'restore')), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(json.loads(result.stdout), {'stage': 'input validation'})
+            self.assertEqual(result.stderr, '')
 
     def test_appliance_has_no_proxy_wiring(self):
         defaults = yaml.safe_load((ROOT / 'ansible/vars/app-defaults/opnsense.yml').read_text())['opnsense_defaults']

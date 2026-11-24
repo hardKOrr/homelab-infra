@@ -48,6 +48,7 @@ def validate(data, settings):
 
 
 def transfer(settings):
+    settings['_stage'] = 'input validation'
     context = ssl.create_default_context()
     if not settings.get('validate_certs', True):
         context.check_hostname = False
@@ -77,12 +78,15 @@ def transfer(settings):
     payload = path.read_bytes() if settings['action'] == 'restore' else None
     if payload is not None:
         validate(payload, settings)
+    settings['_stage'] = 'login form'
     login = request('/index.php').decode()
     fields = HiddenFields(login).fields
     if not fields:
         raise ValueError('login CSRF token missing')
+    settings['_stage'] = 'login submission'
     form('/index.php', dict(fields, usernamefld='root',
                             passwordfld=settings['password'], login='1'))
+    settings['_stage'] = 'authenticated backup form'
     page = request('/diag_backup.php').decode()
     if 'name="conffile"' not in page:
         raise ValueError('native backup form unavailable')
@@ -90,8 +94,11 @@ def transfer(settings):
     if not fields:
         raise ValueError('backup CSRF token missing')
     if settings['action'] == 'backup':
+        settings['_stage'] = 'configuration download'
         data = form('/diag_backup.php', dict(fields, download='1', donotbackuprrd='1'))
+        settings['_stage'] = 'download identity validation'
         validate(data, settings)
+        settings['_stage'] = 'private export write'
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, 'wb') as output:
             output.write(data)
@@ -105,6 +112,7 @@ def transfer(settings):
     parts.extend([
         f'--{boundary}\r\nContent-Disposition: form-data; name="conffile"; filename="config.xml"\r\nContent-Type: application/xml\r\n\r\n'.encode(),
         payload, f'\r\n--{boundary}--\r\n'.encode()])
+    settings['_stage'] = 'configuration upload'
     result = request('/diag_backup.php', b''.join(parts),
                      'multipart/form-data; boundary=' + boundary).decode()
     if 'The configuration has been restored.' not in result or 'Postponing reboot.' in result:
@@ -112,7 +120,10 @@ def transfer(settings):
 
 
 if __name__ == '__main__':
+    settings = {}
     try:
-        transfer(json.load(sys.stdin))
+        settings = json.load(sys.stdin)
+        transfer(settings)
     except Exception:
-        sys.exit('OPNsense native configuration transfer failed; response and secrets suppressed')
+        print(json.dumps({'stage': settings.get('_stage', 'input validation')}))
+        sys.exit(1)
