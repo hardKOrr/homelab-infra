@@ -11,6 +11,7 @@ guest through it.
 """
 
 import os
+import copy
 from pathlib import Path
 import re
 import shutil
@@ -38,7 +39,7 @@ def guest(name="ntfy", vmtype="lxc", tags=None):
     }
 
 
-def run_case(guests, expected=None, failure=None, guest_type="", native_guard=False):
+def run_case(guests, expected=None, failure=None, guest_type="", native_guard=False, maintenance=False):
     assert ANSIBLE_PLAYBOOK, "ansible-playbook executable is not configured"
     provision = yaml.safe_load(
         (ROOT / "ansible/roles/_template-native/tasks/provision.yml").read_text()
@@ -71,12 +72,20 @@ def run_case(guests, expected=None, failure=None, guest_type="", native_guard=Fa
         }
         if guest_type:
             variables["resolve_guest_type"] = guest_type
+        resolve_task = {"ansible.builtin.include_tasks": str(RESOLVER)}
+        if maintenance:
+            targets = yaml.safe_load((ROOT / "ansible/tasks/maintenance/resolve-app-target.yml").read_text())
+            resolve_task = copy.deepcopy(next(t for t in targets if t["name"] ==
+                                             "Resolve app target | Resolve the native instance's owned guest"))
+            resolve_task["ansible.builtin.include_tasks"] = str(RESOLVER)
+            variables.update(_rat_kind="native", _rat_instance="ntfy",
+                             app_config={"proxmox": {"guest_type": guest_type}})
         (root / "resolve.yml").write_text(yaml.safe_dump([{
             "hosts": "localhost",
             "gather_facts": False,
             "vars": variables,
             "tasks": [
-                {"ansible.builtin.include_tasks": str(RESOLVER)},
+                resolve_task,
                 {"ansible.builtin.assert": {"that": [f"resolve_guest_hosts == {expected!r}"]}},
                 {"ansible.builtin.set_fact": {"_existing_hosts": "{{ resolve_guest_hosts }}"}},
                 *([guard] if native_guard else []),
@@ -102,6 +111,14 @@ def run_case(guests, expected=None, failure=None, guest_type="", native_guard=Fa
 
 
 def check_resolver():
+    # Day-2 actions must select the same dedicated guest as Deploy after a method
+    # switch, even while the old Docker stack and Kubernetes nodes retain app tags.
+    for guest_type, vmtype in [("lxc", "lxc"), ("vm", "qemu")]:
+        run_case({
+            "ntfy": guest(vmtype=vmtype, tags=["_+lab", "_ntfy"]),
+            "stack-media": guest("stack-media", tags=["_+lab", "_ntfy", "_.stack+media"]),
+            "k3s-1": guest("k3s-1", vmtype="qemu", tags=["_+lab", "_ntfy", "_.cluster+k3s"]),
+        }, ["ntfy"], guest_type=guest_type, maintenance=True)
     run_case({"ntfy": guest(tags=["_+lab", "_ntfy"])}, ["ntfy"])
     run_case({"ntfy": guest()}, ["ntfy"])
     run_case({"ntfy": guest()}, ["ntfy"], guest_type="lxc")

@@ -153,6 +153,7 @@
   ansible.builtin.include_tasks: ../proxmox/resolve-instance-guest.yml
   vars:
     resolve_guest_instance: "{{ _rat_instance }}"
+    resolve_guest_own_only: "{{ _rat_kind == 'native' }}"
     resolve_guest_type: >-
       {{ app_config.get('proxmox', {}).get('guest_type',
          app_config.get('proxmox', {}).get('type', '')) | string
