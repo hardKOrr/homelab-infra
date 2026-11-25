@@ -5,7 +5,8 @@
 
 Prints the issue's title and state, its open Task sub-issues in order, its latest handoff
 or blocked comment, the claimed PR (head, body, checks, unresolved review threads), and
-the local branch and HEAD against the PR head and the handoff's HEAD.
+the local branch and HEAD against the PR head and the handoff's HEAD. For a failing
+GitHub Actions check it also prints the end of the failed job's log.
 
 Without an issue number it uses $AO_ISSUE_ID, then the current branch's PR (its
 <!-- ao-links --> block). Long text is trimmed and says so. It changes nothing.
@@ -18,6 +19,9 @@ import sys
 
 REPO = os.environ.get("AO_WATCHER_REPO", "hardKOrr/homelab-infra")
 LIMITS = {"comment": 6000, "body": 3000, "thread": 600}
+LOG_LINES = 40
+LOG_JOBS = 3
+PASSING = ("success", "skipped", "neutral")
 MARKER = re.compile(r"<!-- ao-event session=\S+ kind=(handoff|blocked)\b")
 
 QUERY = """query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
@@ -27,7 +31,7 @@ issue(number:$n){number title state url parent{number}
 PR_QUERY = """query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
 pullRequest(number:$n){number state url headRefName headRefOid body isDraft
  commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{
-  ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}}
+  ... on CheckRun{name conclusion status databaseId} ... on StatusContext{context state}}}}}}}
  reviewThreads(first:100){nodes{isResolved path line comments(first:1){nodes{author{login} body}}}}}}}"""
 
 
@@ -49,6 +53,30 @@ def trim(text, kind):
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + f"\n[... trimmed {len(text) - limit} characters; read it on GitHub]"
+
+
+def failed_log(job_id):
+    """The LOG_LINES lines up to a failed Actions job's last error, without gh's job/step/timestamp prefix."""
+    out = sh("gh", "run", "view", "--repo", REPO, "--job", str(job_id), "--log-failed")
+    if not out:
+        return None
+    lines = [re.sub(r"^[^\t]*\t[^\t]*\t\S+Z ?", "", line) for line in out.splitlines()]
+    lines = [line for line in lines if line.strip() and not line.startswith(("##[group]", "##[endgroup]", "== ok "))]
+    # The job's cleanup runs after the failure; end the tail at the last error line.
+    errors = [i for i, line in enumerate(lines) if line.startswith("##[error]")]
+    end = errors[-1] + 1 if errors else len(lines)
+    return "\n".join(lines[max(0, end - LOG_LINES):end])
+
+
+def failing_logs(pr):
+    """Failed-job log tails by check name, for the first LOG_JOBS failing Actions check runs."""
+    commits = pr["commits"]["nodes"]
+    rollup = commits[0]["commit"]["statusCheckRollup"] if commits else None
+    logs = {}
+    for c in (rollup["contexts"]["nodes"] if rollup else []):
+        if c.get("databaseId") and (c.get("conclusion") or "").lower() not in PASSING + ("",) and len(logs) < LOG_JOBS:
+            logs[c["name"]] = failed_log(c["databaseId"])
+    return logs
 
 
 def branch_pr():
@@ -119,8 +147,12 @@ def render(issue, pr, local):
             out.append(f"Checks: {rollup['state'].lower()}")
             for c in rollup["contexts"]["nodes"]:
                 result = (c.get("conclusion") or c.get("status") or c.get("state") or "").lower()
-                if result not in ("success", "skipped", "neutral"):
+                if result not in PASSING:
                     out.append(f"- {c.get('name') or c.get('context')}: {result}")
+                    if c.get("name") in pr.get("logs", {}):
+                        log = pr["logs"][c["name"]]
+                        out += [f"  Last {LOG_LINES} lines of its failed steps:", "```", log, "```"] if log else \
+                            ["  (its log could not be read; gh run view --job " + str(c.get("databaseId")) + " --log-failed)"]
         else:
             out.append("Checks: none reported")
         threads = [t for t in pr["reviewThreads"]["nodes"] if not t["isResolved"]]
@@ -160,6 +192,8 @@ def main():
     issue = data["issue"]
     pr_number = find_pr(number, [t["number"] for t in issue["subIssues"]["nodes"]])
     pr = graphql(PR_QUERY, pr_number)["pullRequest"] if pr_number else None
+    if pr:
+        pr["logs"] = failing_logs(pr)
     head = sh("git", "rev-parse", "HEAD")
     local = {"branch": sh("git", "branch", "--show-current") if head else None, "head": head or "",
              "dirty": bool(sh("git", "status", "--porcelain")) if head else False}
