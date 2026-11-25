@@ -28,7 +28,8 @@
 - name: Immich native | Install the build and runtime packages
   ansible.builtin.apt:
     name: >-
-      {{ ['ca-certificates', 'curl', 'xz-utils', 'unzip', 'build-essential', 'python3', 'python3-dev']
+      {{ ['ca-certificates', 'curl', 'xz-utils', 'unzip', 'build-essential', 'python3', 'python3-dev',
+          'libgl1', 'libglib2.0-0', 'libgomp1']
          + (['i965-va-driver', 'mesa-va-drivers'] if _immich_render_nodes | length > 0 else []) }}
     state: present
     update_cache: true

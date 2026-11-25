@@ -64,6 +64,10 @@ assert "app_config.hosting.method in ['docker', 'native']" in prepare
 # Exercise the real remote-copy tasks: applying a file's 0644 mode to the destination
 # directory made both the web client and Python package inaccessible to the service user.
 tasks = yaml.safe_load(native)
+# OpenCV must import on a CPU-only guest, without VAAPI packages supplying libGL.
+packages = next(t for t in tasks if "ansible.builtin.apt" in t)["ansible.builtin.apt"]["name"]
+for package in ("libgl1", "libglib2.0-0", "libgomp1"):
+    assert f"'{package}'" in packages, package
 build = next(t for t in tasks if t["name"] == "Immich native | Build the pinned release")
 copies = [copy.deepcopy(t) for t in build["block"] if t["name"] in [
     "Immich native | Install the web client", "Immich native | Install the machine-learning package"]]
