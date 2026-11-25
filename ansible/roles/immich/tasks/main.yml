@@ -6,7 +6,7 @@
   ansible.builtin.set_fact:
     _immich_render_nodes: >-
       {{ (app_config.app.devices | default([]) | select('match', '^/dev/dri/') | list)
-         if (_hosting_guest_type | default('vm')) == 'lxc'
+         if (proxmox_vmtype | default('qemu')) == 'lxc'
          else [app_config.app.gpu_render_node] }}
 
 - name: Immich | Verify the render nodes exist inside the stack host

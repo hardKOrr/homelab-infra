@@ -1656,7 +1656,7 @@ def immich_machine_learning_uses_only_a_declared_gpu_device():
         rendered = render(
             template,
             {
-                "_hosting_guest_type": guest_type,
+                "proxmox_vmtype": "lxc" if guest_type == "lxc" else "qemu",
                 "ansible_managed": "Managed by gate test",
                 "instance": "immich",
                 "immich_env_file": "/opt/immich/immich.env",
@@ -1699,6 +1699,10 @@ def immich_machine_learning_uses_only_a_declared_gpu_device():
     )
     assert shared["devices"] == ["/dev/dri/renderD129:/dev/dri/renderD129"], shared
     assert "devices" not in machine_learning_service("", "/dev/dri/renderD128", "img", "lxc")
+    # The guest play never sees localhost's _hosting_guest_type; only the guest's own
+    # proxmox_vmtype selects LXC behavior.
+    for src in ("ansible/roles/immich/tasks/main.yml", "ansible/roles/immich/templates/docker-compose.yml.j2"):
+        assert "_hosting_guest_type" not in read(src), src
 
 
 def comfyui_accelerator_profile_controls_gpu_runtime():

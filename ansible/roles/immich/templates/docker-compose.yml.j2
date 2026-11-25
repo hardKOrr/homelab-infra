@@ -30,7 +30,7 @@ services:
       - "{{ immich_env_file }}"
     volumes:
       - "{{ app_config.app.model_cache_path }}:/cache"
-{% if (_hosting_guest_type | default('vm')) == 'lxc' %}
+{% if (proxmox_vmtype | default('qemu')) == 'lxc' %}
 {% set _ml_nodes = app_config.app.devices | default([]) | select('match', '^/dev/dri/') | list %}
 {% elif app_config.app.gpu_device | default('', true) | trim | length > 0 %}
 {% set _ml_nodes = [app_config.app.gpu_render_node] %}
