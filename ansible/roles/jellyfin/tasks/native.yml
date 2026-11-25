@@ -1,0 +1,175 @@
+---
+# Jellyfin natively on an LXC or a VM: the pinned packages from the Jellyfin APT repository
+# (https://jellyfin.org/docs/general/installation/linux) under the jellyfin unit they ship.
+# Its data lives under app.config_path (data/ holds jellyfin.db, as in the Docker image),
+# its cache at app.cache_path and its HTTP port in network.xml. Jellyfin starts on the first
+# install, so its user, directories, environment and port are in place before the packages.
+- name: Jellyfin native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Jellyfin supports Debian-family amd64 guests only.
+
+- name: Jellyfin native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Jellyfin native | Install the package prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, python3]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# Created before the packages so the user owns the library's uid/gid.
+- name: Jellyfin native | Create the service group
+  ansible.builtin.group:
+    name: "{{ jellyfin_native_user }}"
+    gid: "{{ app_config.app.pgid | default(1313) }}"
+    system: true
+
+- name: Jellyfin native | Create the service user
+  ansible.builtin.user:
+    name: "{{ jellyfin_native_user }}"
+    uid: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ jellyfin_native_user }}"
+    home: /var/lib/jellyfin
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Jellyfin native | Create the project, config, data, log and cache directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ jellyfin_native_user }}"
+    group: "{{ jellyfin_native_user }}"
+    mode: "0750"
+  loop:
+    - "{{ jellyfin_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.config_path }}/config"
+    - "{{ app_config.app.config_path }}/data"
+    - "{{ app_config.app.config_path }}/log"
+    - "{{ app_config.app.cache_path }}"
+
+- name: Jellyfin native | Point the service at its directories
+  ansible.builtin.copy:
+    dest: "{{ jellyfin_native_env_file }}"
+    content: |
+      JELLYFIN_DATA_DIR={{ app_config.app.config_path }}/data
+      JELLYFIN_CONFIG_DIR={{ app_config.app.config_path }}/config
+      JELLYFIN_LOG_DIR={{ app_config.app.config_path }}/log
+      JELLYFIN_CACHE_DIR={{ app_config.app.cache_path }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart jellyfin
+
+# Jellyfin writes the rest of network.xml itself; a new install starts on this port.
+- name: Jellyfin native | Seed the network configuration with the HTTP port
+  ansible.builtin.copy:
+    dest: "{{ app_config.app.config_path }}/config/network.xml"
+    content: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <NetworkConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+        <InternalHttpPort>{{ app_config.app.port }}</InternalHttpPort>
+      </NetworkConfiguration>
+    owner: "{{ jellyfin_native_user }}"
+    group: "{{ jellyfin_native_user }}"
+    mode: "0640"
+    force: false
+
+- name: Jellyfin native | Keep the HTTP port on an existing configuration
+  ansible.builtin.replace:
+    path: "{{ app_config.app.config_path }}/config/network.xml"
+    regexp: '(<InternalHttpPort>)\d+(</InternalHttpPort>)'
+    replace: '\g<1>{{ app_config.app.port }}\g<2>'
+  notify: Restart jellyfin
+
+- name: Jellyfin native | Add the Jellyfin APT repository
+  ansible.builtin.deb822_repository:
+    name: jellyfin
+    types: [deb]
+    uris: https://repo.jellyfin.org/debian
+    suites: ["{{ ansible_facts.distribution_release }}"]
+    components: [main]
+    architectures: [amd64]
+    signed_by: https://repo.jellyfin.org/jellyfin_team.gpg.key
+    state: present
+  register: _jf_native_repo
+
+# deb822_repository does not refresh the indexes, so a new source is fetched here.
+- name: Jellyfin native | Refresh the apt indexes after adding the source
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: _jf_native_repo is changed
+
+- name: Jellyfin native | Install the pinned packages
+  ansible.builtin.apt:
+    name:
+      - "jellyfin-server={{ app_config.app.native_version }}"
+      - "jellyfin-web={{ app_config.app.native_version }}"
+      - "jellyfin-ffmpeg8={{ app_config.app.native_ffmpeg_version }}"
+      - "jellyfin={{ app_config.app.native_version }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 300
+  notify: Restart jellyfin
+
+- name: Jellyfin native | Create the unit drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ jellyfin_native_service }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Jellyfin native | Render the unit drop-in
+  ansible.builtin.template:
+    src: jellyfin-native.conf.j2
+    dest: "/etc/systemd/system/{{ jellyfin_native_service }}.service.d/homelab.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _jf_native_unit
+  notify: Restart jellyfin
+
+- name: Jellyfin native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _jf_native_unit.changed
+
+- name: Jellyfin native | Enable and start Jellyfin
+  ansible.builtin.systemd:
+    name: "{{ jellyfin_native_service }}"
+    state: started
+    enabled: true
+
+- name: Jellyfin native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ jellyfin_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ jellyfin_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

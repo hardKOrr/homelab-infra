@@ -17,3 +17,10 @@ jellyfin_http_delay: 5
 # who logged in; they are not decoration.
 jellyfin_client_name: homelab-infra
 jellyfin_device_name: deploy
+
+# Native: Jellyfin runs from the Jellyfin APT repository as this user (uid/gid app.puid/pgid,
+# which match media_storage.owner so it can read the library) under the package's jellyfin unit.
+jellyfin_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+jellyfin_native_user: jellyfin
+jellyfin_native_service: jellyfin
+jellyfin_native_env_file: /etc/default/jellyfin-homelab

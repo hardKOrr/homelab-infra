@@ -34,7 +34,7 @@ def render(template, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/jellyfin.yml"))["jellyfin_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["storage"] > 0
 
 # Docker keeps the stack-host path and shares the API configuration with Kubernetes.
@@ -54,7 +54,7 @@ prepare = tasks("deploy-prepare.yml")
 resolve = include(prepare, "resolve-media-nfs.yml")
 assert resolve["when"] == "app_config.hosting.method == 'kubernetes'"
 assert next(t for t in prepare if "deploy_host_mounts" in str(t.get("ansible.builtin.set_fact")))[
-    "when"] == "app_config.hosting.method == 'docker'"
+    "when"] == "app_config.hosting.method in ['docker', 'native']"
 
 # The config volume is the application-consistent recovery unit.
 backup = include(kubernetes, "recovery-backup.yml")["vars"]["k8s_recovery"]

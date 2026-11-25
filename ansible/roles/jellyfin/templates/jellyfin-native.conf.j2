@@ -1,0 +1,10 @@
+{{ ansible_managed | comment }}
+[Service]
+# Layout matches the Docker image's /config, so one data directory is the recovery unit.
+EnvironmentFile={{ jellyfin_native_env_file }}
+# The service user reads the DRI nodes through the numeric group ids the guest sees. The
+# empty assignment resets the list, so a removed device drops its group on the next deploy.
+SupplementaryGroups=
+{% if _jf_dri_group_ids | default([]) | length > 0 %}
+SupplementaryGroups={{ _jf_dri_group_ids | join(' ') }}
+{% endif %}

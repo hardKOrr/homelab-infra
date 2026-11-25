@@ -45,9 +45,9 @@
 - name: Jellyfin backup | Stop and archive only Jellyfin
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ jellyfin_project_dir }}"
-    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_stop_services: ["{{ jellyfin_native_service if jellyfin_native | bool else instance }}"]
     pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"
     pbs_client_archives:
       - name: data.pxar
