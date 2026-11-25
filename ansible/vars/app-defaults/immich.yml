@@ -10,6 +10,11 @@ immich_defaults:
     impossible: {}
   stack: photos
 
+  # The item records deployed backend/device metadata, not authored app settings.
+  # Recovery reads its credentials directly; replaying it would pin an old GPU stack.
+  vault:
+    methods: []
+
   recovery:
     methods: [native]
     native:

@@ -89,6 +89,9 @@ def instance_file(app: str, kubernetes: bool) -> dict:
             doc[key] = {}
     doc["app"]["gate_instance_key"] = app
     doc["routing"]["subdomain"] = f"gate-{app}"
+    if app == "immich":
+        doc["stack"] = "immich-lxc"
+        doc["app"].update(gpu_device="", devices=["/dev/dri/renderD128"])
     if kubernetes:
         doc["hosting"]["method"] = "kubernetes"
     return doc
@@ -169,6 +172,8 @@ def main() -> int:
                 (root / f"config/apps/{instance}.yml").write_text(
                     yaml.safe_dump(instance_file(app, kubernetes)))
                 vault["apps"][instance] = {"gate_vault_key": instance}
+                if app == "immich":
+                    vault["apps"][instance]["gpu_device"] = "old-dedicated-igpu"
                 runs.append({"app": app, "instance": instance})
             fact = result_fact(steps)
             (root / f"ansible/playbooks/apps/gate-{app}.yml").write_text(yaml.safe_dump([
@@ -213,6 +218,9 @@ def main() -> int:
             for kubernetes in variants(app, steps, dump):
                 instance = f"{app}-k8s" if kubernetes else app
                 got = json.loads((out / f"{instance}.json").read_text())
+                if app == "immich":
+                    assert got["app"]["gpu_device"] == "", got["app"]["gpu_device"]
+                    assert got["stack"] == "immich-lxc", got["stack"]
                 results[instance] = got
                 if loader is None:
                     continue
