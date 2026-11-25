@@ -1,0 +1,7 @@
+---
+# Remove App hook, run on a native guest after the services stop. Immich's library lives on
+# the declared media mount, so delete_data=true empties it here, as on Docker; Remove App
+# drops the named database later.
+- name: Remove Immich's durable media
+  ansible.builtin.include_tasks: remove-media.yml
+  when: _rm_delete_data | bool

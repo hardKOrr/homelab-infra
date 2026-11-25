@@ -1,5 +1,6 @@
 ---
-# Immich is a two-service Compose application. Its database and cache are resolved from
+# Immich is a two-service Compose application, or (native) two systemd units built from the
+# pinned source on its own guest (native.yml). Its database and cache are resolved from
 # independently deployed named backends before this role runs; no backend service is
 # allowed to appear in this Compose project.
 - name: Immich | Resolve the render nodes Immich machine learning receives
@@ -7,7 +8,7 @@
     _immich_render_nodes: >-
       {{ (app_config.app.devices | default([]) | select('match', '^/dev/dri/') | list)
          if (proxmox_vmtype | default('qemu')) == 'lxc'
-         else [app_config.app.gpu_render_node] }}
+         else ([] if immich_native | bool else [app_config.app.gpu_render_node]) }}
 
 - name: Immich | Verify the render nodes exist inside the stack host
   ansible.builtin.stat:
@@ -76,16 +77,22 @@
       {{ _immich_media_path }}, not under /opt/{{ instance }}. Attach an existing host
       directory with an explicit media_storage.owner before deploying.
 
-- name: Immich | Create project and disposable model-cache directories
+- name: Immich | Create the project directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ immich_project_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0750"
-  loop:
-    - "{{ immich_project_dir }}"
-    - "{{ app_config.app.model_cache_path }}"
+
+- name: Immich | Create the disposable model-cache directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.model_cache_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: not (immich_native | bool)
 
 - name: Immich | Store the backend and device contract in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
@@ -129,16 +136,27 @@
     mode: "0640"
   no_log: true
   notify: Restart Immich
+  when: not (immich_native | bool)
 
 - name: Immich | Pull images
   community.docker.docker_compose_v2_pull:
     project_src: "{{ immich_project_dir }}"
+  when: not (immich_native | bool)
 
 - name: Immich | Start the application
   community.docker.docker_compose_v2:
     project_src: "{{ immich_project_dir }}"
     state: present
     remove_orphans: true
+  when: not (immich_native | bool)
+
+- name: Immich | Resolve the shared iGPU group ids for the native units
+  ansible.builtin.include_tasks: native-devices.yml
+  when: immich_native | bool
+
+- name: Immich | Deploy natively
+  ansible.builtin.include_tasks: native.yml
+  when: immich_native | bool
 
 - name: Immich | Apply pending restart
   ansible.builtin.meta: flush_handlers
@@ -154,6 +172,7 @@
   changed_when: false
 
 - name: Immich | Assert the ML service is running
+  when: not (immich_native | bool)
   ansible.builtin.command:
     argv:
       - docker
@@ -174,6 +193,7 @@
       Immich's machine-learning service is not running. Check the configured image
       {{ app_config.app.machine_learning_image }} and the stack host's GPU devices
       {{ _immich_render_nodes | join(', ') }} before retrying.
+  when: not (immich_native | bool)
 
 - name: Immich | Export the app URL to the playbook
   ansible.builtin.set_fact:

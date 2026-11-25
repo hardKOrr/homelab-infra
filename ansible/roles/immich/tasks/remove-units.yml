@@ -1,0 +1,9 @@
+---
+# Supply the native service list to the shared Remove operation: the two units native.yml
+# installs (neither is named after the instance). Server first, so it stops sending work.
+- name: Immich remove | Load role defaults
+  ansible.builtin.include_vars: ../defaults/main.yml
+
+- name: Immich remove | Select both native services
+  ansible.builtin.set_fact:
+    _rm_service_names: ["{{ immich_native_server_service }}", "{{ immich_native_ml_service }}"]

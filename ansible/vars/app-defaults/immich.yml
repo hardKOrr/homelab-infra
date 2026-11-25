@@ -6,9 +6,21 @@
 immich_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: photos
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type). Building the web client and installing the machine-learning wheels
+  # need the memory and disk below; the build tree is removed afterwards.
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 4
+    memory: 6144
+    disk_volume:
+      size: 32
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
   # The item records deployed backend/device metadata, not authored app settings.
   # Recovery reads its credentials directly; replaying it would pin an old GPU stack.
   vault:
@@ -22,6 +34,22 @@ immich_defaults:
     image: ghcr.io/immich-app/immich-server:v3.1.0
     machine_learning_image: ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino
     port: 2283
+    # Native (https://github.com/immich-app/immich, built from the v3.1.0 source archive;
+    # upstream documents only Docker): the image tags above and this version are one
+    # release. Machine learning runs on the CPU (onnxruntime extra `cpu`): the shared
+    # native guest has no PCI passthrough for the dedicated iGPU, and an LXC's shared
+    # Haswell iGPU has no OpenVINO, so it serves only the server's VAAPI transcoding.
+    native_version: "3.1.0"
+    native_source_sha256: af0fba69cc5830093392de4f5576eeb7f2ccf28ba55154b7598e10f596fdfb40
+    native_node_version: "24.15.0"
+    native_node_sha256: 472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6
+    native_pnpm_version: "11.13.1"
+    native_uv_version: "0.8.15"
+    native_uv_sha256: be9878e9d08ebcb621a683aba52e7fb8bbf92b2532e0d759026ffcc067673042
+    native_ml_extra: cpu
+    native_ffmpeg_version: "7.1.3-6"
+    native_ffmpeg_sha256: 39e99a7927468a6abec5f65d00f55010e8ff2ae3c2605294f179c94f6ae21af2
+    native_countries_sha256: 239eec57ac17f100a11e2536cffc56752c318b50ae765b0918ff7aab4ce8f255
     database:
       provider: postgresql
       instance: postgresql-immich

@@ -17,7 +17,7 @@
       originals/thumbnails plus media_storage.owner. The platform will attach that
       existing host directory and will not adopt global media storage.
     quiet: true
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
 
 - name: Immich | Require the dedicated iGPU mapping on a VM stack host
   ansible.builtin.assert:
@@ -30,6 +30,22 @@
     quiet: true
   when:
     - app_config.hosting.method == 'docker'
+    - _hosting_guest_type | default('vm') != 'lxc'
+
+# A native VM has no iGPU: the shared native guest has no PCI passthrough step, and a Proxmox
+# host's /dev/dri cannot be shared into a VM. Machine learning runs on its CPU. An LXC binds
+# the shared nodes below, which serve the server's VAAPI transcoding.
+- name: Immich | Refuse a GPU declaration for native Immich on a VM
+  ansible.builtin.assert:
+    that:
+      - app_config.app.gpu_device | default('', true) | trim | length == 0
+      - app_config.app.devices | default([]) | select('match', '^/dev/dri(?:/|$)') | list | length == 0
+    fail_msg: >-
+      Native Immich on a VM cannot reach the iGPU. Clear app.gpu_device and the /dev/dri
+      entries of app.devices, or run Immich on an LXC (shared iGPU) or on Kubernetes.
+    quiet: true
+  when:
+    - app_config.hosting.method == 'native'
     - _hosting_guest_type | default('vm') != 'lxc'
 
 # On Kubernetes app.gpu_device is optional: it names the dedicated iGPU of the k3s node
@@ -47,7 +63,7 @@
   vars:
     igpu_app_display: Immich
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - _hosting_guest_type | default('vm') == 'lxc'
 
 - name: Immich | Name the shared DRI nodes to bind into the LXC
@@ -56,7 +72,7 @@
       {{ app_config.app.devices | default([])
          | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - _hosting_guest_type | default('vm') == 'lxc'
 
 - name: Immich | Name the originals and thumbnails mount for the stack host
@@ -64,4 +80,4 @@
     deploy_host_mounts: "{{ app_config.media_storage.mounts }}"
     deploy_host_mounts_owner: "{{ app_config.media_storage.owner }}"
     deploy_host_mounts_own_node: true
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']

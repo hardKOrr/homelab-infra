@@ -178,7 +178,6 @@ ALLOWLIST = {
     },
     "restart-handler": {
         "ansible/roles/authentik/handlers/main.yml",
-        "ansible/roles/immich/handlers/main.yml",
         "ansible/roles/plane/handlers/main.yml",
     },
     "k8s-single-container": {

@@ -1,0 +1,17 @@
+---
+# The numeric group ids of the shared DRI nodes bound into a native LXC; the server unit
+# grants them to the service user (templates/immich-server.service.j2). Empty without nodes.
+- name: Immich native | Read the DRI device group ids
+  ansible.builtin.command:
+    argv: [stat, --format=%F:%g, "{{ item }}"]
+  register: _immich_dri_stat
+  changed_when: false
+  loop: "{{ _immich_render_nodes }}"
+
+- name: Immich native | Resolve the unique DRI group ids
+  ansible.builtin.set_fact:
+    _immich_dri_group_ids: >-
+      {{ _immich_dri_stat.results | map(attribute='stdout')
+         | select('match', '^character special file:')
+         | map('regex_replace', '^character special file:', '')
+         | map('trim') | map('int') | unique | sort | map('string') | list }}

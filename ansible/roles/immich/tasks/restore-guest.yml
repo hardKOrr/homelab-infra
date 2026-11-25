@@ -49,7 +49,7 @@
 - name: Immich restore | Preview or replace the media and database
   ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
   vars:
-    recovery_swap_runtime: docker
+    recovery_swap_runtime: "{{ app_config.hosting.method | default('docker') }}"
     recovery_swap_archives: [database.pxar, media.pxar]
     recovery_swap_paths:
       - path: "{{ _immich_restore_media_path }}"
