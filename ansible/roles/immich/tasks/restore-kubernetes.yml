@@ -19,7 +19,8 @@
       archives:
         - name: media
           claim: "{{ restore_target }}-media"
-          owner: "{{ immich_k8s_owner }}"
+          # The target Deployment's owner, not the source config's.
+          owner: "{{ restore_target_config.media_storage.owner.uid | int }}:{{ restore_target_config.media_storage.owner.gid | int }}"
       database: "{{ k8s_database_step }}"
       stop:
         - "{{ restore_target }}"

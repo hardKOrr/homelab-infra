@@ -101,6 +101,12 @@ def check_shared_recovery_inputs():
     inputs = job["vars"]["k8s_recovery"]
     assert inputs["archives"][0]["claim"] == "{{ restore_target }}-media"
     assert inputs["stop"] == ["{{ restore_target }}"]
+    # app_config is the source's in a restore: the owner must come from the target config.
+    owner = inputs["archives"][0]["owner"]
+    assert "restore_target_config.media_storage.owner" in owner and "app_config" not in owner
+    variables = {"app_config": {"media_storage": {"owner": {"uid": 1, "gid": 2}}},
+                 "restore_target_config": {"media_storage": {"owner": {"uid": 1313, "gid": 1414}}}}
+    assert Templar(loader=DataLoader(), variables=variables).template(owner) == "1313:1414"
     assert next(t for t in restore if "kubernetes-recovery-step" in str(t))["vars"][
         "k8s_database_step_source"] == "registered"
     role = ROOT / "ansible/roles/immich/templates"
