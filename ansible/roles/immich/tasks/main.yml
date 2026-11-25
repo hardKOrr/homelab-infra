@@ -2,18 +2,29 @@
 # Immich is a two-service Compose application. Its database and cache are resolved from
 # independently deployed named backends before this role runs; no backend service is
 # allowed to appear in this Compose project.
-- name: Immich | Verify the dedicated iGPU render node exists inside the VM
-  ansible.builtin.stat:
-    path: "{{ app_config.app.gpu_render_node }}"
-  register: _immich_render_node
+- name: Immich | Resolve the render nodes Immich machine learning receives
+  ansible.builtin.set_fact:
+    _immich_render_nodes: >-
+      {{ (app_config.app.devices | default([]) | select('match', '^/dev/dri/') | list)
+         if (proxmox_vmtype | default('qemu')) == 'lxc'
+         else [app_config.app.gpu_render_node] }}
 
-- name: Immich | Require the VM's render node to be a device
+- name: Immich | Verify the render nodes exist inside the stack host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: _immich_render_node
+  loop: "{{ _immich_render_nodes }}"
+
+- name: Immich | Require each render node to be a device
   ansible.builtin.assert:
-    that: _immich_render_node.stat.ischr | default(false)
+    that: item.stat.ischr | default(false)
     fail_msg: >-
-      {{ app_config.app.gpu_render_node }} is not a device inside the Immich VM. Check
-      the dedicated PCI resource mapping and guest iGPU driver.
+      {{ item.item }} is not a device inside the Immich stack host. Check the PCI
+      resource mapping (VM) or the shared device binding (LXC) and the guest iGPU driver.
     quiet: true
+  loop: "{{ _immich_render_node.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: Immich | Resolve the configured media path
   ansible.builtin.set_fact:
@@ -161,8 +172,8 @@
     that: "'immich-machine-learning' in _immich_running_services.stdout_lines"
     fail_msg: >-
       Immich's machine-learning service is not running. Check the configured image
-      {{ app_config.app.machine_learning_image }} and the VM's dedicated GPU mapping
-      {{ app_config.app.gpu_device }} before retrying.
+      {{ app_config.app.machine_learning_image }} and the stack host's GPU devices
+      {{ _immich_render_nodes | join(', ') }} before retrying.
 
 - name: Immich | Export the app URL to the playbook
   ansible.builtin.set_fact:

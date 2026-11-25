@@ -6,9 +6,14 @@
 immich_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: photos
+
+  # The item records deployed backend/device metadata, not authored app settings.
+  # Recovery reads its credentials directly; replaying it would pin an old GPU stack.
+  vault:
+    methods: []
 
   recovery:
     methods: [native]
@@ -35,6 +40,10 @@ immich_defaults:
     # the PCI device; the ML container uses its /dev/dri render node.
     gpu_device: ""
     gpu_render_node: /dev/dri/renderD128
+    # On a Docker LXC stack the iGPU is shared instead: leave gpu_device empty and list the
+    # host's render nodes here (each an identifier of a proxmox.devices entry with
+    # mode: shared). They are bound into the LXC and into the ML container.
+    devices: []
     # The ML model cache is disposable and stays on the selected stack host rootfs.
     model_cache_path: "/opt/{{ instance }}/model-cache"
 

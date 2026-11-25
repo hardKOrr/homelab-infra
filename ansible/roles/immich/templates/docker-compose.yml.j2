@@ -30,10 +30,19 @@ services:
       - "{{ immich_env_file }}"
     volumes:
       - "{{ app_config.app.model_cache_path }}:/cache"
-{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
+{% if (proxmox_vmtype | default('qemu')) == 'lxc' %}
+{% set _ml_nodes = app_config.app.devices | default([]) | select('match', '^/dev/dri/') | list %}
+{% elif app_config.app.gpu_device | default('', true) | trim | length > 0 %}
+{% set _ml_nodes = [app_config.app.gpu_render_node] %}
+{% else %}
+{% set _ml_nodes = [] %}
+{% endif %}
+{% if _ml_nodes | length > 0 %}
     devices:
-      # The VM receives the dedicated iGPU through PCI passthrough; only the ML
-      # service binds the render node into its container.
-      - "{{ app_config.app.gpu_render_node }}:{{ app_config.app.gpu_render_node }}"
+      # A VM receives the dedicated iGPU through PCI passthrough and an LXC the shared
+      # host nodes; only the ML service binds them into its container.
+{% for node in _ml_nodes %}
+      - "{{ node }}:{{ node }}"
+{% endfor %}
 {% endif %}
     restart: unless-stopped

@@ -1652,10 +1652,11 @@ def flaresolverr_rendering():
 def immich_machine_learning_uses_only_a_declared_gpu_device():
     template = read("ansible/roles/immich/templates/docker-compose.yml.j2")
 
-    def machine_learning_service(gpu_device, render_node, image):
+    def machine_learning_service(gpu_device, render_node, image, guest_type="vm", devices=()):
         rendered = render(
             template,
             {
+                "proxmox_vmtype": "lxc" if guest_type == "lxc" else "qemu",
                 "ansible_managed": "Managed by gate test",
                 "instance": "immich",
                 "immich_env_file": "/opt/immich/immich.env",
@@ -1668,6 +1669,7 @@ def immich_machine_learning_uses_only_a_declared_gpu_device():
                         "port": 2283,
                         "gpu_device": gpu_device,
                         "gpu_render_node": render_node,
+                        "devices": list(devices),
                     },
                     "media_storage": {"owner": {"uid": 1313, "gid": 1313}},
                 },
@@ -1690,6 +1692,17 @@ def immich_machine_learning_uses_only_a_declared_gpu_device():
         "ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino",
     )
     assert hardware["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"], hardware
+
+    # On an LXC the shared nodes in app.devices are bound; the VM render node is ignored.
+    shared = machine_learning_service(
+        "", "/dev/dri/renderD128", "img", guest_type="lxc", devices=["/dev/dri/renderD129"]
+    )
+    assert shared["devices"] == ["/dev/dri/renderD129:/dev/dri/renderD129"], shared
+    assert "devices" not in machine_learning_service("", "/dev/dri/renderD128", "img", "lxc")
+    # The guest play never sees localhost's _hosting_guest_type; only the guest's own
+    # proxmox_vmtype selects LXC behavior.
+    for src in ("ansible/roles/immich/tasks/main.yml", "ansible/roles/immich/templates/docker-compose.yml.j2"):
+        assert "_hosting_guest_type" not in read(src), src
 
 
 def comfyui_accelerator_profile_controls_gpu_runtime():
