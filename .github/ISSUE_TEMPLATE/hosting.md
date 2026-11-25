@@ -6,17 +6,21 @@ title: "feat(<app>): <App> runs on its remaining hosting methods"
 
 <!--
 Fill in <app> (catalog ID), <App> (display name) and <default method> (the old Outcome's
-"Its default stays …"). Keep the issue's ao-dependencies line unchanged as the last line.
-Public text uses the placeholders in docs/lab-placeholders.md.
+"Its default stays …"). Public text uses the placeholders in docs/lab-placeholders.md.
+After creating the issue, add a blocked-by link to each issue it must wait for. A new
+feature in Todo is ready for the watcher; move it to Backlog to hold it.
 
 One issue covers every method the app still lacks. Work runs one method at a time, start
 to finish (its code set, then its drill sets), before the next method starts. Reorder the
-method sections and their sets to choose the order.
+method sections and their set rows to choose the order.
 
-Delete each method, guest type or set that doesn't apply: one the app's defaults already
-list in `hosting.supported`, or one that is out of scope. Keep the remaining R IDs as they
-are; gaps are fine, so nothing is renumbered. The last set left ends with "post done"
-instead of "hand off".
+Delete each method, guest type or set row that doesn't apply: one the app's defaults already
+list in `hosting.supported`, or one that is out of scope. Keep the remaining R IDs and S
+numbers as they are; gaps are fine, so nothing is renumbered. Rows run top to bottom and the
+last one ends with done. Leave Operation and Review blank for the set kind's default model
+(code: claude-sonnet-5-5/medium, reviewed by gpt-6.1-sol/low; execution: the reverse), and
+leave Task blank: the watcher creates one Task sub-issue per row when it admits the issue,
+fills the column in, and keeps this table as the plan.
 
 Kubernetes: R13 is for an app that mounts NFS media or download shares; R14 is for an app
 that needs a GPU or another device (Frigate, Jellyfin, Plex, Emby, Immich, Ollama,
@@ -43,7 +47,7 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 - R2: Each method shall do backup, restore and database dump/drop through the shared operations files, with <App>'s own behavior in their inputs and hooks and no role-local copy (`gate/test-shared-standards.py` fails on one).
 - R3: The repository shall pass `bash gate/lint.sh` and `bash gate/test.sh` at each set's candidate SHA.
 - R4: While <App> runs on a method this issue adds, Deploy shall keep the same application wiring <App>'s `routing` declares on the default method: exactly one DNS record, one Caddy route and one Kuma monitor (SSO as declared) when `routing.proxy` is not `none`, and zero application DNS records, Caddy routes, Authentik apps and Kuma monitors when it is `none`. Verification proves nothing was created or duplicated beyond that.
-- R5: If running <App> on a method or guest type is technically impossible, because upstream documents that the app cannot run this way or a device or kernel feature it needs cannot reach that guest or the cluster, then the worker shall post blocked for that method on the issue with the reason and a link to the upstream source or the exact failing step, tick that method's remaining sets with `impossible` after them, and continue with the next method. The worker shall also remove that method's or guest type's `hosting.supported` entries together with its playbook path, so the gate stays consistent. Difficulty or effort doesn't count as impossible.
+- R5: If running <App> on a method or guest type is technically impossible, because upstream documents that the app cannot run this way or a device or kernel feature it needs cannot reach that guest or the cluster, then the worker shall post blocked for that method on the issue with the reason, a link to the upstream source or the exact failing step, and that method's remaining sets, so the operator closes their tasks as Not planned, and continue with the next method once the operator answers. The worker shall also remove that method's or guest type's `hosting.supported` entries together with its playbook path, so the gate stays consistent. Difficulty or effort doesn't count as impossible.
 
 ## Method 1: Kubernetes
 
@@ -97,18 +101,20 @@ The green lab is disposable: when the lab gets in the way, fix or replace it and
 
 Sets run in order; a method's sets all finish before the next method's first set starts.
 
-- [ ] S1 (code): When R1–R3, R10–R14 and R17 are met, the worker shall tick S1 and hand off. **Method:** Kubernetes. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S2 (execution): When R4, R15 and R16 are met, the worker shall tick S2 and hand off. **Method:** Kubernetes. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
-- [ ] S3 (code): When R1–R3, R20–R22 and R27 are met, the worker shall tick S3 and hand off. **Method:** native. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S4 (execution): When R4, R23 and R24 are met, the worker shall tick S4 and hand off. **Method:** native LXC. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
-- [ ] S5 (execution): When R4, R25 and R26 are met, the worker shall tick S5 and hand off. **Method:** native VM. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
-- [ ] S6 (code): When R1–R3, R30–R32 and R37 are met, the worker shall tick S6 and hand off. **Method:** Docker. <!-- ao-set-model: claude-sonnet-5-5/medium --> <!-- ao-set-review: gpt-6.1-sol/low -->
-- [ ] S7 (execution): When R4, R33 and R34 are met, the worker shall tick S7 and hand off. **Method:** Docker LXC. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
-- [ ] S8 (execution): When R4, R35 and R36 are met, the worker shall tick S8 and post done. **Method:** Docker VM. <!-- ao-set-model: gpt-6.1-sol/low --> <!-- ao-set-review: claude-sonnet-5-5/medium -->
+| Set | Kind | Requirements | Operation | Review | Task | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| S1 | code | R1–R3, R10–R14, R17 |  |  |  | **Method:** Kubernetes |
+| S2 | execution | R4, R15, R16 |  |  |  | **Method:** Kubernetes |
+| S3 | code | R1–R3, R20–R22, R27 |  |  |  | **Method:** native |
+| S4 | execution | R4, R23, R24 |  |  |  | **Method:** native LXC |
+| S5 | execution | R4, R25, R26 |  |  |  | **Method:** native VM |
+| S6 | code | R1–R3, R30–R32, R37 |  |  |  | **Method:** Docker |
+| S7 | execution | R4, R33, R34 |  |  |  | **Method:** Docker LXC |
+| S8 | execution | R4, R35, R36 |  |  |  | **Method:** Docker VM |
 
 ## Reports
 
-Use `ao-event` for handoffs, review/CI fixes, blocked reports and completion; it renders the report and manages workflow metadata. Let it tick set checkboxes with `ao-event tick`. Preserve the issue's hidden dependency, model and reviewer fields; leave comment markers and `STATUS`, `STAGE` and `HEAD` to the command.
+Use `ao-event` for handoffs, review/CI fixes, blocked reports and completion; it renders the report and manages workflow metadata. `ao-event tick` closes your set's task as Done; the watcher moves every other task and the issue through Status. Leave comment markers and `STATUS`, `STAGE` and `HEAD` to the command.
 
 Supply keyed sections with one checklist item per bullet or repeated key. Omit empty sections and add free-form Markdown or further notes when useful:
 
