@@ -1,0 +1,27 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Immich machine learning ({{ instance }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ immich_native_user }}
+Group={{ immich_native_user }}
+WorkingDirectory={{ immich_native_root }}/ml
+Environment=IMMICH_HOST=127.0.0.1
+Environment=IMMICH_PORT={{ immich_native_ml_port }}
+Environment=MACHINE_LEARNING_CACHE_FOLDER={{ app_config.app.model_cache_path }}
+Environment=TRANSFORMERS_CACHE={{ app_config.app.model_cache_path }}
+Environment=PYTHONPATH={{ immich_native_root }}/ml
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=DEVICE={{ app_config.app.native_ml_extra }}
+ExecStart={{ immich_native_root }}/ml/venv/bin/python -m immich_ml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

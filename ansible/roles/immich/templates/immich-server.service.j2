@@ -1,0 +1,28 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Immich server ({{ instance }})
+After=network-online.target {{ immich_native_ml_service }}.service
+Wants=network-online.target {{ immich_native_ml_service }}.service
+
+[Service]
+Type=simple
+User={{ immich_native_user }}
+Group={{ immich_native_user }}
+WorkingDirectory={{ immich_native_root }}/server
+EnvironmentFile={{ immich_env_file }}
+Environment=NODE_ENV=production
+Environment=PATH={{ immich_native_root }}/ffmpeg:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The service user reads the DRI nodes through the numeric group ids the guest sees. The
+# empty assignment resets the list, so a removed device drops its group on the next deploy.
+SupplementaryGroups=
+{% if _immich_dri_group_ids | default([]) | length > 0 %}
+SupplementaryGroups={{ _immich_dri_group_ids | join(' ') }}
+{% endif %}
+ExecStart={{ immich_native_node_root }}/bin/node {{ immich_native_root }}/server/dist/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -44,7 +44,7 @@ def render(gpu):
 def check_defaults_and_dispatch():
     defaults = load("ansible/vars/app-defaults/immich.yml")["immich_defaults"]
     assert defaults["hosting"]["method"] == "docker"
-    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+    assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
     assert [(e["backend"], e["protocol"]) for e in defaults["firewall"]["egress"]] == [
         ("database", "TCP"), ("redis", "TCP")]
     assert defaults["firewall"]["methods"] == ["kubernetes"]
@@ -56,9 +56,9 @@ def check_defaults_and_dispatch():
     restore = load("ansible/roles/immich/tasks/restore.yml")
     assert [t["ansible.builtin.include_tasks"] for t in restore] == [
         "restore-kubernetes.yml", "restore-guest.yml"]
-    assert "== 'kubernetes'" in restore[0]["when"] and "== 'docker'" in restore[1]["when"]
+    assert "== 'kubernetes'" in restore[0]["when"] and "in ['docker', 'native']" in restore[1]["when"]
     prepare = load("ansible/roles/immich/tasks/deploy-prepare.yml")
-    docker_only = [t for t in prepare if "'docker'" in str(t.get("when", ""))]
+    docker_only = [t for t in prepare if "'docker'" in str(t.get("when", "")) or "'native'" in str(t.get("when", ""))]
     assert len(docker_only) == len(prepare) - 1, "only the GPU check is shared with Kubernetes"
 
 

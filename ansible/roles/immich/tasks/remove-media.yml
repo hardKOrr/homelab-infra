@@ -1,5 +1,5 @@
 ---
-# Remove only the media owned by this Immich instance. Its remove.yml hook includes this after
+# Remove only the media owned by this Immich instance. Its remove.yml and remove-native-data.yml hooks include this after
 # stopping Compose when delete_data=true; the media mount itself remains in place for a
 # later deployment. Remove App drops the named database through tasks/database/drop.yml.
 - name: Immich remove | Revalidate its declared media mount and owner

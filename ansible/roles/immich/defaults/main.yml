@@ -8,3 +8,16 @@ immich_env_file: "{{ immich_project_dir }}/immich.env"
 immich_k8s_media_claim: "{{ instance }}-media"
 immich_k8s_owner: "{{ app_config.media_storage.owner.uid | int }}:{{ app_config.media_storage.owner.gid | int }}"
 immich_k8s_ml_port: 3003
+
+# Native (tasks/native.yml): Immich is built from its pinned source archive on a dedicated
+# Debian guest and run by two systemd units as a user with the media owner's uid/gid.
+immich_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+immich_native_user: immich
+immich_native_root: /opt/immich-native
+immich_native_node_root: "{{ immich_native_root }}/node-v{{ app_config.app.native_node_version }}"
+# The unit names are the Compose service names, so Backup and Restore stop the same two
+# services on both methods.
+immich_native_server_service: immich-server
+immich_native_ml_service: immich-machine-learning
+immich_native_ml_port: 3003
+immich_native_build_dir: /var/tmp/immich-build

@@ -11,7 +11,7 @@
            | default('') | regex_replace('/+$', '')) }}
   no_log: true
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - delete_data | default(false) | bool
 
 - name: Validate Immich's dedicated media mount
@@ -26,5 +26,5 @@
     fail_msg: >-
       Refusing to remove Immich data without exactly one safe, owned durable media mount.
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - delete_data | default(false) | bool

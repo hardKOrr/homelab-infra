@@ -2,7 +2,7 @@
 # Application-consistent Immich backup.
 #
 # The PBS guest snapshot cannot contain a Proxmox bind mount, so this task quiesces the
-# Compose project and archives the named PostgreSQL database and Immich media together.
+# Compose project (natively, its two units) and archives the named PostgreSQL database and Immich media together.
 # The model cache is disposable and is intentionally not part of the recovery artifact.
 - name: Immich backup | Require one declared durable media mount
   ansible.builtin.assert:
@@ -71,7 +71,7 @@
     - name: Immich backup | Stop Immich, dump its database and push both archives
       ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
       vars:
-        pbs_client_runtime: docker
+        pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
         pbs_client_compose_project: "{{ immich_project_dir }}"
         pbs_client_stop_services: [immich-server, immich-machine-learning]
         pbs_client_quiesced_hook: "{{ role_path }}/tasks/backup-quiesced.yml"

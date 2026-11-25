@@ -1,5 +1,8 @@
 ---
+# Natively machine learning restarts first: the server reads its address when it starts.
 - name: Restart Immich
-  community.docker.docker_compose_v2:
-    project_src: "{{ immich_project_dir }}"
-    state: restarted
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: "{{ 'native' if immich_native | bool else 'docker' }}"
+    restart_compose_project: "{{ immich_project_dir }}"
+    restart_services: ["{{ immich_native_ml_service }}", "{{ immich_native_server_service }}"]

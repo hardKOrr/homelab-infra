@@ -1,0 +1,479 @@
+---
+# Immich natively on an LXC or a VM. Upstream documents only Docker
+# (https://immich.app/docs/install/requirements), so this builds the pinned release from its
+# source archive (https://github.com/immich-app/immich) the way the server image does: the
+# server and web client with pnpm on a pinned Node.js, the machine-learning service as a uv
+# environment of the release's lockfile on the guest's Python, and jellyfin-ffmpeg's
+# portable build for transcoding. Two units run them as the media owner's uid/gid.
+#
+# Gaps against the image, recorded so they are not mistaken for defects: the server uses
+# sharp's bundled libvips (no HEIC or RAW through a custom libvips/ImageMagick), and the
+# core workflow plugin (a WebAssembly build that needs the extism toolchain) is not built:
+# the server logs that it is missing and everything else works.
+- name: Immich native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution_release == 'bookworm'
+    fail_msg: Native Immich supports Debian 12 on amd64 only.
+
+- name: Immich native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Immich native | Install the build and runtime packages
+  ansible.builtin.apt:
+    name: >-
+      {{ ['ca-certificates', 'curl', 'xz-utils', 'unzip', 'build-essential', 'python3']
+         + (['i965-va-driver', 'mesa-va-drivers'] if _immich_render_nodes | length > 0 else []) }}
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Immich native | Create the service group
+  ansible.builtin.group:
+    name: "{{ immich_native_user }}"
+    gid: "{{ app_config.media_storage.owner.gid | int }}"
+    system: true
+
+- name: Immich native | Create the service user
+  ansible.builtin.user:
+    name: "{{ immich_native_user }}"
+    uid: "{{ app_config.media_storage.owner.uid | int }}"
+    group: "{{ immich_native_user }}"
+    home: "{{ immich_native_root }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Immich native | Create the disposable model-cache directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.model_cache_path }}"
+    state: directory
+    owner: "{{ immich_native_user }}"
+    group: "{{ immich_native_user }}"
+    mode: "0750"
+
+- name: Immich native | Create the install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ immich_native_root }}"
+    - "{{ immich_native_root }}/build"
+    - "{{ immich_native_root }}/build/geodata"
+    - "{{ immich_native_root }}/ml"
+
+- name: Immich native | Check for the pinned Node.js release
+  ansible.builtin.stat:
+    path: "{{ immich_native_node_root }}/bin/node"
+  register: _immich_node
+
+- name: Immich native | Install the pinned Node.js release
+  when: not _immich_node.stat.exists
+  block:
+    - name: Immich native | Download the Node.js archive
+      ansible.builtin.get_url:
+        url: "https://nodejs.org/dist/v{{ app_config.app.native_node_version }}/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        dest: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        checksum: "sha256:{{ app_config.app.native_node_sha256 }}"
+        mode: "0600"
+
+    - name: Immich native | Extract Node.js
+      ansible.builtin.unarchive:
+        src: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        dest: "{{ immich_native_root }}"
+        remote_src: true
+        owner: root
+        group: root
+        creates: "{{ immich_native_node_root }}/bin/node"
+
+  always:
+    - name: Immich native | Remove the Node.js archive
+      ansible.builtin.file:
+        path: "/var/tmp/node-v{{ app_config.app.native_node_version }}-linux-x64.tar.xz"
+        state: absent
+
+- name: Immich native | Read the installed pnpm
+  ansible.builtin.slurp:
+    src: "{{ immich_native_node_root }}/lib/node_modules/pnpm/package.json"
+  register: _immich_pnpm
+  failed_when: false
+
+- name: Immich native | Install the pinned pnpm
+  ansible.builtin.command:
+    argv: ["{{ immich_native_node_root }}/bin/npm", install, -g, "pnpm@{{ app_config.app.native_pnpm_version }}"]
+  environment:
+    PATH: "{{ immich_native_node_root }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    npm_config_update_notifier: "false"
+    npm_config_fund: "false"
+    npm_config_audit: "false"
+  when: >-
+    _immich_pnpm.content is not defined
+    or (_immich_pnpm.content | b64decode | from_json).version != app_config.app.native_pnpm_version
+  changed_when: true
+
+- name: Immich native | Check for the pinned uv
+  ansible.builtin.stat:
+    path: "{{ immich_native_root }}/uv-{{ app_config.app.native_uv_version }}/uv"
+  register: _immich_uv
+
+- name: Immich native | Install the pinned uv
+  when: not _immich_uv.stat.exists
+  block:
+    - name: Immich native | Download the uv archive
+      ansible.builtin.get_url:
+        url: "https://github.com/astral-sh/uv/releases/download/{{ app_config.app.native_uv_version }}/uv-x86_64-unknown-linux-gnu.tar.gz"
+        dest: "/var/tmp/uv-{{ app_config.app.native_uv_version }}.tar.gz"
+        checksum: "sha256:{{ app_config.app.native_uv_sha256 }}"
+        mode: "0600"
+
+    - name: Immich native | Create the uv directory
+      ansible.builtin.file:
+        path: "{{ immich_native_root }}/uv-{{ app_config.app.native_uv_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Immich native | Extract uv
+      ansible.builtin.unarchive:
+        src: "/var/tmp/uv-{{ app_config.app.native_uv_version }}.tar.gz"
+        dest: "{{ immich_native_root }}/uv-{{ app_config.app.native_uv_version }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
+        creates: "{{ immich_native_root }}/uv-{{ app_config.app.native_uv_version }}/uv"
+
+  always:
+    - name: Immich native | Remove the uv archive
+      ansible.builtin.file:
+        path: "/var/tmp/uv-{{ app_config.app.native_uv_version }}.tar.gz"
+        state: absent
+
+- name: Immich native | Check for the pinned jellyfin-ffmpeg
+  ansible.builtin.stat:
+    path: "{{ immich_native_root }}/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}/ffmpeg"
+  register: _immich_ffmpeg
+
+- name: Immich native | Install the pinned jellyfin-ffmpeg
+  when: not _immich_ffmpeg.stat.exists
+  block:
+    - name: Immich native | Download the jellyfin-ffmpeg archive
+      ansible.builtin.get_url:
+        url: "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v{{ app_config.app.native_ffmpeg_version }}/jellyfin-ffmpeg_{{ app_config.app.native_ffmpeg_version }}_portable_linux64-gpl.tar.xz"
+        dest: "/var/tmp/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}.tar.xz"
+        checksum: "sha256:{{ app_config.app.native_ffmpeg_sha256 }}"
+        mode: "0600"
+
+    - name: Immich native | Create the ffmpeg directory
+      ansible.builtin.file:
+        path: "{{ immich_native_root }}/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Immich native | Extract jellyfin-ffmpeg
+      ansible.builtin.unarchive:
+        src: "/var/tmp/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}.tar.xz"
+        dest: "{{ immich_native_root }}/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}"
+        remote_src: true
+        owner: root
+        group: root
+        creates: "{{ immich_native_root }}/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}/ffmpeg"
+
+  always:
+    - name: Immich native | Remove the ffmpeg archive
+      ansible.builtin.file:
+        path: "/var/tmp/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}.tar.xz"
+        state: absent
+
+- name: Immich native | Point the ffmpeg path at the pinned release
+  ansible.builtin.file:
+    path: "{{ immich_native_root }}/ffmpeg"
+    src: "{{ immich_native_root }}/jellyfin-ffmpeg-{{ app_config.app.native_ffmpeg_version }}"
+    state: link
+  notify: Restart Immich
+
+# The geodata is reference data the image downloads at build time; a present file is kept.
+- name: Immich native | Download the geodata
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ immich_native_root }}/build/geodata/{{ item.name }}"
+    checksum: "{{ item.checksum | default(omit) }}"
+    mode: "0644"
+    force: false
+  loop:
+    - {name: admin1CodesASCII.txt, url: "https://download.geonames.org/export/dump/admin1CodesASCII.txt"}
+    - {name: admin2Codes.txt, url: "https://download.geonames.org/export/dump/admin2Codes.txt"}
+    - {name: countryInfo.txt, url: "https://download.geonames.org/export/dump/countryInfo.txt"}
+    - name: ne_10m_admin_0_countries.geojson
+      url: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson"
+      checksum: "sha256:{{ app_config.app.native_countries_sha256 }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart Immich
+
+- name: Immich native | Check for the cities file
+  ansible.builtin.stat:
+    path: "{{ immich_native_root }}/build/geodata/cities500.txt"
+  register: _immich_cities
+
+- name: Immich native | Install the cities file
+  when: not _immich_cities.stat.exists
+  block:
+    - name: Immich native | Download the cities archive
+      ansible.builtin.get_url:
+        url: https://download.geonames.org/export/dump/cities500.zip
+        dest: /var/tmp/immich-cities500.zip
+        mode: "0600"
+
+    - name: Immich native | Extract the cities file
+      ansible.builtin.unarchive:
+        src: /var/tmp/immich-cities500.zip
+        dest: "{{ immich_native_root }}/build/geodata"
+        remote_src: true
+        creates: "{{ immich_native_root }}/build/geodata/cities500.txt"
+      notify: Restart Immich
+
+  always:
+    - name: Immich native | Remove the cities archive
+      ansible.builtin.file:
+        path: /var/tmp/immich-cities500.zip
+        state: absent
+
+- name: Immich native | Date the geodata
+  ansible.builtin.copy:
+    dest: "{{ immich_native_root }}/build/geodata/geodata-date.txt"
+    content: "{{ ansible_facts.date_time.iso8601 }}"
+    mode: "0644"
+    force: false
+
+- name: Immich native | Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ immich_native_root }}/release"
+  register: _immich_release
+  failed_when: false
+
+- name: Immich native | Build the pinned release
+  when: >-
+    _immich_release.content is not defined
+    or (_immich_release.content | b64decode | trim) != app_config.app.native_version
+  block:
+    - name: Immich native | Start from an empty build directory
+      ansible.builtin.file:
+        path: "{{ immich_native_build_dir }}"
+        state: "{{ item }}"
+        mode: "0700"
+      loop: [absent, directory]
+
+    - name: Immich native | Download the source archive
+      ansible.builtin.get_url:
+        url: "https://github.com/immich-app/immich/archive/refs/tags/v{{ app_config.app.native_version }}.tar.gz"
+        dest: "/var/tmp/immich-{{ app_config.app.native_version }}.tar.gz"
+        checksum: "sha256:{{ app_config.app.native_source_sha256 }}"
+        mode: "0600"
+
+    - name: Immich native | Extract the source archive
+      ansible.builtin.unarchive:
+        src: "/var/tmp/immich-{{ app_config.app.native_version }}.tar.gz"
+        dest: "{{ immich_native_build_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+
+    - name: Immich native | Install the server and web dependencies
+      ansible.builtin.command:
+        argv:
+          - pnpm
+          - --filter
+          - "@immich/sdk"
+          - --filter
+          - "@immich/plugin-sdk"
+          - --filter
+          - immich
+          - --filter
+          - immich-web
+          - install
+          - --frozen-lockfile
+          - --force
+        chdir: "{{ immich_native_build_dir }}"
+      environment: &immich_build_env
+        PATH: "{{ immich_native_node_root }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        CI: "1"
+        HOME: "{{ immich_native_build_dir }}"
+        npm_config_store_dir: "{{ immich_native_build_dir }}/pnpm-store"
+        NODE_OPTIONS: --max-old-space-size=4096
+        SHARP_IGNORE_GLOBAL_LIBVIPS: "true"
+      changed_when: true
+
+    - name: Immich native | Build the server
+      ansible.builtin.command:
+        argv:
+          - pnpm
+          - --filter
+          - "@immich/sdk"
+          - --filter
+          - "@immich/plugin-sdk"
+          - --filter
+          - immich
+          - build
+        chdir: "{{ immich_native_build_dir }}"
+      environment: *immich_build_env
+      changed_when: true
+
+    - name: Immich native | Build the web client
+      ansible.builtin.command:
+        argv: [pnpm, --filter, "@immich/sdk", --filter, immich-web, build]
+        chdir: "{{ immich_native_build_dir }}"
+      environment: *immich_build_env
+      changed_when: true
+
+    - name: Immich native | Remove the previous server and web client
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ immich_native_root }}/server"
+        - "{{ immich_native_root }}/build/www"
+        - "{{ immich_native_root }}/ml/immich_ml"
+
+    - name: Immich native | Deploy the production server tree
+      ansible.builtin.command:
+        argv: [pnpm, --filter, immich, --prod, deploy, "{{ immich_native_root }}/server"]
+        chdir: "{{ immich_native_build_dir }}"
+      environment: *immich_build_env
+      changed_when: true
+
+    - name: Immich native | Install the web client
+      ansible.builtin.copy:
+        src: "{{ immich_native_build_dir }}/web/build/"
+        dest: "{{ immich_native_root }}/build/www/"
+        remote_src: true
+        owner: root
+        group: root
+        directory_mode: "0755"
+        mode: "0644"
+
+    - name: Immich native | Install the machine-learning package
+      ansible.builtin.copy:
+        src: "{{ immich_native_build_dir }}/machine-learning/immich_ml/"
+        dest: "{{ immich_native_root }}/ml/immich_ml/"
+        remote_src: true
+        owner: root
+        group: root
+        directory_mode: "0755"
+        mode: "0644"
+
+    - name: Immich native | Install the machine-learning dependencies from the release lockfile
+      ansible.builtin.command:
+        argv:
+          - "{{ immich_native_root }}/uv-{{ app_config.app.native_uv_version }}/uv"
+          - sync
+          - --frozen
+          - --extra
+          - "{{ app_config.app.native_ml_extra }}"
+          - --no-dev
+          - --no-editable
+          - --no-install-project
+          - --compile-bytecode
+          - --no-progress
+          - --python
+          - /usr/bin/python3
+        chdir: "{{ immich_native_build_dir }}/machine-learning"
+      environment:
+        UV_PROJECT_ENVIRONMENT: "{{ immich_native_root }}/ml/venv"
+        UV_CACHE_DIR: "{{ immich_native_build_dir }}/uv-cache"
+        UV_LINK_MODE: copy
+        UV_PYTHON_DOWNLOADS: never
+      changed_when: true
+
+    - name: Immich native | Record the built release
+      ansible.builtin.copy:
+        dest: "{{ immich_native_root }}/release"
+        content: "{{ app_config.app.native_version }}\n"
+        mode: "0644"
+      notify: Restart Immich
+
+  always:
+    - name: Immich native | Remove the build tree and the source archive
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ immich_native_build_dir }}"
+        - "/var/tmp/immich-{{ app_config.app.native_version }}.tar.gz"
+
+# The service user reads the DRI nodes through their numeric group ids, which are the ids
+# the guest sees (configure-devices.yml), not the guest's video or render group names.
+- name: Immich native | Render the service units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: immich-server.service.j2, service: "{{ immich_native_server_service }}"}
+    - {src: immich-machine-learning.service.j2, service: "{{ immich_native_ml_service }}"}
+  loop_control:
+    label: "{{ item.service }}"
+  register: _immich_native_units
+  notify: Restart Immich
+
+- name: Immich native | Reload systemd for changed units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _immich_native_units.changed
+
+- name: Immich native | Enable and start Immich
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - "{{ immich_native_ml_service }}"
+    - "{{ immich_native_server_service }}"
+
+- name: Immich native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ immich_native_ml_service }} {{ immich_native_server_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ immich_native_server_service }} -u {{ immich_native_ml_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Immich native | Apply pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Immich native | Wait for the machine-learning service
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ immich_native_ml_port }}/ping"
+    return_content: true
+  register: _immich_ml_ping
+  until: _immich_ml_ping.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false

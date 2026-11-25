@@ -1,12 +1,12 @@
 ---
 # Restore Immich's named database and durable media from one PBS point (database.pxar,
 # media.pxar). Run by playbooks/maintenance/restore-app.yml. On Kubernetes the shared
-# recovery Job replaces them (restore-kubernetes.yml); on the Docker host the shared swap
+# recovery Job replaces them (restore-kubernetes.yml); on the Docker host or the native guest the shared swap
 # does (restore-guest.yml).
 - name: Immich restore | Use the Kubernetes recovery Job
   ansible.builtin.include_tasks: restore-kubernetes.yml
   when: app_config.hosting.method | default('docker') == 'kubernetes'
 
-- name: Immich restore | Use the Docker swap
+- name: Immich restore | Use the Docker or native swap
   ansible.builtin.include_tasks: restore-guest.yml
-  when: app_config.hosting.method | default('docker') == 'docker'
+  when: app_config.hosting.method | default('docker') in ['docker', 'native']
