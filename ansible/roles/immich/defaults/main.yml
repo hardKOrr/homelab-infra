@@ -14,7 +14,8 @@ immich_k8s_ml_port: 3003
 immich_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
 immich_native_user: immich
 immich_native_root: /opt/immich-native
-immich_native_node_root: "{{ immich_native_root }}/node-v{{ app_config.app.native_node_version }}"
+# The Node.js archive extracts to this directory name.
+immich_native_node_root: "{{ immich_native_root }}/node-v{{ app_config.app.native_node_version }}-linux-x64"
 # The unit names are the Compose service names, so Backup and Restore stop the same two
 # services on both methods.
 immich_native_server_service: immich-server

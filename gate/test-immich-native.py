@@ -22,6 +22,9 @@ assert "immich-app/immich/archive/refs/tags/v{{ app_config.app.native_version }}
 for key in ("source", "node", "uv", "ffmpeg", "countries"):
     assert f"native_{key}_sha256" in native, key
 
+# The Node.js archive's top-level directory is the configured Node root.
+assert "node-v{{ app_config.app.native_node_version }}-linux-x64\"" in (role / "defaults/main.yml").read_text()
+
 # The service user needs the unit, the environment file and the models before the first start.
 assert native.index("Render the service units") < native.index("Enable and start Immich")
 assert native.index("Build the pinned release") < native.index("Render the service units")
