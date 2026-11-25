@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""ao-brief — where an AO issue stands, in one read-only call.
+
+  tools/ao-brief [issue]
+
+Prints the issue's title and state, its open Task sub-issues in order, its latest handoff
+or blocked comment, the claimed PR (head, body, checks, unresolved review threads), and
+the local branch and HEAD against the PR head and the handoff's HEAD.
+
+Without an issue number it uses $AO_ISSUE_ID, then the current branch's PR (its
+<!-- ao-links --> block). Long text is trimmed and says so. It changes nothing.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+REPO = os.environ.get("AO_WATCHER_REPO", "hardKOrr/homelab-infra")
+LIMITS = {"comment": 6000, "body": 3000, "thread": 600}
+MARKER = re.compile(r"<!-- ao-event session=\S+ kind=(handoff|blocked)\b")
+
+QUERY = """query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
+issue(number:$n){number title state url parent{number}
+ subIssues(first:50){nodes{number title state}}
+ comments(last:60){nodes{body createdAt url}}}}}"""
+PR_QUERY = """query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
+pullRequest(number:$n){number state url headRefName headRefOid body isDraft
+ commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{
+  ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}}
+ reviewThreads(first:100){nodes{isResolved path line comments(first:1){nodes{author{login} body}}}}}}}"""
+
+
+def sh(*args):
+    result = subprocess.run(args, capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def graphql(query, n):
+    owner, name = REPO.split("/")
+    out = sh("gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}",
+             "-f", f"name={name}", "-F", f"n={n}")
+    return json.loads(out)["data"]["repository"] if out else None
+
+
+def trim(text, kind):
+    text = (text or "").strip()
+    limit = LIMITS[kind]
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n[... trimmed {len(text) - limit} characters; read it on GitHub]"
+
+
+def branch_pr():
+    out = sh("gh", "pr", "view", "--repo", REPO, "--json", "number")
+    return json.loads(out)["number"] if out else None
+
+
+def linked_issues(body):
+    block = re.search(r"<!-- ao-links -->(.*?)<!-- /ao-links -->", body or "", re.S)
+    return [int(n) for n in re.findall(r"#(\d+)", block[1])] if block else []
+
+
+def find_pr(issue, task_numbers):
+    """The current branch's PR, else a PR (open first) whose ao-links name the issue or a task."""
+    wanted = {issue, *task_numbers}
+    number = branch_pr()
+    if number:
+        return number
+    for state in ("open", "all"):
+        out = sh("gh", "pr", "list", "--repo", REPO, "--state", state, "--search", f"{issue} in:body",
+                 "--json", "number,body", "--limit", "20")
+        for pr in json.loads(out or "[]"):
+            if wanted & set(linked_issues(pr["body"])):
+                return pr["number"]
+    return None
+
+
+def resolve_issue(arg):
+    if arg:
+        return int(arg.lstrip("#"))
+    match = re.fullmatch(r"(?:github:[\w.-]+/[\w.-]+#)?(\d+)", os.environ.get("AO_ISSUE_ID", ""))
+    if match:
+        return int(match[1])
+    number = branch_pr()
+    if number:
+        pr = graphql(PR_QUERY, number)["pullRequest"]
+        for candidate in reversed(linked_issues(pr["body"])):
+            data = graphql(QUERY, candidate)
+            if data and data["issue"] and not data["issue"]["parent"]:
+                return candidate
+    return None
+
+
+def render(issue, pr, local):
+    """Format the brief from GitHub data (issue, pr or None) and local git state."""
+    out = [f"# #{issue['number']} {issue['title']} ({issue['state'].lower()})", issue["url"], ""]
+    tasks = issue["subIssues"]["nodes"]
+    open_tasks = [t for t in tasks if t["state"] == "OPEN"]
+    out.append(f"## Tasks: {len(open_tasks)} open of {len(tasks)}")
+    out += [f"- #{t['number']} {t['title']}" for t in open_tasks] or ["- none open" if tasks else "- no Task sub-issues"]
+    out.append("")
+    latest = next((c for c in reversed(issue["comments"]["nodes"]) if MARKER.search(c["body"])), None)
+    handoff_head = None
+    if latest:
+        kind = MARKER.search(latest["body"])[1]
+        head = re.search(r"^HEAD:\s*([0-9a-f]{7,40})", latest["body"], re.M)
+        handoff_head = head[1] if head else None
+        out += [f"## Latest {kind} comment ({latest['createdAt'][:16].replace('T', ' ')})", latest["url"],
+                trim(re.sub(r"\n?<!-- ao-event [^>]*-->", "", latest["body"]), "comment"), ""]
+    else:
+        out += ["## Latest handoff or blocked comment", "- none yet", ""]
+    if pr:
+        draft = ", draft" if pr["isDraft"] else ""
+        out += [f"## PR #{pr['number']} ({pr['state'].lower()}{draft}) {pr['headRefName']} @ {pr['headRefOid'][:12]}", pr["url"]]
+        commits = pr["commits"]["nodes"]
+        rollup = commits[0]["commit"]["statusCheckRollup"] if commits else None
+        if rollup:
+            out.append(f"Checks: {rollup['state'].lower()}")
+            for c in rollup["contexts"]["nodes"]:
+                result = (c.get("conclusion") or c.get("status") or c.get("state") or "").lower()
+                if result not in ("success", "skipped", "neutral"):
+                    out.append(f"- {c.get('name') or c.get('context')}: {result}")
+        else:
+            out.append("Checks: none reported")
+        threads = [t for t in pr["reviewThreads"]["nodes"] if not t["isResolved"]]
+        out.append(f"Unresolved review threads: {len(threads)}")
+        for t in threads:
+            first = (t["comments"]["nodes"] or [{"author": None, "body": ""}])[0]
+            who = (first["author"] or {}).get("login", "?")
+            out.append(f"- {who} {t['path']}:{t['line'] or '?'}: {trim(first['body'], 'thread')}")
+        out += ["", "### PR body", trim(pr["body"], "body"), ""]
+    else:
+        out += ["## PR", "- no PR yet for this issue or the current branch", ""]
+    out.append("## Local")
+    if local["branch"] is None:
+        out.append("- not in a git checkout")
+    else:
+        out.append(f"- branch {local['branch']} @ {local['head'][:12]}" + (", uncommitted changes" if local["dirty"] else ""))
+        if pr:
+            same = pr["headRefOid"].startswith(local["head"]) or local["head"].startswith(pr["headRefOid"])
+            out.append(f"- PR head: {'matches' if same else 'differs from local HEAD'}")
+        if handoff_head:
+            same = local["head"].startswith(handoff_head) or handoff_head.startswith(local["head"])
+            out.append(f"- handoff HEAD {handoff_head}: {'matches' if same else 'differs from local HEAD'}")
+    return "\n".join(out)
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] in (["-h"], ["--help"]) or len(args) > 1:
+        print(__doc__.strip())
+        sys.exit(0 if args[:1] in (["-h"], ["--help"]) else 2)
+    number = resolve_issue(args[0] if args else None)
+    if not number:
+        sys.exit("ao-brief: no issue given, no $AO_ISSUE_ID, and the current branch has no PR naming one")
+    data = graphql(QUERY, number)
+    if not data or not data["issue"]:
+        sys.exit(f"ao-brief: cannot read issue #{number} in {REPO}")
+    issue = data["issue"]
+    pr_number = find_pr(number, [t["number"] for t in issue["subIssues"]["nodes"]])
+    pr = graphql(PR_QUERY, pr_number)["pullRequest"] if pr_number else None
+    head = sh("git", "rev-parse", "HEAD")
+    local = {"branch": sh("git", "branch", "--show-current") if head else None, "head": head or "",
+             "dirty": bool(sh("git", "status", "--porcelain")) if head else False}
+    print(render(issue, pr, local))
+
+
+if __name__ == "__main__":
+    main()
