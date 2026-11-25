@@ -89,6 +89,7 @@
       - "'_+lab' in (hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_tags_parsed | default([]))"
       - >-
         (hostvars[_resolve_guest_named_owned_hosts[0]].proxmox_tags_parsed | default([])
+         | reject('match', '^_[.]dev[+][a-z0-9][a-z0-9-]*$')
          | select('match', '^_[A-Za-z0-9]|^_[.]') | list | length) == 0
       - >-
         resolve_guest_type | default('', true) | length == 0

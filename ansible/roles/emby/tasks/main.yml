@@ -1,5 +1,6 @@
 ---
-# Emby on Docker, on the stack host. The Kubernetes path is kubernetes.yml.
+# Emby on Docker on the stack host, or natively on its own guest (native.yml). The Kubernetes
+# path is kubernetes.yml.
 - name: Resolve Emby's API base on the stack host
   ansible.builtin.set_fact:
     _emby_base: "http://localhost:{{ app_config.app.port }}/emby"
@@ -18,6 +19,7 @@
     owner: root
     group: root
     mode: "0750"
+  when: not (emby_native | bool)
 
 - name: Create Emby config directory
   ansible.builtin.file:
@@ -26,6 +28,7 @@
     owner: "{{ app_config.app.puid | default(1313) }}"
     group: "{{ app_config.app.pgid | default(1313) }}"
     mode: "0750"
+  when: not (emby_native | bool)
 
 - name: Verify media mounts are present on the stack host
   ansible.builtin.stat:
@@ -76,6 +79,14 @@
   ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
   vars:
     compose_project_dir: "{{ emby_project_dir }}"
+  when: not (emby_native | bool)
+
+- name: Deploy Emby natively
+  ansible.builtin.include_tasks: native.yml
+  when: emby_native | bool
+
+- name: Apply pending Emby restarts
+  ansible.builtin.meta: flush_handlers
 
 - name: Configure Emby through its API
   ansible.builtin.include_tasks: configure.yml

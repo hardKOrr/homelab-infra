@@ -5,9 +5,20 @@ emby_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
   # Recovery is owned by this deployment slice: the complete Emby config
   # database, including its own users and library definitions, is archived as
   # one quiesced application-consistent unit. Media libraries remain external.
@@ -18,7 +29,11 @@ emby_defaults:
       restore_playbook: restore-app.yml
   media_storage: {}
   app:
-    image: lscr.io/linuxserver/emby:latest
+    service_name: emby-server   # native systemd unit
+    image: "lscr.io/linuxserver/emby:4.10.2.0"
+    # Native: the same release from its .deb (https://emby.media/linux-server.html).
+    native_version: "4.10.2.0"
+    native_deb_sha256: 80c8666fc6f6143558c235c57932189a3f0b3f899b44519fc4621dd7dea16e32
     # Keep the host port distinct from Jellyfin (8096), so the alternatives can coexist.
     port: 8097
     container_port: 8096

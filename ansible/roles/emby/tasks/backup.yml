@@ -2,7 +2,7 @@
 # Emby's config directory contains its SQLite state, integrations, generated
 # secrets, and registry. Quiescing the one Compose service makes the directory an
 # application-consistent recovery unit rather than relying only on a crash-consistent VM
-# snapshot.
+# snapshot. Natively the quiesced service is the emby-server unit.
 - name: Emby backup | Assert the recovery contract
   ansible.builtin.assert:
     that:
@@ -31,9 +31,9 @@
 - name: Emby backup | Quiesce Emby and archive its config to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ emby_project_dir }}"
-    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_stop_services: ["{{ emby_native_service if emby_native | bool else instance }}"]
     pbs_client_archives:
       - name: data.pxar
         path: "{{ app_config.app.config_path }}"

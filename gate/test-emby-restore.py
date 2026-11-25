@@ -86,7 +86,8 @@ def main():
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == ["{{ emby_native_service if emby_native | bool else instance }}"]
+    assert swap["recovery_swap_runtime"] == "{{ app_config.hosting.method | default('docker') }}"
     assert swap["recovery_swap_compose_project"] == "{{ emby_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/emby/System/Info/Public")
 

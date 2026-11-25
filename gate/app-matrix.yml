@@ -534,7 +534,7 @@ deemix:
     native: [tasks/recovery/restore-swap.yml]
 emby:
   method: docker
-  supported: [docker-lxc, docker-vm, kubernetes]
+  supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]
   deploy:
     docker:
     - tasks/load-user-vars.yml
@@ -580,13 +580,41 @@ emby:
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
+    native:
+    - tasks/load-user-vars.yml
+    - tasks/apps/load-config.yml
+    - tasks/hosting/validate-app.yml
+    - tasks/resolve-estate.yml
+    - tasks/proxmox/assert-dedicated-igpu.yml
+    - tasks/proxmox/resolve-native-type.yml
+    - tasks/proxmox/resolve-instance-guest.yml
+    - tasks/proxmox/resolve-native-placement.yml
+    - tasks/proxmox/migrate-inventory-guest.yml
+    - tasks/proxmox/ensure-guest-running.yml
+    - tasks/proxmox/provision-native-guest.yml
+    - tasks/proxmox/attach-host-mounts.yml
+    - tasks/proxmox/attach-shared-device.yml
+    - tasks/firewall/open-app-access.yml
+    - tasks/guest-bootstrap.yml
+    - tasks/bootstrap/configure-unattended-upgrades.yml
+    - tasks/bitwarden/upsert-item.yml
+    - tasks/backup/pbs-client-install.yml
+    - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
+    - tasks/wiring/authentik.yml
+    - tasks/wiring/uptime-kuma.yml
+    - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
+    - tasks/proxmox/record-app-on-guest.yml
+    - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
+    native: [tasks/backup/pbs-client-backup.yml]
   restore:
     docker: [tasks/recovery/restore-swap.yml]
     kubernetes:
     - tasks/kubernetes/recovery-restore.yml
     - tasks/bitwarden/upsert-item.yml
+    native: [tasks/recovery/restore-swap.yml]
 flaresolverr:
   method: kubernetes
   supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]

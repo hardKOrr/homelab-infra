@@ -1,0 +1,168 @@
+---
+# Emby natively on an LXC or a VM: the pinned upstream .deb
+# (https://emby.media/linux-server.html) under the emby-server unit it ships, with its data
+# at app.config_path and its HTTP port at app.port. Emby starts on the first install, so
+# its user, data directory, environment file and port are all in place before the package.
+- name: Emby native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Emby supports Debian-family amd64 guests only.
+
+- name: Emby native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Emby native | Install the package prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+# Created before the package so the user owns the library's uid/gid.
+- name: Emby native | Create the service group
+  ansible.builtin.group:
+    name: "{{ emby_native_user }}"
+    gid: "{{ app_config.app.pgid | default(1313) }}"
+    system: true
+
+- name: Emby native | Create the service user
+  ansible.builtin.user:
+    name: "{{ emby_native_user }}"
+    uid: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ emby_native_user }}"
+    home: /var/lib/emby
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Emby native | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ emby_native_user }}"
+    group: "{{ emby_native_user }}"
+    mode: "0750"
+  loop:
+    - "{{ emby_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.config_path }}/config"
+
+- name: Emby native | Point the service at its config directory
+  ansible.builtin.copy:
+    dest: "{{ emby_native_env_file }}"
+    content: "EMBY_DATA={{ app_config.app.config_path }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart emby
+
+# Emby writes the rest of system.xml itself; a new install starts on this port.
+- name: Emby native | Seed the server configuration with the HTTP port
+  ansible.builtin.copy:
+    dest: "{{ app_config.app.config_path }}/config/system.xml"
+    content: |
+      <?xml version="1.0"?>
+      <ServerConfiguration>
+        <HttpServerPortNumber>{{ app_config.app.port }}</HttpServerPortNumber>
+      </ServerConfiguration>
+    owner: "{{ emby_native_user }}"
+    group: "{{ emby_native_user }}"
+    mode: "0640"
+    force: false
+
+- name: Emby native | Keep the HTTP port on an existing configuration
+  ansible.builtin.replace:
+    path: "{{ app_config.app.config_path }}/config/system.xml"
+    regexp: '(<HttpServerPortNumber>)\d+(</HttpServerPortNumber>)'
+    replace: '\g<1>{{ app_config.app.port }}\g<2>'
+  notify: Restart emby
+
+- name: Emby native | Read the installed package version
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, "-f=${Version}", emby-server]
+  register: _emby_native_installed
+  changed_when: false
+  failed_when: false
+
+- name: Emby native | Install the pinned package
+  when: _emby_native_installed.stdout | default('') != app_config.app.native_version
+  block:
+    - name: Emby native | Download the .deb
+      ansible.builtin.get_url:
+        url: "https://github.com/MediaBrowser/Emby.Releases/releases/download/{{ app_config.app.native_version }}/emby-server-deb_{{ app_config.app.native_version }}_amd64.deb"
+        dest: "/var/tmp/emby-server_{{ app_config.app.native_version }}_amd64.deb"
+        checksum: "sha256:{{ app_config.app.native_deb_sha256 }}"
+        mode: "0600"
+
+    - name: Emby native | Install the .deb
+      ansible.builtin.apt:
+        deb: "/var/tmp/emby-server_{{ app_config.app.native_version }}_amd64.deb"
+        state: present
+        lock_timeout: 300
+      notify: Restart emby
+
+  always:
+    - name: Emby native | Remove the .deb
+      ansible.builtin.file:
+        path: "/var/tmp/emby-server_{{ app_config.app.native_version }}_amd64.deb"
+        state: absent
+
+- name: Emby native | Create the unit drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ emby_native_service }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The service user reads the DRI nodes through their numeric group ids, which are the ids
+# the guest sees (configure-devices.yml), not the guest's video or render group names.
+- name: Emby native | Render the unit drop-in
+  ansible.builtin.template:
+    src: emby-native.conf.j2
+    dest: "/etc/systemd/system/{{ emby_native_service }}.service.d/homelab.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _emby_native_unit
+  notify: Restart emby
+
+- name: Emby native | Reload systemd for a changed unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _emby_native_unit.changed
+
+- name: Emby native | Enable and start Emby
+  ansible.builtin.systemd:
+    name: "{{ emby_native_service }}"
+    state: started
+    enabled: true
+
+- name: Emby native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ emby_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ emby_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

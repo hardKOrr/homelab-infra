@@ -21,10 +21,13 @@
 - name: Native guest | Resolve placement and reject an existing type mismatch
   ansible.builtin.include_tasks: ../../../tasks/proxmox/resolve-native-placement.yml
 
+# Device provenance describes an attachment, not shared hosting. Keep every other
+# topology marker fail-closed, including markers introduced by future features.
 - name: Native guest | Refuse a shared or template guest
   ansible.builtin.assert:
     that: >-
       hostvars[item].proxmox_tags_parsed | default([])
+      | reject('match', '^_[.]dev[+][a-z0-9][a-z0-9-]*$')
       | select('match', '^_[.]') | list | length == 0
     fail_msg: Native applications require a dedicated owned guest, not a shared guest or template.
   loop: "{{ _existing_hosts }}"
