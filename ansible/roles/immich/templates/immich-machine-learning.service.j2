@@ -13,6 +13,9 @@ Environment=IMMICH_HOST=127.0.0.1
 Environment=IMMICH_PORT={{ immich_native_ml_port }}
 Environment=MACHINE_LEARNING_CACHE_FOLDER={{ app_config.app.model_cache_path }}
 Environment=TRANSFORMERS_CACHE={{ app_config.app.model_cache_path }}
+# The launcher starts gunicorn as `python -m gunicorn`: the venv's bin must lead PATH.
+Environment=PATH={{ immich_native_root }}/ml/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=VIRTUAL_ENV={{ immich_native_root }}/ml/venv
 Environment=PYTHONPATH={{ immich_native_root }}/ml
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1

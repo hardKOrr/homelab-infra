@@ -46,6 +46,10 @@ assert units == ["{{ immich_native_server_service }}", "{{ immich_native_ml_serv
 assert yaml.safe_load((role / "defaults/main.yml").read_text())["immich_native_server_service"] == "immich-server"
 assert yaml.safe_load((role / "defaults/main.yml").read_text())["immich_native_ml_service"] == "immich-machine-learning"
 
+# The ML launcher spawns `python`, so the venv's bin must lead the unit's PATH.
+ml_unit = (role / "templates/immich-machine-learning.service.j2").read_text()
+assert "Environment=PATH={{ immich_native_root }}/ml/venv/bin:" in ml_unit
+
 # A native VM refuses an iGPU declaration; an LXC binds the shared nodes.
 prepare = (role / "tasks/deploy-prepare.yml").read_text()
 assert "Refuse a GPU declaration for native Immich on a VM" in prepare
