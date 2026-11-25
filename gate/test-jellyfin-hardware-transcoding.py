@@ -78,8 +78,8 @@ def run_playbook(server, root, devices, gpu_device=""):
     fake_find = fake_bin / "find"
     fake_find.write_text(
         "#!/bin/sh\n"
-        "[ \"${7:-}\" = '%G\\n' ] || exit 9\n"
-        "printf '44\\n104\\n104\\n'\n"
+        "[ \"${1:-}\" = /dev/dri ] || exit 9\n"
+        "printf 'directory:0\\ncharacter special file:104\\ncharacter special file:44\\ncharacter special file:104\\nregular file:999\\n'\n"
     )
     fake_find.chmod(0o755)
     env = os.environ | {
@@ -200,6 +200,8 @@ def main():
             gpu_service = render_compose(root, [], "fixture-igpu", ["44", "104"])
             assert "/dev/dri:/dev/dri" in gpu_service["devices"]
             assert gpu_service["group_add"] == ["44", "104"]
+            assert any("ATTACHED_DEVICES_PERMS=" in value and "-exec test -c {} ;" in value
+                       for value in gpu_service["environment"])
 
             dri_service = render_compose(root, ["/dev/dri"], "", ["44", "104"])
             assert "/dev/dri:/dev/dri" in dri_service["devices"]
@@ -208,6 +210,7 @@ def main():
             cpu_service = render_compose(root, [], "", [])
             assert "devices" not in cpu_service
             assert "group_add" not in cpu_service
+            assert not any("ATTACHED_DEVICES_PERMS=" in value for value in cpu_service["environment"])
     finally:
         server.shutdown()
         server.server_close()

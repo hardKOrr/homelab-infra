@@ -23,6 +23,11 @@ services:
       # through the reverse proxy is told to go somewhere it may not be able to.
       - JELLYFIN_PublishedServerUrl={{ _jf_published_url }}
 {% endif %}
+{% if _jf_dri_device_declared | default(false) | bool %}
+      # PVE bind mounts can report a cached directory-entry type; test the device inode.
+      # The image adds these device groups to its service user before dropping privileges.
+      - ATTACHED_DEVICES_PERMS=/dev/dri /dev/dvb /dev/vchiq /dev/video1? -exec test -c {} ;
+{% endif %}
 {% for key, value in (app_config.app.extra_env | default({})).items() %}
       - {{ key }}={{ value }}
 {% endfor %}
