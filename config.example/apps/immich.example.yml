@@ -29,6 +29,10 @@ app:
   # Name of the dedicated iGPU declaration in proxmox.devices.
   gpu_device: intel-igpu
   gpu_render_node: /dev/dri/renderD128
+  # On a Docker LXC stack (stack: photos-lxc with infrastructure.stacks.photos-lxc.guest_type:
+  # lxc in config/infrastructure.yml) leave gpu_device empty and list the host's render
+  # nodes; each must be an identifier of a proxmox.devices entry with mode: shared.
+  # devices: [/dev/dri/renderD129]
 
 media_storage:
   mounts:

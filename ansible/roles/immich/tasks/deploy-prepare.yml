@@ -18,7 +18,7 @@
       existing host directory and will not adopt global media storage.
     quiet: true
 
-- name: Immich | Require the dedicated iGPU mapping
+- name: Immich | Require the dedicated iGPU mapping on a VM stack host
   ansible.builtin.assert:
     that:
       - app_config.app.gpu_device | default('') | length > 0
@@ -27,6 +27,22 @@
       Immich machine learning requires a dedicated iGPU mapping in proxmox.devices and
       a render node path inside the VM.
     quiet: true
+  when: _hosting_guest_type | default('vm') != 'lxc'
+
+# On an LXC the iGPU is optional and shared: without app.devices, machine learning runs on
+# the CPU.
+- name: Immich | Validate the shared iGPU declaration on an LXC
+  ansible.builtin.include_tasks: ../../../tasks/proxmox/assert-dedicated-igpu.yml
+  vars:
+    igpu_app_display: Immich
+  when: _hosting_guest_type | default('vm') == 'lxc'
+
+- name: Immich | Name the shared DRI nodes to bind into the LXC
+  ansible.builtin.set_fact:
+    deploy_host_shared_devices: >-
+      {{ app_config.app.devices | default([])
+         | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
+  when: _hosting_guest_type | default('vm') == 'lxc'
 
 - name: Immich | Name the originals and thumbnails mount for the stack VM
   ansible.builtin.set_fact:

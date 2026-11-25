@@ -1115,13 +1115,14 @@ homepage:
     - tasks/notify.yml
 immich:
   method: docker
-  supported: [docker-vm]
+  supported: [docker-lxc, docker-vm]
   deploy:
     docker:
     - tasks/load-user-vars.yml
     - tasks/apps/load-config.yml
     - tasks/hosting/validate-app.yml
     - tasks/resolve-estate.yml
+    - tasks/proxmox/assert-dedicated-igpu.yml
     - tasks/database/deploy-consumer.yml
     - tasks/stack/find-or-create-host.yml
     - tasks/proxmox/attach-host-mounts.yml
