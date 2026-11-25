@@ -34,7 +34,7 @@ def render(template, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/jellyfin.yml"))["jellyfin_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["storage"] > 0
 
 # Docker keeps the stack-host path and shares the API configuration with Kubernetes.
@@ -42,9 +42,9 @@ main = tasks("main.yml")
 for shared in ("resolve.yml", "credentials.yml", "configure.yml", "../../../tasks/stack/compose-deploy.yml"):
     include(main, shared)
 kubernetes = tasks("kubernetes.yml")
-for shared in ("resolve.yml", "credentials.yml", "configure.yml", "kubernetes-gpu.yml"):
+for shared in ("resolve.yml", "credentials.yml", "configure.yml", "gpu-probe.yml"):
     include(kubernetes, shared)
-assert include(kubernetes, "kubernetes-gpu.yml")["when"] == "_jf_gpu_declared | bool"
+assert include(kubernetes, "gpu-probe.yml")["when"] == "_jf_gpu_declared | bool"
 
 # Media: the same NFS shares at the same container paths as Docker's bind mounts, read-only,
 # through the shared seam and nothing role-local.
@@ -54,7 +54,7 @@ prepare = tasks("deploy-prepare.yml")
 resolve = include(prepare, "resolve-media-nfs.yml")
 assert resolve["when"] == "app_config.hosting.method == 'kubernetes'"
 assert next(t for t in prepare if "deploy_host_mounts" in str(t.get("ansible.builtin.set_fact")))[
-    "when"] == "app_config.hosting.method == 'docker'"
+    "when"] == "app_config.hosting.method in ['docker', 'native']"
 
 # The config volume is the application-consistent recovery unit.
 backup = include(kubernetes, "recovery-backup.yml")["vars"]["k8s_recovery"]
@@ -143,7 +143,7 @@ assert {"name": "JELLYFIN_PublishedServerUrl", "value": "https://jellyfin.exampl
 
 # The GPU proof lists H.264 profiles with the image's vainfo and hands the render node to the
 # encoding settings, which save it as the VA-API device.
-probe = read(f"{ROLE}/tasks/kubernetes-gpu.yml")
+probe = read(f"{ROLE}/tasks/gpu-probe.yml")
 assert "/usr/lib/jellyfin-ffmpeg/vainfo" in probe and "VAProfileH264" in probe and "_jf_vaapi_device" in probe
 assert "'VaapiDevice': _jf_vaapi_device" in read(f"{ROLE}/tasks/configure-transcoding.yml")
 

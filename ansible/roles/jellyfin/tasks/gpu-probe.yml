@@ -1,0 +1,34 @@
+---
+# Device path only, from inside the application runtime: the render node exists, Jellyfin's service
+# user can open it, and VA-API lists the device's H.264 profiles. Sets _jf_vaapi_device to the
+# node, which configure-transcoding.yml saves as Jellyfin's VA-API device. Whether the app
+# then uses the device at play time is not exercised here.
+- name: Jellyfin GPU | Probe the render node as the service user
+  ansible.builtin.command:
+    argv: "{{ jellyfin_gpu_probe_prefix + [_jf_gpu_probe_script] }}"
+  vars:
+    _jf_gpu_probe_script: |
+      node=$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)
+      [ -n "$node" ] || { echo "no render node under /dev/dri"; exit 3; }
+      test -r "$node" && test -w "$node" \
+        || { echo "$node is not accessible by the Jellyfin service user"; exit 4; }
+      echo "RENDER_NODE=$node"
+      /usr/lib/jellyfin-ffmpeg/vainfo --display drm --device "$node" 2>&1
+  delegate_to: "{{ jellyfin_gpu_probe_host | default(inventory_hostname) }}"
+  become: true
+  register: _jf_gpu_probe
+  until: _jf_gpu_probe.rc == 0
+  retries: 6
+  delay: 5
+  changed_when: false
+
+- name: Jellyfin GPU | Require H.264 profiles on the device
+  ansible.builtin.assert:
+    that: _jf_gpu_probe.stdout is search('VAProfileH264')
+    fail_msg: >-
+      vainfo as the Jellyfin service user lists no H.264 profile for the iGPU:
+      {{ _jf_gpu_probe.stdout | default('') | truncate(400) }}
+
+- name: Jellyfin GPU | Keep the render node for the encoding settings
+  ansible.builtin.set_fact:
+    _jf_vaapi_device: "{{ _jf_gpu_probe.stdout | regex_search('RENDER_NODE=(/dev/dri/renderD[0-9]+)', '\\1') | first }}"

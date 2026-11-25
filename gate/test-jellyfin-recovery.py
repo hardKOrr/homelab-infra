@@ -165,9 +165,9 @@ def check_backup_inputs_and_hook():
     integrity check that runs while it is stopped."""
     upload = next(t for t in backup_source if t["name"] == "Jellyfin backup | Stop and archive only Jellyfin")
     assert upload["ansible.builtin.include_tasks"].endswith("tasks/backup/pbs-client-backup.yml")
-    assert upload["vars"]["pbs_client_runtime"] == "docker"
+    assert upload["vars"]["pbs_client_runtime"] == "{{ app_config.hosting.method | default('docker') }}"
     assert upload["vars"]["pbs_client_compose_project"] == "{{ jellyfin_project_dir }}"
-    assert upload["vars"]["pbs_client_stop_services"] == ["{{ instance }}"]
+    assert upload["vars"]["pbs_client_stop_services"] == ["{{ jellyfin_native_service if jellyfin_native | bool else instance }}"]
     assert upload["vars"]["pbs_client_quiesced_hook"] == "{{ role_path }}/tasks/backup-quiesced.yml"
     hook = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/backup-quiesced.yml").read_text())
     for healthy in [True, False]:
@@ -230,7 +230,7 @@ def check_restore_swap(server):
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == ["{{ jellyfin_native_service if jellyfin_native | bool else instance }}"]
     assert swap["recovery_swap_compose_project"] == "{{ jellyfin_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/System/Info/Public")
 

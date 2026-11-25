@@ -2,6 +2,21 @@
 # Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). A media server
 # serves the whole library, so the stack host gets app.mounts or, by default, all of
 # media_storage.
+# Native Jellyfin on a VM has no iGPU: the shared native guest has no PCI passthrough step,
+# and a Proxmox host's /dev/dri cannot be shared into a VM. An LXC binds the shared nodes below.
+- name: Jellyfin | Refuse a GPU declaration for native Jellyfin on a VM
+  ansible.builtin.assert:
+    that:
+      - app_config.app.gpu_device | default('', true) | trim | length == 0
+      - app_config.app.devices | default([]) | select('match', '^/dev/dri(?:/|$)') | list | length == 0
+    fail_msg: >-
+      Native Jellyfin on a VM cannot reach the iGPU. Clear app.gpu_device and the /dev/dri
+      entries of app.devices, or run Jellyfin on an LXC (shared iGPU) or on Kubernetes.
+    quiet: true
+  when:
+    - app_config.hosting.method == 'native'
+    - _hosting_guest_type | default('vm') != 'lxc'
+
 - name: Jellyfin | Check the GPU placement declaration
   ansible.builtin.include_tasks: ../../../tasks/proxmox/assert-dedicated-igpu.yml
   vars:
@@ -13,7 +28,7 @@
       {{ app_config.app.mounts
          | default((app_config.media_storage | default({})).mounts | default([]), true) }}
     deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
-  when: app_config.hosting.method == 'docker'
+  when: app_config.hosting.method in ['docker', 'native']
 
 # On Kubernetes the pod mounts the same shares over NFS: resolve each mount's export and open
 # the cluster nodes' egress to its server.
@@ -25,12 +40,12 @@
          | default((app_config.media_storage | default({})).mounts | default([]), true) }}
   when: app_config.hosting.method == 'kubernetes'
 
-# On an LXC stack host the iGPU nodes in app.devices are bound into the guest as shared.
+# On an LXC (stack host or native guest) the iGPU nodes in app.devices are bound into the guest as shared.
 - name: Jellyfin | Name the shared DRI nodes to bind into the LXC
   ansible.builtin.set_fact:
     deploy_host_shared_devices: >-
       {{ app_config.app.devices | default([])
          | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - _hosting_guest_type | default('vm') == 'lxc'

@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: jellyfin
-  description: "Deploys Jellyfin as a Docker container on a homelab-infra stack host"
+  description: "Deploys Jellyfin as a Docker container on a homelab-infra stack host, or natively on its own guest"
   min_ansible_version: "2.15"
 
 # The deploy playbook installs Docker on the stack host before this role. A role
