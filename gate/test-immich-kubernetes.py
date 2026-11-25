@@ -66,6 +66,8 @@ def check_workload():
         deployments = {d["metadata"]["name"]: d["spec"]["template"]["spec"]
                        for d in docs if d["kind"] == "Deployment"}
         assert set(deployments) == {"immich", "immich-machine-learning"}
+        # Service links inject IMMICH_PORT as a tcp:// URL, breaking both processes.
+        assert all(pod["enableServiceLinks"] is False for pod in deployments.values())
         server = deployments["immich"]
         assert server["securityContext"]["runAsUser"] == 1313
         assert [m["mountPath"] for m in server["containers"][0]["volumeMounts"]] == ["/data"]

@@ -47,6 +47,9 @@ spec:
         homelab-infra/env-checksum: {{ _immich_k8s_env_checksum }}
     spec:
       automountServiceAccountToken: false
+      # The instance Service would inject IMMICH_PORT=tcp://..., but Immich expects
+      # that environment variable to be numeric. Services are resolved through DNS.
+      enableServiceLinks: false
       securityContext:
         runAsUser: {{ owner.uid | int }}
         runAsGroup: {{ owner.gid | int }}
@@ -120,6 +123,7 @@ spec:
         app.kubernetes.io/component: machine-learning
     spec:
       automountServiceAccountToken: false
+      enableServiceLinks: false
 {% if _immich_gpu_declared | bool %}
       # The iGPU is passed through to one node VM, so only that node has /dev/dri. A
       # hostPath device node is unusable in an unprivileged container (its device cgroup
