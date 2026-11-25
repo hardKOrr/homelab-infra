@@ -1,0 +1,33 @@
+---
+# Resolve Jellyfin's media mounts and libraries from the lab's declared media storage. Shared
+# by the Docker path (main.yml) and the Kubernetes path (kubernetes.yml); it reads
+# configuration only, never the stack host.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _jf_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+    _jf_library_root: >-
+      {{ ((app_config.media_storage | default({})).library | default('', true))
+         | regex_replace('/+$', '') }}
+
+- name: Assert the lab declares a media library
+  ansible.builtin.assert:
+    that: _jf_library_root | length > 0
+    fail_msg: >-
+      media_storage.library is not set in config/infrastructure.yml, so there is
+      no library for {{ instance }} to serve. It is the root the *arr apps write
+      into (app.library_subpath hangs off it) and the same root this server reads.
+
+- name: Resolve the library paths this server will serve
+  ansible.builtin.set_fact:
+    _jf_libraries: >-
+      {{ app_config.app.libraries | default([], true)
+         | map('combine', {'_root': _jf_library_root}) | list }}
+
+# Created rather than merely asserted, deliberately, and it is the one place this
+# role writes to the library: Jellyfin refuses a library location that does not
+# exist, and on a lab where sonarr has been deployed but lidarr has not, the music
+# path legitimately does not exist yet. An empty directory under a root the
+# platform already declares is this deploy finishing its own job — the same call
+# roles/qbittorrent makes for its download directory.

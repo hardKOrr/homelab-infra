@@ -65,7 +65,7 @@ def run_playbook(server, root, devices, gpu_device=""):
         "vars": {
             "app_config": {"app": {"devices": devices, "gpu_device": gpu_device}},
             "_jf_base": f"http://127.0.0.1:{server.server_port}",
-            "_jf_auth_header": 'MediaBrowser Token="fixture-token"',
+            "_jf_auth_headers": {"Authorization": 'MediaBrowser Token="fixture-token"'}, "_jf_host_headers": {},
         },
         "tasks": [
             {"ansible.builtin.include_tasks": str(device_task_file)},

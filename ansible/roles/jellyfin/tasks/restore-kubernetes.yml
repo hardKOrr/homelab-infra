@@ -1,0 +1,34 @@
+---
+# Replace the target's config PVC through the shared Kubernetes recovery Job, then prove the
+# restored server like the Docker path does. The NFS media shares are not part of the archive.
+- name: Jellyfin Kubernetes restore | Assert the recovery contract before changing the target
+  ansible.builtin.include_tasks: restore-contract.yml
+
+- name: Jellyfin Kubernetes restore | Restore the config volume
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Jellyfin
+      archives:
+        - name: data
+          claim: "{{ restore_target }}-config"
+          owner: "{{ restore_target_config.app.puid | default(1000) }}:{{ restore_target_config.app.pgid | default(1000) }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        Jellyfin's complete config database (its users, libraries and server settings) from
+        its config volume; the shared media and the transcode cache are not included
+      verify:
+        - >-
+          Open the Jellyfin URL and sign in with the source instance's Jellyfin account, then
+          check that its libraries are present.
+
+- name: Jellyfin Kubernetes restore | Verify the restored server and record its account
+  ansible.builtin.include_tasks: restore-verified.yml
+  vars:
+    _jellyfin_restore_instance: "{{ restore_target }}"
+    _jellyfin_restore_base: "http://{{ k8s_cluster_facts.ingress_vip }}"
+    _jellyfin_restore_headers:
+      Host: >-
+        {{ restore_target_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
+  when: _application_restore_complete | default(false) | bool

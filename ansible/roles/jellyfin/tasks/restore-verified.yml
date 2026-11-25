@@ -1,10 +1,13 @@
 ---
 # restore-swap.yml verified hook: the restored server is a configured Jellyfin, accepts the
 # source app-owned account and has a media library; the account is then recorded for this
-# instance.
+# instance. On Kubernetes the restore reaches the server through the ingress: it sets
+# _jellyfin_restore_base, _jellyfin_restore_headers and _jellyfin_restore_instance (the
+# target; `instance` is the source there).
 - name: Jellyfin restore | Read the restored server
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/System/Info/Public"
+    url: "{{ _jellyfin_restore_base | default('http://localhost:' ~ app_config.app.port) }}/System/Info/Public"
+    headers: "{{ _jellyfin_restore_headers | default({}) }}"
     return_content: true
     status_code: 200
   register: _jellyfin_restore_health
@@ -24,13 +27,13 @@
 
 - name: Jellyfin restore | Authenticate with the source app-owned account
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/Users/AuthenticateByName"
+    url: "{{ _jellyfin_restore_base | default('http://localhost:' ~ app_config.app.port) }}/Users/AuthenticateByName"
     method: POST
-    headers:
-      Authorization: >-
-        MediaBrowser Client="{{ jellyfin_client_name }}",
-        Device="{{ jellyfin_device_name }}",
-        DeviceId="{{ jellyfin_client_name }}-{{ instance }}", Version="1.0.0"
+    headers: >-
+      {{ _jellyfin_restore_headers | default({}) | combine({'Authorization':
+           'MediaBrowser Client="' ~ jellyfin_client_name ~ '", Device="' ~ jellyfin_device_name
+           ~ '", DeviceId="' ~ jellyfin_client_name ~ '-' ~ _jellyfin_restore_instance | default(instance)
+           ~ '", Version="1.0.0"'}) }}
     body_format: json
     body:
       Username: "{{ restore_source_jellyfin_user }}"
@@ -50,9 +53,10 @@
 
 - name: Jellyfin restore | Read the restored users
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/Users"
-    headers:
-      Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+    url: "{{ _jellyfin_restore_base | default('http://localhost:' ~ app_config.app.port) }}/Users"
+    headers: >-
+      {{ _jellyfin_restore_headers | default({}) | combine({'Authorization':
+           'MediaBrowser Token="' ~ _jellyfin_restore_auth.json.AccessToken ~ '"'}) }}
     return_content: true
     status_code: 200
   register: _jellyfin_restore_users
@@ -69,9 +73,10 @@
 
 - name: Jellyfin restore | Read the restored libraries
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/Library/VirtualFolders"
-    headers:
-      Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+    url: "{{ _jellyfin_restore_base | default('http://localhost:' ~ app_config.app.port) }}/Library/VirtualFolders"
+    headers: >-
+      {{ _jellyfin_restore_headers | default({}) | combine({'Authorization':
+           'MediaBrowser Token="' ~ _jellyfin_restore_auth.json.AccessToken ~ '"'}) }}
     return_content: true
     status_code: 200
   register: _jellyfin_restore_libraries
@@ -86,7 +91,7 @@
 - name: Jellyfin restore | Publish the restored account for the target instance
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
-    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_name: "homelab-infra/media/{{ _jellyfin_restore_instance | default(instance) }}"
     vault_item_fields:
       username: "{{ restore_source_jellyfin_user }}"
       password: "{{ restore_source_jellyfin_password }}"

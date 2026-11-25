@@ -1,9 +1,9 @@
 ---
+# _jf_vaapi_device (optional): the render node the pod probe found; saved as the VA-API device.
 - name: Read Jellyfin's current encoding settings
   ansible.builtin.uri:
     url: "{{ _jf_base }}/System/Configuration/encoding"
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
+    headers: "{{ _jf_auth_headers }}"
     return_content: true
     status_code: 200
   register: _jf_encoding_options_before
@@ -33,6 +33,11 @@
                  {'HardwareDecodingCodecs': _jf_hardware_decoding_codecs}
                  if _jf_dri_device_declared | bool else {},
                  recursive=True
+               )
+             | combine(
+                 {'VaapiDevice': _jf_vaapi_device}
+                 if _jf_dri_device_declared | bool and _jf_vaapi_device | default('') | length > 0 else {},
+                 recursive=True
                ),
              recursive=True
            ) }}
@@ -42,8 +47,7 @@
   ansible.builtin.uri:
     url: "{{ _jf_base }}/System/Configuration/encoding"
     method: POST
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
+    headers: "{{ _jf_auth_headers }}"
     body_format: json
     body: "{{ _jf_encoding_options_desired }}"
     status_code: 204
@@ -54,8 +58,7 @@
 - name: Read Jellyfin's encoding settings back
   ansible.builtin.uri:
     url: "{{ _jf_base }}/System/Configuration/encoding"
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
+    headers: "{{ _jf_auth_headers }}"
     return_content: true
     status_code: 200
   register: _jf_encoding_options_after
@@ -65,6 +68,9 @@
     and
     (_jf_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool)
       == (_jf_hardware_encoding_enabled | bool)
+    and
+    (_jf_vaapi_device | default('') | length == 0
+     or _jf_encoding_options_after.json.VaapiDevice | default('') == _jf_vaapi_device)
     and
     (not (_jf_dri_device_declared | bool)
      or 'hevc' in (_jf_encoding_options_after.json.HardwareDecodingCodecs | default([], true)))
@@ -78,6 +84,7 @@
     that:
       - (_jf_encoding_options_after.json.HardwareAccelerationType | default('none') | lower) == _jf_hardware_acceleration_type
       - (_jf_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool) == (_jf_hardware_encoding_enabled | bool)
+      - _jf_vaapi_device | default('') | length == 0 or _jf_encoding_options_after.json.VaapiDevice | default('') == _jf_vaapi_device
       - not (_jf_dri_device_declared | bool) or 'hevc' in (_jf_encoding_options_after.json.HardwareDecodingCodecs | default([], true))
     fail_msg: >-
       Jellyfin encoding settings did not match the declared DRI device:
