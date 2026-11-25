@@ -128,7 +128,22 @@
     k8s_app: "{{ _jf_k8s_base | combine(_jf_k8s_gpu if _jf_gpu_declared | bool else {}) }}"
 
 - name: Jellyfin Kubernetes | Prove the iGPU path in the pod
-  ansible.builtin.include_tasks: kubernetes-gpu.yml
+  ansible.builtin.include_tasks: gpu-probe.yml
+  vars:
+    jellyfin_gpu_probe_host: "{{ k8s_api_host }}"
+    jellyfin_gpu_probe_prefix:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - su
+      - -s
+      - /bin/sh
+      - abc
+      - -c
   when: _jf_gpu_declared | bool
 
 - name: Jellyfin Kubernetes | Configure Jellyfin through its API

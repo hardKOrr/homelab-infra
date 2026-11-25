@@ -145,6 +145,23 @@
 - name: Apply pending Jellyfin restarts
   ansible.builtin.meta: flush_handlers
 
+- name: Prove the native Jellyfin iGPU path as its service user
+  ansible.builtin.include_tasks: gpu-probe.yml
+  vars:
+    jellyfin_gpu_probe_prefix:
+      - setpriv
+      - --reuid
+      - "{{ jellyfin_native_user }}"
+      - --regid
+      - "{{ jellyfin_native_user }}"
+      - --groups
+      - "{{ _jf_dri_group_ids | join(',') }}"
+      - sh
+      - -c
+  when:
+    - jellyfin_native | bool
+    - _jf_dri_device_declared | bool
+
 # The rest of the deploy talks to the API.
 - name: Configure Jellyfin through its API
   ansible.builtin.include_tasks: configure.yml
