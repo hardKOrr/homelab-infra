@@ -1,0 +1,33 @@
+---
+# Restore Immich's named database and media claim on Kubernetes through the shared
+# recovery Job. Run by restore.yml from playbooks/maintenance/restore-app.yml, which
+# resolves the cluster and the target and requires the target's recent safety point;
+# app_config is the source instance's. The server is stopped for the restore; machine
+# learning holds no state and is left running.
+- name: Immich Kubernetes restore | Describe the target database recovery step
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ restore_target_config }}"
+    k8s_database_step_instance: "{{ restore_target }}"
+
+- name: Immich Kubernetes restore | Restore through the shared Kubernetes recovery Job
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
+  vars:
+    k8s_recovery:
+      app: Immich
+      archives:
+        - name: media
+          claim: "{{ restore_target }}-media"
+          # The target Deployment's owner, not the source config's.
+          owner: "{{ restore_target_config.media_storage.owner.uid | int }}:{{ restore_target_config.media_storage.owner.gid | int }}"
+      database: "{{ k8s_database_step }}"
+      stop:
+        - "{{ restore_target }}"
+      describe: >-
+        the {{ k8s_database_step.describe }} and the media volume holding originals and
+        thumbnails
+      verify:
+        - >-
+          Open https://{{ restore_target }}.<estate domain>/, sign in, and check that the
+          restored photos and their thumbnails are present.

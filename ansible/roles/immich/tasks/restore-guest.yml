@@ -1,0 +1,73 @@
+---
+# Restore Immich's application-consistent database and durable media artifact through the
+# shared swap. Both archives are fetched and the dump checked while Immich still runs; the
+# media mount is swapped as its declared owner and the named database replaced while it is
+# stopped. On a failure the swap puts the original media and database back.
+- name: Immich restore | Require one declared durable media mount
+  ansible.builtin.assert:
+    that:
+      - app_config.media_storage.mounts is sequence
+      - app_config.media_storage.mounts | length == 1
+      - app_config.media_storage.mounts[0].path | default('') is match('^/')
+    fail_msg: >-
+      Immich restore requires the deployed target's one explicitly declared media_storage.mounts entry.
+
+- name: Immich restore | Resolve the target backend and credential
+  ansible.builtin.set_fact:
+    _immich_restore_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.database.instance, {}) }}
+    _immich_restore_database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_password
+         | default(app_config.app.database_password | default(''), true) }}
+    _immich_restore_database_user: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_user
+         | default(app_config.app.database.role | default(''), true) }}
+    _immich_restore_media_path: "{{ (app_config.media_storage.mounts | first).path }}"
+  no_log: true
+
+- name: Immich restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
+      - _immich_restore_media_path | length > 1
+      - _immich_restore_media_path.split('/') | select('equalto', '..') | list | length == 0
+      - restore_target is defined and restore_target | length > 0
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - _immich_restore_database_backend.provider | default('') == 'postgresql'
+      - _immich_restore_database_backend.host | default('') | length > 0
+      - _immich_restore_database_backend.port | default(0) | int > 0
+      - app_config.app.database.name | default('') | length > 0
+      - _immich_restore_database_user | length > 0
+      - _immich_restore_database_password | length > 0
+    fail_msg: >-
+      Immich restore needs a deployed target, a named PostgreSQL backend, its Vaultwarden
+      credential, and a snapshot when overwrite=true.
+
+- name: Immich restore | Preview or replace the media and database
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [database.pxar, media.pxar]
+    recovery_swap_paths:
+      - path: "{{ _immich_restore_media_path }}"
+        source: media
+        owner: "{{ app_config.media_storage.owner.uid | int }}"
+        group: "{{ app_config.media_storage.owner.gid | int }}"
+        mount: true
+    recovery_swap_database:
+      config: "{{ app_config.app.database }}"
+      dump: database/immich.dump
+    recovery_swap_stop_services: [immich-server, immich-machine-learning]
+    recovery_swap_compose_project: "{{ immich_project_dir }}"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/api/server/ping"
+
+- name: Immich restore | Report the read-only plan
+  ansible.builtin.debug:
+    msg:
+      - "PLAN ONLY — nothing was changed."
+      - "A real restore replaces {{ _immich_restore_media_path }} and database {{ app_config.app.database.name }}."
+      - "Re-run with snapshot=<snapshot-id> and overwrite=true only after verifying the target."
+  when: not (restore_overwrite | bool)

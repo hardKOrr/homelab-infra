@@ -231,7 +231,7 @@ def main():
     assert hook[0]["ansible.builtin.include_tasks"] == "../../../tasks/database/dump.yml"
     assert hook[0]["vars"]["database_dump_file"] == "{{ _immich_backup_scratch.path }}/immich.dump"
 
-    restore_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/restore.yml").read_text())
+    restore_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/restore-guest.yml").read_text())
     restore_contract = next(task for task in restore_tasks
                             if task.get("name") == "Immich restore | Assert the restore contract")
     assert "_immich_restore_media_path | length > 1" in restore_contract[

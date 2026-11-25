@@ -1,0 +1,148 @@
+---
+# Immich on Kubernetes: the server and the machine-learning pod in the instance's
+# namespace, with originals and thumbnails on one default-StorageClass claim. PostgreSQL
+# and Redis stay the registered backends (named in app.database and app.redis) and are
+# reached from the pods through the cluster-node alias, which the app-defaults `firewall`
+# egress opens. With app.gpu_device the machine-learning pod is pinned to the k3s node
+# that holds that iGPU (cluster.nodes[].gpu_device) and gets /dev/dri; without it, it runs
+# on the CPU anywhere. Runs on localhost, as every Kubernetes role does.
+- name: Immich Kubernetes | Resolve the registered Redis backend and its credential
+  ansible.builtin.set_fact:
+    _immich_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.redis.instance, {}) }}
+    _immich_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.redis.instance, {}).password
+         | default('', true) }}
+  no_log: true
+
+- name: Immich Kubernetes | Assert the registered backends are available
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database.provider == 'postgresql'
+      - app_config.app.database_host | default('') | length > 0
+      - app_config.app.database_port | default(0) | int > 0
+      - app_config.app.database_user | default('') | length > 0
+      - app_config.app.database_password | default('') | length > 0
+      - _immich_redis_backend.provider | default('') == 'redis'
+      - _immich_redis_backend.host | default('') | length > 0
+      - _immich_redis_backend.port | default(0) | int > 0
+      - _immich_redis_password | length > 0
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
+      - app_config.app.storage | default(0) | int > 0
+    fail_msg: >-
+      Immich requires the registered PostgreSQL instance {{ app_config.app.database.instance }}
+      and Redis instance {{ app_config.app.redis.instance }}, their credentials in
+      Vaultwarden, a media owner and app.storage.
+
+- name: Immich Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Immich Kubernetes | Resolve the iGPU node
+  ansible.builtin.set_fact:
+    _immich_gpu_declared: "{{ app_config.app.gpu_device | default('', true) | trim | length > 0 }}"
+    _immich_gpu_nodes: >-
+      {{ k8s_cluster_facts.nodes | selectattr('gpu_device', 'defined')
+         | selectattr('gpu_device', 'equalto', app_config.app.gpu_device | default('', true) | trim)
+         | map(attribute='name') | list }}
+
+- name: Immich Kubernetes | Require exactly one cluster node holding the declared iGPU
+  ansible.builtin.assert:
+    that: _immich_gpu_nodes | length == 1
+    fail_msg: >-
+      app.gpu_device {{ app_config.app.gpu_device }} must be the gpu_device of exactly one
+      node in the k3s cluster's cluster.nodes, and Deploy k3s Cluster must have passed it
+      to that node's VM.
+  when: _immich_gpu_declared | bool
+
+- name: Immich Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Immich Kubernetes | Store the backend contract in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: immich
+      instance: "{{ instance }}"
+      database_instance: "{{ app_config.app.database.instance }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      redis_instance: "{{ app_config.app.redis.instance }}"
+      redis_host: "{{ _immich_redis_backend.host }}"
+      redis_port: "{{ _immich_redis_backend.port }}"
+      redis_password: "{{ _immich_redis_password }}"
+      gpu_device: "{{ app_config.app.gpu_device | default('') }}"
+    vault_item_secret_fields: [database_password, redis_password]
+  no_log: true
+
+- name: Immich Kubernetes | Assemble the runtime environment
+  ansible.builtin.set_fact:
+    _immich_k8s_env:
+      IMMICH_VERSION: "{{ app_config.app.image | regex_replace('^.*:', '') }}"
+      TZ: "{{ homelabinfra_config.timezone | default('UTC') }}"
+      DB_HOSTNAME: "{{ app_config.app.database_host }}"
+      DB_PORT: "{{ app_config.app.database_port | string }}"
+      DB_USERNAME: "{{ app_config.app.database_user }}"
+      DB_PASSWORD: "{{ app_config.app.database_password }}"
+      DB_DATABASE_NAME: "{{ app_config.app.database.name }}"
+      DB_VECTOR_EXTENSION: pgvector
+      REDIS_HOSTNAME: "{{ _immich_redis_backend.host }}"
+      REDIS_PORT: "{{ _immich_redis_backend.port | string }}"
+      REDIS_PASSWORD: "{{ _immich_redis_password }}"
+      REDIS_DBINDEX: "0"
+      IMMICH_MACHINE_LEARNING_URL: "http://{{ instance }}-machine-learning:{{ immich_k8s_ml_port }}"
+  no_log: true
+
+- name: Immich Kubernetes | Sync the runtime environment into its namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data: "{{ _immich_k8s_env }}"
+  no_log: true
+
+# The pods read the Secret at start, so a changed credential must roll them.
+- name: Immich Kubernetes | Fingerprint the environment
+  ansible.builtin.set_fact:
+    _immich_k8s_env_checksum: "{{ _immich_k8s_env | to_json(sort_keys=True) | hash('sha256') }}"
+  no_log: true
+
+- name: Immich Kubernetes | Render the workload
+  ansible.builtin.set_fact:
+    _immich_k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Immich Kubernetes | Apply the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _immich_k8s_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-machine-learning"
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 900
+
+- name: Immich Kubernetes | Describe the database step of the backup
+  ansible.builtin.include_tasks: ../../../tasks/database/kubernetes-recovery-step.yml
+  vars:
+    k8s_database_step_source: registered
+    k8s_database_step_config: "{{ app_config }}"
+    k8s_database_step_instance: "{{ instance }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Immich Kubernetes | Schedule the shared application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: media
+          claim: "{{ immich_k8s_media_claim }}"
+          owner: "{{ immich_k8s_owner }}"
+      database: "{{ k8s_database_step | default({}) }}"
+      stop:
+        - "{{ instance }}"
+      describe: >-
+        a custom-format dump of {{ app_config.app.database.name }} and the media volume
+        holding originals and thumbnails; the machine-learning model cache is not included
