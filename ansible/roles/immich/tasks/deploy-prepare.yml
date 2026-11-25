@@ -1,7 +1,7 @@
 ---
 # Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning). Immich needs its
-# one declared durable media mount and its dedicated iGPU mapping; the mount is attached to
-# the stack VM on that VM's own node only.
+# one declared durable media mount and its iGPU mapping; the mount is attached to
+# the stack host on that host's own node only.
 - name: Immich | Require exactly one new durable media mount
   ansible.builtin.assert:
     that:
@@ -44,7 +44,8 @@
          | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
   when: _hosting_guest_type | default('vm') == 'lxc'
 
-- name: Immich | Name the originals and thumbnails mount for the stack VM
+- name: Immich | Name the originals and thumbnails mount for the stack host
   ansible.builtin.set_fact:
     deploy_host_mounts: "{{ app_config.media_storage.mounts }}"
+    deploy_host_mounts_owner: "{{ app_config.media_storage.owner }}"
     deploy_host_mounts_own_node: true
