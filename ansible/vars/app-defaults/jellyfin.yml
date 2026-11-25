@@ -8,7 +8,7 @@ jellyfin_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: media
 
@@ -65,6 +65,9 @@ jellyfin_defaults:
     # Optional dedicated GPU declaration from proxmox.devices. When set, the stack
     # VM is pinned to that device's node, /dev/dri and its host groups are exposed
     # to Jellyfin, and Deploy enables VA-API decoding and encoding in Jellyfin.
+    # On a Docker LXC stack the iGPU is shared instead: leave gpu_device empty and list
+    # the host's render nodes in devices (each an identifier of a proxmox.devices entry
+    # with mode: shared). Deploy binds them into the LXC and into the container.
     gpu_device: ""
     devices: []
 
