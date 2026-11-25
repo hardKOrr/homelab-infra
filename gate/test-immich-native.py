@@ -45,7 +45,8 @@ assert "database_client_runtime: \"{{ app_config.hosting.method" in (role / "tas
 assert "recovery_swap_runtime: \"{{ app_config.hosting.method" in (role / "tasks/restore-guest.yml").read_text()
 assert "in ['docker', 'native']" in (role / "tasks/restore.yml").read_text()
 assert "restart_runtime: \"{{ 'native' if immich_native" in (role / "handlers/main.yml").read_text()
-units = yaml.safe_load((role / "tasks/remove-units.yml").read_text())[0]["ansible.builtin.set_fact"]["_rm_service_names"]
+remove_units = yaml.safe_load((role / "tasks/remove-units.yml").read_text())
+units = next(t for t in remove_units if "ansible.builtin.set_fact" in t)["ansible.builtin.set_fact"]["_rm_service_names"]
 assert units == ["{{ immich_native_server_service }}", "{{ immich_native_ml_service }}"]
 # Backup and restore stop the same two names on both methods: the units are named like the services.
 assert yaml.safe_load((role / "defaults/main.yml").read_text())["immich_native_server_service"] == "immich-server"
@@ -100,5 +101,15 @@ with tempfile.TemporaryDirectory() as directory:
             assert path.parent.parent.stat().st_mode & 0o111 == 0o111
         if repeat:
             assert re.search(r"changed=0\b", result.stdout), result.stdout
+    # Remove includes the hook directly, outside the role, so defaults are not implicit.
+    play["tasks"] = [
+        {"ansible.builtin.include_tasks": str(role / "tasks/remove-units.yml")},
+        {"ansible.builtin.assert": {"that": [
+            "_rm_service_names == ['immich-server', 'immich-machine-learning']"]}},
+    ]
+    playbook.write_text(yaml.safe_dump([play]))
+    result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 print("Immich native pins one release with verified downloads and reuses the shared backup, restore and remove")
