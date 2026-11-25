@@ -21,7 +21,7 @@
 
 - name: Jellyfin native | Install the package prerequisites
   ansible.builtin.apt:
-    name: [ca-certificates, python3]
+    name: [ca-certificates, python3, python3-debian]
     state: present
     update_cache: true
     cache_valid_time: 3600

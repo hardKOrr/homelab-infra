@@ -19,6 +19,9 @@ assert "https://repo.jellyfin.org/debian" in native
 for package in ("jellyfin-server", "jellyfin-web", "jellyfin-ffmpeg8", "jellyfin"):
     assert f'"{package}={{{{ app_config.app.native_' in native, package
 
+# deb822_repository needs the Python debian library on the guest before the repository is added.
+assert native.index("python3-debian") < native.index("Add the Jellyfin APT repository")
+
 # Jellyfin starts on install, so its environment, directories and port come before the packages.
 for step in ("Point the service at its directories", "Seed the network configuration"):
     assert native.index(step) < native.index("Install the pinned packages")
