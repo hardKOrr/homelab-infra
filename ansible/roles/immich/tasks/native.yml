@@ -362,7 +362,7 @@
         owner: root
         group: root
         directory_mode: "0755"
-        mode: "0644"
+        mode: "u=rwX,go=rX"
 
     - name: Immich native | Install the machine-learning package
       ansible.builtin.copy:
@@ -372,7 +372,7 @@
         owner: root
         group: root
         directory_mode: "0755"
-        mode: "0644"
+        mode: "u=rwX,go=rX"
 
     - name: Immich native | Install the machine-learning dependencies from the release lockfile
       ansible.builtin.command:
@@ -412,6 +412,17 @@
       loop:
         - "{{ immich_native_build_dir }}"
         - "/var/tmp/immich-{{ app_config.app.native_version }}.tar.gz"
+
+- name: Immich native | Keep the installed package directories traversable
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ immich_native_root }}/build/www"
+    - "{{ immich_native_root }}/ml/immich_ml"
 
 # The service user reads the DRI nodes through their numeric group ids, which are the ids
 # the guest sees (configure-devices.yml), not the guest's video or render group names.

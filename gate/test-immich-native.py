@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Guard Immich's native method: one pinned release, verified downloads, the shared-operation inputs."""
 
+import copy
+import os
+import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -54,5 +59,46 @@ assert "Environment=PATH={{ immich_native_root }}/ml/venv/bin:" in ml_unit
 prepare = (role / "tasks/deploy-prepare.yml").read_text()
 assert "Refuse a GPU declaration for native Immich on a VM" in prepare
 assert "app_config.hosting.method in ['docker', 'native']" in prepare
+
+# Exercise the real remote-copy tasks: applying a file's 0644 mode to the destination
+# directory made both the web client and Python package inaccessible to the service user.
+tasks = yaml.safe_load(native)
+build = next(t for t in tasks if t["name"] == "Immich native | Build the pinned release")
+copies = [copy.deepcopy(t) for t in build["block"] if t["name"] in [
+    "Immich native | Install the web client", "Immich native | Install the machine-learning package"]]
+repair = copy.deepcopy(next(t for t in tasks if t["name"].endswith("package directories traversable")))
+for task in copies + [repair]:
+    module = next(value for key, value in task.items() if key.startswith("ansible.builtin."))
+    module.update(owner=str(os.getuid()), group=str(os.getgid()))
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    source, installed = root / "source", root / "installed"
+    paths = [("web/build/.well-known/test.json", "build/www/.well-known/test.json"),
+             ("machine-learning/immich_ml/__main__.py", "ml/immich_ml/__main__.py")]
+    for src, dst in paths:
+        path = source / src
+        path.parent.mkdir(parents=True)
+        path.write_text("canary\n")
+        (installed / dst).parent.mkdir(parents=True)
+    # The repair must also work on an already-built release, whose build block is skipped.
+    for path in [installed / "build/www", installed / "ml/immich_ml"]:
+        path.chmod(0o644)
+    playbook = root / "copy.yml"
+    play = {"hosts": "localhost", "gather_facts": False,
+            "vars": {"immich_native_build_dir": str(source), "immich_native_root": str(installed)},
+            "tasks": [repair] + copies + [repair]}
+    playbook.write_text(yaml.safe_dump([play]))
+    ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
+    for repeat in [False, True]:
+        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
+                                capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        for _, dst in paths:
+            path = installed / dst
+            assert path.read_text() == "canary\n"
+            assert path.parent.stat().st_mode & 0o111 == 0o111
+            assert path.parent.parent.stat().st_mode & 0o111 == 0o111
+        if repeat:
+            assert re.search(r"changed=0\b", result.stdout), result.stdout
 
 print("Immich native pins one release with verified downloads and reuses the shared backup, restore and remove")
