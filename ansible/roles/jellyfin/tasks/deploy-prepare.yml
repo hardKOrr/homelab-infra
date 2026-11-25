@@ -13,6 +13,17 @@
       {{ app_config.app.mounts
          | default((app_config.media_storage | default({})).mounts | default([]), true) }}
     deploy_host_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+  when: app_config.hosting.method == 'docker'
+
+# On Kubernetes the pod mounts the same shares over NFS: resolve each mount's export and open
+# the cluster nodes' egress to its server.
+- name: Jellyfin | Resolve the existing media shares for Kubernetes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-media-nfs.yml
+  vars:
+    k8s_media_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+  when: app_config.hosting.method == 'kubernetes'
 
 # On an LXC stack host the iGPU nodes in app.devices are bound into the guest as shared.
 - name: Jellyfin | Name the shared DRI nodes to bind into the LXC
@@ -20,4 +31,6 @@
     deploy_host_shared_devices: >-
       {{ app_config.app.devices | default([])
          | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
-  when: _hosting_guest_type | default('vm') == 'lxc'
+  when:
+    - app_config.hosting.method == 'docker'
+    - _hosting_guest_type | default('vm') == 'lxc'

@@ -1285,7 +1285,7 @@ influxdb:
     native: [tasks/recovery/restore-swap.yml]
 jellyfin:
   method: docker
-  supported: [docker-lxc, docker-vm]
+  supported: [docker-lxc, docker-vm, kubernetes]
   deploy:
     docker:
     - tasks/load-user-vars.yml
@@ -1308,10 +1308,36 @@ jellyfin:
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
+    kubernetes:
+    - tasks/load-user-vars.yml
+    - tasks/apps/load-config.yml
+    - tasks/hosting/validate-app.yml
+    - tasks/resolve-estate.yml
+    - tasks/proxmox/assert-dedicated-igpu.yml
+    - tasks/kubernetes/resolve-media-nfs.yml
+    - tasks/proxmox/attach-shared-device.yml
+    - tasks/kubernetes/open-app-access.yml
+    - tasks/kubernetes/resolve-cluster.yml
+    - tasks/kubernetes/prepare-media-volumes.yml
+    - tasks/kubernetes/ensure-nfs-client.yml
+    - tasks/kubernetes/ensure-namespace.yml
+    - tasks/kubernetes/single-container.yml
+    - tasks/bitwarden/upsert-item.yml
+    - tasks/kubernetes/recovery-backup.yml
+    - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
+    - tasks/wiring/authentik.yml
+    - tasks/wiring/uptime-kuma.yml
+    - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
+    - tasks/proxmox/record-app-on-guest.yml
+    - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
   restore:
     docker: [tasks/recovery/restore-swap.yml]
+    kubernetes:
+    - tasks/kubernetes/recovery-restore.yml
+    - tasks/bitwarden/upsert-item.yml
 jellyseerr:
   method: kubernetes
   supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]

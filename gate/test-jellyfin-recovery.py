@@ -191,7 +191,7 @@ def check_backup_inputs_and_hook():
 def run_hook(hook, stage, port):
     if hook == "deploy-readiness":
         tasks = [task for task in yaml.safe_load(
-            (repo / "ansible/roles/jellyfin/tasks/main.yml").read_text())
+            (repo / "ansible/roles/jellyfin/tasks/configure.yml").read_text())
                  if task.get("name") in ["Wait for Jellyfin to answer",
                                          "Assert the app identifies itself as Jellyfin"]]
         assert len(tasks) == 2
@@ -210,7 +210,7 @@ def run_hook(hook, stage, port):
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False,
             "vars": {"instance": "jellyfin", "recovery_swap_stage": str(stage),
-                     "_jf_base": f"http://127.0.0.1:{port}",
+                     "_jf_base": f"http://127.0.0.1:{port}", "_jf_host_headers": {},
                      "jellyfin_http_retries": 2, "jellyfin_http_delay": 0,
                      "jellyfin_client_name": "homelab-infra", "jellyfin_device_name": "deploy",
                      "restore_source_jellyfin_user": "admin",
@@ -225,7 +225,7 @@ def run_hook(hook, stage, port):
 
 def check_restore_swap(server):
     """Jellyfin supplies its paths and checks; gate/test-restore-swap.py proves the swap."""
-    swap = swap_inputs("jellyfin")
+    swap = swap_inputs("jellyfin", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ app_config.app.config_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
@@ -271,7 +271,7 @@ def check_startup_readiness(server):
 
 def check_contract():
     """An existing target needs an independent pre-restore point before anything runs."""
-    contract = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore.yml").read_text())[0]
+    contract = yaml.safe_load((repo / "ansible/roles/jellyfin/tasks/restore-contract.yml").read_text())[0]
     for point, ok in [("", False), (snapshot, False), (pre_restore_point, True)]:
         with tempfile.TemporaryDirectory() as directory:
             playbook = Path(directory) / "contract.yml"

@@ -13,6 +13,11 @@ stack: media     # which Docker stack host this app runs on
 # To use Docker on an LXC, set stack: jellyfin-lxc (any stack name) and
 # infrastructure.stacks.jellyfin-lxc.guest_type: lxc in config/infrastructure.yml, with
 # hosting.method: docker.
+#
+# To use Kubernetes, set hosting.method: kubernetes. The pod mounts the same media shares
+# over NFS, read-only at the same paths. With gpu_device, name the iGPU of one k3s node
+# (cluster.nodes[].gpu_device in config/apps/k3s-cluster.yml, a dedicated proxmox.devices
+# entry on that node's Proxmox host): the pod is pinned to that node and gets /dev/dri.
 
 # ── App config ─────────────────────────────────────────────────────────────────
 # app:

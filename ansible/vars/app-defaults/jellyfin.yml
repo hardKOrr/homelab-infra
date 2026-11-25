@@ -8,7 +8,7 @@ jellyfin_defaults:
   platform_layers: [media_storage]
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
 
@@ -62,12 +62,17 @@ jellyfin_defaults:
         collection_type: music
         subpath: music
 
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 10
+
     # Optional dedicated GPU declaration from proxmox.devices. When set, the stack
     # VM is pinned to that device's node, /dev/dri and its host groups are exposed
     # to Jellyfin, and Deploy enables VA-API decoding and encoding in Jellyfin.
     # On a Docker LXC stack the iGPU is shared instead: leave gpu_device empty and list
     # the host's render nodes in devices (each an identifier of a proxmox.devices entry
     # with mode: shared). Deploy binds them into the LXC and into the container.
+    # On Kubernetes gpu_device names the iGPU of one k3s node (cluster.nodes[].gpu_device):
+    # the pod is pinned to that node and gets /dev/dri.
     gpu_device: ""
     devices: []
 
@@ -98,3 +103,9 @@ jellyfin_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

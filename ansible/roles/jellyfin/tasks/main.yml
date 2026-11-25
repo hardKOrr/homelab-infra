@@ -25,6 +25,7 @@
 - name: Resolve the app's addresses and paths
   ansible.builtin.set_fact:
     _jf_base: "http://localhost:{{ app_config.app.port }}"
+    _jf_host_headers: {}
     _jf_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
 
 - name: Resolve Jellyfin's DRI device and host groups
@@ -42,17 +43,8 @@
              and homelabinfra_infra.domain | length > 0)
          else '' }}
 
-# Jellyfin only ever reads the library, but it needs all of it: a media server
-# pointed at half a library is indistinguishable from a broken one to the person
-# looking for the other half.
-- name: Resolve the storage this app uses
-  ansible.builtin.set_fact:
-    _jf_mounts: >-
-      {{ app_config.app.mounts
-         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
-    _jf_library_root: >-
-      {{ ((app_config.media_storage | default({})).library | default('', true))
-         | regex_replace('/+$', '') }}
+- name: Resolve the storage and libraries this app uses
+  ansible.builtin.include_tasks: resolve.yml
 
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
@@ -104,26 +96,6 @@
 # The library root is where the *arr apps write. Without it there is nothing to
 # serve and no honest way to configure this app, so this is fatal rather than a
 # server deployed pointing at nothing.
-- name: Assert the lab declares a media library
-  ansible.builtin.assert:
-    that: _jf_library_root | length > 0
-    fail_msg: >-
-      media_storage.library is not set in config/infrastructure.yml, so there is
-      no library for {{ instance }} to serve. It is the root the *arr apps write
-      into (app.library_subpath hangs off it) and the same root this server reads.
-
-- name: Resolve the library paths this server will serve
-  ansible.builtin.set_fact:
-    _jf_libraries: >-
-      {{ app_config.app.libraries | default([], true)
-         | map('combine', {'_root': _jf_library_root}) | list }}
-
-# Created rather than merely asserted, deliberately, and it is the one place this
-# role writes to the library: Jellyfin refuses a library location that does not
-# exist, and on a lab where sonarr has been deployed but lidarr has not, the music
-# path legitimately does not exist yet. An empty directory under a root the
-# platform already declares is this deploy finishing its own job — the same call
-# roles/qbittorrent makes for its download directory.
 - name: Ensure each library path exists
   ansible.builtin.file:
     path: "{{ item._root }}/{{ item.subpath }}"
@@ -151,23 +123,8 @@
       ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
       on the Proxmox node.
 
-# ── The admin credential ──────────────────────────────────────────────────────
-# The platform's, not the operator's, and generated once: this is the account the
-# first-run wizard creates, and the only credential this deploy can prove the
-# server with afterwards. On a re-run the one already in the vault wins —
-# regenerating it would leave the platform holding a password Jellyfin's user
-# database has never heard of.
-#
-# homelabinfra_vault, not homelabinfra_infra: this play reloads homelabinfra_infra
-# from config/.generated/facts.yml, which holds topology and never credentials.
 - name: Resolve the admin credentials
-  ansible.builtin.set_fact:
-    _jf_user: "{{ app_config.app.admin_user | default('admin') }}"
-    _jf_password: >-
-      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).password
-         | default('', true)
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-  no_log: true
+  ansible.builtin.include_tasks: credentials.yml
 
 # The shared Compose deploy recreates the container when the Compose file changed, in the
 # same up that creates it, so a new install is never restarted mid first boot.
@@ -177,188 +134,9 @@
   vars:
     compose_project_dir: "{{ jellyfin_project_dir }}"
 
-# /System/Info/Public is unauthenticated by design and is the only endpoint that
-# answers on a server that has not been set up yet. It is also how this role
-# decides whether to run the wizard, so it is asked before anything else.
-- name: Wait for Jellyfin to answer
-  ansible.builtin.uri:
-    url: "{{ _jf_base }}/System/Info/Public"
-    return_content: true
-    status_code: 200
-  register: _jf_public
-  # Jellyfin can return HTTP 200 with a startup payload before public info is ready.
-  until:
-    - _jf_public.status | default(0) == 200
-    - _jf_public.json.ProductName | default('') | length > 0
-  retries: "{{ jellyfin_http_retries }}"
-  delay: "{{ jellyfin_http_delay }}"
-  changed_when: false
-
-- name: Assert the app identifies itself as Jellyfin
-  ansible.builtin.assert:
-    that: (_jf_public.json.ProductName | default('')) is search('Jellyfin')
-    fail_msg: >-
-      {{ app_config.app.port }} answered /System/Info/Public with ProductName
-      "{{ _jf_public.json.ProductName | default('nothing') }}", which is not
-      Jellyfin. Either app.image is not Jellyfin, or another container already
-      holds that port on this stack host.
-
-# ── First run ─────────────────────────────────────────────────────────────────
-# The wizard runs only on a server that has not completed it. Everything below
-# this point is the same on a first deploy and on a re-run.
-- name: Complete the first-run wizard
-  ansible.builtin.include_tasks: setup-wizard.yml
-  when: not (_jf_public.json.StartupWizardCompleted | default(false) | bool)
-
-# ── Prove the credential works ────────────────────────────────────────────────
-# This is the role's usability probe, in the shape LESSONS.md calls "authenticate
-# and be named back": only a server that finished its wizard AND holds the account
-# this platform created can return a token for these credentials. A container that
-# is merely running fails here.
-- name: Sign in as the platform's admin account
-  ansible.builtin.uri:
-    url: "{{ _jf_base }}/Users/AuthenticateByName"
-    method: POST
-    headers:
-      Authorization: >-
-        MediaBrowser Client="{{ jellyfin_client_name }}",
-        Device="{{ jellyfin_device_name }}",
-        DeviceId="{{ jellyfin_client_name }}-{{ instance }}",
-        Version="1.0.0"
-    body_format: json
-    body:
-      Username: "{{ _jf_user }}"
-      Pw: "{{ _jf_password }}"
-    status_code: [200, 401]
-  register: _jf_auth
-  changed_when: false
-  no_log: true
-
-- name: Assert Jellyfin accepts the platform's credentials
-  ansible.builtin.assert:
-    that:
-      - _jf_auth.status == 200
-      - (_jf_auth.json.AccessToken | default('')) | length > 0
-    fail_msg: >-
-      {{ instance }} refused the admin credentials this deploy holds (HTTP
-      {{ _jf_auth.status | default('no response') }}). Unlike the *arr apps and
-      the download client, this cannot be repaired from the outside: Jellyfin
-      keeps its accounts in its own database and there is no supported way to
-      reset one without an existing session. If the password was changed in the
-      UI, put the new one into the vault item homelab-infra/media/{{ instance }}
-      and re-run; if the account is lost, the recovery path is Jellyfin's own
-      (stop the container, remove the user from
-      {{ app_config.app.config_path }}/data/jellyfin.db, re-run this deploy).
-
-- name: Record the session token
-  ansible.builtin.set_fact:
-    _jf_token: "{{ _jf_auth.json.AccessToken }}"
-    _jf_auth_header: 'MediaBrowser Token="{{ _jf_auth.json.AccessToken }}"'
-  no_log: true
-
-# The mirror of the servarr and qbittorrent unauthenticated-API checks, and the
-# same reason: without it, a server left open to the LAN looks identical to a
-# secured one from here. Readarr was retired from this repo for shipping exactly
-# this defect upstream.
-- name: Call the API with no token
-  ansible.builtin.uri:
-    url: "{{ _jf_base }}/Users"
-    status_code: [200, 401, 403]
-  register: _jf_unauthenticated
-  changed_when: false
-
-- name: Assert the API refuses a caller with no token
-  ansible.builtin.assert:
-    that: _jf_unauthenticated.status in [401, 403]
-    fail_msg: >-
-      {{ instance }} served /Users to a caller with no token. Anything on the LAN
-      can enumerate this server's accounts and stream from it. Check whether the
-      running container is reading a configuration this role did not write.
-
-# A declared Intel iGPU is the configuration source of truth for Jellyfin's
-# acceleration settings too. Saving through Jellyfin's API keeps the server's
-# own encoding configuration converged alongside the device passed by Compose.
-- name: Configure Jellyfin hardware transcoding from its declared device
-  ansible.builtin.include_tasks: configure-transcoding.yml
-
-# ── Libraries ─────────────────────────────────────────────────────────────────
-# A media server with no library is a deploy that exited 0 and left the operator
-# a setup screen. These are created against the same paths the *arr apps write to.
-- name: Read the libraries that already exist
-  ansible.builtin.uri:
-    url: "{{ _jf_base }}/Library/VirtualFolders"
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
-    return_content: true
-    status_code: 200
-  register: _jf_existing_libraries
-  changed_when: false
-
-- name: Create the libraries this lab declares
-  ansible.builtin.uri:
-    # Jellyfin takes the name and the collection type as query parameters and the
-    # locations in the body — an AddVirtualFolderDto whose LibraryOptions carries
-    # PathInfos. refreshLibrary=false because a scan of a populated library can
-    # run for a long time and a deploy must not block on it; Jellyfin schedules
-    # its own scan afterwards.
-    url: >-
-      {{ _jf_base }}/Library/VirtualFolders?name={{ item.name | urlencode }}&collectionType={{ item.collection_type }}&refreshLibrary=false
-    method: POST
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
-    body_format: json
-    body:
-      LibraryOptions:
-        PathInfos:
-          - Path: "{{ item._root }}/{{ item.subpath }}"
-    status_code: [200, 204]
-  loop: "{{ _jf_libraries }}"
-  loop_control:
-    label: "{{ item.name }} → {{ item._root }}/{{ item.subpath }}"
-  when: item.name not in (_jf_existing_libraries.json | default([]) | map(attribute='Name') | list)
-  register: _jf_library_create
-
-# Read back rather than trusting the create: the POST returns no body, and a
-# library that was accepted but landed on a different path would look identical
-# from the response alone.
-- name: Read the libraries back
-  ansible.builtin.uri:
-    url: "{{ _jf_base }}/Library/VirtualFolders"
-    headers:
-      Authorization: "{{ _jf_auth_header }}"
-    return_content: true
-    status_code: 200
-  register: _jf_libraries_now
-  changed_when: false
-
-- name: Assert every declared library exists and points at the lab's storage
-  ansible.builtin.assert:
-    that:
-      - item.name in (_jf_libraries_now.json | map(attribute='Name') | list)
-      - (item._root ~ '/' ~ item.subpath) in
-        (_jf_libraries_now.json | selectattr('Name', 'equalto', item.name)
-         | map(attribute='Locations') | flatten | list)
-    fail_msg: >-
-      {{ instance }} has no library "{{ item.name }}" serving
-      {{ item._root }}/{{ item.subpath }}. Jellyfin accepted the deploy's request
-      and did not record it, which normally means the path is not visible inside
-      the container — check that {{ item._root }} is one of the media_storage
-      mounts attached to this stack host.
-  loop: "{{ _jf_libraries }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-# ── Store the credential ──────────────────────────────────────────────────────
-# Under the same item name the rest of the media stack uses, and stored only
-# after the server has proven the credential works.
-- name: Store and verify the admin credentials
-  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/media/{{ instance }}"
-    vault_item_fields:
-      username: "{{ _jf_user }}"
-      password: "{{ _jf_password }}"
-    vault_item_secret_fields: [password]
+# The rest of the deploy talks to the API.
+- name: Configure Jellyfin through its API
+  ansible.builtin.include_tasks: configure.yml
 
 # ── Hand the endpoint back to the playbook ────────────────────────────────────
 - name: Export the app's address to the playbook

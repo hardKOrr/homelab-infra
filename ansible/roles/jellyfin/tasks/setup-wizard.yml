@@ -18,6 +18,7 @@
 
 - name: First run | Set the server's language and metadata region
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/Startup/Configuration"
     method: POST
     body_format: json
@@ -32,6 +33,7 @@
 # step. It returns the empty account form, which is of no interest.
 - name: First run | Open the account step
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/Startup/User"
     status_code: 200
   changed_when: false
@@ -42,6 +44,7 @@
 # the same boundary 403 draws around Authentik's directory content.
 - name: First run | Create the platform's admin account
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/Startup/User"
     method: POST
     body_format: json
@@ -57,6 +60,7 @@
 # routing.access, and nothing else gets a vote.
 - name: First run | Allow remote access without touching the router
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/Startup/RemoteAccess"
     method: POST
     body_format: json
@@ -67,6 +71,7 @@
 
 - name: First run | Finish the wizard
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/Startup/Complete"
     method: POST
     status_code: [200, 204]
@@ -76,6 +81,7 @@
 # open in the first place.
 - name: First run | Confirm the wizard is closed
   ansible.builtin.uri:
+    headers: "{{ _jf_host_headers }}"
     url: "{{ _jf_base }}/System/Info/Public"
     return_content: true
     status_code: 200
