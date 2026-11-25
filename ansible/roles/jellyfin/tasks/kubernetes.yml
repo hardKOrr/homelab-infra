@@ -38,7 +38,7 @@
 - name: Jellyfin Kubernetes | Resolve the admin credentials
   ansible.builtin.include_tasks: credentials.yml
 
-- name: Jellyfin Kubernetes | Prepare the media volumes
+- name: Jellyfin Kubernetes | Prepare the writable media volumes for the library directories
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
   vars:
     k8s_media_shares: >-
@@ -46,7 +46,7 @@
       {%- for share in k8s_media_nfs -%}
       {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
                                  'path': share.export, 'mount_path': share.path,
-                                 'read_only': true}) -%}
+                                 'read_only': false}) -%}
       {%- endfor -%}
       {{ shares }}
 
@@ -62,6 +62,31 @@
 
 - name: Jellyfin Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Docker creates a missing library directory (Lidarr may not have made music yet); the pod
+# mounts the shares read-only, so a one-shot Job with writable mounts does it first, as the
+# app user. Jellyfin refuses a library location that does not exist.
+- name: Jellyfin Kubernetes | Ensure each library directory exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: "{{ instance }}-library-dirs"
+    k8s_job_timeout: 300
+    k8s_job_report_changed: false
+    k8s_job_manifest: "{{ lookup('ansible.builtin.template', role_path ~ '/templates/library-dirs-job.yaml.j2') }}"
+  when: k8s_media_volumes | length > 0
+
+- name: Jellyfin Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': true}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
 
 - name: Jellyfin Kubernetes | Deploy the workload
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml

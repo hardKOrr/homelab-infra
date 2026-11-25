@@ -1321,6 +1321,7 @@ jellyfin:
     - tasks/kubernetes/prepare-media-volumes.yml
     - tasks/kubernetes/ensure-nfs-client.yml
     - tasks/kubernetes/ensure-namespace.yml
+    - tasks/kubernetes/run-job.yml
     - tasks/kubernetes/single-container.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/kubernetes/recovery-backup.yml

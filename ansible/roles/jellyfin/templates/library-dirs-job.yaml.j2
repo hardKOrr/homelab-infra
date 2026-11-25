@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ instance }}-library-dirs
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: library-dirs
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: library-dirs
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsUser: {{ app_config.app.puid | default(1000) | int }}
+        runAsGroup: {{ app_config.app.pgid | default(1000) | int }}
+      containers:
+        - name: library-dirs
+          image: {{ app_config.app.image | to_json }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -ceu]
+          args:
+            - |
+              for dir in "$@"; do mkdir -p "$dir"; chmod 0775 "$dir" 2>/dev/null || true; done
+            - library-dirs
+{% for library in _jf_libraries %}
+            - {{ (library._root ~ '/' ~ library.subpath) | to_json }}
+{% endfor %}
+          volumeMounts: {{ k8s_media_volume_mounts | to_json }}
+      volumes: {{ k8s_media_volumes | to_json }}

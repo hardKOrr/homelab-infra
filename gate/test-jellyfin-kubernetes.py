@@ -48,7 +48,7 @@ assert include(kubernetes, "kubernetes-gpu.yml")["when"] == "_jf_gpu_declared | 
 
 # Media: the same NFS shares at the same container paths as Docker's bind mounts, read-only,
 # through the shared seam and nothing role-local.
-shares = include(kubernetes, "prepare-media-volumes.yml")["vars"]["k8s_media_shares"]
+shares = next(t for t in kubernetes if t.get("name") == "Jellyfin Kubernetes | Prepare the media volumes")["vars"]["k8s_media_shares"]
 assert "'mount_path': share.path" in shares and "'read_only': true" in shares
 prepare = tasks("deploy-prepare.yml")
 resolve = include(prepare, "resolve-media-nfs.yml")
@@ -146,5 +146,26 @@ assert {"name": "JELLYFIN_PublishedServerUrl", "value": "https://jellyfin.exampl
 probe = read(f"{ROLE}/tasks/kubernetes-gpu.yml")
 assert "/usr/lib/jellyfin-ffmpeg/vainfo" in probe and "VAProfileH264" in probe and "_jf_vaapi_device" in probe
 assert "'VaapiDevice': _jf_vaapi_device" in read(f"{ROLE}/tasks/configure-transcoding.yml")
+
+# A library directory that does not exist yet (Lidarr has not made music) is created before
+# the read-only workload, by a Job with writable mounts as the app user: Jellyfin refuses a
+# library location that is missing.
+names = [t.get("name") for t in kubernetes]
+job_at = names.index("Jellyfin Kubernetes | Ensure each library directory exists")
+assert job_at < names.index("Jellyfin Kubernetes | Deploy the workload")
+assert "'read_only': false" in kubernetes[names.index(
+    "Jellyfin Kubernetes | Prepare the writable media volumes for the library directories")]["vars"]["k8s_media_shares"]
+assert "run-job.yml" in kubernetes[job_at]["ansible.builtin.include_tasks"]
+job = yaml.safe_load(render(read(f"{ROLE}/templates/library-dirs-job.yaml.j2"), {
+    "instance": "jellyfin", "app_config": defaults,
+    "_jf_libraries": [dict(lib, _root="/mnt/media") for lib in defaults["app"]["libraries"]],
+    "k8s_media_volumes": [{"name": "media-0", "nfs": {"server": "192.0.2.50", "path": "/export/media"}}],
+    "k8s_media_volume_mounts": [{"name": "media-0", "mountPath": "/mnt/media"}],
+}))
+pod = job["spec"]["template"]["spec"]
+assert pod["securityContext"] == {"runAsUser": 1313, "runAsGroup": 1313}
+args = pod["containers"][0]["args"]
+assert "/mnt/media/music" in args and "/mnt/media/movies" in args and "mkdir -p" in args[0]
+assert "readOnly" not in pod["volumes"][0]["nfs"]
 
 print("Jellyfin keeps Docker as default and renders its Kubernetes workload, iGPU pinning and recovery dispatch")
