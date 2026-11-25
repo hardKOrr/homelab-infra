@@ -48,6 +48,11 @@ def check_defaults_and_dispatch():
     assert [(e["backend"], e["protocol"]) for e in defaults["firewall"]["egress"]] == [
         ("database", "TCP"), ("redis", "TCP")]
     assert defaults["firewall"]["methods"] == ["kubernetes"]
+    # The shared recovery Jobs consume this contract; quiescing the server also needs
+    # Python in the push container so its exit trap can resume the Deployment.
+    client = defaults["backup"]["client"]
+    assert {"image", "key_url", "repository", "suite", "component"} <= client.keys()
+    assert client["image"].startswith("python:")
     restore = load("ansible/roles/immich/tasks/restore.yml")
     assert [t["ansible.builtin.include_tasks"] for t in restore] == [
         "restore-kubernetes.yml", "restore-guest.yml"]

@@ -9,18 +9,15 @@ immich_defaults:
     supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: photos
-
   # The item records deployed backend/device metadata, not authored app settings.
   # Recovery reads its credentials directly; replaying it would pin an old GPU stack.
   vault:
     methods: []
-
   recovery:
     methods: [native]
     native:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
-
   app:
     image: ghcr.io/immich-app/immich-server:v3.1.0
     machine_learning_image: ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino
@@ -50,7 +47,6 @@ immich_defaults:
     storage: 20
     # The ML model cache is disposable and stays on the selected stack host rootfs.
     model_cache_path: "/opt/{{ instance }}/model-cache"
-
   # Kubernetes pods reach both registered backends through the cluster-node alias. The
   # Docker guest keeps its own access path.
   firewall:
@@ -62,7 +58,6 @@ immich_defaults:
       - name: redis
         protocol: TCP
         backend: redis
-
   # No global media_storage is inherited. Immich must not adopt an existing photo
   # library: the instance config names one new durable mount and its ownership.
   media_storage:
@@ -71,7 +66,6 @@ immich_defaults:
       user: homelab-infra
       uid: 1313
       gid: 1313
-
   routing:
     subdomain: immich
     proxy: internal
@@ -80,7 +74,6 @@ immich_defaults:
     # Mobile clients authenticate to Immich and cannot complete a browser-only proxy
     # challenge. Authentik supplies a catalog tile; Immich remains the auth boundary.
     identity: catalog
-
   # The app-owned recovery path archives the named PostgreSQL database and the durable
   # originals/thumbnails mount together. PBS guest snapshots alone do not include a bind
   # mount, so this is deliberately application-consistent.
@@ -91,3 +84,12 @@ immich_defaults:
     retention_days: 14
     datastore: ""
     backup_id: ""
+    timezone: '{{ homelabinfra_config.timezone | default(''UTC'') }}'
+    timeout_seconds: 3600
+    scratch_size: 2
+    client:
+      image: python:3.12-bookworm
+      key_url: https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg
+      repository: http://download.proxmox.com/debian/pbs-client
+      suite: bookworm
+      component: main
