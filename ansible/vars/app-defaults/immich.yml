@@ -6,7 +6,7 @@
 immich_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: photos
 
@@ -44,8 +44,24 @@ immich_defaults:
     # host's render nodes here (each an identifier of a proxmox.devices entry with
     # mode: shared). They are bound into the LXC and into the ML container.
     devices: []
+    # Kubernetes: size in Gi of the claim holding originals and thumbnails (default
+    # StorageClass). The machine-learning pod runs on the k3s node whose
+    # cluster.nodes[].gpu_device equals gpu_device (with it empty, on any node, on the CPU).
+    storage: 20
     # The ML model cache is disposable and stays on the selected stack host rootfs.
     model_cache_path: "/opt/{{ instance }}/model-cache"
+
+  # Kubernetes pods reach both registered backends through the cluster-node alias. The
+  # Docker guest keeps its own access path.
+  firewall:
+    methods: [kubernetes]
+    egress:
+      - name: postgresql
+        protocol: TCP
+        backend: database
+      - name: redis
+        protocol: TCP
+        backend: redis
 
   # No global media_storage is inherited. Immich must not adopt an existing photo
   # library: the instance config names one new durable mount and its ownership.

@@ -10,7 +10,7 @@ from restore_swap_inputs import swap_inputs
 
 
 def main():
-    swap = swap_inputs("immich")
+    swap = swap_inputs("immich", "restore-guest.yml")
     assert swap["recovery_swap_archives"] == ["database.pxar", "media.pxar"]
     assert swap["recovery_swap_paths"] == [{
         "path": "{{ _immich_restore_media_path }}", "source": "media",

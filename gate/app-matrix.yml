@@ -1115,7 +1115,7 @@ homepage:
     - tasks/notify.yml
 immich:
   method: docker
-  supported: [docker-lxc, docker-vm]
+  supported: [docker-lxc, docker-vm, kubernetes]
   deploy:
     docker:
     - tasks/load-user-vars.yml
@@ -1138,10 +1138,36 @@ immich:
     - tasks/proxmox/record-app-on-guest.yml
     - tasks/assert-no-degradations.yml
     - tasks/notify.yml
+    kubernetes:
+    - tasks/load-user-vars.yml
+    - tasks/apps/load-config.yml
+    - tasks/hosting/validate-app.yml
+    - tasks/resolve-estate.yml
+    - tasks/proxmox/assert-dedicated-igpu.yml
+    - tasks/database/deploy-consumer.yml
+    - tasks/proxmox/attach-shared-device.yml
+    - tasks/kubernetes/open-app-access.yml
+    - tasks/kubernetes/resolve-cluster.yml
+    - tasks/kubernetes/ensure-namespace.yml
+    - tasks/bitwarden/upsert-item.yml
+    - tasks/kubernetes/sync-secret.yml
+    - tasks/kubernetes/apply-manifest.yml
+    - tasks/database/kubernetes-recovery-step.yml
+    - tasks/kubernetes/recovery-backup.yml
+    - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
+    - tasks/wiring/authentik.yml
+    - tasks/wiring/uptime-kuma.yml
+    - tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml
+    - tasks/proxmox/record-app-on-guest.yml
+    - tasks/assert-no-degradations.yml
+    - tasks/notify.yml
   backup:
     docker: [tasks/backup/pbs-client-backup.yml]
   restore:
     docker: [tasks/recovery/restore-swap.yml]
+    kubernetes:
+    - tasks/database/kubernetes-recovery-step.yml
+    - tasks/kubernetes/recovery-restore.yml
 influxdb:
   method: native
   supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]

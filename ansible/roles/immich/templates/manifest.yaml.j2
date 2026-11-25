@@ -1,0 +1,201 @@
+{#
+  Immich in the namespace its instance owns: the media claim, the server and the
+  machine-learning Deployments and their Services, and the Ingress. PostgreSQL and Redis
+  are registered backends outside the namespace; the pods read their connection from the
+  `<instance>-env` Secret. Rendered by tasks/kubernetes.yml.
+#}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set owner = app_config.media_storage.owner %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ immich_k8s_media_claim }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage | int }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  # The default StorageClass is node-pinned and the claim is ReadWriteOnce.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: server
+      annotations:
+        homelab-infra/env-checksum: {{ _immich_k8s_env_checksum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: {{ owner.uid | int }}
+        runAsGroup: {{ owner.gid | int }}
+        fsGroup: {{ owner.gid | int }}
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: immich-server
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - name: http
+              containerPort: 2283
+          volumeMounts:
+            - name: media
+              mountPath: /data
+          startupProbe:
+            httpGet: {path: /api/server/ping, port: http}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: /api/server/ping, port: http}
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: {path: /api/server/ping, port: http}
+            periodSeconds: 30
+            failureThreshold: 10
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: {{ immich_k8s_media_claim }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: {{ app_config.app.port }}
+      targetPort: http
+---
+# Machine learning holds no durable state: its model cache is an emptyDir.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}-machine-learning
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: machine-learning
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: machine-learning
+    spec:
+      automountServiceAccountToken: false
+{% if _immich_gpu_declared | bool %}
+      # The iGPU is passed through to one node VM, so only that node has /dev/dri. A
+      # hostPath device node is unusable in an unprivileged container (its device cgroup
+      # refuses it), so the container is privileged, as Emby's is.
+      nodeSelector:
+        kubernetes.io/hostname: {{ _immich_gpu_nodes[0] }}
+{% endif %}
+      containers:
+        - name: immich-machine-learning
+          image: {{ app_config.app.machine_learning_image }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - name: ml
+              containerPort: {{ immich_k8s_ml_port }}
+{% if _immich_gpu_declared | bool %}
+          securityContext:
+            privileged: true
+{% endif %}
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+{% if _immich_gpu_declared | bool %}
+            - name: dri
+              mountPath: /dev/dri
+{% endif %}
+          startupProbe:
+            httpGet: {path: /ping, port: ml}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: /ping, port: ml}
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: cache
+          emptyDir: {}
+{% if _immich_gpu_declared | bool %}
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+{% endif %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}-machine-learning
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: machine-learning
+  ports:
+    - name: ml
+      port: {{ immich_k8s_ml_port }}
+      targetPort: ml
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  rules:
+    - host: {{ _deploy_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}
