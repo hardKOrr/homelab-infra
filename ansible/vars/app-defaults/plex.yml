@@ -5,7 +5,7 @@
 plex_defaults:
   hosting:
     method: docker
-    supported: [docker-vm]
+    supported: [docker-vm, docker-lxc]
     impossible: {}
   stack: media
   recovery:
@@ -26,6 +26,9 @@ plex_defaults:
     # the shared media stack VM to that device's node and grants Plex the DRI device groups.
     # The role enables Plex hardware decoding and encoding when /dev/dri is declared,
     # and disables both settings when no /dev/dri device is configured.
+    # On a Docker LXC stack the iGPU is shared instead: leave gpu_device empty and list
+    # the host's render nodes in devices (each an identifier of a proxmox.devices entry
+    # with mode: shared). Deploy binds them into the LXC and into the container.
     gpu_device: ""
     devices: []
     mounts: >-

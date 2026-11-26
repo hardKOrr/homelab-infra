@@ -18,6 +18,9 @@ services:
       - PLEX_CLAIM={{ _plex_claim_token }}
 {% endif %}
     volumes:
+{% if _plex_dri_group_ids | default([], true) | length > 0 %}
+      - "./device-groups.sh:/etc/cont-init.d/46-plex-device-groups:ro"
+{% endif %}
       - "{{ app_config.app.config_path }}:/config"
       - "{{ app_config.app.transcode_path }}:/transcode"
 {% for mount in _plex_mounts %}
