@@ -1,0 +1,47 @@
+---
+# Read Preferences.xml into _plex_prefs_text, on the stack host (Docker) or from the running
+# pod (Kubernetes), waiting until it holds every literal in _plex_prefs_expect (default: none).
+# Kubernetes callers have run resolve-cluster.yml and set _plex_k8s_prefs_path.
+- name: Plex preferences | Read from the stack host
+  ansible.builtin.slurp:
+    src: "{{ _plex_preferences }}"
+  register: _plex_prefs_slurp
+  until: >-
+    _plex_prefs_slurp.content is defined
+    and (_plex_prefs_expect | default([]) | reject('in', _plex_prefs_slurp.content | b64decode) | list | length == 0)
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: false
+  no_log: true
+  when: app_config.hosting.method | default('docker') != 'kubernetes'
+
+- name: Plex preferences | Read from the pod
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ _plex_k8s_target | default(instance) }}"
+      - --
+      - cat
+      - "{{ _plex_k8s_prefs_path }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _plex_prefs_exec
+  until: >-
+    _plex_prefs_exec.rc == 0
+    and (_plex_prefs_expect | default([]) | reject('in', _plex_prefs_exec.stdout) | list | length == 0)
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: false
+  no_log: true
+  when: app_config.hosting.method | default('docker') == 'kubernetes'
+
+- name: Plex preferences | Keep the text
+  ansible.builtin.set_fact:
+    _plex_prefs_text: >-
+      {{ _plex_prefs_exec.stdout if app_config.hosting.method | default('docker') == 'kubernetes'
+         else _plex_prefs_slurp.content | b64decode }}
+  no_log: true

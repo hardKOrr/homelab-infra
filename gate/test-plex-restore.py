@@ -56,7 +56,7 @@ def run_hook(hook, stage, state, port):
 
 
 def main():
-    swap = swap_inputs("plex")
+    swap = swap_inputs("plex", "restore-guest.yml")
     [path] = swap["recovery_swap_paths"]
     assert path == {"path": "{{ plex_state_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}

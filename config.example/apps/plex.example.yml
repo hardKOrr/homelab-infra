@@ -7,6 +7,8 @@
 # To use Docker on an LXC, set stack: plex-lxc (any stack name) and
 # infrastructure.stacks.plex-lxc.guest_type: lxc in config/infrastructure.yml, with
 # hosting.method: docker.
+# To use Kubernetes, set hosting.method: kubernetes; with app.gpu_device set to the
+# gpu_device of one k3s node in cluster.nodes, the pod runs on that node with its iGPU.
 
 # app:
 #   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.

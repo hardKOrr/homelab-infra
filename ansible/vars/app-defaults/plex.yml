@@ -5,7 +5,7 @@
 plex_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc]
+    supported: [docker-vm, docker-lxc, kubernetes]
     impossible: {}
   stack: media
   recovery:
@@ -19,6 +19,8 @@ plex_defaults:
     port: 32400
     container_port: 32400
     config_path: "/opt/{{ instance }}/config"
+    # Config PVC size in Gi on Kubernetes (the cluster's default StorageClass).
+    storage: 20
     transcode_path: "/opt/{{ instance }}/transcode"
     puid: 1313
     pgid: 1313
@@ -29,6 +31,8 @@ plex_defaults:
     # On a Docker LXC stack the iGPU is shared instead: leave gpu_device empty and list
     # the host's render nodes in devices (each an identifier of a proxmox.devices entry
     # with mode: shared). Deploy binds them into the LXC and into the container.
+    # On Kubernetes gpu_device names the iGPU of one k3s node (cluster.nodes[].gpu_device)
+    # and pins the pod there; the pod mounts the node's /dev/dri.
     gpu_device: ""
     devices: []
     mounts: >-
