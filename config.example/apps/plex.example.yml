@@ -4,11 +4,18 @@
 # Store Secret: item homelab-infra/apps/<instance>, field claim_token. Do not put
 # that short-lived secret in this file.
 
+# To use Docker on an LXC, set stack: plex-lxc (any stack name) and
+# infrastructure.stacks.plex-lxc.guest_type: lxc in config/infrastructure.yml, with
+# hosting.method: docker.
+
 # app:
 #   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
 #   # It selects the device's stack VM and adds /dev/dri to Plex's container.
 #   # GPU stack precedence: ansible/vars/contract/app-layering.md.
 #   gpu_device: intel-igpu
+#   # On a Docker LXC stack leave gpu_device empty and list the host's render nodes
+#   # instead; each must be an identifier of a proxmox.devices entry with mode: shared.
+#   # devices: [/dev/dri/renderD129]
 #   # Plex tells clients this route in bridge-network mode. Keep the explicit
 #   # port: Plex rejects an incomplete custom access URL.
 #   advertise_url: https://plex.example.test:443

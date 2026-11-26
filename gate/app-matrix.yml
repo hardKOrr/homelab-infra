@@ -2825,7 +2825,7 @@ plane:
     native: [tasks/recovery/restore-swap.yml]
 plex:
   method: docker
-  supported: [docker-vm]
+  supported: [docker-lxc, docker-vm]
   deploy:
     docker:
     - tasks/load-user-vars.yml

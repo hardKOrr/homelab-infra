@@ -12,6 +12,10 @@ services:
       - PLEX_UID={{ app_config.app.puid | default(1313) }}
       - PLEX_GID={{ app_config.app.pgid | default(1313) }}
       - ADVERTISE_IP={{ _plex_advertise_url }}
+{% if _plex_dri_device_declared | default(false) | bool %}
+      # PVE bind mounts can report a cached directory-entry type; test the device inode.
+      - ATTACHED_DEVICES_PERMS=/dev/dri /dev/dvb /dev/vchiq /dev/video1? -exec test -c {} ;
+{% endif %}
 {% if not _plex_claimed and _plex_claim_token | length > 0 %}
       # First startup only. The role rewrites this file after proving the claim,
       # so the short-lived token is never retained in the Compose project.

@@ -106,8 +106,8 @@ def run_device_access(root, devices, gpu_device, expected_groups):
     fake_find = fake_bin / "find"
     fake_find.write_text(
         "#!/bin/sh\n"
-        "[ \"${7:-}\" = '%G\\n' ] || exit 9\n"
-        "printf '44\\n104\\n104\\n'\n"
+        "[ \"${1:-}\" = /dev/dri ] || exit 9\n"
+        "printf 'directory:0\\ncharacter special file:104\\ncharacter special file:44\\ncharacter special file:104\\nregular file:999\\n'\n"
     )
     fake_find.chmod(0o755)
     playbook_path = root / "configure-devices.yml"
