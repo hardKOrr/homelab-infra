@@ -1,0 +1,43 @@
+---
+# Device path only, on the native guest: the render node exists, Plex's service user can open
+# it, and VA-API lists the device's H.264 profiles. configure-transcoder.yml then saves the
+# hardware preferences. Plex's bundled drivers belong to its transcoder (which needs Plex
+# Pass), so the probe uses the distribution's VA-API driver for the device. Whether Plex
+# then uses the device at play time is not exercised here.
+- name: Plex native GPU | Install vainfo and the Intel VA-API drivers
+  ansible.builtin.apt:
+    name: [vainfo, i965-va-driver, intel-media-va-driver]
+    state: present
+    lock_timeout: 300
+
+- name: Plex native GPU | Probe the render node as the service user
+  ansible.builtin.command:
+    argv:
+      - setpriv
+      - --reuid
+      - "{{ plex_native_user }}"
+      - --regid
+      - "{{ plex_native_user }}"
+      - --groups
+      - "{{ _plex_dri_group_ids | join(',') }}"
+      - sh
+      - -c
+      - |
+        node=$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)
+        [ -n "$node" ] || { echo "no render node under /dev/dri"; exit 3; }
+        test -r "$node" && test -w "$node" \
+          || { echo "$node is not accessible by the Plex service user"; exit 4; }
+        echo "RENDER_NODE=$node"
+        vainfo --display drm --device "$node" 2>&1
+  register: _plex_native_gpu_probe
+  until: _plex_native_gpu_probe.rc == 0
+  retries: 6
+  delay: 5
+  changed_when: false
+
+- name: Plex native GPU | Require H.264 profiles on the device
+  ansible.builtin.assert:
+    that: _plex_native_gpu_probe.stdout is search('VAProfileH264')
+    fail_msg: >-
+      vainfo as the Plex service user lists no H.264 profile for the iGPU:
+      {{ _plex_native_gpu_probe.stdout | default('') | truncate(400) }}

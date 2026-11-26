@@ -61,7 +61,7 @@ def main():
     assert path == {"path": "{{ plex_state_path }}", "owner": "{{ app_config.app.puid }}",
                     "group": "{{ app_config.app.pgid }}", "mode": "0750"}
     assert swap["recovery_swap_archives"] == ["data.pxar"]
-    assert swap["recovery_swap_stop_services"] == ["{{ instance }}"]
+    assert swap["recovery_swap_stop_services"] == ["{{ plex_native_service if plex_native | bool else instance }}"]
     assert swap["recovery_swap_compose_project"] == "{{ plex_project_dir }}"
     assert swap["recovery_swap_health_url"].endswith("/identity")
 

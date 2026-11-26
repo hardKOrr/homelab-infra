@@ -62,9 +62,9 @@
 - name: Plex backup | Stop only Plex and archive the quiesced data directory to PBS
   ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-backup.yml
   vars:
-    pbs_client_runtime: docker
+    pbs_client_runtime: "{{ app_config.hosting.method | default('docker') }}"
     pbs_client_compose_project: "{{ plex_project_dir }}"
-    pbs_client_stop_services: ["{{ instance }}"]
+    pbs_client_stop_services: ["{{ plex_native_service if plex_native | bool else instance }}"]
     pbs_client_backup_args: [--exclude, /Cache, --exclude, /Codecs, --exclude, /Crash Reports, --exclude, /Logs]
     pbs_client_archives:
       - name: data.pxar

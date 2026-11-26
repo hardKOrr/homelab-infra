@@ -5,9 +5,20 @@
 plex_defaults:
   hosting:
     method: docker
-    supported: [docker-vm, docker-lxc, kubernetes]
+    supported: [docker-vm, docker-lxc, kubernetes, native-lxc, native-vm]
     impossible: {}
   stack: media
+  # Used only when hosting.method is native (the guest type comes from the instance's
+  # proxmox.guest_type).
+  proxmox:
+    ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
   recovery:
     methods: [native]
     native:
@@ -15,7 +26,11 @@ plex_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: "plexinc/pms-docker:latest"
+    image: "plexinc/pms-docker:1.43.5.11079-b3b13e506"
+    # Native: the same Plex release from the Plex Media Server APT repository
+    # (https://repo.plex.tv/deb). A VM cannot reach the iGPU (see deploy-prepare.yml); an
+    # LXC binds the shared one.
+    native_version: "1.43.5.11079-b3b13e506"
     port: 32400
     container_port: 32400
     config_path: "/opt/{{ instance }}/config"
