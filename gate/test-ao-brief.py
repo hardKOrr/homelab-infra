@@ -72,6 +72,42 @@ log = brief.failed_log(1)
 check("a failed log keeps the failure and ends at the error", log ==
       "== FAIL gate/test-b.py\nwhy it failed\n##[error]Process completed with exit code 1.", log or "")
 
+review_pr = {
+    "number": 996, "title": "Native Jellyfin", "state": "OPEN", "url": "p", "isDraft": False,
+    "headRefName": "ao/x", "headRefOid": HEAD, "baseRefName": "master", "body": "Why it changes.",
+    "additions": 410, "deletions": 68, "changedFiles": 2,
+    "commits": pr["commits"],
+    "reviews": {"nodes": [{"author": {"login": "rev"}, "state": "COMMENTED", "submittedAt": "2026-11-25T20:28:00Z",
+                           "body": "Changes requested: add python3-debian.", "commit": {"oid": "e3a71aa10ec5ff"}},
+                          {"author": {"login": "rev"}, "state": "COMMENTED", "submittedAt": "2026-11-25T20:29:00Z",
+                           "body": "", "commit": {"oid": "e3a71aa10ec5ff"}}]},
+    "reviewThreads": {"nodes": [
+        {"isResolved": True, "isOutdated": True, "path": "roles/a.yml", "line": 25,
+         "comments": {"nodes": [{"author": {"login": "rev"}, "body": "[P1] Install it first"},
+                                {"author": {"login": "dev"}, "body": "Done in f5921fe"}]}},
+        {"isResolved": False, "isOutdated": False, "path": "roles/b.yml", "line": None,
+         "comments": {"nodes": [{"author": None, "body": "still open"}]}}]},
+}
+diff = "\n".join(["diff --git a/roles/a.yml b/roles/a.yml", "--- a/roles/a.yml", "+++ b/roles/a.yml", "@@ -1 +1 @@", "-x", "+y",
+                  "diff --git a/big.yml b/big.yml", "--- /dev/null", "+++ b/big.yml", "@@ -0,0 +1,500 @@"]
+                 + [f"+line {i}" for i in range(500)])
+check("a diff splits per file", [p for p, _ in brief.split_diff(diff)] == ["roles/a.yml", "big.yml"])
+out = brief.render_review(review_pr, f"origin/master...{HEAD[:12]}", " 2 files changed", diff, local)
+check("the review head shows base, size and checks", "ao/x @ 2eaab2d0875c into master: 2 files, +410 -68" in out
+      and "- gate: failure" in out and "lint" not in out, out)
+check("a local PR head is said to be on disk", "the PR head, so files on disk" in out, out)
+check("earlier reviews with a body are shown with their commit", "## Earlier reviews: 1" in out
+      and "rev commented 2026-11-25 20:28 on e3a71aa10ec5" in out and "add python3-debian" in out, out)
+check("every thread is shown, resolved too, with replies", "1 unresolved of 2" in out
+      and "roles/a.yml:25 (resolved, outdated)" in out and "  - dev: Done in f5921fe" in out
+      and "roles/b.yml:? (unresolved)" in out and "  - ?: still open" in out, out)
+check("each file gets its own diff section", "### roles/a.yml\n```diff" in out and "+y" in out, out)
+check("a long file diff is cut with the command for the rest", "+line 395" in out and "+line 397" not in out
+      and f"[... cut 104 lines; the rest: git diff origin/master...{HEAD[:12]} -- big.yml]" in out, out)
+out = brief.render_review(review_pr, "gh pr diff 996", None, None, {**local, "head": "f" * 40})
+check("another local HEAD points at git show", f"read PR files with `git show {HEAD[:12]}:<path>`" in out, out)
+check("an unreadable diff says how to get it", "the diff could not be read; run gh pr diff 996" in out, out)
+
 if failures:
     print("\n".join(failures))
     sys.exit(1)
