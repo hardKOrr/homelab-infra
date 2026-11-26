@@ -72,5 +72,7 @@ recorded in `gate/structure.yml`, may not grow, and are deleted once they meet t
 ## Live lab
 
 Live runs may overlap and use the runner checkout as it stands; see
-[Live operations](ansible/README.md#live-operations). Test an unmerged branch by pointing
-the runner at that branch (see `rundeck/README.md`).
+[Live operations](ansible/README.md#live-operations). Start anything long with
+`tools/lab-start` and wait on it with `tools/lab-wait`, which blocks until it ends. Do not
+poll a job's log or a status script with `tail`, `sleep` or repeated checks. Test an
+unmerged branch by pointing the runner at that branch (see `rundeck/README.md`).
