@@ -2890,6 +2890,7 @@ plex:
     - tasks/guest-bootstrap.yml
     - tasks/bootstrap/configure-unattended-upgrades.yml
     - tasks/backup/pbs-client-install.yml
+    - tasks/apps/restart.yml
     - tasks/bitwarden/upsert-item.yml
     - tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml
     - tasks/wiring/authentik.yml
@@ -2903,10 +2904,10 @@ plex:
     native: [tasks/backup/pbs-client-backup.yml]
   restore:
     docker: [tasks/recovery/restore-swap.yml]
-    native: [tasks/recovery/restore-swap.yml]
     kubernetes:
     - tasks/kubernetes/recovery-restore.yml
     - tasks/bitwarden/upsert-item.yml
+    native: [tasks/recovery/restore-swap.yml]
 postgresql:
   method: native
   supported: [docker-lxc, docker-vm, kubernetes, native-lxc, native-vm]
