@@ -96,7 +96,7 @@
     suites: [public]
     components: [main]
     architectures: [amd64]
-    signed_by: https://downloads.plex.tv/plex-keys/PlexSign.key
+    signed_by: https://downloads.plex.tv/plex-keys/PlexSign.v2.key
     state: present
   register: _plex_native_repo
 
