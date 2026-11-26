@@ -1,0 +1,24 @@
+---
+# The Docker image sets these from ADVERTISE_IP and its /transcode mount; natively they are
+# saved preferences. Runs after the claim, with _plex_server_token.
+- name: Plex native prefs | Read the current preferences
+  ansible.builtin.include_tasks: read-preferences.yml
+
+- name: Plex native prefs | Set the advertised URL and the transcode directory
+  ansible.builtin.uri:
+    url: "{{ _plex_base }}/:/prefs?{{ item.key }}={{ item.value | urlencode }}"
+    method: PUT
+    headers: "{{ _plex_headers | default({}) | combine({'X-Plex-Token': _plex_server_token}) }}"
+    status_code: 200
+  loop:
+    - {key: customConnections, value: "{{ _plex_advertise_url }}"}
+    - {key: TranscoderTempDirectory, value: "{{ app_config.app.transcode_path }}"}
+  loop_control:
+    label: "{{ item.key }}"
+  register: _plex_native_prefs_put
+  until: _plex_native_prefs_put.status | default(0) == 200
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: true
+  when: _plex_prefs_text is not search(item.key ~ '="' ~ item.value ~ '"')
+  no_log: true

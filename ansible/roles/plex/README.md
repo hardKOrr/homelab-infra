@@ -19,3 +19,13 @@ naming a k3s node's iGPU, the pod pinned to that node with `/dev/dri`. The claim
 reaches the pod through a Secret for the first start only. Recovery archives the config
 PVC; restore goes through the shared Kubernetes recovery Job and publishes the restored
 token the same way.
+
+## Native
+
+`hosting.method: native` runs the pinned `plexmediaserver` package from the Plex Media
+Server APT repository (`repo.plex.tv`) on its own LXC or VM (`proxmox.guest_type`), from
+`tasks/native.yml`, with the same data layout as the Docker image. The claim token sits in
+the root-only unit drop-in until the claim succeeds. On an LXC the shared iGPU's render
+nodes are bound in and `tasks/native-gpu.yml` proves them as the service user (device and
+`vainfo` only); a VM cannot reach the iGPU, so Deploy refuses a GPU declaration there.
+Backup and restore use the shared operations with the `native` runtime.

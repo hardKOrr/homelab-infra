@@ -6,3 +6,11 @@ plex_http_delay: 2
 plex_state_path: "{{ app_config.app.config_path }}/Library/Application Support/Plex Media Server"
 # Plex's state directory inside the pod, where the config PVC is mounted at /config.
 plex_k8s_state_path: "/config/Library/Application Support/Plex Media Server"
+
+# Native: Plex runs from the Plex Media Server APT repository as this user (uid/gid
+# app.puid/pgid, which match media_storage.owner so it can read the library) under the
+# package's plexmediaserver unit.
+plex_native: "{{ app_config.hosting.method | default('docker') == 'native' }}"
+plex_native_user: plex
+plex_native_service: plexmediaserver
+plex_native_unit_dropin: /etc/systemd/system/plexmediaserver.service.d/homelab.conf

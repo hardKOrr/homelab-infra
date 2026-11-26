@@ -36,7 +36,7 @@ def render(template, variables):
 
 defaults = yaml.safe_load(read("ansible/vars/app-defaults/plex.yml"))["plex_defaults"]
 assert defaults["hosting"]["method"] == "docker"
-assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes"]
+assert defaults["hosting"]["supported"] == ["docker-vm", "docker-lxc", "kubernetes", "native-lxc", "native-vm"]
 assert defaults["app"]["storage"] > 0
 
 # Docker keeps the stack-host path; both paths share the preferences reader and transcoder.

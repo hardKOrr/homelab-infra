@@ -1,0 +1,157 @@
+---
+# Plex natively on an LXC or a VM: the pinned plexmediaserver package from the Plex Media
+# Server APT repository (https://support.plex.tv/articles/235974187-enable-repository-updating-for-supported-linux-server-distributions/)
+# under the plexmediaserver unit it ships. State lives under app.config_path (the same
+# layout as the Docker image's /config) and the unit drop-in points Plex at it. Plex starts on
+# the first install, so its user, directories, drop-in and claimed Preferences.xml come first.
+- name: Plex native | Assert the supported guest
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: Native Plex supports Debian-family amd64 guests only.
+
+- name: Plex native | Install the pinned PBS client when this lab declares app backups
+  ansible.builtin.include_tasks: ../../../tasks/backup/pbs-client-install.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Plex native | Install the package prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, python3, python3-debian]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Plex native | Note whether the package is already installed
+  ansible.builtin.stat:
+    path: /usr/lib/plexmediaserver
+  register: _plex_native_installed
+
+# Created before the package so the user owns the library's uid/gid.
+- name: Plex native | Create the service group
+  ansible.builtin.group:
+    name: "{{ plex_native_user }}"
+    gid: "{{ app_config.app.pgid | default(1313) }}"
+    system: true
+
+- name: Plex native | Create the service user
+  ansible.builtin.user:
+    name: "{{ plex_native_user }}"
+    uid: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ plex_native_user }}"
+    home: /var/lib/plexmediaserver
+    create_home: false
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Plex native | Create the project, data and transcode directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ plex_native_user }}"
+    group: "{{ plex_native_user }}"
+    mode: "0750"
+  loop:
+    - "{{ plex_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.config_path }}/Library"
+    - "{{ app_config.app.config_path }}/Library/Application Support"
+    - "{{ plex_state_path }}"
+    - "{{ app_config.app.transcode_path }}"
+
+- name: Plex native | Create the unit drop-in directory
+  ansible.builtin.file:
+    path: "{{ plex_native_unit_dropin | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plex native | Render the unit drop-in
+  ansible.builtin.template:
+    src: plex-native.conf.j2
+    dest: "{{ plex_native_unit_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _plex_native_unit
+
+# The package does not read PLEX_CLAIM (the Docker image's first-run script does), so the
+# claim is exchanged here, as that script does, and the server token is written into a new
+# Preferences.xml before Plex first starts.
+- name: Plex native | Claim the server
+  ansible.builtin.include_tasks: native-claim.yml
+  when: not (_plex_claimed | bool)
+
+- name: Plex native | Add the Plex Media Server APT repository
+  ansible.builtin.deb822_repository:
+    name: plexmediaserver
+    types: [deb]
+    uris: https://repo.plex.tv/deb
+    suites: [public]
+    components: [main]
+    architectures: [amd64]
+    signed_by: https://downloads.plex.tv/plex-keys/PlexSign.v2.key
+    state: present
+  register: _plex_native_repo
+
+# deb822_repository does not refresh the indexes, so a new source is fetched here.
+- name: Plex native | Refresh the apt indexes after adding the source
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 300
+  when: _plex_native_repo is changed
+
+# The package's own scripts restart Plex on an upgrade and start it on a new install.
+- name: Plex native | Install the pinned package
+  ansible.builtin.apt:
+    name: "plexmediaserver={{ app_config.app.native_version }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 300
+
+- name: Plex native | Reload systemd for a changed drop-in
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _plex_native_unit.changed
+
+# A drop-in change on an existing install needs a restart; a new install already started
+# with it, and restarting that mid first boot could spend the claim token for nothing.
+- name: Plex native | Restart Plex for a changed drop-in
+  ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
+  vars:
+    restart_runtime: native
+    restart_services: ["{{ plex_native_service }}"]
+  when: _plex_native_unit.changed and _plex_native_installed.stat.exists
+
+- name: Plex native | Enable and start Plex
+  ansible.builtin.systemd:
+    name: "{{ plex_native_service }}"
+    state: started
+    enabled: true
+
+- name: Plex native | Install lab maintenance scripts
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - name: lab-restart-app
+      content: |
+        #!/bin/sh
+        set -eu
+        exec systemctl restart {{ plex_native_service }}
+    - name: lab-tail-applog
+      content: |
+        #!/bin/sh
+        set -eu
+        exec journalctl -u {{ plex_native_service }} -n "${1:-50}" --no-pager
+  loop_control:
+    label: "{{ item.name }}"

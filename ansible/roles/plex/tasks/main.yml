@@ -57,11 +57,13 @@
     group: "{{ app_config.app.pgid | default(1313) }}"
     mode: "0750"
   loop: ["{{ plex_project_dir }}", "{{ app_config.app.config_path }}", "{{ app_config.app.transcode_path }}"]
+  when: not (plex_native | bool)
 
 - name: Ensure media applications share a Docker network
   community.docker.docker_network:
     name: "{{ _plex_media_network }}"
     state: present
+  when: not (plex_native | bool)
 
 - name: Verify media paths are present on the stack host
   ansible.builtin.stat:
@@ -91,6 +93,17 @@
       {{ [{'src': 'device-groups.sh.j2', 'dest': plex_project_dir ~ '/device-groups.sh', 'mode': '0755'}]
          if _plex_dri_device_declared | bool else [] }}
     compose_secrets: "{{ [_plex_claim_token | default('')] | select | list }}"
+  when: not (plex_native | bool)
+
+- name: Deploy Plex natively
+  ansible.builtin.include_tasks: native.yml
+  when: plex_native | bool
+
+- name: Prove the native Plex iGPU path as its service user
+  ansible.builtin.include_tasks: native-gpu.yml
+  when:
+    - plex_native | bool
+    - _plex_dri_device_declared | bool
 
 - name: Wait for Plex to answer its identity endpoint
   ansible.builtin.uri:
@@ -135,6 +148,10 @@
 - name: Configure Plex hardware transcoding from its declared device
   ansible.builtin.include_tasks: configure-transcoder.yml
 
+- name: Save the advertised URL and transcode directory of a native Plex
+  ansible.builtin.include_tasks: native-prefs.yml
+  when: plex_native | bool
+
 - name: Store and verify the Plex server token
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
@@ -155,4 +172,6 @@
     # The file being replaced still holds the token; keep it masked in the diff.
     compose_secrets: "{{ [_plex_claim_token | default('')] | select | list }}"
     _plex_claimed: true
-  when: not (_plex_claimed_before | bool)
+  when:
+    - not (plex_native | bool)
+    - not (_plex_claimed_before | bool)

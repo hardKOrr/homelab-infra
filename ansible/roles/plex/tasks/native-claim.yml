@@ -1,0 +1,61 @@
+---
+# Exchange the one-use claim token for a server token and seed Preferences.xml with it and a
+# new machine identity, the way pms-docker's 40-plex-first-run does. Plex is stopped first so
+# it cannot overwrite the file, and starts afterwards with the claimed identity. An
+# unclaimed server holds no identity worth keeping, so its Preferences.xml is replaced.
+- name: Plex native claim | Make a machine identity
+  ansible.builtin.set_fact:
+    _plex_native_machine_id: "{{ lookup('ansible.builtin.pipe', 'uuidgen') }}"
+  no_log: true
+
+- name: Plex native claim | Derive the client identifier
+  ansible.builtin.set_fact:
+    _plex_native_client_id: "{{ (_plex_native_machine_id ~ '- Plex Media Server') | hash('sha1') }}"
+  no_log: true
+
+- name: Plex native claim | Exchange the claim token for a server token
+  ansible.builtin.uri:
+    url: "https://plex.tv/api/claim/exchange?token={{ _plex_claim_token | urlencode }}"
+    method: POST
+    return_content: true
+    headers:
+      X-Plex-Client-Identifier: "{{ _plex_native_client_id }}"
+      X-Plex-Product: Plex Media Server
+      X-Plex-Version: "1.1"
+      X-Plex-Provides: server
+      X-Plex-Platform: Linux
+      X-Plex-Platform-Version: "1.0"
+      X-Plex-Device-Name: PlexMediaServer
+      X-Plex-Device: Linux
+    status_code: [200, 201, 400, 401, 404]
+  register: _plex_native_exchange
+  changed_when: false
+  no_log: true
+
+- name: Plex native claim | Require a server token from the claim token
+  ansible.builtin.assert:
+    that: >-
+      _plex_native_exchange.status in [200, 201]
+      and (_plex_native_exchange.content | default('')) is search('<authentication-token>[^<]+</authentication-token>')
+    fail_msg: >-
+      plex.tv refused the claim token for {{ instance }} (HTTP {{ _plex_native_exchange.status | default('none') }}).
+      Obtain a fresh claim token (valid for four minutes), update
+      homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
+    quiet: true
+
+- name: Plex native claim | Stop an installed Plex before replacing its preferences
+  ansible.builtin.systemd:
+    name: "{{ plex_native_service }}"
+    state: stopped
+  when: _plex_native_installed.stat.exists
+
+- name: Plex native claim | Write the claimed Preferences.xml
+  ansible.builtin.copy:
+    dest: "{{ _plex_preferences }}"
+    content: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <Preferences MachineIdentifier="{{ _plex_native_machine_id }}" ProcessedMachineIdentifier="{{ _plex_native_client_id }}" PlexOnlineToken="{{ _plex_native_exchange.content | regex_search('<authentication-token>([^<]+)</authentication-token>', '\1') | first }}"/>
+    owner: "{{ plex_native_user }}"
+    group: "{{ plex_native_user }}"
+    mode: "0600"
+  no_log: true

@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: plex
-  description: "Deploys Plex Media Server as a Docker container on a homelab-infra media stack host"
+  description: "Deploys Plex Media Server as a Docker container on a homelab-infra media stack host, or natively on its own guest"
   min_ansible_version: "2.15"
 
 # The deploy playbook installs Docker. Recovery plans must not configure the host.

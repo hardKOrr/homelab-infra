@@ -1,6 +1,21 @@
 ---
 # Deploy hook (playbooks/apps/deploy.yml, localhost, before provisioning): the GPU check,
 # the media paths for the stack host or the NFS shares for Kubernetes, and the port behind the opt-in remote-access forward.
+# Native Plex on a VM has no iGPU: the shared native guest has no PCI passthrough step, and a
+# Proxmox host's /dev/dri cannot be shared into a VM. An LXC binds the shared nodes below.
+- name: Plex | Refuse a GPU declaration for native Plex on a VM
+  ansible.builtin.assert:
+    that:
+      - app_config.app.gpu_device | default('', true) | trim | length == 0
+      - app_config.app.devices | default([]) | select('match', '^/dev/dri(?:/|$)') | list | length == 0
+    fail_msg: >-
+      Native Plex on a VM cannot reach the iGPU. Clear app.gpu_device and the /dev/dri
+      entries of app.devices, or run Plex on an LXC (shared iGPU) or on Kubernetes.
+    quiet: true
+  when:
+    - app_config.hosting.method == 'native'
+    - _hosting_guest_type | default('vm') != 'lxc'
+
 - name: Plex | Check the GPU placement declaration
   ansible.builtin.include_tasks: ../../../tasks/proxmox/assert-dedicated-igpu.yml
   vars:
@@ -22,12 +37,12 @@
     k8s_media_mounts: "{{ app_config.app.mounts | default([], true) }}"
   when: app_config.hosting.method == 'kubernetes'
 
-# On an LXC stack host the iGPU nodes in app.devices are bound into the guest as shared.
+# On an LXC (stack host or native guest) the iGPU nodes in app.devices are bound into the guest as shared.
 - name: Plex | Name the shared DRI nodes to bind into the LXC
   ansible.builtin.set_fact:
     deploy_host_shared_devices: >-
       {{ app_config.app.devices | default([])
          | select('match', '^/dev/dri/') | map('community.general.dict_kv', 'host') | list }}
   when:
-    - app_config.hosting.method == 'docker'
+    - app_config.hosting.method in ['docker', 'native']
     - _hosting_guest_type | default('vm') == 'lxc'

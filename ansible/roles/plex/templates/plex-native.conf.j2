@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+[Service]
+# Same layout as the Docker image's /config, so one data directory is the recovery unit.
+Environment="PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR={{ app_config.app.config_path }}/Library/Application Support"
+Environment=TZ={{ homelabinfra_config.timezone | default('UTC') }}
+# The service user reads the DRI nodes through the numeric group ids the guest sees. The
+# empty assignment resets the list, so a removed device drops its group on the next deploy.
+SupplementaryGroups=
+{% if _plex_dri_group_ids | default([]) | length > 0 %}
+SupplementaryGroups={{ _plex_dri_group_ids | join(' ') }}
+{% endif %}
