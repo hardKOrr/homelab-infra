@@ -1,8 +1,8 @@
 ---
 # Device path only, from inside the running pod: the render node exists, Plex's service user
 # can open it, and VA-API lists the device's H.264 profiles. The image has no vainfo, so the
-# probe installs it (Plex's own VA-API drivers are bundled; its Plex Pass transcoder is not
-# exercised here).
+# probe installs it and uses its matching system VA-API driver. Plex's bundled drivers
+# belong to its transcoder, which is not exercised here (it requires Plex Pass).
 - name: Plex Kubernetes GPU | Probe the render node and its H.264 profiles
   ansible.builtin.command:
     argv:
@@ -25,8 +25,7 @@
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq vainfo >/dev/null 2>&1 \
             || { echo "vainfo could not be installed in the pod"; exit 5; }
         }
-        su -s /bin/sh plex -c "LIBVA_DRIVERS_PATH=/usr/lib/plexmediaserver/lib/dri \
-          vainfo --display drm --device $node" 2>&1
+        su -s /bin/sh plex -c "vainfo --display drm --device $node" 2>&1
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _plex_k8s_gpu_probe
