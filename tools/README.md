@@ -13,6 +13,7 @@ options; `<script> --help` prints it.
 | A shell command inside one `_+lab` guest (LXC directly, VM through lab-run) | `tools/guest-exec <name or vmid> '<cmd>'` |
 | Run the whole recovery drill on one instance, stopping at the first failure | `tools/lab-start drill-<i> -- tools/lab-drill <instance>`; `--plan` prints the steps |
 | Where an AO issue stands: open tasks, latest handoff or blocked comment, PR checks and unresolved threads, local HEAD against both | `tools/ao-brief [issue]` (read-only) |
+| A PR to review: head against local HEAD, checks, earlier reviews and every thread, the diff stat and the diff file by file | `tools/ao-brief --review <pr>` (read-only; may fetch the base and head refs) |
 | Check an app in a browser: sign in, pages render, a flow works | `tools/lab-browser <instance> <url> ansible/roles/<app>/browser/<spec>.js` |
 
 `lab-exec` and `guest-exec` take a script on stdin instead of a command string. Exit codes are the command's.

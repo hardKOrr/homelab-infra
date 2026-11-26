@@ -2,6 +2,7 @@
 """ao-brief — where an AO issue stands, in one read-only call.
 
   tools/ao-brief [issue]
+  tools/ao-brief --review <pr>
 
 Prints the issue's title and state, its open Task sub-issues in order, its latest handoff
 or blocked comment, the claimed PR (head, body, checks, unresolved review threads), and
@@ -10,6 +11,12 @@ GitHub Actions check it also prints the end of the failed job's log.
 
 Without an issue number it uses $AO_ISSUE_ID, then the current branch's PR (its
 <!-- ao-links --> block). Long text is trimmed and says so. It changes nothing.
+
+With --review it prints what a reviewer reads first, for one PR: title, head and base,
+whether the local HEAD is the PR head, checks, earlier reviews and every review thread
+(resolved too), the PR body, the diff stat and the diff file by file. The diff is local git
+(base...PR head, fetching the two refs when the head commit is missing), else `gh pr diff`.
+A file's diff past FILE_LINES lines is cut with the command that prints the rest.
 """
 import json
 import os
@@ -18,9 +25,10 @@ import subprocess
 import sys
 
 REPO = os.environ.get("AO_WATCHER_REPO", "hardKOrr/homelab-infra")
-LIMITS = {"comment": 6000, "body": 3000, "thread": 600}
+LIMITS = {"comment": 6000, "body": 3000, "thread": 600, "review": 1500}
 LOG_LINES = 40
 LOG_JOBS = 3
+FILE_LINES = 400
 PASSING = ("success", "skipped", "neutral")
 MARKER = re.compile(r"<!-- ao-event session=\S+ kind=(handoff|blocked)\b")
 
@@ -33,11 +41,19 @@ pullRequest(number:$n){number state url headRefName headRefOid body isDraft
  commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{
   ... on CheckRun{name conclusion status databaseId} ... on StatusContext{context state}}}}}}}
  reviewThreads(first:100){nodes{isResolved path line comments(first:1){nodes{author{login} body}}}}}}}"""
+REVIEW_QUERY = """query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
+pullRequest(number:$n){number title state url headRefName headRefOid baseRefName body isDraft
+ additions deletions changedFiles
+ commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{
+  ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}}
+ reviews(last:10){nodes{author{login} state submittedAt body commit{oid}}}
+ reviewThreads(first:100){nodes{isResolved isOutdated path line
+  comments(first:10){nodes{author{login} body}}}}}}}"""
 
 
 def sh(*args):
     result = subprocess.run(args, capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else None
+    return result.stdout.strip("\n").rstrip() if result.returncode == 0 else None
 
 
 def graphql(query, n):
@@ -178,8 +194,115 @@ def render(issue, pr, local):
     return "\n".join(out)
 
 
+def check_lines(pr):
+    """One line per check that did not pass, after the rollup state."""
+    commits = pr["commits"]["nodes"]
+    rollup = commits[0]["commit"]["statusCheckRollup"] if commits else None
+    if not rollup:
+        return ["Checks: none reported"]
+    out = [f"Checks: {rollup['state'].lower()}"]
+    for c in rollup["contexts"]["nodes"]:
+        result = (c.get("conclusion") or c.get("status") or c.get("state") or "").lower()
+        if result not in PASSING:
+            out.append(f"- {c.get('name') or c.get('context')}: {result}")
+    return out
+
+
+def split_diff(diff):
+    """A unified diff as [(path, lines)], one entry per file."""
+    files = []
+    for line in (diff or "").splitlines():
+        if line.startswith("diff --git "):
+            files.append((line.rsplit(" b/", 1)[-1], [line]))
+        elif files:
+            files[-1][1].append(line)
+    return files
+
+
+def review_diff(pr):
+    """(range, stat, diff) for the PR: local git base...head when the head commit is here, else gh."""
+    base, head = f"origin/{pr['baseRefName']}", pr["headRefOid"]
+    sh("git", "fetch", "-q", "origin", pr["baseRefName"])
+    if sh("git", "cat-file", "-e", f"{head}^{{commit}}") is None:
+        sh("git", "fetch", "-q", "origin", pr["headRefName"])
+    if sh("git", "cat-file", "-e", f"{head}^{{commit}}") is not None:
+        span = f"{base}...{head[:12]}"
+        diff = sh("git", "diff", "--no-color", f"{base}...{head}")
+        if diff is not None:
+            return span, sh("git", "diff", "--stat=120", f"{base}...{head}"), diff
+    return f"gh pr diff {pr['number']}", None, sh("gh", "pr", "diff", str(pr["number"]), "--repo", REPO)
+
+
+def render_review(pr, span, stat, diff, local):
+    """Format the review brief from GitHub data, the diff and local git state."""
+    draft = ", draft" if pr["isDraft"] else ""
+    out = [f"# PR #{pr['number']} {pr['title']} ({pr['state'].lower()}{draft})", pr["url"],
+           f"{pr['headRefName']} @ {pr['headRefOid'][:12]} into {pr['baseRefName']}: "
+           f"{pr['changedFiles']} files, +{pr['additions']} -{pr['deletions']}"]
+    if local["branch"] is None:
+        out.append("Local: not in a git checkout; read files with `git show <head>:<path>`")
+    else:
+        same = local["head"] and (pr["headRefOid"].startswith(local["head"]) or local["head"].startswith(pr["headRefOid"]))
+        out.append(f"Local: {local['branch']} @ {local['head'][:12]}, " + (
+            "the PR head, so files on disk are what you review" if same else
+            f"not the PR head; read PR files with `git show {pr['headRefOid'][:12]}:<path>`"))
+    out += check_lines(pr) + [""]
+    reviews = [r for r in pr["reviews"]["nodes"] if (r["body"] or "").strip()]
+    out.append(f"## Earlier reviews: {len(reviews)}")
+    for r in reviews:
+        commit = (r.get("commit") or {}).get("oid", "")[:12]
+        out += [f"### {(r['author'] or {}).get('login', '?')} {r['state'].lower()} "
+                f"{(r['submittedAt'] or '')[:16].replace('T', ' ')} on {commit or '?'}", trim(r["body"], "review")]
+    threads = pr["reviewThreads"]["nodes"]
+    open_count = sum(not t["isResolved"] for t in threads)
+    out += ["", f"## Review threads: {open_count} unresolved of {len(threads)}"]
+    for t in threads:
+        state = "unresolved" if not t["isResolved"] else "resolved"
+        state += ", outdated" if t.get("isOutdated") else ""
+        out.append(f"- {t['path']}:{t['line'] or '?'} ({state})")
+        for c in t["comments"]["nodes"]:
+            body = trim(c["body"], "thread").replace("\n", "\n    ")
+            out.append(f"  - {(c['author'] or {}).get('login', '?')}: {body}")
+    out += ["", "## PR body", trim(pr["body"], "body"), "", f"## Diff ({span})"]
+    if stat:
+        out += ["```", stat, "```"]
+    files = split_diff(diff)
+    if diff is None:
+        out.append(f"- the diff could not be read; run gh pr diff {pr['number']}")
+    for path, lines in files:
+        out += ["", f"### {path}", "```diff"]
+        out += lines[:FILE_LINES]
+        out.append("```")
+        if len(lines) > FILE_LINES:
+            rest = f"git diff {span} -- {path}" if "..." in span else f"gh pr diff {pr['number']}"
+            out.append(f"[... cut {len(lines) - FILE_LINES} lines; the rest: {rest}]")
+    return "\n".join(out)
+
+
+def local_state():
+    head = sh("git", "rev-parse", "HEAD")
+    return {"branch": sh("git", "branch", "--show-current") if head else None, "head": head or "",
+            "dirty": bool(sh("git", "status", "--porcelain")) if head else False}
+
+
+def review_main(arg):
+    number = int(arg.lstrip("#")) if arg and arg.lstrip("#").isdigit() else None
+    if not number:
+        sys.exit("ao-brief: --review needs a PR number")
+    data = graphql(REVIEW_QUERY, number)
+    if not data or not data["pullRequest"]:
+        sys.exit(f"ao-brief: cannot read PR #{number} in {REPO}")
+    pr = data["pullRequest"]
+    span, stat, diff = review_diff(pr)
+    print(render_review(pr, span, stat, diff, local_state()))
+
+
 def main():
     args = sys.argv[1:]
+    if args[:1] == ["--review"]:
+        if len(args) != 2:
+            sys.exit("usage: tools/ao-brief --review <pr>")
+        return review_main(args[1])
     if args[:1] in (["-h"], ["--help"]) or len(args) > 1:
         print(__doc__.strip())
         sys.exit(0 if args[:1] in (["-h"], ["--help"]) else 2)
@@ -194,10 +317,7 @@ def main():
     pr = graphql(PR_QUERY, pr_number)["pullRequest"] if pr_number else None
     if pr:
         pr["logs"] = failing_logs(pr)
-    head = sh("git", "rev-parse", "HEAD")
-    local = {"branch": sh("git", "branch", "--show-current") if head else None, "head": head or "",
-             "dirty": bool(sh("git", "status", "--porcelain")) if head else False}
-    print(render(issue, pr, local))
+    print(render(issue, pr, local_state()))
 
 
 if __name__ == "__main__":
