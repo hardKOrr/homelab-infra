@@ -70,6 +70,26 @@ assert include(rolled, "kubernetes-workload.yml")["vars"]["_plex_k8s_claiming"] 
 # The config volume is the application-consistent recovery unit.
 backup = include(kubernetes, "recovery-backup.yml")["vars"]["k8s_recovery"]
 assert backup["archives"][0]["claim"] == "{{ instance }}-config" and backup["stop"] == ["{{ instance }}"]
+# Exercise the shared recovery input seam with Plex's real defaults, not a fixture client.
+shared_backup = yaml.safe_load(read("ansible/tasks/kubernetes/recovery-backup.yml"))
+backup_block = next(t["block"] for t in shared_backup if t.get("block"))
+resolve_backup = next(t["ansible.builtin.set_fact"]["_kr"] for t in backup_block
+                      if "_kr" in t.get("ansible.builtin.set_fact", {}))
+recovery_variables = {
+    "instance": "plex", "app_config": defaults,
+    "k8s_recovery": render(backup, {"instance": "plex", "app_config": defaults}),
+    "k8s_pbs_repository": "backup@example.test:store", "k8s_pbs_datastore": "store",
+    "homelabinfra_config": {"timezone": "UTC"}, "homelabinfra_infra": {}, "_kr_ntfy_token": "",
+}
+recovery_variables.update({
+    "_kr": render(resolve_backup, recovery_variables), "k8s_namespace": "app-plex",
+    "k8s_pbs_fingerprint": "00:" * 31 + "00", "_k8s_recovery_ansible_root": str(ROOT / "ansible"),
+})
+recovery_docs = list(yaml.safe_load_all(render(
+    read("ansible/templates/kubernetes/recovery-backup.yaml.j2"), recovery_variables)))
+cronjob = next(d for d in recovery_docs if d["kind"] == "CronJob")
+backup_pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+assert any(c["image"] == defaults["backup"]["client"]["image"] for c in backup_pod["containers"])
 restore = tasks("restore-kubernetes.yml")
 job = include(restore, "tasks/kubernetes/recovery-restore.yml")
 assert job["vars"]["k8s_recovery"]["archives"][0]["claim"] == "{{ restore_target }}-config"
