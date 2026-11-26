@@ -33,6 +33,10 @@
               if _plex_gpu_declared | bool else []) }}
       probe: {path: /identity, port: "{{ app_config.app.container_port | default(32400) }}"}
       resources: {requests: {cpu: 500m, memory: 1Gi}}
+      # A replacement claim token rolls the unclaimed pod, so its PLEX_CLAIM is read again.
+      pod_annotations: >-
+        {{ {'homelabinfra/claim-token-sha256': _plex_claim_token | hash('sha256')}
+           if _plex_k8s_claiming | default(false) | bool else {} }}
     # The iGPU is passed through to one node VM, so only that node has /dev/dri. A hostPath
     # device node is unusable in an unprivileged container (its device cgroup refuses it).
     _plex_k8s_gpu:

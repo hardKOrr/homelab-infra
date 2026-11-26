@@ -87,7 +87,7 @@ shared = read("ansible/templates/kubernetes/single-container.yaml.j2")
 configmap = read(f"{ROLE}/templates/device-groups-configmap.yaml.j2")
 
 
-def workload(gpu, claiming=False):
+def workload(gpu, claiming=False, token="claim-one"):
     app = dict(defaults["app"], gpu_device="intel-igpu-2" if gpu else "")
     variables = {
         "instance": "plex", "_deploy_fqdn": "plex.example.test",
@@ -98,7 +98,7 @@ def workload(gpu, claiming=False):
             "server": "192.0.2.50", "path": "/export/media", "readOnly": True}}],
         "k8s_media_volume_mounts": [{"name": "media-0", "mountPath": "/mnt/media", "readOnly": True}],
         "_plex_gpu_declared": gpu, "_plex_gpu_nodes": ["k3s-4"] if gpu else [],
-        "_plex_k8s_claiming": claiming,
+        "_plex_k8s_claiming": claiming, "_plex_claim_token": token,
         **deploy["vars"],
     }
     variables["k8s_app"] = render(deploy["vars"]["k8s_app"], variables)
@@ -127,6 +127,16 @@ env = {e["name"]: e for e in container["env"]}
 assert env["PLEX_UID"]["value"] == "1313" and "PLEX_CLAIM" not in env
 claiming = workload(False, claiming=True)[("Deployment", "plex")]["spec"]["template"]["spec"]["containers"][0]
 assert {"name": "PLEX_CLAIM", "valueFrom": {"secretKeyRef": {"name": "plex", "key": "claim_token"}}} in claiming["env"]
+
+def annotations(token, claiming=True):
+    template = workload(False, claiming, token)[("Deployment", "plex")]["spec"]["template"]
+    return template["metadata"].get("annotations", {})
+
+
+# Retrying an unclaimed server with a replacement token rolls the pod, without exposing it.
+first, second = annotations("claim-one"), annotations("claim-two")
+assert first and first != second and "claim-one" not in str(first)
+assert annotations("claim-one") == first and annotations("claim-one", False) == {}
 
 gpu = workload(True)
 pod = gpu[("Deployment", "plex")]["spec"]["template"]["spec"]
