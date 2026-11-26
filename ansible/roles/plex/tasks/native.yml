@@ -3,7 +3,7 @@
 # Server APT repository (https://support.plex.tv/articles/235974187-enable-repository-updating-for-supported-linux-server-distributions/)
 # under the plexmediaserver unit it ships. State lives under app.config_path (the same
 # layout as the Docker image's /config) and the unit drop-in points Plex at it. Plex starts on
-# the first install, so its user, directories and drop-in (with the claim token) come first.
+# the first install, so its user, directories, drop-in and claimed Preferences.xml come first.
 - name: Plex native | Assert the supported guest
   ansible.builtin.assert:
     that:
@@ -71,16 +71,21 @@
     group: root
     mode: "0755"
 
-# Holds the one-use claim token until it is spent, so it is readable by root only.
 - name: Plex native | Render the unit drop-in
   ansible.builtin.template:
     src: plex-native.conf.j2
     dest: "{{ plex_native_unit_dropin }}"
     owner: root
     group: root
-    mode: "0600"
+    mode: "0644"
   register: _plex_native_unit
-  no_log: true
+
+# The package does not read PLEX_CLAIM (the Docker image's first-run script does), so the
+# claim is exchanged here, as that script does, and the server token is written into a new
+# Preferences.xml before Plex first starts.
+- name: Plex native | Claim the server
+  ansible.builtin.include_tasks: native-claim.yml
+  when: not (_plex_claimed | bool)
 
 - name: Plex native | Add the Plex Media Server APT repository
   ansible.builtin.deb822_repository:

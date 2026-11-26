@@ -33,16 +33,21 @@ prepare = (role / "tasks/deploy-prepare.yml").read_text()
 assert "Refuse a GPU declaration for native Plex on a VM" in prepare
 assert "app_config.hosting.method in ['docker', 'native']" in prepare
 
-# The drop-in carries the claim token only while unclaimed, and resets the DRI groups.
+# The package ignores PLEX_CLAIM, so Deploy exchanges the token and seeds Preferences.xml
+# before the package first starts Plex.
+claim = (role / "tasks/native-claim.yml").read_text()
+assert "plex.tv/api/claim/exchange" in claim and "PlexOnlineToken=" in claim
+assert native.index("Claim the server") < native.index("Install the pinned package")
+assert "PLEX_CLAIM" not in (role / "templates/plex-native.conf.j2").read_text()
+
+# The drop-in resets the DRI groups when there are none.
 env = jinja2.Environment(keep_trailing_newline=True)
 env.filters["comment"] = lambda text: "# " + str(text)
 template = env.from_string((role / "templates/plex-native.conf.j2").read_text())
-ctx = dict(ansible_managed="m", app_config={"app": {"config_path": "/opt/p/config"}}, homelabinfra_config={},
-           _plex_claim_token="TOK", _plex_dri_group_ids=["44", "104"])
-unclaimed = template.render(_plex_claimed=False, **ctx)
-assert "PLEX_CLAIM=TOK" in unclaimed and "SupplementaryGroups=44 104" in unclaimed
-assert "/opt/p/config/Library/Application Support" in unclaimed
-claimed = template.render(_plex_claimed=True, **{**ctx, "_plex_dri_group_ids": []})
-assert "PLEX_CLAIM" not in claimed and "SupplementaryGroups=\n" in claimed
+ctx = dict(ansible_managed="m", app_config={"app": {"config_path": "/opt/p/config"}}, homelabinfra_config={})
+with_groups = template.render(_plex_dri_group_ids=["44", "104"], **ctx)
+assert "SupplementaryGroups=44 104" in with_groups
+assert "/opt/p/config/Library/Application Support" in with_groups
+assert "SupplementaryGroups=\n" in template.render(_plex_dri_group_ids=[], **ctx)
 
 print("Plex native pins one release, reuses the shared backup and restore and keeps the iGPU on an LXC")

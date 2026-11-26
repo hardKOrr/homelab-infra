@@ -175,18 +175,3 @@
   when:
     - not (plex_native | bool)
     - not (_plex_claimed_before | bool)
-
-# Natively the claim token lives in the unit drop-in; render it without the token now.
-- name: Remove the consumed claim token from the native Plex unit
-  ansible.builtin.template:
-    src: plex-native.conf.j2
-    dest: "{{ plex_native_unit_dropin }}"
-    owner: root
-    group: root
-    mode: "0600"
-  vars:
-    _plex_claimed: true
-  no_log: true
-  when:
-    - plex_native | bool
-    - not (_plex_claimed_before | bool)

@@ -3,10 +3,6 @@
 # Same layout as the Docker image's /config, so one data directory is the recovery unit.
 Environment="PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR={{ app_config.app.config_path }}/Library/Application Support"
 Environment=TZ={{ homelabinfra_config.timezone | default('UTC') }}
-{% if not _plex_claimed and _plex_claim_token | length > 0 %}
-# First startup only. Deploy rewrites this file after proving the claim.
-Environment=PLEX_CLAIM={{ _plex_claim_token }}
-{% endif %}
 # The service user reads the DRI nodes through the numeric group ids the guest sees. The
 # empty assignment resets the list, so a removed device drops its group on the next deploy.
 SupplementaryGroups=
