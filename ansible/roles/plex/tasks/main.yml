@@ -87,6 +87,9 @@
     compose_project_dir: "{{ plex_project_dir }}"
     compose_owner: "{{ app_config.app.puid | default(1313) }}"
     compose_group: "{{ app_config.app.pgid | default(1313) }}"
+    compose_files: >-
+      {{ [{'src': 'device-groups.sh.j2', 'dest': plex_project_dir ~ '/device-groups.sh', 'mode': '0755'}]
+         if _plex_dri_device_declared | bool else [] }}
     compose_secrets: "{{ [_plex_claim_token | default('')] | select | list }}"
 
 - name: Wait for Plex to answer its identity endpoint

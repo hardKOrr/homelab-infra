@@ -186,6 +186,11 @@ def render_compose(root, devices, gpu_device, group_ids):
                 "src": str(compose_template),
                 "dest": str(compose_path),
             },
+        }, {
+            "ansible.builtin.template": {
+                "src": str(compose_template.with_name("device-groups.sh.j2")),
+                "dest": str(root / "device-groups.sh"),
+            },
         }],
     }]
     playbook_path.write_text(yaml.safe_dump(play, sort_keys=False))
@@ -283,10 +288,34 @@ def main():
             gpu_compose = render_compose(root, [], "fixture-igpu", ["44", "104"])
             assert '"/dev/dri:/dev/dri"' in gpu_compose
             assert re.search(r'(?m)^    group_add:\n      - "44"\n      - "104"$', gpu_compose)
+            assert "./device-groups.sh:/etc/cont-init.d/46-plex-device-groups:ro" in gpu_compose
+
+            # Model the image's privilege drop: the real service needs membership
+            # in both an existing group (including root on an LXC) and a new GID.
+            render_compose(root, ["/dev/dri/renderD128"], "", ["0", "104"])
+            fake_bin = root / "init-bin"
+            fake_bin.mkdir()
+            for name, body in {
+                "getent": '[ "$2" = 0 ] && echo root:x:0: || exit 2',
+                "groupadd": 'echo "groupadd $*" >> "$INIT_LOG"',
+                "usermod": 'echo "usermod $*" >> "$INIT_LOG"',
+            }.items():
+                command = fake_bin / name
+                command.write_text("#!/bin/sh\n" + body + "\n")
+                command.chmod(0o755)
+            init_log = root / "init.log"
+            subprocess.run(["bash", str(root / "device-groups.sh")], check=True,
+                           env=os.environ | {"PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                                             "INIT_LOG": str(init_log)})
+            assert init_log.read_text().splitlines() == [
+                "usermod -a -G root plex", "groupadd -g 104 plex-device-104",
+                "usermod -a -G plex-device-104 plex",
+            ]
 
             cpu_compose = render_compose(root, [], "", [])
             assert "group_add:" not in cpu_compose
             assert "devices:" not in cpu_compose
+            assert "46-plex-device-groups" not in cpu_compose
     finally:
         for pending in server.pending_writes:
             pending.join()

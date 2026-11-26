@@ -1,0 +1,12 @@
+#!/usr/bin/with-contenv bash
+# Plex drops Docker's supplemental groups when starting its service. Its image's
+# find -type c also misses PVE bind mounts, so use the stat-resolved device GIDs.
+set -eu
+for gid in {{ _plex_dri_group_ids | join(' ') }}; do
+    group=$(getent group "$gid" | cut -d: -f1)
+    if [ -z "$group" ]; then
+        group="plex-device-$gid"
+        groupadd -g "$gid" "$group"
+    fi
+    usermod -a -G "$group" plex
+done
