@@ -3,6 +3,8 @@
 
 from pathlib import Path
 import os
+import subprocess
+import tempfile
 
 import yaml
 from ansible.parsing.dataloader import DataLoader
@@ -102,12 +104,18 @@ def workload(gpu, claiming=False, token="claim-one"):
         **deploy["vars"],
     }
     variables["k8s_app"] = render(deploy["vars"]["k8s_app"], variables)
-    docs = yaml.safe_load_all(render(shared, variables))
-    result = {(d["kind"], d["metadata"]["name"]): d for d in docs}
+    variables['role_path'] = str(ROOT / ROLE)
+    variables['k8s_app_extra_manifest'] = ''
     if gpu:
         assert "role_path ~ '/templates/device-groups-configmap.yaml.j2'" in deploy["vars"]["k8s_app_extra_manifest"]
-        result.update({(d["kind"], d["metadata"]["name"]): d for d in yaml.safe_load_all(render(configmap, variables))})
-    return result
+        variables['k8s_app_extra_manifest'] = render(configmap, variables)
+    shared_tasks = yaml.safe_load(read('ansible/tasks/kubernetes/single-container.yml'))
+    manifest = render(shared_tasks[-1]['vars']['k8s_manifest'], variables)
+    docs = list(yaml.safe_load_all(manifest))
+    assert all(d['apiVersion'] == ('apps/v1' if d['kind'] == 'Deployment'
+                                   else 'networking.k8s.io/v1' if d['kind'] == 'Ingress'
+                                   else 'v1') for d in docs)
+    return {(d["kind"], d["metadata"]["name"]): d for d in docs}
 
 
 cpu = workload(False)
@@ -159,5 +167,18 @@ assert "renderD" in probe and "su -s /bin/sh plex" in probe and "VAProfileH264" 
 node = yaml.safe_load(read("ansible/tasks/kubernetes/provision-node.yml"))
 attach = include(node, "attach-pci-passthrough.yml")
 assert attach["when"] == "k8s_node.gpu_device | default('', true) | length > 0"
+
+# The canary inspects the media visible to Plex, including inside a Kubernetes pod.
+canary = next(t["block"] for t in tasks("drill-canary.yml") if t.get("block"))
+find = include(canary, "../../../tasks/drill/app-exec.yml")
+with tempfile.TemporaryDirectory() as directory:
+    folder = Path(directory)
+    (folder / "canary.mkv").touch()
+    (folder / "ignore.txt").touch()
+    (folder / "nested").mkdir()
+    (folder / "nested" / "ignore.mp4").touch()
+    argv = render(find["vars"]["drill_exec_argv"], {"_pxc_folder": directory})
+    result = subprocess.run(argv, check=True, capture_output=True, text=True)
+    assert result.stdout.splitlines() == [str(folder / "canary.mkv")]
 
 print("Plex keeps Docker as default and renders its Kubernetes workload, claim, iGPU pinning and recovery dispatch")
