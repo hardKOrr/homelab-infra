@@ -37,6 +37,8 @@ assert "app_config.hosting.method in ['docker', 'native']" in prepare
 # before the package first starts Plex.
 claim = (role / "tasks/native-claim.yml").read_text()
 assert "plex.tv/api/claim/exchange" in claim and "PlexOnlineToken=" in claim
+# The claim writes Preferences.xml into the state directory, which must exist by then.
+assert '"{{ plex_state_path }}"' in native[: native.index("Claim the server")]
 assert native.index("Claim the server") < native.index("Install the pinned package")
 assert "PLEX_CLAIM" not in (role / "templates/plex-native.conf.j2").read_text()
 

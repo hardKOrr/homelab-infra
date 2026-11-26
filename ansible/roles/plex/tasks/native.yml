@@ -61,6 +61,7 @@
     - "{{ app_config.app.config_path }}"
     - "{{ app_config.app.config_path }}/Library"
     - "{{ app_config.app.config_path }}/Library/Application Support"
+    - "{{ plex_state_path }}"
     - "{{ app_config.app.transcode_path }}"
 
 - name: Plex native | Create the unit drop-in directory
