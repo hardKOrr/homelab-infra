@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-device-groups
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+data:
+  device-groups.sh: |
+    #!/usr/bin/with-contenv bash
+    # Plex drops the container's supplemental groups when it starts its service. Give its
+    # service user the group of each DRI node the pod sees, as the node VM numbers it.
+    set -eu
+    for node in /dev/dri/*; do
+        [ -c "$node" ] || continue
+        gid=$(stat -c %g "$node")
+        [ "$gid" -gt 0 ] || continue
+        group=$(getent group "$gid" | cut -d: -f1)
+        if [ -z "$group" ]; then
+            group="plex-device-$gid"
+            groupadd -g "$gid" "$group"
+        fi
+        usermod -a -G "$group" plex
+    done

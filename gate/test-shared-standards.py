@@ -270,7 +270,7 @@ def check_restore_matchers():
     for line in ["argv: [chown, -R, a]", "  - setpriv", "chown -R ntfy:ntfy x", "    recurse: true"]:
         assert RESTORE_OWNERSHIP.search(line), line
     assert not RESTORE_OWNERSHIP.search("owner: root")
-    assert in_restore_code("ansible/roles/plex/tasks/restore.yml")
+    assert in_restore_code("ansible/roles/plex/tasks/restore-guest.yml")
     assert in_restore_code("ansible/roles/wordpress/files/wordpress-recovery")
     assert not in_restore_code("ansible/roles/plex/tasks/main.yml")
 

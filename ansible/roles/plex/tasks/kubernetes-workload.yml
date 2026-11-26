@@ -1,0 +1,48 @@
+---
+# Apply Plex's Deployment (and, with the iGPU, its device-group ConfigMap). The caller sets
+# _plex_k8s_claiming: true while the claim token is still unspent, so the pod starts with
+# PLEX_CLAIM; the next apply drops it, as the Docker path does.
+- name: Plex Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/single-container.yml
+  vars:
+    k8s_wait_timeout: 600
+    _plex_k8s_base:
+      name: "{{ instance }}"
+      image: "{{ app_config.app.image }}"
+      port: "{{ app_config.app.port }}"
+      container_port: "{{ app_config.app.container_port | default(32400) }}"
+      host: "{{ _deploy_fqdn }}"
+      env: >-
+        {{ [{'name': 'TZ', 'value': homelabinfra_config.timezone | default('UTC')},
+            {'name': 'PLEX_UID', 'value': app_config.app.puid | default(1313)},
+            {'name': 'PLEX_GID', 'value': app_config.app.pgid | default(1313)},
+            {'name': 'ADVERTISE_IP', 'value': _plex_advertise_url}]
+           + ([{'name': 'PLEX_CLAIM', 'secret': 'claim_token'}] if _plex_k8s_claiming | default(false) | bool else []) }}
+      volumes:
+        - {name: config, mount_path: /config, storage: "{{ app_config.app.storage | default(20) }}"}
+      extra_volumes: >-
+        {{ k8s_media_volumes + [{'name': 'transcode', 'emptyDir': {}}]
+           + ([{'name': 'dri', 'hostPath': {'path': '/dev/dri', 'type': 'Directory'}},
+               {'name': 'device-groups', 'configMap': {'name': instance ~ '-device-groups', 'defaultMode': 493}}]
+              if _plex_gpu_declared | bool else []) }}
+      extra_volume_mounts: >-
+        {{ k8s_media_volume_mounts + [{'name': 'transcode', 'mountPath': '/transcode'}]
+           + ([{'name': 'dri', 'mountPath': '/dev/dri'},
+               {'name': 'device-groups', 'mountPath': '/etc/cont-init.d/46-plex-device-groups',
+                'subPath': 'device-groups.sh'}]
+              if _plex_gpu_declared | bool else []) }}
+      probe: {path: /identity, port: "{{ app_config.app.container_port | default(32400) }}"}
+      resources: {requests: {cpu: 500m, memory: 1Gi}}
+      # A replacement claim token rolls the unclaimed pod, so its PLEX_CLAIM is read again.
+      pod_annotations: >-
+        {{ {'homelabinfra/claim-token-sha256': _plex_claim_token | hash('sha256')}
+           if _plex_k8s_claiming | default(false) | bool else {} }}
+    # The iGPU is passed through to one node VM, so only that node has /dev/dri. A hostPath
+    # device node is unusable in an unprivileged container (its device cgroup refuses it).
+    _plex_k8s_gpu:
+      node_selector: {kubernetes.io/hostname: "{{ _plex_gpu_nodes[0] | default('') }}"}
+      container_security_context: {privileged: true}
+    k8s_app: "{{ _plex_k8s_base | combine(_plex_k8s_gpu if _plex_gpu_declared | bool else {}) }}"
+    k8s_app_extra_manifest: >-
+      {{ lookup('ansible.builtin.template', role_path ~ '/templates/device-groups-configmap.yaml.j2')
+         if _plex_gpu_declared | bool else '' }}

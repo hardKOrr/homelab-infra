@@ -1,0 +1,200 @@
+---
+# Plex on Kubernetes: /config on a default-StorageClass PVC and the media on the lab's existing
+# NFS shares, read-only at the same container paths as on Docker (deploy-prepare.yml resolved
+# them into k8s_media_nfs). With app.gpu_device the pod is pinned to the cluster node that
+# holds that iGPU (cluster.nodes[].gpu_device) and gets /dev/dri. The claim token reaches the
+# pod through a Secret for the first start only; Plex's API is reached through the ingress VIP
+# with the routed Host name, and its Preferences.xml is read from the pod.
+- name: Plex Kubernetes | Resolve the cluster and API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Plex Kubernetes | Resolve the settings the workload and API use
+  ansible.builtin.set_fact:
+    _plex_mounts: "{{ app_config.app.mounts | default([], true) }}"
+    _plex_claim_token: "{{ app_config.app.claim_token | default('', true) }}"
+    _plex_advertise_url: >-
+      {{ app_config.app.advertise_url | default('', true)
+         or ('https://' ~ (app_config.routing.subdomain | default(instance, true))
+             ~ '.' ~ (homelabinfra_infra.domain | default('')) ~ ':443') }}
+    _plex_gpu_declared: "{{ app_config.app.gpu_device | default('', true) | trim | length > 0 }}"
+    _plex_gpu_nodes: >-
+      {{ k8s_cluster_facts.nodes | selectattr('gpu_device', 'defined')
+         | selectattr('gpu_device', 'equalto', app_config.app.gpu_device | default('', true) | trim)
+         | map(attribute='name') | list }}
+    _plex_base: "http://{{ k8s_cluster_facts.ingress_vip }}"
+    _plex_headers: "{{ {'Host': _deploy_fqdn} }}"
+    _plex_k8s_prefs_path: "{{ plex_k8s_state_path }}/Preferences.xml"
+  no_log: true
+
+- name: Plex Kubernetes | Assert the advertised Plex URL includes a port
+  ansible.builtin.assert:
+    that: _plex_advertise_url is match('^https?://[^/]+:[0-9]+/?$')
+    fail_msg: "app.advertise_url must be a complete HTTP(S) URL with an explicit port."
+
+- name: Plex Kubernetes | Require exactly one cluster node holding the declared iGPU
+  ansible.builtin.assert:
+    that: _plex_gpu_nodes | length == 1
+    fail_msg: >-
+      app.gpu_device {{ app_config.app.gpu_device }} must be the gpu_device of exactly one
+      node in the k3s cluster's cluster.nodes, and Deploy k3s Cluster must have passed it
+      to that node's VM.
+  when: _plex_gpu_declared | bool
+
+- name: Plex Kubernetes | Prepare the media volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/prepare-media-volumes.yml
+  vars:
+    k8s_media_shares: >-
+      {%- set shares = [] -%}
+      {%- for share in k8s_media_nfs -%}
+      {%- set _ = shares.append({'name': 'media-' ~ loop.index0, 'server': share.server,
+                                 'path': share.export, 'mount_path': share.path,
+                                 'read_only': true}) -%}
+      {%- endfor -%}
+      {{ shares }}
+
+- name: Plex Kubernetes | Ensure the NFS client on every cluster node
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-nfs-client.yml
+  vars:
+    k8s_nfs_client_node: "{{ plex_k8s_node.name }}"
+  loop: "{{ k8s_cluster_facts.nodes }}"
+  loop_control:
+    loop_var: plex_k8s_node
+    label: Kubernetes node
+  when: k8s_media_volumes | length > 0
+
+- name: Plex Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# A server is claimed once its Preferences.xml in the pod holds a server token. No running
+# pod, or no token yet, means the claim token is still needed.
+- name: Plex Kubernetes | Check whether the Deployment is running
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", wait, --for=condition=available,
+           --timeout=120s, "deployment/{{ instance }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _plex_k8s_running
+  failed_when: false
+  changed_when: false
+
+- name: Plex Kubernetes | Read the existing preferences
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, "deployment/{{ instance }}",
+           --, cat, "{{ _plex_k8s_prefs_path }}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _plex_k8s_existing
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _plex_k8s_running.rc == 0
+
+- name: Plex Kubernetes | Resolve whether Plex has a server token
+  ansible.builtin.set_fact:
+    _plex_claimed: >-
+      {{ _plex_k8s_existing.stdout | default('') is search('PlexOnlineToken="[^"]+"') }}
+  no_log: true
+
+- name: Plex Kubernetes | Require a Vaultwarden claim token for an unclaimed Plex server
+  ansible.builtin.assert:
+    that: _plex_claim_token | length > 0
+    fail_msg: >-
+      {{ instance }} is not claimed. Store a fresh Plex claim token as hidden field
+      claim_token in Vaultwarden item homelab-infra/apps/{{ instance }}, then rerun.
+  when: not _plex_claimed
+
+- name: Plex Kubernetes | Put the claim token in the namespace for the first start
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      claim_token: "{{ _plex_claim_token }}"
+  when: not _plex_claimed
+
+- name: Plex Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: kubernetes-workload.yml
+  vars:
+    _plex_k8s_claiming: "{{ not _plex_claimed }}"
+
+- name: Plex Kubernetes | Wait for Plex to answer its identity endpoint
+  ansible.builtin.uri:
+    url: "{{ _plex_base }}/identity"
+    headers: "{{ _plex_headers }}"
+    return_content: true
+    status_code: 200
+  register: _plex_identity
+  until: _plex_identity.status | default(0) == 200
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: false
+
+- name: Plex Kubernetes | Assert the service identifies itself as Plex
+  ansible.builtin.assert:
+    that: _plex_identity.content is search('MediaContainer')
+    fail_msg: "The ingress did not return a Plex identity document."
+
+- name: Plex Kubernetes | Read the preferences once Plex has claimed
+  ansible.builtin.include_tasks: read-preferences.yml
+  vars:
+    _plex_prefs_expect: ['PlexOnlineToken="']
+
+- name: Plex Kubernetes | Extract the Plex server token for media consumers
+  ansible.builtin.set_fact:
+    _plex_server_token: "{{ _plex_prefs_text | regex_findall('PlexOnlineToken=\"([^\"]+)\"') | first | default('') }}"
+  no_log: true
+
+- name: Plex Kubernetes | Assert Plex exchanged the claim token for a server token
+  ansible.builtin.assert:
+    that: _plex_server_token | length > 0
+    fail_msg: >-
+      Plex started but Preferences.xml lacks PlexOnlineToken. Obtain a fresh claim token,
+      update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
+
+- name: Plex Kubernetes | Configure Plex hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoder.yml
+
+- name: Plex Kubernetes | Store and verify the Plex server token
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      token: "{{ _plex_server_token }}"
+    vault_item_secret_fields: [token]
+  no_log: true
+
+# Apply the claimed workload in this run so the pod leaves the claim environment now and a
+# repeat Deploy finds nothing to change; the spent token's Secret goes with it.
+- name: Plex Kubernetes | Remove the consumed claim token from the pod and namespace
+  when: not _plex_claimed
+  block:
+    - name: Plex Kubernetes | Apply the workload without the claim token
+      ansible.builtin.include_tasks: kubernetes-workload.yml
+      vars:
+        _plex_k8s_claiming: false
+
+    - name: Plex Kubernetes | Delete the claim token Secret
+      ansible.builtin.command:
+        argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", delete, secret, "{{ instance }}",
+               --ignore-not-found]
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+- name: Plex Kubernetes | Prove the iGPU path in the pod
+  ansible.builtin.include_tasks: kubernetes-gpu.yml
+  when: _plex_gpu_declared | bool
+
+- name: Plex Kubernetes | Schedule its application-consistent backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: data
+          claim: "{{ instance }}-config"
+          owner: "{{ app_config.app.puid }}:{{ app_config.app.pgid }}"
+      stop:
+        - "{{ instance }}"
+      stop_replicas: 1
+      describe: >-
+        Plex's server identity, library databases and metadata from its config volume; the
+        shared media and the transcode scratch space are not included

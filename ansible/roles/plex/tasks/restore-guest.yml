@@ -1,0 +1,49 @@
+---
+# Restore one Plex data.pxar archive through the shared swap. The generic Restore App
+# playbook only dispatches here for applications that explicitly declare this path;
+# ordinary Docker applications remain covered by their whole-guest PBS snapshots.
+
+- name: Plex restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Plex restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Plex restore | Keep external media outside recovery state
+  ansible.builtin.assert:
+    that:
+      - plex_state_path != item.path
+      - not plex_state_path.startswith(item.path ~ '/')
+      - not item.path.startswith(plex_state_path ~ '/')
+    fail_msg: "Plex recovery state must not overlap declared media or the transcode path."
+  loop: "{{ app_config.app.mounts | default([], true) }}"
+
+- name: Plex restore | Keep transcode outside recovery state
+  ansible.builtin.assert:
+    that:
+      - app_config.app.transcode_path != plex_state_path
+      - not app_config.app.transcode_path.startswith(plex_state_path ~ '/')
+      - not plex_state_path.startswith(app_config.app.transcode_path ~ '/')
+    fail_msg: "Plex recovery state must not overlap the transcode path."
+
+- name: Plex restore | Preview or replace the server state
+  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
+  vars:
+    recovery_swap_runtime: docker
+    recovery_swap_archives: [data.pxar]
+    recovery_swap_paths:
+      - path: "{{ plex_state_path }}"
+        owner: "{{ app_config.app.puid }}"
+        group: "{{ app_config.app.pgid }}"
+        mode: "0750"
+    recovery_swap_stop_services: ["{{ instance }}"]
+    recovery_swap_compose_project: "{{ plex_project_dir }}"
+    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
+    recovery_swap_health_url: "http://localhost:{{ app_config.app.port }}/identity"
+    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"

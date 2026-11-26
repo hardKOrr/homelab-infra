@@ -73,7 +73,7 @@ def run_playbook(server, preferences_path, playbook_path, devices, gpu_device=""
         play[0]["tasks"].append({
             "name": "Confirm Plex preferences were reread after the delayed flush",
             "ansible.builtin.assert": {
-                "that": "_plex_preferences_hardware_after.attempts | default(1) | int > 1",
+                "that": "_plex_prefs_slurp.attempts | default(1) | int > 1",
                 "fail_msg": "Plex readback did not retry while its preferences were stale.",
             },
         })

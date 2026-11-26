@@ -6,16 +6,19 @@
           | select('match', '^/dev/dri(?:/|$)') | list | length > 0)
          or (app_config.app.gpu_device | default('', true) | trim | length > 0) }}
 
+- name: Read the current Plex preferences
+  ansible.builtin.include_tasks: read-preferences.yml
+
 - name: Resolve the desired Plex hardware transcoding preferences
   ansible.builtin.set_fact:
     _plex_hardware_transcoding_value: >-
       {{ '1' if _plex_hardware_device_declared | bool else '0' }}
     _plex_hardware_codecs_current: >-
-      {{ (_plex_preferences_after.content | b64decode
+      {{ (_plex_prefs_text
           | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
           | first | default('', true)) }}
     _plex_hardware_encoders_current: >-
-      {{ (_plex_preferences_after.content | b64decode
+      {{ (_plex_prefs_text
           | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
           | first | default('', true)) }}
   no_log: true
@@ -24,8 +27,7 @@
   ansible.builtin.uri:
     url: "{{ _plex_base }}/:/prefs?HardwareAcceleratedCodecs={{ _plex_hardware_transcoding_value }}&HardwareAcceleratedEncoders={{ _plex_hardware_transcoding_value }}"
     method: PUT
-    headers:
-      X-Plex-Token: "{{ _plex_server_token }}"
+    headers: "{{ _plex_headers | default({}) | combine({'X-Plex-Token': _plex_server_token}) }}"
     status_code: 200
   register: _plex_hardware_put
   # Right after its first claim Plex restarts its server and refuses calls for a moment.
@@ -51,30 +53,20 @@
   when: _plex_hardware_put is not skipped
 
 - name: Read Plex preferences after configuring hardware transcoding
-  ansible.builtin.slurp:
-    src: "{{ _plex_preferences }}"
-  register: _plex_preferences_hardware_after
-  until: >-
-    ((_plex_preferences_hardware_after.content | b64decode
-      | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
-      | first | default('', true)) == _plex_hardware_transcoding_value)
-    and
-    ((_plex_preferences_hardware_after.content | b64decode
-      | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
-      | first | default('', true)) == _plex_hardware_transcoding_value)
-  retries: "{{ plex_http_retries }}"
-  delay: "{{ plex_http_delay }}"
-  changed_when: false
-  no_log: true
+  ansible.builtin.include_tasks: read-preferences.yml
+  vars:
+    _plex_prefs_expect:
+      - 'HardwareAcceleratedCodecs="{{ _plex_hardware_transcoding_value }}"'
+      - 'HardwareAcceleratedEncoders="{{ _plex_hardware_transcoding_value }}"'
 
 - name: Resolve the applied Plex hardware transcoding preferences
   ansible.builtin.set_fact:
     _plex_hardware_codecs_after: >-
-      {{ (_plex_preferences_hardware_after.content | b64decode
+      {{ (_plex_prefs_text
           | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
           | first | default('', true)) }}
     _plex_hardware_encoders_after: >-
-      {{ (_plex_preferences_hardware_after.content | b64decode
+      {{ (_plex_prefs_text
           | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
           | first | default('', true)) }}
   no_log: true

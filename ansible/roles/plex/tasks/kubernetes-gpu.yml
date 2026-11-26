@@ -1,0 +1,42 @@
+---
+# Device path only, from inside the running pod: the render node exists, Plex's service user
+# can open it, and VA-API lists the device's H.264 profiles. The image has no vainfo, so the
+# probe installs it and uses its matching system VA-API driver. Plex's bundled drivers
+# belong to its transcoder, which is not exercised here (it requires Plex Pass).
+- name: Plex Kubernetes GPU | Probe the render node and its H.264 profiles
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - exec
+      - "deployment/{{ instance }}"
+      - --
+      - sh
+      - -c
+      - |
+        node=$(ls /dev/dri/renderD* 2>/dev/null | head -n 1)
+        [ -n "$node" ] || { echo "no render node under /dev/dri"; exit 3; }
+        su -s /bin/sh plex -c "test -r $node && test -w $node" \
+          || { echo "$node is not readable by the Plex service user"; exit 4; }
+        command -v vainfo >/dev/null 2>&1 || {
+          apt-get update -qq >/dev/null 2>&1
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq vainfo >/dev/null 2>&1 \
+            || { echo "vainfo could not be installed in the pod"; exit 5; }
+        }
+        su -s /bin/sh plex -c "vainfo --display drm --device $node" 2>&1
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _plex_k8s_gpu_probe
+  until: _plex_k8s_gpu_probe.rc == 0
+  retries: 6
+  delay: 5
+  changed_when: false
+
+- name: Plex Kubernetes GPU | Require H.264 profiles on the device
+  ansible.builtin.assert:
+    that: _plex_k8s_gpu_probe.stdout is search('VAProfileH264')
+    fail_msg: >-
+      vainfo in the Plex pod lists no H.264 profile for the iGPU:
+      {{ _plex_k8s_gpu_probe.stdout | default('') | truncate(400) }}

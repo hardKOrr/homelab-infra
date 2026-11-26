@@ -65,9 +65,12 @@
 - name: k8s single container | Render and apply the workload
   ansible.builtin.include_tasks: apply-manifest.yml
   vars:
-    k8s_manifest: >-
+    k8s_manifest: |
       {{ lookup('ansible.builtin.template',
-                (role_path | dirname | dirname) ~ '/templates/kubernetes/single-container.yaml.j2')
-         ~ ('\n---\n' ~ k8s_app_extra_manifest if k8s_app_extra_manifest | default('') | length > 0 else '') }}
+                (role_path | dirname | dirname) ~ '/templates/kubernetes/single-container.yaml.j2') }}
+      {% if k8s_app_extra_manifest | default('') | length > 0 %}
+      ---
+      {{ k8s_app_extra_manifest }}
+      {% endif %}
     k8s_wait_for:
       - "deployment/{{ instance }}"
