@@ -536,6 +536,7 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+        stack_avoid_vmid_reserved: "{{ (app_config.proxmox.vm.datastore_disk | default({})).source_vmid | default('') }}"
 
     - name: Resolve the stack host's tag and Proxmox identity for the datastore disk
       ansible.builtin.set_fact:

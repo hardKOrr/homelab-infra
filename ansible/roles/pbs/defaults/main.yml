@@ -6,8 +6,11 @@ pbs_apt_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm
 pbs_apt_keyring: /etc/apt/keyrings/proxmox-release.gpg
 pbs_apt_repo_url: "http://download.proxmox.com/debian/pbs"
 pbs_native: "{{ app_config.hosting.method | default('native') == 'native' }}"
-# The Docker image has no PAM, so its API user is the image's admin@pbs.
-pbs_auth_id: "{{ 'root@pam' if pbs_native | bool else 'admin@pbs' }}"
+# The API token belongs to root@pam on both methods, so backup groups written by one method
+# stay writable by the other (PBS checks group ownership). The Docker image has no PAM; its
+# only login is admin@pbs, whose password Deploy replaces (tasks/admin-password.yml).
+pbs_auth_id: root@pam
+pbs_admin_id: admin@pbs
 pbs_project_dir: "/opt/{{ instance }}"
 # proxmox-backup-manager runs inside the container on Docker.
 pbs_manager_argv: "{{ ['proxmox-backup-manager'] if pbs_native | bool else ['docker', 'exec', instance, 'proxmox-backup-manager'] }}"

@@ -21,10 +21,12 @@ mounts one declared disk through `tasks/datastore-disk/`: `device.yml`, `stage.y
 on that stack's LXC or VM; PBS has no upstream image. `playbooks/apps/pbs.yml` Play 1b
 finds or creates the host, `tasks/docker.yml` mounts the optional `datastore_disk` (VM
 only), deploys the Compose project and reuses the native `token.yml`,
-`register-reused-datastore.yml` and `export.yml`. The container has no PAM, so the
-API token belongs to `admin@pbs` rather than `root@pam`; `proxmox-backup-manager` runs
-through `docker exec` (`pbs_manager_argv`). Configuration, state and logs are named
-volumes; the datastore is bind-mounted at its configured path, so a retained one keeps its
+`register-reused-datastore.yml` and `export.yml`. The container has no PAM and ships only `admin@pbs`, so Deploy creates `root@pam` as the
+token owner: the token stays `root@pam!ansible` as on the native method, which keeps PBS's
+backup-group ownership valid across a switch. `proxmox-backup-manager` runs through
+`docker exec` (`pbs_manager_argv`). Configuration, state and logs are host directories under
+`/opt/<instance>`, seeded from the image on first deploy; the datastore is bind-mounted at
+its configured path, so a retained one keeps its
 registration. Deploy replaces the image's default `admin@pbs` password with a generated one
 kept in `homelab-infra/apps/<instance>` (`admin_password`) and reuses it on repeat. `second_copy` is refused on Docker.
 
@@ -253,3 +255,10 @@ drives. Never let two PBS guests write to the source and received copies at the 
 7. Keep the original volume until the application restore and a new scheduled backup have
    both passed. If Deploy fails, stop the replacement before changing volume attachment or
    configuration; the source volume remains the recovery point.
+
+## Recovery (Docker)
+
+Backup App archives `/opt/<instance>/etc` (configuration, users, tokens, certificates) as
+`config.pxar`, live, because the target PBS may be this one; the datastore is the backups
+themselves and is retained, not archived. Restore App swaps that directory back. The drill
+canary is a `p2-canary-pbs-<id>@pbs` user with an ACL (`tasks/drill-canary.yml`).

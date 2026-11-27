@@ -1,6 +1,7 @@
 {{ ansible_managed | comment }}
-# Proxmox Backup Server ({{ instance }}). The configuration, state and logs live in named
-# volumes; the datastore is bind-mounted at its configured path so PBS sees the same path
+# Proxmox Backup Server ({{ instance }}). The configuration, state and logs are host
+# directories (seeded from the image on first deploy, so Backup App can archive the
+# configuration); the datastore is bind-mounted at its configured path so PBS sees the same path
 # on every method and a retained datastore keeps its registration.
 services:
   {{ instance }}:
@@ -14,12 +15,7 @@ services:
     ports:
       - "{{ app_config.app.port }}:8007"
     volumes:
-      - etc:/etc/proxmox-backup
-      - lib:/var/lib/proxmox-backup
-      - logs:/var/log/proxmox-backup
+      - "{{ pbs_project_dir }}/etc:/etc/proxmox-backup"
+      - "{{ pbs_project_dir }}/lib:/var/lib/proxmox-backup"
+      - "{{ pbs_project_dir }}/logs:/var/log/proxmox-backup"
       - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}:{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
-
-volumes:
-  etc:
-  lib:
-  logs:

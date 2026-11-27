@@ -15,6 +15,42 @@
     pbs_datastore_required_mounts: ["{{ homelabinfra_config.infrastructure.backups.datastore_path }}"]
   when: app_config.proxmox.vm.datastore_disk is defined
 
+- name: PBS Docker | Create the configuration, state and log directories
+  ansible.builtin.file:
+    path: "{{ pbs_project_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [etc, lib, logs]
+
+# Bind mounts, unlike named volumes, do not receive the image's initial files.
+- name: PBS Docker | Find directories still empty
+  ansible.builtin.find:
+    paths: "{{ pbs_project_dir }}/{{ item }}"
+    hidden: true
+  loop: [etc, lib, logs]
+  register: _pbs_seed_found
+
+- name: PBS Docker | Seed an empty directory from the image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --entrypoint
+      - sh
+      - -v
+      - "{{ pbs_project_dir }}/{{ item.item }}:/seed"
+      - "{{ app_config.app.image }}"
+      - -c
+      - "cp -a {{ {'etc': '/etc/proxmox-backup', 'lib': '/var/lib/proxmox-backup', 'logs': '/var/log/proxmox-backup'}[item.item] }}/. /seed/"
+  loop: "{{ _pbs_seed_found.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.matched == 0
+  changed_when: true
+
 # The container's `backup` user owns the datastore directory; PBS manages what is inside it.
 - name: PBS Docker | Deploy the Compose project
   ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
@@ -31,6 +67,19 @@
 
 - name: PBS Docker | Replace the image's default administrator password
   ansible.builtin.include_tasks: admin-password.yml
+
+# The image has only admin@pbs; the token owner is root@pam as on the native method.
+- name: PBS Docker | Read the PBS users
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"
+  register: _pbs_users
+  changed_when: false
+
+- name: PBS Docker | Create the token owner user
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'create', pbs_auth_id] }}"
+  when: (_pbs_users.stdout | from_json | selectattr('userid', 'equalto', pbs_auth_id) | list) | length == 0
+  changed_when: true
 
 - name: PBS Docker | Resolve, store and prove the API token
   ansible.builtin.include_tasks: token.yml

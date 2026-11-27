@@ -26,6 +26,9 @@
 #                                         bootstrap.yml chains, so a shared group would
 #                                         hand a later app every earlier app's host.
 #   app_config                          — merged app config (handed to Play 2 via add_host)
+#   stack_avoid_vmid_reserved           — optional VMID a new stack VM must not take (PBS's
+#                                         retained datastore volume owner); an IP-derived
+#                                         collision moves to the next free ID before the clone
 #   stack_placement_devices             — optional proxmox.devices keys for non-GPU passthrough
 #   homelabinfra_config.ansible.ssh_user
 #   homelabinfra_config.proxmox.*       — API connection + floating VM placement
@@ -371,6 +374,18 @@
 
     - name: Derive VMID from IP
       ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Avoid the reserved VMID of a retained volume
+      ansible.builtin.include_tasks: ../proxmox/avoid-vmid-collision.yml
+      vars:
+        avoid_vmid_requested: "{{ homelabinfra_config.proxmox.vm.vmid }}"
+        avoid_vmid_reserved: "{{ stack_avoid_vmid_reserved }}"
+        avoid_vmid_source_ip: "{{ homelabinfra_config.proxmox.vm.vmid_source_ip | default('') }}"
+        avoid_vmid_current_ip: "{{ homelabinfra_instance.network.ip_address }}"
+        avoid_vmid_node: "{{ homelabinfra_config.proxmox.node }}"
+      when:
+        - _stack_sizing.guest_type == 'vm'
+        - stack_avoid_vmid_reserved | default('') | string | length > 0
 
     - name: Ensure the Debian cloud-init template exists for the stack VM
       when: _stack_sizing.guest_type == 'vm'

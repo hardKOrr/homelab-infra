@@ -1,0 +1,14 @@
+---
+# restore-swap.yml verified hook: the restored configuration lists its users and the token.
+- name: PBS restore | Read the restored users
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"
+  register: _pbs_restore_users
+  changed_when: false
+
+- name: PBS restore | Require the token owner
+  ansible.builtin.assert:
+    that: >-
+      _pbs_restore_users.stdout | from_json | selectattr('userid', 'equalto', pbs_auth_id)
+      | list | length == 1
+    fail_msg: The restored PBS configuration has no {{ pbs_auth_id }} user.

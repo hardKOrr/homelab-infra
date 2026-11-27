@@ -1,0 +1,13 @@
+---
+# restore-swap.yml staged hook: the point must hold the user configuration.
+- name: PBS restore | Check the staged user configuration
+  ansible.builtin.stat:
+    path: "{{ recovery_swap_stage }}/config/user.cfg"
+  register: _pbs_restore_staged_users
+  changed_when: false
+
+- name: PBS restore | Require the staged user configuration
+  ansible.builtin.assert:
+    that: _pbs_restore_staged_users.stat.isreg | default(false)
+    fail_msg: >-
+      The selected PBS recovery point has no user.cfg; live state has not been replaced.
