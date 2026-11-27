@@ -90,6 +90,20 @@ def recovery() -> bool:
             print("FAIL the original holder could not commit after clients disconnected")
             return False
         os.unlink(facts)
+        # another process squatting the holder's socket name must not be trusted
+        fake_id = 4000000
+        squat = subprocess.Popen([sys.executable, "-c", (
+            "import socket,sys;s=socket.socket(socket.AF_UNIX);"
+            f"s.bind(b'\\0facts-lock-{fake_id}');s.listen(1);print('up',flush=True);"
+            "c,_=s.accept();c.recv(100);c.sendall(b'unchanged\\n')")],
+            stdout=subprocess.PIPE, text=True)
+        squat.stdout.readline()
+        fake = subprocess.run([sys.executable, str(LOCK), "commit", os.path.join(tmp, "squat.yml"),
+                               f"{fake_id}.secret"], input="x: 1\n", text=True, env=env, capture_output=True)
+        squat.kill()
+        if fake.returncode == 0 or "not served by lock holder" not in fake.stderr:
+            print("FAIL commit trusted a reply from a process that is not the lock holder")
+            return False
         stale_view = "stale: snapshot\n"
         os.kill(first, signal.SIGKILL)  # holder dies without releasing
         try:

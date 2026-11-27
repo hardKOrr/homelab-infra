@@ -152,6 +152,21 @@ def publish(path: str, staged: str) -> str:
         return f"error: {err}\n"
 
 
+def connect_holder(pid: int) -> socket.socket:
+    """Connect to the holder's socket and prove the peer is that holder process, run by
+    this user, before any secret or content is sent. After the holder exits, another local
+    process could bind the same abstract name."""
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(30)
+    client.connect(sock_name(pid))
+    peer_pid, peer_uid, _ = struct.unpack(
+        "3i", client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    if peer_pid != pid or peer_uid != os.getuid():
+        client.close()
+        raise OSError(f"the socket is not served by lock holder {pid}")
+    return client
+
+
 def commit(path: str, token: str) -> str:
     pid, _, secret = token.partition(".")
     if not pid.isdigit() or not secret:
@@ -161,9 +176,7 @@ def commit(path: str, token: str) -> str:
     with os.fdopen(fd, "wb") as handle:
         handle.write(sys.stdin.buffer.read())
     try:
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        client.settimeout(30)
-        client.connect(sock_name(int(pid)))
+        client = connect_holder(int(pid))
         client.sendall(f"{secret} {os.getpid()}\n".encode())
         reply = client.makefile("rb").readline().decode().strip()
     except OSError as err:
@@ -212,9 +225,7 @@ def release(path: str, token: str) -> None:
     if not pid.isdigit() or not secret:
         return
     try:
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        client.settimeout(10)
-        client.connect(sock_name(int(pid)))
+        client = connect_holder(int(pid))
         client.sendall(f"{secret} release\n".encode())
         reply = client.makefile("rb").readline().decode().strip()
     except OSError:
