@@ -1424,10 +1424,19 @@ systemctl enable rundeckd >/dev/null 2>&1 || true
 systemctl restart rundeckd
 
 # A JDK upgraded under a running rundeckd makes every job fail until it restarts; the
-# timer installed here restarts it once no execution is running. A rerun changes nothing.
+# timer installed here restarts it once no execution is running. The checkout and venv
+# belong to the rundeck account by now, so a root timer is installed only from a fresh
+# root-owned clone, never from them. A rerun changes nothing.
 say "rundeckd restart after Java upgrades"
-(cd "$REPO_DIR/ansible" && "$VENV_DIR/bin/ansible-playbook" -i localhost, \
-  playbooks/maintenance/runner-java-restart.yml >/dev/null)
+rjr_src="$(mktemp -d)"
+git clone -q --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$rjr_src"
+rjr_files="$rjr_src/ansible/files/runner"
+install -m 0755 -o root -g root "$rjr_files/rundeckd-java-restart.sh" /usr/local/sbin/rundeckd-java-restart
+install -m 0644 -o root -g root "$rjr_files/rundeckd-java-restart.service" /etc/systemd/system/
+install -m 0644 -o root -g root "$rjr_files/rundeckd-java-restart.timer" /etc/systemd/system/
+rm -rf "$rjr_src"
+systemctl daemon-reload
+systemctl enable --now rundeckd-java-restart.timer >/dev/null 2>&1
 GUEST
 
 # ── Author the config ──────────────────────────────────────────────────────────
