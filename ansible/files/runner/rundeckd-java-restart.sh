@@ -52,7 +52,11 @@ mainpid() { systemctl show -p MainPID --value rundeckd 2>/dev/null || echo 0; }
 
 # A previous run that could not give execution back, or a failed restart, finishes first.
 if [ -e "$STATE" ] && [ -n "$url" ] && [ -n "$token" ]; then
-  [ "$(mainpid)" -gt 0 ] 2>/dev/null || systemctl restart rundeckd 2>/dev/null
+  # Only a unit systemd reports as stopped is started; a failed query proves nothing, and
+  # a restart could cut off running jobs.
+  case "$(systemctl is-active rundeckd 2>/dev/null)" in
+    inactive|failed) systemctl start rundeckd 2>/dev/null ;;
+  esac
   if restored; then rm -f "$STATE"; fi
 fi
 

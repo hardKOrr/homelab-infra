@@ -43,7 +43,8 @@ def run(maps, running, second=None, bad_enable=False, state_left=False, mode="ac
         d = Path(d)
         (d / "bin").mkdir()
         (d / "bin/systemctl").write_text(
-            f'#!/bin/sh\n[ "$1" = show ] && {{ [ -f {d}/down ] && echo 0 || echo 4242; exit 0; }}\n'
+            f'#!/bin/sh\n[ "$1" = show ] && {{ [ -f {d}/show_fails ] && exit 1; [ -f {d}/down ] && echo 0 || echo 4242; exit 0; }}\n'
+            f'[ "$1" = is-active ] && {{ [ -f {d}/down ] && echo inactive || echo active; exit 0; }}\n'
             f'echo "systemctl $@" >> {d}/calls\n'
             f'[ "$1" = restart ] && [ -f {d}/bad_restart ] && exit 1\nexit 0\n')
         (d / "bin/curl").write_text(CURL)
@@ -107,7 +108,10 @@ assert not state and mode == "active"
 calls, state, mode = run(STALE, IDLE, flags=("bad_restart",))
 assert state, "dropped recovery state after a failed restart"
 calls, state, mode = run(CLEAN, IDLE, state_left=True, mode="passive", flags=("down",))
-assert "systemctl restart rundeckd" in calls and not state, "did not retry a failed restart"
+assert "systemctl start rundeckd" in calls and not state, "did not start a stopped service"
+calls, state, mode = run(CLEAN, IDLE, state_left=True, mode="passive", flags=("show_fails",))
+assert not any(c.startswith("systemctl") for c in calls) and not state, \
+    "touched a live service after a failed PID lookup"
 calls, state, mode = run(STALE, IDLE, flags=("no_state_dir",))
 assert calls == [], "switched to passive without a recovery marker"
 
