@@ -20,6 +20,7 @@
 #       guest_type: vm        # lxc | vm; defaults to vm
 #       node: <pve-node-3>       # optional pin for a new stack VM
 #       storage: <vm-image-store> # optional Proxmox VM image storage
+#       template_storage: <vm-image-store> # optional cloud template storage on the pinned node
 #
 # Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
 # values apply when the host is CREATED. Changing them later does not move a running host;

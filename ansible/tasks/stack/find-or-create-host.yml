@@ -404,7 +404,7 @@
         cloud_template_image_url: >-
           {{ homelabinfra_config.proxmox.cloud_template.image_url
              | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
-        cloud_template_storage: "{{ homelabinfra_config.proxmox.storage }}"
+        cloud_template_storage: "{{ _stack_sizing.template_storage | default(homelabinfra_config.proxmox.storage, true) }}"
         cloud_template_bridge: "{{ network_effective.bridge }}"
 
     - name: Clone the stack host VM

@@ -30,6 +30,10 @@ bind-mounted datastore. Deploy re-registers the existing chunks if the Compose p
 removed. Deploy replaces the image's default `admin@pbs` password with a generated one
 kept in `homelab-infra/apps/<instance>` (`admin_password`) and reuses it on repeat. `second_copy` is refused on Docker.
 
+For a node-local retained disk, pin the Docker VM stack to the node that can see the exact
+volume. If that node cannot reach the default VM or template pool, set the corresponding
+`storage` or `template_storage` in [the stack override](../../vars/stack-defaults.yml).
+
 ## Optional second copy
 
 `second_copy` is disabled by default. When enabled, it attaches a second retained disk on
