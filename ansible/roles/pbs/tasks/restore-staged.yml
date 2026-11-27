@@ -11,3 +11,31 @@
     that: _pbs_restore_staged_users.stat.isreg | default(false)
     fail_msg: >-
       The selected PBS recovery point has no user.cfg; live state has not been replaced.
+
+# The recovery point predates this PBS's published token and certificate. Keep the live
+# ones, so Vaultwarden, the registry and PVE still authenticate and trust it.
+- name: PBS restore | Read the live certificate fingerprint
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/nodes/localhost/certificates/info"
+    headers:
+      Authorization: "PBSAPIToken={{ homelabinfra_infra.backups.api_token_id }}:{{ homelabinfra_infra.backups.api_token_secret }}"
+    validate_certs: false
+  register: _pbs_restore_certs_before
+  changed_when: false
+  no_log: true
+
+- name: PBS restore | Remember the live certificate fingerprint
+  ansible.builtin.set_fact:
+    _pbs_restore_fingerprint: >-
+      {{ _pbs_restore_certs_before.json.data | selectattr('fingerprint', 'defined')
+         | map(attribute='fingerprint') | first }}
+
+- name: PBS restore | Carry the live token and certificate into the staged configuration
+  ansible.builtin.script:
+    cmd: >-
+      {{ role_path }}/files/preserve-auth.py {{ (pbs_project_dir ~ '/etc') | quote }}
+      {{ (recovery_swap_stage ~ '/config') | quote }}
+      {{ homelabinfra_infra.backups.api_token_id | quote }}
+    executable: python3
+  changed_when: true
+  no_log: true

@@ -15,41 +15,17 @@
     pbs_datastore_required_mounts: ["{{ homelabinfra_config.infrastructure.backups.datastore_path }}"]
   when: app_config.proxmox.vm.datastore_disk is defined
 
+# The image's startup script sets these to backup:backup 0700 on every start and seeds an
+# empty /etc/proxmox-backup from its own defaults, so Deploy creates them the same way and a
+# repeat changes nothing.
 - name: PBS Docker | Create the configuration, state and log directories
   ansible.builtin.file:
     path: "{{ pbs_project_dir }}/{{ item }}"
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    owner: "{{ pbs_backup_uid }}"
+    group: "{{ pbs_backup_uid }}"
+    mode: "0700"
   loop: [etc, lib, logs]
-
-# Bind mounts, unlike named volumes, do not receive the image's initial files.
-- name: PBS Docker | Find directories still empty
-  ansible.builtin.find:
-    paths: "{{ pbs_project_dir }}/{{ item }}"
-    hidden: true
-  loop: [etc, lib, logs]
-  register: _pbs_seed_found
-
-- name: PBS Docker | Seed an empty directory from the image
-  ansible.builtin.command:
-    argv:
-      - docker
-      - run
-      - --rm
-      - --entrypoint
-      - sh
-      - -v
-      - "{{ pbs_project_dir }}/{{ item.item }}:/seed"
-      - "{{ app_config.app.image }}"
-      - -c
-      - "cp -a {{ {'etc': '/etc/proxmox-backup', 'lib': '/var/lib/proxmox-backup', 'logs': '/var/log/proxmox-backup'}[item.item] }}/. /seed/"
-  loop: "{{ _pbs_seed_found.results }}"
-  loop_control:
-    label: "{{ item.item }}"
-  when: item.matched == 0
-  changed_when: true
 
 # The listener is published to the network only after the managed administrator password
 # is in place and verified (the marker below). Until then it binds the guest's loopback, so

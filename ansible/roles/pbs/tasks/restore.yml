@@ -20,9 +20,10 @@
     recovery_swap_paths:
       - path: "{{ pbs_project_dir }}/etc"
         source: config
-        owner: 0
-        group: 0
-        mode: "0755"
+        # The proxy runs as `backup`: it owns the whole tree, as the image sets at start.
+        owner: "{{ pbs_backup_uid }}"
+        group: "{{ pbs_backup_uid }}"
+        mode: "0700"
     recovery_swap_compose_project: "{{ pbs_project_dir }}"
     recovery_swap_stop_services: ["{{ instance }}"]
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"

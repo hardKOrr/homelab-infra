@@ -25,7 +25,7 @@ only), deploys the Compose project and reuses the native `token.yml`,
 token owner: the token stays `root@pam!ansible` as on the native method, which keeps PBS's
 backup-group ownership valid across a switch. `proxmox-backup-manager` runs through
 `docker exec` (`pbs_manager_argv`). Configuration, state and logs are host directories under
-`/opt/<instance>`, seeded from the image on first deploy; the datastore is bind-mounted at
+`/opt/<instance>` owned by `backup` as the image sets them; the datastore is bind-mounted at
 its configured path, so a retained one keeps its
 registration. Deploy replaces the image's default `admin@pbs` password with a generated one
 kept in `homelab-infra/apps/<instance>` (`admin_password`) and reuses it on repeat. `second_copy` is refused on Docker.
