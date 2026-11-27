@@ -1,0 +1,42 @@
+---
+# pbs role, hosting.method: docker — PBS in the community container image on a stack host
+# (an LXC or a VM). Called from Play 2 of playbooks/apps/pbs.yml with `tasks_from: docker.yml`.
+# The datastore is a host directory (on a VM, optionally the retained `datastore_disk`)
+# bind-mounted at the same path inside the container; token handling, the retained-datastore
+# registration and the exports are the native method's own task files.
+
+- name: PBS Docker | Mount the persistent datastore disk
+  ansible.builtin.include_tasks: datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-store
+    pbs_datastore_disk_label: pbs-datastore
+    pbs_datastore_required_mounts: ["{{ homelabinfra_config.infrastructure.backups.datastore_path }}"]
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+# The container's `backup` user owns the datastore directory; PBS manages what is inside it.
+- name: PBS Docker | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ pbs_project_dir }}"
+    compose_dirs:
+      - path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+        owner: "{{ pbs_backup_uid }}"
+        group: "{{ pbs_backup_uid }}"
+        mode: "0750"
+
+- name: PBS Docker | Wait for the PBS API to answer
+  ansible.builtin.include_tasks: api-wait.yml
+
+- name: PBS Docker | Resolve, store and prove the API token
+  ansible.builtin.include_tasks: token.yml
+
+- name: PBS Docker | Register the retained datastore without initialising it
+  ansible.builtin.include_tasks: register-reused-datastore.yml
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'reuse'
+
+- name: PBS Docker | Hand the endpoint and token back to the playbook
+  ansible.builtin.include_tasks: export.yml

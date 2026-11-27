@@ -32,7 +32,7 @@ assert defaults["second_copy"]["enabled"] is False
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
 
-pbs_record_tasks = playbook[2]["tasks"]
+pbs_record_tasks = playbook[3]["tasks"]
 # homelabinfra_infra comes from load-user-vars' set_fact; an include_vars reload of
 # facts.yml under that name is shadowed by it and does nothing.
 assert not any(
@@ -281,7 +281,7 @@ assert "pbs_datastore_disk_mode == 'attach'" in str(attach_guard["when"])
 
 register_tasks = load_yaml("ansible/roles/pbs/tasks/register-reused-datastore.yml")
 register_existing = task(register_tasks, "PBS datastore reuse | Register the retained directory without initialising it")
-assert register_existing["ansible.builtin.command"]["argv"][-2:] == ["--reuse-datastore", "true"]
+assert "'--reuse-datastore', 'true']" in register_existing["ansible.builtin.command"]["argv"]
 assert "_pbs_reuse_native_supported | bool" in str(register_existing["when"])
 legacy_guard = task(register_tasks, "PBS datastore reuse | Require an empty legacy config before registration")
 assert "stat.size" in str(legacy_guard["ansible.builtin.assert"]["that"])

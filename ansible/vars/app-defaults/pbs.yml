@@ -11,8 +11,12 @@
 pbs_defaults:
   hosting:
     method: native
-    supported: [native-vm]
+    supported: [native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm)
+  # runs the community image on that stack host, dedicated to PBS. The native VM default
+  # is unchanged; the Docker method has no second_copy.
+  stack: ""
   proxmox:
     type: vm
     vm:
@@ -76,6 +80,10 @@ pbs_defaults:
     datastore_name: homelab
     datastore_mode: create     # reuse requires a recovered registration; never initialises
     api_token_name: ansible     # token id becomes root@pam!ansible
+    # Docker method only: PBS has no upstream image, so this is the community build
+    # (https://github.com/ayufan/pve-backup-server-dockerfiles). Its admin@pbs user takes
+    # the API token; the native method's root@pam token is unchanged.
+    image: ayufan/proxmox-backup-server:v4.2.0-1
     service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
                                          # name; playbooks/apps/remove.yml stops this
 

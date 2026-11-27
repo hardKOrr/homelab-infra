@@ -9,10 +9,23 @@ datastore path. This gives the datastore a storage identity independent of the r
 PBS OS disk.
 
 Role layout: `tasks/main.yml` imports `tasks/main/install.yml` (repositories, datastore
-disks, packages, services, API liveness) and `tasks/main/token.yml` (token reuse or
+disks, packages, services, API liveness) and `tasks/token.yml` (token reuse or
 recreation, vault write, ACL, proof), then exports the endpoint. `tasks/datastore-disk.yml`
 mounts one declared disk through `tasks/datastore-disk/`: `device.yml`, `stage.yml`,
 `copy.yml` and `mount.yml`.
+
+## Docker hosting
+
+`hosting.method: docker` with `stack: <name>` runs the community image
+`app.image` ([ayufan/pve-backup-server-dockerfiles](https://github.com/ayufan/pve-backup-server-dockerfiles))
+on that stack's LXC or VM; PBS has no upstream image. `playbooks/apps/pbs.yml` Play 1b
+finds or creates the host, `tasks/docker.yml` mounts the optional `datastore_disk` (VM
+only), deploys the Compose project and reuses the native `token.yml`,
+`register-reused-datastore.yml` and `export.yml`. The container has no PAM, so the
+API token belongs to `admin@pbs` rather than `root@pam`; `proxmox-backup-manager` runs
+through `docker exec` (`pbs_manager_argv`). Configuration, state and logs are named
+volumes; the datastore is bind-mounted at its configured path, so a retained one keeps its
+registration. `second_copy` is refused on Docker.
 
 ## Optional second copy
 

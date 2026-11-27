@@ -1,0 +1,13 @@
+---
+# Phase of main.yml and docker.yml: wait until the PBS API answers on this guest.
+
+- name: Wait for the PBS API to answer
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"
+    validate_certs: false   # PBS serves a self-signed certificate until one is installed
+    status_code: [200, 401]
+  register: _pbs_health
+  until: _pbs_health.status | default(0) in [200, 401]
+  retries: 30
+  delay: 5
+  changed_when: false

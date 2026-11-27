@@ -99,6 +99,14 @@ stack_defaults:
     memory: 4096
     disk_size: 64
 
+  # Proxmox Backup Server on Docker alone: it holds the lab's backups, so no other app
+  # shares its host. Boot tier 60 like the native VM — backups start after what they back up.
+  pbs:
+    boot_order: 60
+    cores: 2
+    memory: 2048
+    disk_size: 32
+
   # The *arr suite, download clients and Bazarr. Many small containers, and the media
   # itself lives on mounted storage rather than the rootfs.
   media:

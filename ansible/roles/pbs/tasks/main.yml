@@ -32,8 +32,11 @@
 - name: Install PBS and its datastore disks
   ansible.builtin.import_tasks: main/install.yml
 
+- name: Wait for the PBS API to answer
+  ansible.builtin.import_tasks: api-wait.yml
+
 - name: Resolve, store and prove the API token
-  ansible.builtin.import_tasks: main/token.yml
+  ansible.builtin.import_tasks: token.yml
 
 - name: Register the retained datastore without initialising it
   ansible.builtin.include_tasks: register-reused-datastore.yml
@@ -41,23 +44,8 @@
     - app_config.proxmox.vm.datastore_disk is defined
     - app_config.app.datastore_mode | default('create') == 'reuse'
 
-# ── Hand the endpoint and token back to the playbook ──────────────────────────
-- name: Export the PBS endpoint to the playbook
-  ansible.builtin.set_fact:
-    pbs_url: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
-    pbs_token_id: "{{ _pbs_token_id }}"
-    pbs_token_secret: "{{ _pbs_token_secret }}"
-    pbs_token_rotated: "{{ not (_pbs_token_usable | bool) }}"
-  no_log: true
-
-- name: Report a rotated API token
-  ansible.builtin.debug:
-    msg: >-
-      A new PBS API token was issued for {{ _pbs_token_id }} because no working
-      secret was recorded. It is written to config/.generated/facts.yml under
-      backups.api_token_secret; any external tool using the previous secret needs
-      updating.
-  when: not (_pbs_token_usable | bool)
+- name: Hand the endpoint and token back to the playbook
+  ansible.builtin.import_tasks: export.yml
 
 # ── Lab maintenance scripts ───────────────────────────────────────────────────
 - name: Install lab maintenance scripts

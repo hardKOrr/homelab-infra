@@ -6,7 +6,7 @@
 
 - name: PBS datastore reuse | List local registrations
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+    argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores
   changed_when: false
 
@@ -32,7 +32,7 @@
 
 - name: PBS datastore reuse | Read datastore create options
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, create, --help]
+    argv: "{{ pbs_manager_argv + ['datastore', 'create', '--help'] }}"
   register: _pbs_reuse_create_help
   changed_when: false
   failed_when: false
@@ -46,14 +46,10 @@
 
 - name: PBS datastore reuse | Register the retained directory without initialising it
   ansible.builtin.command:
-    argv:
-      - proxmox-backup-manager
-      - datastore
-      - create
-      - "{{ app_config.app.datastore_name }}"
-      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
-      - --reuse-datastore
-      - 'true'
+    argv: >-
+      {{ pbs_manager_argv + ['datastore', 'create', app_config.app.datastore_name,
+         homelabinfra_config.infrastructure.backups.datastore_path,
+         '--reuse-datastore', 'true'] }}
   register: _pbs_reuse_create
   changed_when: _pbs_reuse_create.rc == 0
   when:
@@ -111,7 +107,7 @@
 
 - name: PBS datastore reuse | Read registrations after reuse
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+    argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores_after
   changed_when: false
 

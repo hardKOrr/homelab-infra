@@ -18,6 +18,14 @@
 # The API token is generated on first deploy and immediately stored and verified in
 # `homelab-infra/backups`. Generated facts retain only its non-secret token ID.
 
+# ── Docker hosting ─────────────────────────────────────────────────────────────
+# Run PBS as the community container image on a stack host instead of a native VM. Use
+# a stack of its own (guest_type lxc or vm, set under infrastructure.stacks); the
+# retained datastore_disk below needs a VM. second_copy is not available on Docker.
+# hosting:
+#   method: docker
+# stack: pbs            # or an LXC stack, e.g. pbs-lxc
+
 # ── VM resources ───────────────────────────────────────────────────────────────
 # proxmox:
 #   node: <pve-node>       # optional per-instance node; add it to proxmox.nodes

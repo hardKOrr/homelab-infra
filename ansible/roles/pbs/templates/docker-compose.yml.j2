@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+# Proxmox Backup Server ({{ instance }}). The configuration, state and logs live in named
+# volumes; the datastore is bind-mounted at its configured path so PBS sees the same path
+# on every method and a retained datastore keeps its registration.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    # The image documents SIGHUP as its stop signal and a tmpfs /run.
+    stop_signal: SIGHUP
+    tmpfs:
+      - /run
+    ports:
+      - "{{ app_config.app.port }}:8007"
+    volumes:
+      - etc:/etc/proxmox-backup
+      - lib:/var/lib/proxmox-backup
+      - logs:/var/log/proxmox-backup
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}:{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+
+volumes:
+  etc:
+  lib:
+  logs:
