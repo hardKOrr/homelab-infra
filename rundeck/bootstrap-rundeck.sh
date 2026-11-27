@@ -1431,12 +1431,22 @@ say "rundeckd restart after Java upgrades"
 rjr_src="$(mktemp -d)"
 git clone -q --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$rjr_src"
 rjr_files="$rjr_src/ansible/files/runner"
-install -m 0755 -o root -g root "$rjr_files/rundeckd-java-restart.sh" /usr/local/sbin/rundeckd-java-restart
-install -m 0644 -o root -g root "$rjr_files/rundeckd-java-restart.service" /etc/systemd/system/
-install -m 0644 -o root -g root "$rjr_files/rundeckd-java-restart.timer" /etc/systemd/system/
+rjr_script_change="$(install -Cv -m 0755 -o root -g root "$rjr_files/rundeckd-java-restart.sh" /usr/local/sbin/rundeckd-java-restart)"
+rjr_unit_change="$(install -Cv -m 0644 -o root -g root \
+  "$rjr_files/rundeckd-java-restart.service" "$rjr_files/rundeckd-java-restart.timer" /etc/systemd/system/)"
 rm -rf "$rjr_src"
-systemctl daemon-reload
-systemctl enable --now rundeckd-java-restart.timer >/dev/null 2>&1
+rjr_timer=rundeckd-java-restart.timer
+if [ -n "$rjr_unit_change" ]; then
+  systemctl daemon-reload
+fi
+if [ -n "$rjr_script_change$rjr_unit_change" ] \
+    || ! systemctl is-enabled --quiet "$rjr_timer" \
+    || ! systemctl is-active --quiet "$rjr_timer"; then
+  systemctl enable --now "$rjr_timer" >/dev/null 2>&1
+  say "rundeckd Java restart hook: changed"
+else
+  say "rundeckd Java restart hook: unchanged"
+fi
 GUEST
 
 # ── Author the config ──────────────────────────────────────────────────────────

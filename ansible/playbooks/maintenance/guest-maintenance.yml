@@ -177,7 +177,7 @@
 
     - name: Record what this guest reported
       ansible.builtin.set_fact:
-        _gm_reachable: true
+        _gm_reachable: "{{ not (_gm_reboot_stat.unreachable | default(false)) }}"
         _gm_needs_reboot: "{{ _gm_reboot_stat.stat.exists | default(false) }}"
         _gm_runs_docker: "{{ _gm_docker_stat.stat.exists | default(false) }}"
         _gm_reboot_reason: >-
@@ -329,7 +329,7 @@
 
     - name: Restart rundeckd after a Java upgrade on this guest
       ansible.builtin.include_tasks: ../../tasks/maintenance/install-rundeckd-java-restart.yml
-      when: _gm_rundeck_stat.stat.exists
+      when: _gm_rundeck_stat.stat.exists | default(false)
 
 
 # ── Play 5: reboot now, all at once ────────────────────────────────────────────
