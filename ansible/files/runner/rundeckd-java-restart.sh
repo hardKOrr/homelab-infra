@@ -39,12 +39,17 @@ assert isinstance(e, list)
 print(len(e))'; }
 enable() { api POST system/executions/enable >/dev/null; }
 
-# A previous run that could not give execution back finishes that first.
+# restored: execution is active again, confirmed by the server's own status.
+restored() { enable 2>/dev/null && [ "$(mode 2>/dev/null)" = active ]; }
+mainpid() { systemctl show -p MainPID --value rundeckd 2>/dev/null || echo 0; }
+
+# A previous run that could not give execution back, or a failed restart, finishes first.
 if [ -e "$STATE" ] && [ -n "$url" ] && [ -n "$token" ]; then
-  if [ "$(mode 2>/dev/null)" = active ] || enable 2>/dev/null; then rm -f "$STATE"; fi
+  [ "$(mainpid)" -gt 0 ] 2>/dev/null || systemctl restart rundeckd 2>/dev/null
+  if restored; then rm -f "$STATE"; fi
 fi
 
-pid=$(systemctl show -p MainPID --value rundeckd 2>/dev/null || echo 0)
+pid=$(mainpid)
 [ "${pid:-0}" -gt 0 ] 2>/dev/null || exit 0
 maps=${RJR_MAPS:-/proc/$pid/maps}
 grep -qE '/usr/lib/jvm/.*\(deleted\)' "$maps" 2>/dev/null || exit 0
@@ -62,21 +67,34 @@ fi
 prior=$(mode) || { echo "cannot read the execution mode; will retry" >&2; exit 0; }
 # Passive is an operator's hold, kept only in memory: a restart would start Rundeck in its
 # configured mode and could open admission during the hold. Wait for the operator.
-if [ "$prior" != active ]; then
-  echo "rundeckd needs a restart after a Java upgrade; execution mode is $prior, waiting"
+case "$prior" in
+  active) ;;
+  passive) echo "rundeckd needs a restart after a Java upgrade; execution is passive, waiting"
+    exit 0 ;;
+  *) echo "unrecognised execution mode '$prior'; will retry" >&2; exit 0 ;;
+esac
+# The marker comes first: without it an interrupted run could leave execution disabled.
+touch "$STATE" 2>/dev/null || { echo "cannot write $STATE; not restarting" >&2; exit 0; }
+api POST system/executions/disable >/dev/null 2>&1
+if [ "$(mode 2>/dev/null)" != passive ]; then
+  echo "execution did not become passive; not restarting" >&2
+  restored && rm -f "$STATE"
   exit 0
 fi
-touch "$STATE"
-api POST system/executions/disable >/dev/null || { enable 2>/dev/null && rm -f "$STATE"; exit 0; }
 count=$(running) || count=unknown
 if [ "$count" != 0 ]; then
   echo "an execution started before the drain; not restarting"
-  enable 2>/dev/null && rm -f "$STATE"
+  restored && rm -f "$STATE"
   exit 0
 fi
 echo "restarting rundeckd after a Java upgrade"
-systemctl restart rundeckd
+if ! systemctl restart rundeckd; then
+  echo "systemctl restart rundeckd failed; later runs retry it" >&2
+  exit 1
+fi
 for _ in $(seq 60); do
-  enable 2>/dev/null && { rm -f "$STATE"; break; }
+  restored && { rm -f "$STATE"; exit 0; }
   sleep 5
 done
+echo "rundeckd restarted but execution could not be confirmed active; later runs retry" >&2
+exit 1

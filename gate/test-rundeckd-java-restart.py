@@ -27,8 +27,8 @@ while [ $# -gt 0 ]; do case "$1" in -X) method=$2; shift;; http*) url=$1;; esac;
 p=${url#http://x/api/58/}
 echo "$method $p" >> "$RJR_T/calls"
 case "$method $p" in
-  "GET system/executions/status") echo "{\"executionMode\":\"$(cat "$RJR_T/mode")\"}";;
-  "POST system/executions/disable") echo passive > "$RJR_T/mode"; [ -f "$RJR_T/second" ] && mv "$RJR_T/second" "$RJR_T/running"; echo '{}';;
+  "GET system/executions/status") [ -f "$RJR_T/odd_mode" ] && { echo '{"executionMode":"weird"}'; exit 0; }; echo "{\"executionMode\":\"$(cat "$RJR_T/mode")\"}";;
+  "POST system/executions/disable") [ -f "$RJR_T/no_disable" ] || echo passive > "$RJR_T/mode"; [ -f "$RJR_T/second" ] && mv "$RJR_T/second" "$RJR_T/running"; echo '{}';;
   "POST system/executions/enable") [ -f "$RJR_T/bad_enable" ] && exit 22; echo active > "$RJR_T/mode"; echo '{}';;
   "GET project/*/executions/running") [ -f "$RJR_T/running" ] || exit 22; cat "$RJR_T/running";;
   *) exit 22;;
@@ -36,13 +36,15 @@ esac
 '''
 
 
-def run(maps, running, second=None, bad_enable=False, state_left=False, mode="active"):
+def run(maps, running, second=None, bad_enable=False, state_left=False, mode="active",
+        flags=()):
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
         (d / "bin").mkdir()
         (d / "bin/systemctl").write_text(
-            '#!/bin/sh\n[ "$1" = show ] && { echo 4242; exit 0; }\n'
-            f'echo "systemctl $@" >> {d}/calls\n')
+            f'#!/bin/sh\n[ "$1" = show ] && {{ [ -f {d}/down ] && echo 0 || echo 4242; exit 0; }}\n'
+            f'echo "systemctl $@" >> {d}/calls\n'
+            f'[ "$1" = restart ] && [ -f {d}/bad_restart ] && exit 1\nexit 0\n')
         (d / "bin/curl").write_text(CURL)
         (d / "bin/sleep").write_text("#!/bin/sh\n")
         for f in ("systemctl", "curl", "sleep"):
@@ -56,12 +58,14 @@ def run(maps, running, second=None, bad_enable=False, state_left=False, mode="ac
             (d / "second").write_text(second)
         if bad_enable:
             (d / "bad_enable").write_text("")
+        for f in flags:
+            (d / f).write_text("")
         if state_left:
             (d / "state").write_text("")
         env = {**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}", "RJR_T": str(d),
                "RJR_MAPS": str(d / "maps"), "RJR_CRED": str(d / "cred"),
-               "RJR_STATE": str(d / "state")}
-        subprocess.run(["bash", str(HOOK)], env=env, check=True, capture_output=True)
+               "RJR_STATE": str(d / ("nodir/state" if "no_state_dir" in flags else "state"))}
+        subprocess.run(["bash", str(HOOK)], env=env, capture_output=True)
         calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
         return [c for c in calls if not c.startswith("GET")], (d / "state").exists(), \
             (d / "mode").read_text().strip()
@@ -89,6 +93,18 @@ calls, state, mode = run(STALE, IDLE, bad_enable=True)
 assert state, "lost track of execution mode that could not be re-enabled"
 calls, state, mode = run(CLEAN, IDLE, state_left=True, mode="passive")
 assert mode == "active" and not state, "did not finish an interrupted re-enable"
+
+calls, state, mode = run(STALE, IDLE, flags=("odd_mode",))
+assert not any("disable" in c or "restart" in c for c in calls), "acted on an unknown mode"
+calls, state, mode = run(STALE, IDLE, flags=("no_disable",))
+assert "systemctl restart rundeckd" not in calls, "restarted without confirmed passive mode"
+assert not state and mode == "active"
+calls, state, mode = run(STALE, IDLE, flags=("bad_restart",))
+assert state, "dropped recovery state after a failed restart"
+calls, state, mode = run(CLEAN, IDLE, state_left=True, mode="passive", flags=("down",))
+assert "systemctl restart rundeckd" in calls and not state, "did not retry a failed restart"
+calls, state, mode = run(STALE, IDLE, flags=("no_state_dir",))
+assert calls == [], "switched to passive without a recovery marker"
 
 boot = (ROOT / "rundeck/bootstrap-rundeck.sh").read_text()
 assert 'git clone -q --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$rjr_src"' in boot
