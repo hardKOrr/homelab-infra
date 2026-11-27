@@ -85,6 +85,10 @@ def main() -> int:
         if "facts-lock.yml" not in text or "facts_lock_action: release" not in text:
             print(f"FAIL {name} does not take and release the facts lock")
             return 1
+    boot = (ROOT / "rundeck/bootstrap-rundeck.sh").read_text()
+    if boot.index('flock 9') > boot.index('"$VENV_DIR/bin/python3" - "$FACTS"'):
+        print("FAIL bootstrap-rundeck.sh writes the runner key before taking the facts lock")
+        return 1
     with tempfile.TemporaryDirectory() as tmp:
         facts = os.path.join(tmp, "facts.yml")
         for n in range(ROUNDS):
