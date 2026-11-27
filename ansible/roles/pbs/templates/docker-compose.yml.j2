@@ -13,7 +13,7 @@ services:
     tmpfs:
       - /run
     ports:
-      - "{{ '' if _pbs_published | bool else '127.0.0.1:' }}{{ app_config.app.port }}:8007"
+      - "{{ '' if pbs_listener_open | bool else '127.0.0.1:' }}{{ app_config.app.port }}:8007"
     volumes:
       - "{{ pbs_project_dir }}/etc:/etc/proxmox-backup"
       - "{{ pbs_project_dir }}/lib:/var/lib/proxmox-backup"
