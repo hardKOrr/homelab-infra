@@ -29,6 +29,9 @@
 - name: PBS Docker | Wait for the PBS API to answer
   ansible.builtin.include_tasks: api-wait.yml
 
+- name: PBS Docker | Replace the image's default administrator password
+  ansible.builtin.include_tasks: admin-password.yml
+
 - name: PBS Docker | Resolve, store and prove the API token
   ansible.builtin.include_tasks: token.yml
 

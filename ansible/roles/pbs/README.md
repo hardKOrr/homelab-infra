@@ -25,7 +25,8 @@ only), deploys the Compose project and reuses the native `token.yml`,
 API token belongs to `admin@pbs` rather than `root@pam`; `proxmox-backup-manager` runs
 through `docker exec` (`pbs_manager_argv`). Configuration, state and logs are named
 volumes; the datastore is bind-mounted at its configured path, so a retained one keeps its
-registration. `second_copy` is refused on Docker.
+registration. Deploy replaces the image's default `admin@pbs` password with a generated one
+kept in `homelab-infra/apps/<instance>` (`admin_password`) and reuses it on repeat. `second_copy` is refused on Docker.
 
 ## Optional second copy
 
