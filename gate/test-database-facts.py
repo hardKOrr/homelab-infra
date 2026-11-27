@@ -34,7 +34,12 @@ def pg_tasks_file():
 
 
 def task_named(tasks, name):
-    return next(task for task in tasks if task.get("name") == name)
+    def walk(items):
+        for task in items:
+            yield task
+            yield from walk(task.get("block", []))
+
+    return next(task for task in walk(tasks) if task.get("name") == name)
 
 
 def backend_record(engine, instance, method, app):

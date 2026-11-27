@@ -25,6 +25,8 @@ def main():
                for task in resolve["tasks"]), resolve
 
     lifecycle = read_yaml("ansible/tasks/kubernetes/remove-cluster.yml")
+    # The registry read/write sits in a block that holds the facts lock; flatten it.
+    lifecycle = [inner for task in lifecycle for inner in (task.get("block", [task]))]
     names = [task.get("name", "") for task in lifecycle]
     ordered = [
         "k3s Remove | Verify the firewall alias before destroying node VMs",
