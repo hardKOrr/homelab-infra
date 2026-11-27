@@ -77,8 +77,8 @@ RESTART = ["POST system/executions/disable", "systemctl restart rundeckd",
 assert run(CLEAN, IDLE)[0] == [], "restarted without a Java upgrade"
 calls, state, mode = run(STALE, IDLE)
 assert calls == RESTART and not state and mode == "active", (calls, state, mode)
-assert run(STALE, IDLE, mode="passive")[0] == ["systemctl restart rundeckd"], \
-    "changed an execution mode the operator had set"
+assert run(STALE, IDLE, mode="passive")[0] == [], \
+    "restarted while an operator holds execution passive"
 assert run(STALE, BUSY)[0] == [], "restarted while an execution runs"
 for bad in (None, "{}", '{"error":true,"message":"x"}', '{"executions":null}'):
     assert run(STALE, bad)[0] == [], f"restarted on an answer without a list: {bad}"

@@ -10,9 +10,11 @@
 # Rundeck API for running executions (what `rd executions list` shows) and does nothing
 # while any exists, or while the answer is missing or malformed; the next tick retries.
 # To close the gap between "none running" and the restart, it first puts Rundeck in
-# passive execution mode (no new job starts), checks again, restarts, and returns the
-# prior mode. If that return fails, /var/lib/rundeckd-java-restart.reenable stays and
-# every later tick re-enables execution before doing anything else.
+# passive execution mode (no new job starts), checks again, restarts, and returns it to
+# active. While an operator holds Rundeck passive it waits, because a restart would
+# reset that in-memory hold. If returning to active fails,
+# /var/lib/rundeckd-java-restart.reenable stays and every later tick re-enables
+# execution before doing anything else.
 #
 # The token is given to curl on stdin, never in its arguments.
 # Test seams (gate/test-rundeckd-java-restart.py): RJR_MAPS, RJR_CRED, RJR_STATE.
@@ -58,21 +60,23 @@ if [ "$count" != 0 ]; then
 fi
 
 prior=$(mode) || { echo "cannot read the execution mode; will retry" >&2; exit 0; }
-if [ "$prior" = active ]; then
-  touch "$STATE"
-  api POST system/executions/disable >/dev/null || { enable 2>/dev/null && rm -f "$STATE"; exit 0; }
+# Passive is an operator's hold, kept only in memory: a restart would start Rundeck in its
+# configured mode and could open admission during the hold. Wait for the operator.
+if [ "$prior" != active ]; then
+  echo "rundeckd needs a restart after a Java upgrade; execution mode is $prior, waiting"
+  exit 0
 fi
+touch "$STATE"
+api POST system/executions/disable >/dev/null || { enable 2>/dev/null && rm -f "$STATE"; exit 0; }
 count=$(running) || count=unknown
 if [ "$count" != 0 ]; then
   echo "an execution started before the drain; not restarting"
-  [ "$prior" = active ] && enable 2>/dev/null && rm -f "$STATE"
+  enable 2>/dev/null && rm -f "$STATE"
   exit 0
 fi
 echo "restarting rundeckd after a Java upgrade"
 systemctl restart rundeckd
-if [ "$prior" = active ]; then
-  for _ in $(seq 60); do
-    enable 2>/dev/null && { rm -f "$STATE"; break; }
-    sleep 5
-  done
-fi
+for _ in $(seq 60); do
+  enable 2>/dev/null && { rm -f "$STATE"; break; }
+  sleep 5
+done
