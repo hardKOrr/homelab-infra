@@ -171,7 +171,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
 - `callback_plugins/` defines the common job and terminal output; `library/` holds
   controller-side modules.
 - `files/` contains controller-side helper programs installed or called by tasks, grouped
-  as `files/decommission/`, `files/pbs/`, `files/proxmox/` and `files/recovery/`.
+  as `files/decommission/`, `files/pbs/`, `files/proxmox/` `files/recovery/`, and `files/runner/`.
 - `templates/kubernetes/` holds the shared Kubernetes recovery CronJob and Job and the
   single-container workload.
 
