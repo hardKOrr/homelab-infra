@@ -24,7 +24,9 @@ def run(maps, api):
             '#!/bin/sh\n[ "$1" = show ] && { echo 4242; exit 0; }\n'
             f'echo "$@" >> {log}\n')
         (d / "bin/curl").write_text(
-            "#!/bin/sh\n" + ("exit 22\n" if api is None else f"echo '{api}'\n"))
+            "#!/bin/sh\n" + ("exit 22\n" if api is None else
+                          'case "$*" in *"/api/58/project/*/executions/running") ;; '
+                          '*) exit 22;; esac\n' f"echo '{api}'\n"))
         for f in ("systemctl", "curl"):
             (d / "bin" / f).chmod(0o755)
         (d / "maps").write_text(maps)

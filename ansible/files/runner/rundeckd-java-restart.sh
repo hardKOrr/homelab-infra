@@ -26,7 +26,7 @@ if [ -z "$url" ] || [ -z "$token" ]; then
   exit 0
 fi
 body=$(curl -sf -m 20 -H "X-Rundeck-Auth-Token: $token" -H 'Accept: application/json' \
-  "$url/api/58/executions/running?project=*") || {
+  "$url/api/58/project/*/executions/running") || {
   echo "cannot list running executions; will retry" >&2
   exit 0
 }
