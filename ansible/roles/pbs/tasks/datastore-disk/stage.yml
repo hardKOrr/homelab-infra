@@ -45,15 +45,6 @@
       The declared PBS datastore path is a symlink or non-directory. Refusing to mount over
       or copy from an ambiguous path.
 
-- name: PBS datastore disk | Create target and staging directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    mode: "0755"
-  loop:
-    - "{{ pbs_datastore_disk_path }}"
-    - /var/lib/homelab-infra/pbs-datastore-stage
-
 - name: PBS datastore disk | Read the staging mount
   ansible.builtin.command:
     argv:
@@ -67,6 +58,24 @@
   changed_when: false
   failed_when: false
   no_log: true
+  when: _pbs_final_mount.rc != 0
+
+# Once a disk is mounted at a path, that path is the filesystem's root and PBS owns its
+# mode (it sets it when creating the datastore); the role sets a mode only on the
+# unmounted directory beneath a mount. A retry after an interrupted run may find the
+# disk still mounted at the staging path, so that mount is read first.
+- name: PBS datastore disk | Create the datastore directory
+  ansible.builtin.file:
+    path: "{{ pbs_datastore_disk_path }}"
+    state: directory
+    mode: "0755"
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Create the staging directory
+  ansible.builtin.file:
+    path: /var/lib/homelab-infra/pbs-datastore-stage
+    state: directory
+    mode: "{{ '0755' if _pbs_stage_mount.rc != 0 else omit }}"
   when: _pbs_final_mount.rc != 0
 
 - name: PBS datastore disk | Refuse a staging path owned by another filesystem
