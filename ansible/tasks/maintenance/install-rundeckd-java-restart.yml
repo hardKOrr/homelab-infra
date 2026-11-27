@@ -1,0 +1,59 @@
+---
+# Install the runner's rundeckd restart after a Java upgrade. Runs ON the runner, as
+# root: from the Guest Maintenance apply play (on the guest that holds Rundeck) and from
+# playbooks/maintenance/runner-java-restart.yml, which bootstrap-rundeck.sh runs.
+#
+# unattended-upgrades replaces the JDK under a running rundeckd and, with the
+# needrestart policy of configure-unattended-upgrades.yml, restarts nothing. Every job
+# then fails until rundeckd restarts. A systemd timer runs ansible/files/runner/
+# rundeckd-java-restart.sh every 5 minutes: a restart therefore follows a Java upgrade
+# within 5 minutes once no execution is running. Nothing here touches Rundeck's
+# configuration or credentials, and a repeat run changes nothing.
+
+- name: Runner Java restart | Install the check script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/runner/rundeckd-java-restart.sh"
+    dest: /usr/local/sbin/rundeckd-java-restart
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Runner Java restart | Install the service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/rundeckd-java-restart.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Restart rundeckd after a Java upgrade once no execution is running
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/rundeckd-java-restart
+  register: _rjr_service
+
+- name: Runner Java restart | Install the timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/rundeckd-java-restart.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Check whether rundeckd needs a restart after a Java upgrade
+
+      [Timer]
+      OnBootSec=5min
+      OnUnitActiveSec=5min
+
+      [Install]
+      WantedBy=timers.target
+  register: _rjr_timer
+
+- name: Runner Java restart | Enable the timer
+  ansible.builtin.systemd:
+    name: rundeckd-java-restart.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ _rjr_service is changed or _rjr_timer is changed }}"

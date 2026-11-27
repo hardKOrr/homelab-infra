@@ -320,6 +320,17 @@
         watchtower_timezone: "{{ homelabinfra_config.timezone | default('UTC', true) }}"
       when: gm_runs_docker | bool
 
+    # The guest that holds Rundeck must restart it after a Java upgrade; recognised by
+    # its configuration, not by name.
+    - name: Check whether this guest runs Rundeck
+      ansible.builtin.stat:
+        path: /etc/rundeck/rundeck-config.properties
+      register: _gm_rundeck_stat
+
+    - name: Restart rundeckd after a Java upgrade on this guest
+      ansible.builtin.include_tasks: ../../tasks/maintenance/install-rundeckd-java-restart.yml
+      when: _gm_rundeck_stat.stat.exists
+
 
 # ── Play 5: reboot now, all at once ────────────────────────────────────────────
 # Only reached with force=true. Routine reboots never come through here -- they happen on

@@ -1422,6 +1422,12 @@ install -d -o rundeck -g rundeck -m 0750 "$REPO_DIR/config" "$REPO_DIR/config/ap
 chown -R rundeck:rundeck "$REPO_DIR" "$VENV_DIR" /var/lib/rundeck/.ansible
 systemctl enable rundeckd >/dev/null 2>&1 || true
 systemctl restart rundeckd
+
+# A JDK upgraded under a running rundeckd makes every job fail until it restarts; the
+# timer installed here restarts it once no execution is running. A rerun changes nothing.
+say "rundeckd restart after Java upgrades"
+(cd "$REPO_DIR/ansible" && "$VENV_DIR/bin/ansible-playbook" -i localhost, \
+  playbooks/maintenance/runner-java-restart.yml >/dev/null)
 GUEST
 
 # ── Author the config ──────────────────────────────────────────────────────────
