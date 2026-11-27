@@ -2,6 +2,7 @@
 """Hold one lock across a read, merge and write of config/.generated/facts.yml.
 
     facts-lock.py acquire <facts.yml>   waits for the lock, prints a token
+    facts-lock.py commit  <facts.yml> <token>   new content on stdin; prints changed|unchanged
     facts-lock.py release <facts.yml> <token>
 
 The lock is an OS flock on the persistent file `<facts.yml>.lock`. Ansible runs each task
@@ -10,11 +11,17 @@ flock for the whole transaction and `release` stops it. The kernel drops the flo
 holder exits, however it exits, and the holder exits when the owning ansible-playbook run
 is gone. The lock is therefore never broken by a timeout: a slow writer keeps it, and a
 dead one cannot strand it. The token is the holder's pid.
+
+The holder, not the writer, publishes the file: `commit` stages the content beside
+facts.yml and asks the holder to rename it into place. A transaction whose holder has died
+(and whose lock another writer may now hold) cannot reach the holder, so its stale snapshot
+is never written and the task fails.
 """
 
 import fcntl
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -66,12 +73,71 @@ def hold(path: str, owner: int) -> None:
             if not alive(owner):
                 os._exit(0)
             time.sleep(0.02)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(sock_name(os.getpid()))
+    srv.listen(4)
+    srv.settimeout(0.2)
     sys.stdout.write("ready\n")
     sys.stdout.flush()
     sys.stdout.close()
     while alive(owner):
-        time.sleep(0.2)
+        try:
+            conn, _ = srv.accept()
+        except socket.timeout:
+            continue
+        with conn:
+            conn.settimeout(10)
+            staged = conn.makefile("rb").readline().decode().rstrip("\n")
+            conn.sendall(publish(path, staged).encode())
     os._exit(0)
+
+
+def sock_name(pid: int) -> bytes:
+    return b"\0facts-lock-" + str(pid).encode()
+
+
+def publish(path: str, staged: str) -> str:
+    """Rename the staged file over facts.yml unless it already has that content."""
+    if os.path.dirname(os.path.abspath(staged)) != os.path.dirname(os.path.abspath(path)):
+        return "error: staged file is not beside facts.yml\n"
+    try:
+        with open(staged, "rb") as new:
+            data = new.read()
+        try:
+            with open(path, "rb") as old:
+                same = old.read() == data and (os.stat(path).st_mode & 0o777) == 0o600
+        except FileNotFoundError:
+            same = False
+        if same:
+            os.unlink(staged)
+            return "unchanged\n"
+        os.chmod(staged, 0o600)
+        os.replace(staged, path)
+        return "changed\n"
+    except OSError as err:
+        return f"error: {err}\n"
+
+
+def commit(path: str, token: str) -> str:
+    if not token.isdigit():
+        sys.exit("no facts lock is held by this transaction")
+    staged = f"{path}.{token}.{os.getpid()}.new"
+    fd = os.open(staged, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(sys.stdin.buffer.read())
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(30)
+        client.connect(sock_name(int(token)))
+        client.sendall(staged.encode() + b"\n")
+        reply = client.makefile("rb").readline().decode().strip()
+    except OSError as err:
+        reply = f"error: the lock holder is gone ({err})"
+    if reply not in ("changed", "unchanged"):
+        if os.path.exists(staged):
+            os.unlink(staged)
+        sys.exit(f"facts.yml not written: {reply}")
+    return reply
 
 
 def acquire(path: str) -> int:
@@ -126,6 +192,8 @@ def release(path: str, token: str) -> None:
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "acquire":
         print(acquire(sys.argv[2]))
+    elif len(sys.argv) == 4 and sys.argv[1] == "commit":
+        print(commit(sys.argv[2], sys.argv[3]))
     elif len(sys.argv) == 4 and sys.argv[1] == "release":
         release(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 4 and sys.argv[1] == "hold":

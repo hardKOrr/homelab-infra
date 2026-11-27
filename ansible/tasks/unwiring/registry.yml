@@ -59,13 +59,11 @@
       become: false
 
     - name: Unwire registry | Write the pruned registry
-      ansible.builtin.copy:
-        dest: "{{ unwire_registry_file }}"
-        mode: "0600"
-        content: "{{ _unwire_registry_pruned.stdout | from_json | to_nice_yaml(indent=2) }}"
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: commit
+        facts_lock_content: "{{ _unwire_registry_pruned.stdout | from_json | to_nice_yaml(indent=2) }}"
       when: (_unwire_registry_pruned.stdout | from_json) != _unwire_registry
-      delegate_to: localhost
-      become: false
 
   always:
     - name: Unwire registry | Release the facts lock

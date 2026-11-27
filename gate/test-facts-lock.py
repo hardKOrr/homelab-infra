@@ -19,7 +19,7 @@ LOCK = ROOT / "ansible/scripts/facts-lock.py"
 ROUNDS = 40
 
 WRITER = """
-import subprocess, sys, os, yaml
+import subprocess, sys, os, yaml, time
 lock, path, key = sys.argv[1:4]
 tok = subprocess.check_output([sys.executable, lock, "acquire", path], text=True).strip()
 try:
@@ -27,11 +27,10 @@ try:
         data = yaml.safe_load(open(path)) or {}
     except FileNotFoundError:
         data = {}
-    import time; time.sleep(0.01)
+    time.sleep(0.01)
     data = {**data, key: {"host": key}}
-    with open(path, "w") as f:
-        yaml.safe_dump(data, f)
-    os.chmod(path, 0o600)
+    subprocess.run([sys.executable, lock, "commit", path, tok], input=yaml.safe_dump(data),
+                   text=True, check=True, stdout=subprocess.DEVNULL)
 finally:
     subprocess.check_call([sys.executable, lock, "release", path, tok])
 """
@@ -53,12 +52,32 @@ def recovery() -> bool:
         if waiter.poll() is not None:
             print("FAIL a second acquire did not wait for the held lock")
             return False
+        stale_view = "stale: snapshot\n"
         os.kill(first, signal.SIGKILL)  # holder dies without releasing
         try:
             token = waiter.communicate(timeout=10)[0].strip()
         except subprocess.TimeoutExpired:
             print("FAIL waiter never got the lock after the holder died")
             waiter.kill()
+            return False
+        # the first transaction lost its lock: its commit must not reach facts.yml
+        stale = subprocess.run([sys.executable, str(LOCK), "commit", facts, str(first)],
+                               input=stale_view, text=True, env=env, capture_output=True)
+        if stale.returncode == 0 or os.path.exists(facts):
+            print("FAIL a transaction that lost its lock was able to write facts.yml")
+            return False
+        if [f for f in os.listdir(tmp) if f.endswith(".new")]:
+            print("FAIL a refused commit left a staged file")
+            return False
+        live = subprocess.run([sys.executable, str(LOCK), "commit", facts, token],
+                              input="live: 1\n", text=True, env=env, capture_output=True)
+        if live.returncode or live.stdout.strip() != "changed" or oct(os.stat(facts).st_mode & 0o777) != "0o600":
+            print("FAIL the live holder's commit did not publish 0600 content")
+            return False
+        again = subprocess.run([sys.executable, str(LOCK), "commit", facts, token],
+                               input="live: 1\n", text=True, env=env, capture_output=True)
+        if again.stdout.strip() != "unchanged":
+            print("FAIL an identical commit did not report unchanged")
             return False
         run("release", facts, token)
         # an owner that exits (killed run) frees the lock too
@@ -82,7 +101,7 @@ def main() -> int:
                  "ansible/tasks/unwiring/registry.yml",
                  "ansible/tasks/kubernetes/remove-cluster.yml"):
         text = (ROOT / name).read_text()
-        if "facts-lock.yml" not in text or "facts_lock_action: release" not in text:
+        if "facts-lock.yml" not in text or "facts_lock_action: release" not in text or "facts_lock_action: commit" not in text or "ansible.builtin.copy" in text:
             print(f"FAIL {name} does not take and release the facts lock")
             return 1
     boot = (ROOT / "rundeck/bootstrap-rundeck.sh").read_text()

@@ -225,10 +225,10 @@
       delegate_to: localhost
 
     - name: Generated facts | Merge and write facts for {{ generated_facts_service }}
-      ansible.builtin.copy:
-        dest: "{{ _generated_facts_file }}"
-        mode: "0600"
-        content: >-
+      ansible.builtin.include_tasks: facts-lock.yml
+      vars:
+        facts_lock_action: commit
+        facts_lock_content: >-
           {{ _gf_existing_facts
              | combine({'estates': {_generated_facts_estate:
                                     {generated_facts_service: _generated_facts_data}}}
@@ -236,8 +236,6 @@
                        else {generated_facts_service: _generated_facts_data},
                        recursive=True)
              | to_nice_yaml(indent=2) }}
-      become: false
-      delegate_to: localhost
   always:
     - name: Generated facts | Release the facts lock
       ansible.builtin.include_tasks: facts-lock.yml

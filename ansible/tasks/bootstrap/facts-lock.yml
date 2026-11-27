@@ -4,7 +4,9 @@
 # without it the later reader's stale copy overwrites the earlier writer's key.
 #
 # Inputs:
-#   facts_lock_action   acquire | release
+#   facts_lock_action   acquire | commit | release
+#   facts_lock_content  commit only: the new file content. The lock holder publishes it
+#                       (0600, atomic), so a transaction that lost its lock writes nothing.
 #   facts_lock_file     absolute path of config/.generated/facts.yml
 # Sets `_facts_lock_token` on acquire; release uses it and is safe when it is unset.
 # Callers wrap the work in a block and release in its `always:` section.
@@ -26,6 +28,21 @@
   ansible.builtin.set_fact:
     _facts_lock_token: "{{ _facts_lock_result.stdout | trim }}"
   when: facts_lock_action == 'acquire'
+
+- name: Facts lock | Commit the new content through the lock holder
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ facts_lock_file | dirname | dirname | dirname }}/ansible/scripts/facts-lock.py"
+      - commit
+      - "{{ facts_lock_file }}"
+      - "{{ _facts_lock_token | default('') }}"
+    stdin: "{{ facts_lock_content }}"
+  register: _facts_lock_commit
+  changed_when: _facts_lock_commit.stdout | trim == 'changed'
+  delegate_to: localhost
+  become: false
+  when: facts_lock_action == 'commit'
 
 - name: Facts lock | Release
   ansible.builtin.command:

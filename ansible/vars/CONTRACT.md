@@ -283,6 +283,7 @@ schema is settled in [App-level layering](contract/app-layering.md).
 
 Every task that rewrites `facts.yml` (`write-generated-facts.yml`, `unwiring/registry.yml`,
 `kubernetes/remove-cluster.yml`) holds the lock `facts.yml.lock` across its read, merge and
-write (`tasks/bootstrap/facts-lock.yml`, `scripts/facts-lock.py`), as does the runner key written by
+write (`tasks/bootstrap/facts-lock.yml`, `scripts/facts-lock.py`; the lock holder publishes the
+file, so a run that lost its lock writes nothing), as does the runner key written by
 `rundeck/bootstrap-rundeck.sh`, so overlapping live runs
 keep each other's keys.
