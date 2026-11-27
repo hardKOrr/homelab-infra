@@ -36,6 +36,11 @@ finally:
 """
 
 
+def token_probe(token: str) -> bytes:
+    """A valid request whose client disconnects before the reply: the holder's send fails."""
+    return token.partition(".")[2].encode() + b" 1"
+
+
 def alive_pid(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -69,6 +74,22 @@ def recovery() -> bool:
             print("FAIL the holder accepted a request without the transaction secret")
             return False
         forged.close()
+        # clients that disconnect without reading, or send garbage, must not stop the holder
+        for payload in (b"x" * 5000 + b"\n", b"\xff\xfe\n", b"", token_probe(first_token) + b"\n"):
+            rude = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            rude.connect(b"\0facts-lock-" + str(first).encode())
+            rude.sendall(payload)
+            rude.close()
+        time.sleep(0.5)
+        if not alive_pid(first):
+            print("FAIL a disconnecting client stopped the lock holder")
+            return False
+        ok = subprocess.run([sys.executable, str(LOCK), "commit", facts, first_token],
+                            input="first: 1\n", text=True, env=env, capture_output=True)
+        if ok.returncode or yaml.safe_load(open(facts)) != {"first": 1}:
+            print("FAIL the original holder could not commit after clients disconnected")
+            return False
+        os.unlink(facts)
         stale_view = "stale: snapshot\n"
         os.kill(first, signal.SIGKILL)  # holder dies without releasing
         try:

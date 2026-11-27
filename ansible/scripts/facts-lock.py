@@ -91,12 +91,18 @@ def hold(path: str, owner: int) -> None:
     while alive(owner):
         try:
             conn, _ = srv.accept()
-        except socket.timeout:
+        except OSError:  # timeout, or a connection that died before it was accepted
             continue
+        # A broken client must never take the holder down: it owns the lock for the
+        # whole transaction, so every per-connection failure is contained here.
+        reply = "error: bad request\n"
         with conn:
-            conn.settimeout(10)
-            reply = handle(conn, path, secret)
-            conn.sendall(reply.encode())
+            try:
+                conn.settimeout(10)
+                reply = handle(conn, path, secret)
+                conn.sendall(reply.encode())
+            except (OSError, ValueError):
+                pass
         if reply == "released\n":
             os._exit(0)
     os._exit(0)
