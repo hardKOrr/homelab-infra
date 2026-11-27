@@ -93,11 +93,22 @@
 - name: PBS Docker | Resolve, store and prove the API token
   ansible.builtin.include_tasks: token.yml
 
+# Remove App deletes the Compose project and its registration but keeps the datastore,
+# including on a stack without a separate disk. Let PBS validate and reopen the store.
+- name: PBS Docker | Check for existing datastore chunks
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: _pbs_docker_chunks
+
 - name: PBS Docker | Register the retained datastore without initialising it
   ansible.builtin.include_tasks: register-reused-datastore.yml
-  when:
-    - app_config.proxmox.vm.datastore_disk is defined
-    - app_config.app.datastore_mode | default('create') == 'reuse'
+  when: >-
+    app_config.app.datastore_mode | default('create') == 'reuse'
+    or _pbs_docker_chunks.stat.isdir | default(false)
 
 - name: PBS Docker | Hand the endpoint and token back to the playbook
   ansible.builtin.include_tasks: export.yml

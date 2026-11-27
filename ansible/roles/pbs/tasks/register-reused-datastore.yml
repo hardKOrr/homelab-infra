@@ -44,6 +44,14 @@
          ((_pbs_reuse_create_help.stdout | default('')) ~
           (_pbs_reuse_create_help.stderr | default(''))) }}
 
+- name: PBS datastore reuse | Require the container to support datastore reuse
+  ansible.builtin.assert:
+    that: _pbs_reuse_native_supported | bool
+    fail_msg: The PBS container image must support --reuse-datastore to register an existing chunk store.
+  when:
+    - _pbs_reuse_registered | length == 0
+    - app_config.hosting.method | default('native') == 'docker'
+
 - name: PBS datastore reuse | Register the retained directory without initialising it
   ansible.builtin.command:
     argv: >-
