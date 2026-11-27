@@ -51,6 +51,19 @@
   when: item.matched == 0
   changed_when: true
 
+# The listener is published to the network only after the managed administrator password
+# is in place and verified (the marker below). Until then it binds the guest's loopback, so
+# the image's default login is never reachable from outside, and a failed initialization
+# leaves the port closed.
+- name: PBS Docker | Check whether the service was already published
+  ansible.builtin.stat:
+    path: "{{ pbs_project_dir }}/.published"
+  register: _pbs_published_marker
+
+- name: PBS Docker | Resolve the listener binding
+  ansible.builtin.set_fact:
+    _pbs_published: "{{ _pbs_published_marker.stat.exists }}"
+
 # The container's `backup` user owns the datastore directory; PBS manages what is inside it.
 - name: PBS Docker | Deploy the Compose project
   ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
@@ -67,6 +80,28 @@
 
 - name: PBS Docker | Replace the image's default administrator password
   ansible.builtin.include_tasks: admin-password.yml
+
+- name: PBS Docker | Publish the listener now that the default password is gone
+  when: not (_pbs_published | bool)
+  block:
+    - name: PBS Docker | Record the publication
+      ansible.builtin.file:
+        path: "{{ pbs_project_dir }}/.published"
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: PBS Docker | Publish the Compose project
+      ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+      vars:
+        compose_project_dir: "{{ pbs_project_dir }}"
+        _pbs_published: true
+
+    - name: PBS Docker | Wait for the published PBS API
+      ansible.builtin.include_tasks: api-wait.yml
 
 # The image has only admin@pbs; the token owner is root@pam as on the native method.
 - name: PBS Docker | Read the PBS users

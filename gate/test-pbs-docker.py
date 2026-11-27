@@ -13,13 +13,19 @@ env = jinja2.Environment(
     undefined=jinja2.StrictUndefined, extensions=["jinja2.ext.do"],
 )
 env.filters["comment"] = lambda text: "# " + str(text)
+env.filters["bool"] = bool
 IMAGE = "ayufan/proxmox-backup-server:v4.2.0-1"
 text = env.get_template("docker-compose.yml.j2").render(
-    ansible_managed="managed", instance="pbs", app_config={"app": {"image": IMAGE, "port": 8007}}, pbs_project_dir="/opt/pbs",
+    ansible_managed="managed", instance="pbs", app_config={"app": {"image": IMAGE, "port": 8007}}, pbs_project_dir="/opt/pbs", _pbs_published=True,
     homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
 )
 service = yaml.safe_load(text)["services"]["pbs"]
 assert service["image"] == IMAGE and service["stop_signal"] == "SIGHUP", service
+closed = yaml.safe_load(env.get_template("docker-compose.yml.j2").render(
+    ansible_managed="m", instance="pbs", app_config={"app": {"image": IMAGE, "port": 8007}},
+    homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
+    pbs_project_dir="/opt/pbs", _pbs_published=False))["services"]["pbs"]
+assert closed["ports"] == ["127.0.0.1:8007:8007"], closed
 assert service["tmpfs"] == ["/run"] and service["ports"] == ["8007:8007"], service
 assert "/mnt/backup:/mnt/backup" in service["volumes"], service
 assert "/opt/pbs/etc:/etc/proxmox-backup" in service["volumes"]
