@@ -10,7 +10,8 @@
 # Rundeck API for running executions (what `rd executions list` shows) and does nothing
 # while any exists, or while the answer is missing or malformed; the next tick retries.
 # To close the gap between "none running" and the restart, it first puts Rundeck in
-# passive execution mode (no new job starts), checks again, restarts, and returns it to
+# passive execution mode (no new job starts), checks again, including the scheduler's
+# running-job count (a dispatched job may have no execution record yet), restarts, and returns it to
 # active. While an operator holds Rundeck passive it waits, because a restart would
 # reset that in-memory hold. If returning to active fails,
 # /var/lib/rundeckd-java-restart.reenable stays and every later tick re-enables
@@ -37,6 +38,12 @@ import json,sys
 e = json.load(sys.stdin)["executions"]
 assert isinstance(e, list)
 print(len(e))'; }
+# Jobs Quartz already dispatched can still be starting, with no execution record yet.
+scheduled() { api GET system/info | python3 -c '
+import json,sys
+n = json.load(sys.stdin)["system"]["stats"]["scheduler"]["running"]
+assert isinstance(n, int) and not isinstance(n, bool)
+print(n)'; }
 enable() { api POST system/executions/enable >/dev/null; }
 
 # restored: execution is active again, confirmed by the server's own status.
@@ -82,7 +89,8 @@ if [ "$(mode 2>/dev/null)" != passive ]; then
   exit 0
 fi
 count=$(running) || count=unknown
-if [ "$count" != 0 ]; then
+sched=$(scheduled) || sched=unknown
+if [ "$count" != 0 ] || [ "$sched" != 0 ]; then
   echo "an execution started before the drain; not restarting"
   restored && rm -f "$STATE"
   exit 0
