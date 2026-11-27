@@ -28,7 +28,7 @@ p=${url#http://x/api/58/}
 echo "$method $p" >> "$RJR_T/calls"
 case "$method $p" in
   "GET system/executions/status") [ -f "$RJR_T/odd_mode" ] && { echo '{"executionMode":"weird"}'; exit 0; }; echo "{\"executionMode\":\"$(cat "$RJR_T/mode")\"}";;
-  "POST system/executions/disable") [ -f "$RJR_T/no_disable" ] || echo passive > "$RJR_T/mode"; [ -f "$RJR_T/second" ] && mv "$RJR_T/second" "$RJR_T/running"; echo '{}';;
+  "POST system/executions/disable") [ -f "$RJR_T/no_disable" ] || echo passive > "$RJR_T/mode"; [ -f "$RJR_T/disable_errors" ] && exit 22; [ -f "$RJR_T/second" ] && mv "$RJR_T/second" "$RJR_T/running"; echo '{}';;
   "POST system/executions/enable") [ -f "$RJR_T/bad_enable" ] && exit 22; echo active > "$RJR_T/mode"; echo '{}';;
   "GET system/info") [ -f "$RJR_T/sched" ] && n=$(cat "$RJR_T/sched") || n=0; [ -f "$RJR_T/odd_info" ] && { echo '{"system":{}}'; exit 0; }; echo "{\"system\":{\"stats\":{\"scheduler\":{\"running\":$n}}}}";;
   "GET project/*/executions/running") [ -f "$RJR_T/running" ] || exit 22; cat "$RJR_T/running";;
@@ -102,6 +102,12 @@ for fl in ("sched=1", "odd_info"):
     calls, state, mode = run(STALE, IDLE, flags=(fl,))
     assert "systemctl restart rundeckd" not in calls and mode == "active" and not state, \
         f"restarted with a job still starting in the scheduler ({fl})"
+calls, state, mode = run(STALE, IDLE, flags=("disable_errors",))
+assert "systemctl restart rundeckd" not in calls and mode == "active" and not state, \
+    "restarted after a disable that flipped the flag but returned an error"
+calls, state, mode = run(STALE, IDLE, flags=("disable_errors", "bad_enable"))
+assert "systemctl restart rundeckd" not in calls and state, \
+    "lost the recovery marker after a failed disable and failed re-enable"
 calls, state, mode = run(STALE, IDLE, flags=("no_disable",))
 assert "systemctl restart rundeckd" not in calls, "restarted without confirmed passive mode"
 assert not state and mode == "active"

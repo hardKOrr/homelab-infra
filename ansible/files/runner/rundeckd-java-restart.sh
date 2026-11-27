@@ -86,9 +86,12 @@ case "$prior" in
 esac
 # The marker comes first: without it an interrupted run could leave execution disabled.
 touch "$STATE" 2>/dev/null || { echo "cannot write $STATE; not restarting" >&2; exit 0; }
-api POST system/executions/disable >/dev/null 2>&1
-if [ "$(mode 2>/dev/null)" != passive ]; then
-  echo "execution did not become passive; not restarting" >&2
+# The request must succeed, not just flip the flag: Rundeck sets passive before it removes
+# the scheduler's triggers, so a failure partway can leave triggers that still fire. The
+# marker stays on a failed disable, and the next tick puts execution back.
+if ! api POST system/executions/disable >/dev/null 2>&1 \
+    || [ "$(mode 2>/dev/null)" != passive ]; then
+  echo "could not disable execution cleanly; not restarting" >&2
   restored && rm -f "$STATE"
   exit 0
 fi
