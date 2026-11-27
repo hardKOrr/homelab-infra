@@ -1,5 +1,8 @@
 ---
 # restore-swap.yml verified hook: the restored configuration lists its users and the token.
+- name: PBS restore | Wait for the restored PBS API
+  ansible.builtin.include_tasks: api-wait.yml
+
 - name: PBS restore | Read the restored users
   ansible.builtin.command:
     argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"

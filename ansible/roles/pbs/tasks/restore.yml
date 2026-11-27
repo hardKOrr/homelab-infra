@@ -27,6 +27,6 @@
     recovery_swap_compose_project: "{{ pbs_project_dir }}"
     recovery_swap_stop_services: ["{{ instance }}"]
     recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    recovery_swap_health_url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"
-    recovery_swap_health_status: [200, 401]
+    # No health URL: the shared wait validates certificates and PBS serves a self-signed one.
+    # The verified hook waits with the same local TLS handling as Deploy.
     recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
