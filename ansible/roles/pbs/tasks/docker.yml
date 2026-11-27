@@ -37,6 +37,7 @@
   register: _pbs_published_marker
 
 # The container's `backup` user owns the datastore directory; PBS manages what is inside it.
+# Native datastore reuse checks that the root directory is exactly 0755.
 - name: PBS Docker | Deploy the Compose project
   ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
   vars:
@@ -46,7 +47,7 @@
       - path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
         owner: "{{ pbs_backup_uid }}"
         group: "{{ pbs_backup_uid }}"
-        mode: "0750"
+        mode: "0755"
 
 - name: PBS Docker | Wait for the PBS API to answer
   ansible.builtin.include_tasks: api-wait.yml

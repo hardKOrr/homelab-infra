@@ -31,9 +31,11 @@ assert "/mnt/backup:/mnt/backup" in service["volumes"], service
 assert "/opt/pbs/etc:/etc/proxmox-backup" in service["volumes"]
 
 docker = (ROOT / "ansible/roles/pbs/tasks/docker.yml").read_text()
+block = yaml.safe_load(docker)
+deploy = next(t for t in block if t.get("name") == "PBS Docker | Deploy the Compose project")
+assert deploy["vars"]["compose_dirs"][0]["mode"] == "0755", "PBS reuse requires datastore root mode 0755"
 # An include parameter overrides a fact of the same name while the enclosing block's guard is
 # evaluated, so the guard must not read the variable the publishing include passes.
-block = yaml.safe_load(docker)
 publish = next(t for t in block if t.get("name") == "PBS Docker | Publish the listener now that the default password is gone")
 include = next(t for t in publish["block"] if "Publish the Compose project" in t["name"])
 passed = set(include["vars"])
