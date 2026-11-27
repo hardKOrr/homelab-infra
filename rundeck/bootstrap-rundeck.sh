@@ -2408,7 +2408,10 @@ install -d -o rundeck -g rundeck -m 0750 "$(dirname "$FACTS")"
 # Same lock as ansible/scripts/facts-lock.py (an flock on facts.yml.lock), held across the
 # read, merge and write, including the branch that creates the file. The lock file stays
 # rundeck-owned so the Ansible writers, which run as rundeck, can open it.
-[ -e "$FACTS.lock" ] || install -o rundeck -g rundeck -m 0600 /dev/null "$FACTS.lock"
+# Open-or-create in place (never `install`, which replaces the file and so its inode,
+# and with it the lock another writer may already hold), then fix ownership.
+(umask 077; : >> "$FACTS.lock")
+chown rundeck:rundeck "$FACTS.lock"
 exec 9<>"$FACTS.lock"
 flock 9
 if [ -f "$FACTS" ]; then
