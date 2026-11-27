@@ -95,7 +95,10 @@ def hold(path: str, owner: int) -> None:
             continue
         with conn:
             conn.settimeout(10)
-            conn.sendall(handle(conn, path, secret).encode())
+            reply = handle(conn, path, secret)
+            conn.sendall(reply.encode())
+        if reply == "released\n":
+            os._exit(0)
     os._exit(0)
 
 
@@ -109,8 +112,12 @@ def handle(conn: socket.socket, path: str, secret: str) -> str:
     if struct.unpack("3i", cred)[1] != os.getuid():
         return "error: peer is not this user\n"
     parts = conn.makefile("rb").readline().decode().split()
-    if len(parts) != 2 or not hmac.compare_digest(parts[0], secret) or not parts[1].isdigit():
+    if len(parts) != 2 or not hmac.compare_digest(parts[0], secret):
         return "error: not this transaction\n"
+    if parts[1] == "release":
+        return "released\n"
+    if not parts[1].isdigit():
+        return "error: bad request\n"
     # The only file the holder will publish is the one this transaction's commit stages.
     staged = f"{path}.{os.getpid()}.{parts[1]}.new"
     return publish(path, staged)
@@ -193,23 +200,23 @@ def acquire(path: str) -> int:
 
 
 def release(path: str, token: str) -> None:
-    pid = token.partition(".")[0]
-    if not pid.isdigit():
+    """Ask the holder to stop. A token from another acquisition, even one whose pid the
+    kernel reused, fails the secret check and releases nothing."""
+    pid, _, secret = token.partition(".")
+    if not pid.isdigit() or not secret:
         return
-    pid = int(pid)
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as handle:
-            cmd = handle.read().split(b"\0")
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(10)
+        client.connect(sock_name(int(pid)))
+        client.sendall(f"{secret} release\n".encode())
+        reply = client.makefile("rb").readline().decode().strip()
     except OSError:
-        return
-    if b"hold" not in cmd or path.encode() not in cmd:
-        return
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
+        return  # the holder is already gone, so the lock is already free
+    if reply != "released":
         return
     for _ in range(500):
-        if not alive(pid):
+        if not alive(int(pid)):
             return
         time.sleep(0.02)
     sys.exit(f"lock holder {pid} did not stop")

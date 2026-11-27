@@ -36,6 +36,14 @@ finally:
 """
 
 
+def alive_pid(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def recovery() -> bool:
     """A holder killed outright, or whose owner exits, frees the lock; a waiter blocks."""
     import signal
@@ -77,6 +85,14 @@ def recovery() -> bool:
             return False
         if [f for f in os.listdir(tmp) if f.endswith(".new")]:
             print("FAIL a refused commit left a staged file")
+            return False
+        # a stale token (right pid, wrong secret: a reused pid) neither commits nor releases
+        stale_tok = token.split(".")[0] + ".deadbeef"
+        bad = subprocess.run([sys.executable, str(LOCK), "commit", facts, stale_tok],
+                             input="stale: 1\n", text=True, env=env, capture_output=True)
+        run("release", facts, stale_tok)
+        if bad.returncode == 0 or not alive_pid(int(token.split(".")[0])):
+            print("FAIL a stale token committed or released the current holder")
             return False
         live = subprocess.run([sys.executable, str(LOCK), "commit", facts, token],
                               input="live: 1\n", text=True, env=env, capture_output=True)
