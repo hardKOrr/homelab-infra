@@ -45,13 +45,22 @@ def recovery() -> bool:
         facts = os.path.join(tmp, "facts.yml")
         env = {**os.environ, "FACTS_LOCK_OWNER_PID": str(os.getpid())}
         run = lambda *a: subprocess.check_output([sys.executable, str(LOCK), *a], text=True, env=env).strip()
-        first = int(run("acquire", facts))
+        first_token = run("acquire", facts)
+        first = int(first_token.split(".")[0])
         waiter = subprocess.Popen([sys.executable, str(LOCK), "acquire", facts],
                                   stdout=subprocess.PIPE, text=True, env=env)
         time.sleep(1)
         if waiter.poll() is not None:
             print("FAIL a second acquire did not wait for the held lock")
             return False
+        import socket
+        forged = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        forged.connect(b"\0facts-lock-" + str(first).encode())
+        forged.sendall(b"not-the-secret 1\n")
+        if not forged.makefile("rb").readline().startswith(b"error"):
+            print("FAIL the holder accepted a request without the transaction secret")
+            return False
+        forged.close()
         stale_view = "stale: snapshot\n"
         os.kill(first, signal.SIGKILL)  # holder dies without releasing
         try:
@@ -61,7 +70,7 @@ def recovery() -> bool:
             waiter.kill()
             return False
         # the first transaction lost its lock: its commit must not reach facts.yml
-        stale = subprocess.run([sys.executable, str(LOCK), "commit", facts, str(first)],
+        stale = subprocess.run([sys.executable, str(LOCK), "commit", facts, first_token],
                                input=stale_view, text=True, env=env, capture_output=True)
         if stale.returncode == 0 or os.path.exists(facts):
             print("FAIL a transaction that lost its lock was able to write facts.yml")

@@ -10,7 +10,8 @@ in its own process, so `acquire` starts a small detached holder process that own
 flock for the whole transaction and `release` stops it. The kernel drops the flock when the
 holder exits, however it exits, and the holder exits when the owning ansible-playbook run
 is gone. The lock is therefore never broken by a timeout: a slow writer keeps it, and a
-dead one cannot strand it. The token is the holder's pid.
+dead one cannot strand it. The token is `<holder pid>.<secret>`; the secret is generated per
+transaction and handed to the holder on its stdin, never on a command line.
 
 The holder, not the writer, publishes the file: `commit` stages the content beside
 facts.yml and asks the holder to rename it into place. A transaction whose holder has died
@@ -20,8 +21,12 @@ is never written and the task fails.
 
 import fcntl
 import os
+import hmac
+import secrets
 import signal
 import socket
+import stat
+import struct
 import subprocess
 import sys
 import time
@@ -64,6 +69,9 @@ def alive(pid: int) -> bool:
 
 def hold(path: str, owner: int) -> None:
     signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+    secret = sys.stdin.readline().strip()
+    if not secret:
+        os._exit(1)
     fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
     while True:
         try:
@@ -87,8 +95,7 @@ def hold(path: str, owner: int) -> None:
             continue
         with conn:
             conn.settimeout(10)
-            staged = conn.makefile("rb").readline().decode().rstrip("\n")
-            conn.sendall(publish(path, staged).encode())
+            conn.sendall(handle(conn, path, secret).encode())
     os._exit(0)
 
 
@@ -96,11 +103,25 @@ def sock_name(pid: int) -> bytes:
     return b"\0facts-lock-" + str(pid).encode()
 
 
+def handle(conn: socket.socket, path: str, secret: str) -> str:
+    """Serve one request: `<secret> <n>`, from a peer running as this user."""
+    cred = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    if struct.unpack("3i", cred)[1] != os.getuid():
+        return "error: peer is not this user\n"
+    parts = conn.makefile("rb").readline().decode().split()
+    if len(parts) != 2 or not hmac.compare_digest(parts[0], secret) or not parts[1].isdigit():
+        return "error: not this transaction\n"
+    # The only file the holder will publish is the one this transaction's commit stages.
+    staged = f"{path}.{os.getpid()}.{parts[1]}.new"
+    return publish(path, staged)
+
+
 def publish(path: str, staged: str) -> str:
     """Rename the staged file over facts.yml unless it already has that content."""
-    if os.path.dirname(os.path.abspath(staged)) != os.path.dirname(os.path.abspath(path)):
-        return "error: staged file is not beside facts.yml\n"
     try:
+        st = os.lstat(staged)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            return "error: staged file is not a regular file of this user\n"
         with open(staged, "rb") as new:
             data = new.read()
         try:
@@ -119,17 +140,18 @@ def publish(path: str, staged: str) -> str:
 
 
 def commit(path: str, token: str) -> str:
-    if not token.isdigit():
+    pid, _, secret = token.partition(".")
+    if not pid.isdigit() or not secret:
         sys.exit("no facts lock is held by this transaction")
-    staged = f"{path}.{token}.{os.getpid()}.new"
+    staged = f"{path}.{pid}.{os.getpid()}.new"
     fd = os.open(staged, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(fd, "wb") as handle:
         handle.write(sys.stdin.buffer.read())
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(30)
-        client.connect(sock_name(int(token)))
-        client.sendall(staged.encode() + b"\n")
+        client.connect(sock_name(int(pid)))
+        client.sendall(f"{secret} {os.getpid()}\n".encode())
         reply = client.makefile("rb").readline().decode().strip()
     except OSError as err:
         reply = f"error: the lock holder is gone ({err})"
@@ -144,8 +166,11 @@ def acquire(path: str) -> int:
     os.makedirs(os.path.dirname(os.path.abspath(path)), mode=0o750, exist_ok=True)
     child = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), "hold", path, str(owner_pid())],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         start_new_session=True)
+    secret = secrets.token_hex(16)
+    child.stdin.write(secret.encode() + b"\n")
+    child.stdin.close()
     deadline = time.monotonic() + WAIT
     fd = child.stdout.fileno()
     os.set_blocking(fd, False)
@@ -164,13 +189,14 @@ def acquire(path: str) -> int:
             sys.exit(f"timed out waiting for {path}.lock")
         else:
             time.sleep(0.02)
-    return child.pid
+    return f"{child.pid}.{secret}"
 
 
 def release(path: str, token: str) -> None:
-    if not token.isdigit():
+    pid = token.partition(".")[0]
+    if not pid.isdigit():
         return
-    pid = int(token)
+    pid = int(pid)
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as handle:
             cmd = handle.read().split(b"\0")
