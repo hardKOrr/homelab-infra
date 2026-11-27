@@ -53,6 +53,10 @@
   loop:
     - "{{ pbs_datastore_disk_path }}"
     - /var/lib/homelab-infra/pbs-datastore-stage
+  # Once the disk is mounted, the datastore root is the filesystem's root and PBS owns its
+  # mode (it sets it when creating the datastore); the role sets it only on the unmounted
+  # directory beneath the mount.
+  when: _pbs_final_mount.rc != 0
 
 - name: PBS datastore disk | Read the staging mount
   ansible.builtin.command:
