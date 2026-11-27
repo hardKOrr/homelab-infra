@@ -280,3 +280,8 @@ each role key carries exactly the fields listed in Section 3 for that role. Cons
 with `is defined` on the keys they read — a role absent from the file means that baseline
 service has not been bootstrapped yet. The `config/apps/<instance>.yml`
 schema is settled in [App-level layering](contract/app-layering.md).
+
+Every task that rewrites `facts.yml` (`write-generated-facts.yml`, `unwiring/registry.yml`,
+`kubernetes/remove-cluster.yml`) holds the lock `facts.yml.lock` across its read, merge and
+write (`tasks/bootstrap/facts-lock.yml`, `scripts/facts-lock.py`), so overlapping live runs
+keep each other's keys.

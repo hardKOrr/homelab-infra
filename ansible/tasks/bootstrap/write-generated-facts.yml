@@ -124,109 +124,125 @@
       {{ (_gf_defaults | first)
          | default(_gf_domains | list | first | default(''), true) }}
 
-- name: Generated facts | Load existing registries
-  ansible.builtin.set_fact:
-    _gf_existing_facts: >-
-      {{ lookup('ansible.builtin.file', _generated_facts_file, errors='ignore')
-         | from_yaml | default({}, true) }}
-    _gf_existing_infra: "{{ homelabinfra_infra | default({}, true) }}"
-    _gf_existing_local_infra: "{{ hostvars['localhost'].homelabinfra_infra | default({}, true) }}"
-
-# Older database writers could store the literal Jinja expression as a key.
-# Rebuild only the selected estate's database map so normal writes repair it.
-- name: Generated facts | Remove unresolved database instance keys from file registry
-  ansible.builtin.set_fact:
-    _gf_existing_facts: >-
-      {{ _gf_existing_facts
-         | combine(
-             {'databases': (_gf_existing_facts.get('databases', {}) | default({}, true)
-               | dict2items
-               | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-               | items2dict)}
-             if _generated_facts_estate | length == 0 else
-             {'estates': _gf_existing_facts.get('estates', {})
-               | combine({_generated_facts_estate:
-                 _gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
-                 | combine({'databases':
-                   (_gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
-                     .get('databases', {}) | default({}, true)
-                     | dict2items
-                     | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-                     | items2dict)}, recursive=False)}, recursive=False)},
-             recursive=False) }}
-  when: generated_facts_service == 'databases'
-
-- name: Generated facts | Read cleaned database registry
-  ansible.builtin.set_fact:
-    _gf_clean_database_registry: >-
-      {{ (_gf_existing_facts.get('databases', {}) if _generated_facts_estate | length == 0
-          else _gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
-            .get('databases', {})) | default({}, true) }}
-  when: generated_facts_service == 'databases'
-
-- name: Generated facts | Remove unresolved database instance keys from memory registry
-  ansible.builtin.set_fact:
-    _gf_existing_infra: >-
-      {{ _gf_existing_infra
-         | combine(
-             {'databases': _gf_clean_infra_database_registry}
-             if _generated_facts_estate | length == 0 else
-             {'estates': _gf_existing_infra.get('estates', {})
-               | combine({_generated_facts_estate:
-                 _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
-                 | combine({'databases': _gf_clean_infra_database_registry}, recursive=False)},
-                 recursive=False)},
-             recursive=False) }}
-    _gf_existing_local_infra: >-
-      {{ _gf_existing_local_infra
-         | combine(
-             {'databases': _gf_clean_local_infra_database_registry}
-             if _generated_facts_estate | length == 0 else
-             {'estates': _gf_existing_local_infra.get('estates', {})
-               | combine({_generated_facts_estate:
-                 _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
-                 | combine({'databases': _gf_clean_local_infra_database_registry}, recursive=False)},
-                 recursive=False)},
-             recursive=False) }}
+# One lock spans the read, the merge and the write: a second live run that writes in
+# between would otherwise lose its key (ansible/vars/CONTRACT.md §3).
+- name: Generated facts | Read, merge and write under the facts lock
   vars:
-    _gf_clean_infra_database_registry: >-
-      {{ (_gf_existing_infra.get('databases', {}) if _generated_facts_estate | length == 0
-          else _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
-            .get('databases', {})) | default({}, true)
-         | dict2items
-         | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-         | items2dict }}
-    _gf_clean_local_infra_database_registry: >-
-      {{ (_gf_existing_local_infra.get('databases', {}) if _generated_facts_estate | length == 0
-          else _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
-            .get('databases', {})) | default({}, true)
-         | dict2items
-         | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
-         | items2dict }}
-  when: generated_facts_service == 'databases'
+    facts_lock_file: "{{ _generated_facts_file }}"
+  block:
+    - name: Generated facts | Take the facts lock
+      ansible.builtin.include_tasks: facts-lock.yml
+      vars:
+        facts_lock_action: acquire
 
-- name: Generated facts | Ensure config/.generated exists
-  ansible.builtin.file:
-    path: "{{ _generated_facts_file | dirname }}"
-    state: directory
-    mode: "0750"
-  become: false
-  delegate_to: localhost
+    - name: Generated facts | Load existing registries
+      ansible.builtin.set_fact:
+        _gf_existing_facts: >-
+          {{ lookup('ansible.builtin.file', _generated_facts_file, errors='ignore')
+             | from_yaml | default({}, true) }}
+        _gf_existing_infra: "{{ homelabinfra_infra | default({}, true) }}"
+        _gf_existing_local_infra: "{{ hostvars['localhost'].homelabinfra_infra | default({}, true) }}"
 
-- name: Generated facts | Merge and write facts for {{ generated_facts_service }}
-  ansible.builtin.copy:
-    dest: "{{ _generated_facts_file }}"
-    mode: "0600"
-    content: >-
-      {{ _gf_existing_facts
-         | combine({'estates': {_generated_facts_estate:
-                                {generated_facts_service: _generated_facts_data}}}
-                   if _generated_facts_estate | length > 0
-                   else {generated_facts_service: _generated_facts_data},
-                   recursive=True)
-         | to_nice_yaml(indent=2) }}
-  become: false
-  delegate_to: localhost
+    # Older database writers could store the literal Jinja expression as a key.
+    # Rebuild only the selected estate's database map so normal writes repair it.
+    - name: Generated facts | Remove unresolved database instance keys from file registry
+      ansible.builtin.set_fact:
+        _gf_existing_facts: >-
+          {{ _gf_existing_facts
+             | combine(
+                 {'databases': (_gf_existing_facts.get('databases', {}) | default({}, true)
+                   | dict2items
+                   | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+                   | items2dict)}
+                 if _generated_facts_estate | length == 0 else
+                 {'estates': _gf_existing_facts.get('estates', {})
+                   | combine({_generated_facts_estate:
+                     _gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
+                     | combine({'databases':
+                       (_gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
+                         .get('databases', {}) | default({}, true)
+                         | dict2items
+                         | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+                         | items2dict)}, recursive=False)}, recursive=False)},
+                 recursive=False) }}
+      when: generated_facts_service == 'databases'
+
+    - name: Generated facts | Read cleaned database registry
+      ansible.builtin.set_fact:
+        _gf_clean_database_registry: >-
+          {{ (_gf_existing_facts.get('databases', {}) if _generated_facts_estate | length == 0
+              else _gf_existing_facts.get('estates', {}).get(_generated_facts_estate, {})
+                .get('databases', {})) | default({}, true) }}
+      when: generated_facts_service == 'databases'
+
+    - name: Generated facts | Remove unresolved database instance keys from memory registry
+      ansible.builtin.set_fact:
+        _gf_existing_infra: >-
+          {{ _gf_existing_infra
+             | combine(
+                 {'databases': _gf_clean_infra_database_registry}
+                 if _generated_facts_estate | length == 0 else
+                 {'estates': _gf_existing_infra.get('estates', {})
+                   | combine({_generated_facts_estate:
+                     _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
+                     | combine({'databases': _gf_clean_infra_database_registry}, recursive=False)},
+                     recursive=False)},
+                 recursive=False) }}
+        _gf_existing_local_infra: >-
+          {{ _gf_existing_local_infra
+             | combine(
+                 {'databases': _gf_clean_local_infra_database_registry}
+                 if _generated_facts_estate | length == 0 else
+                 {'estates': _gf_existing_local_infra.get('estates', {})
+                   | combine({_generated_facts_estate:
+                     _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
+                     | combine({'databases': _gf_clean_local_infra_database_registry}, recursive=False)},
+                     recursive=False)},
+                 recursive=False) }}
+      vars:
+        _gf_clean_infra_database_registry: >-
+          {{ (_gf_existing_infra.get('databases', {}) if _generated_facts_estate | length == 0
+              else _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
+                .get('databases', {})) | default({}, true)
+             | dict2items
+             | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+             | items2dict }}
+        _gf_clean_local_infra_database_registry: >-
+          {{ (_gf_existing_local_infra.get('databases', {}) if _generated_facts_estate | length == 0
+              else _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
+                .get('databases', {})) | default({}, true)
+             | dict2items
+             | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+             | items2dict }}
+      when: generated_facts_service == 'databases'
+
+    - name: Generated facts | Ensure config/.generated exists
+      ansible.builtin.file:
+        path: "{{ _generated_facts_file | dirname }}"
+        state: directory
+        mode: "0750"
+      become: false
+      delegate_to: localhost
+
+    - name: Generated facts | Merge and write facts for {{ generated_facts_service }}
+      ansible.builtin.copy:
+        dest: "{{ _generated_facts_file }}"
+        mode: "0600"
+        content: >-
+          {{ _gf_existing_facts
+             | combine({'estates': {_generated_facts_estate:
+                                    {generated_facts_service: _generated_facts_data}}}
+                       if _generated_facts_estate | length > 0
+                       else {generated_facts_service: _generated_facts_data},
+                       recursive=True)
+             | to_nice_yaml(indent=2) }}
+      become: false
+      delegate_to: localhost
+  always:
+    - name: Generated facts | Release the facts lock
+      ansible.builtin.include_tasks: facts-lock.yml
+      vars:
+        facts_lock_action: release
 
 # ── Keep the in-memory registry in step with the file ─────────────────────────
 # Callers write a key here and then WIRE against it in the same play. Every one of

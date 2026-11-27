@@ -1,0 +1,43 @@
+---
+# Take or release the lock that serializes every read, merge and write of
+# config/.generated/facts.yml (ansible/scripts/facts-lock.py). Two live runs may overlap;
+# without it the later reader's stale copy overwrites the earlier writer's key.
+#
+# Inputs:
+#   facts_lock_action   acquire | release
+#   facts_lock_file     absolute path of config/.generated/facts.yml
+# Sets `_facts_lock_token` on acquire; release uses it and is safe when it is unset.
+# Callers wrap the work in a block and release in its `always:` section.
+
+- name: Facts lock | Acquire
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ facts_lock_file | dirname | dirname | dirname }}/ansible/scripts/facts-lock.py"
+      - acquire
+      - "{{ facts_lock_file }}"
+  register: _facts_lock_result
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  when: facts_lock_action == 'acquire'
+
+- name: Facts lock | Remember the token
+  ansible.builtin.set_fact:
+    _facts_lock_token: "{{ _facts_lock_result.stdout | trim }}"
+  when: facts_lock_action == 'acquire'
+
+- name: Facts lock | Release
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ facts_lock_file | dirname | dirname | dirname }}/ansible/scripts/facts-lock.py"
+      - release
+      - "{{ facts_lock_file }}"
+      - "{{ _facts_lock_token | default('') }}"
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  when:
+    - facts_lock_action == 'release'
+    - _facts_lock_token is defined

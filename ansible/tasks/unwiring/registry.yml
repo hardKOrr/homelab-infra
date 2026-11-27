@@ -27,35 +27,51 @@
 # next run, and unlike the provider unwiring above it cannot be "stale route on a proxy
 # that is gone" — nothing external is involved, this is the platform's own file.
 
-- name: Unwire registry | Read the current registry
-  ansible.builtin.set_fact:
-    _unwire_registry: >-
-      {{ (lookup('ansible.builtin.file', unwire_registry_file, errors='ignore')
-          | from_yaml) | default({}, true) }}
+# One lock spans the read, the prune and the write, so a concurrent writer's key survives.
+- name: Unwire registry | Read, change and write under the facts lock
+  vars:
+    facts_lock_file: "{{ unwire_registry_file }}"
+  block:
+    - name: Unwire registry | Take the facts lock
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: acquire
 
-- name: Unwire registry | Compute the registry without {{ instance }}
-  ansible.builtin.command:
-    argv:
-      - "{{ ansible_playbook_python }}"
-      - "{{ unwire_registry_file | dirname | dirname | dirname }}/ansible/scripts/registry-forget.py"
-    stdin: >-
-      {{ {'registry': _unwire_registry,
-          'instance': instance,
-          'database_backend': unwire_registry_database_backend | default(false) | bool}
-         | to_json }}
-  register: _unwire_registry_pruned
-  changed_when: false
-  delegate_to: localhost
-  become: false
+    - name: Unwire registry | Read the current registry
+      ansible.builtin.set_fact:
+        _unwire_registry: >-
+          {{ (lookup('ansible.builtin.file', unwire_registry_file, errors='ignore')
+              | from_yaml) | default({}, true) }}
 
-- name: Unwire registry | Write the pruned registry
-  ansible.builtin.copy:
-    dest: "{{ unwire_registry_file }}"
-    mode: "0600"
-    content: "{{ _unwire_registry_pruned.stdout | from_json | to_nice_yaml(indent=2) }}"
-  when: (_unwire_registry_pruned.stdout | from_json) != _unwire_registry
-  delegate_to: localhost
-  become: false
+    - name: Unwire registry | Compute the registry without {{ instance }}
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ unwire_registry_file | dirname | dirname | dirname }}/ansible/scripts/registry-forget.py"
+        stdin: >-
+          {{ {'registry': _unwire_registry,
+              'instance': instance,
+              'database_backend': unwire_registry_database_backend | default(false) | bool}
+             | to_json }}
+      register: _unwire_registry_pruned
+      changed_when: false
+      delegate_to: localhost
+      become: false
+
+    - name: Unwire registry | Write the pruned registry
+      ansible.builtin.copy:
+        dest: "{{ unwire_registry_file }}"
+        mode: "0600"
+        content: "{{ _unwire_registry_pruned.stdout | from_json | to_nice_yaml(indent=2) }}"
+      when: (_unwire_registry_pruned.stdout | from_json) != _unwire_registry
+      delegate_to: localhost
+      become: false
+
+  always:
+    - name: Unwire registry | Release the facts lock
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: release
 
 - name: Unwire registry | Report what the registry no longer claims
   ansible.builtin.debug:
