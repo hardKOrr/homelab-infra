@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart rundeckd after a Java upgrade once no execution is running
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rundeckd-java-restart

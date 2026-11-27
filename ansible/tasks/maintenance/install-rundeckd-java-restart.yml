@@ -1,0 +1,33 @@
+---
+# Install the runner's rundeckd restart after a Java upgrade. Runs ON the runner, as
+# root, from the Guest Maintenance apply play (on the guest that holds Rundeck).
+# rundeck/bootstrap-rundeck.sh installs the same three files from a root-owned clone.
+#
+# unattended-upgrades replaces the JDK under a running rundeckd and, with the
+# needrestart policy of configure-unattended-upgrades.yml, restarts nothing. Every job
+# then fails until rundeckd restarts. A systemd timer runs ansible/files/runner/
+# rundeckd-java-restart.sh every 5 minutes: a restart therefore follows a Java upgrade
+# within 5 minutes once no execution is running. Nothing here touches Rundeck's
+# configuration or credentials, and a repeat run changes nothing.
+
+- name: Runner Java restart | Install the check script and its systemd units
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/runner/{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: rundeckd-java-restart.sh, dest: /usr/local/sbin/rundeckd-java-restart, mode: "0755"}
+    - {src: rundeckd-java-restart.service, dest: /etc/systemd/system/rundeckd-java-restart.service, mode: "0644"}
+    - {src: rundeckd-java-restart.timer, dest: /etc/systemd/system/rundeckd-java-restart.timer, mode: "0644"}
+  loop_control:
+    label: "{{ item.dest }}"
+  register: _rjr_files
+
+- name: Runner Java restart | Enable the timer
+  ansible.builtin.systemd:
+    name: rundeckd-java-restart.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ _rjr_files is changed }}"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check whether rundeckd needs a restart after a Java upgrade
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
