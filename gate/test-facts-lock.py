@@ -2,7 +2,7 @@
 """Writers of config/.generated/facts.yml hold facts-lock.py across read, merge and write.
 
 Two processes each add their own key to one temporary facts.yml, the way the registry
-writers do (read, merge, write mode 0600), many times; every round ends with both keys.
+writers do (read, merge, write mode 0600), many times; a killed holder or exited owner frees the lock; every round ends with both keys.
 Also checks every task that rewrites facts.yml takes the lock.
 """
 
@@ -37,6 +37,46 @@ finally:
 """
 
 
+def recovery() -> bool:
+    """A holder killed outright, or whose owner exits, frees the lock; a waiter blocks."""
+    import signal
+    import time
+
+    with tempfile.TemporaryDirectory() as tmp:
+        facts = os.path.join(tmp, "facts.yml")
+        env = {**os.environ, "FACTS_LOCK_OWNER_PID": str(os.getpid())}
+        run = lambda *a: subprocess.check_output([sys.executable, str(LOCK), *a], text=True, env=env).strip()
+        first = int(run("acquire", facts))
+        waiter = subprocess.Popen([sys.executable, str(LOCK), "acquire", facts],
+                                  stdout=subprocess.PIPE, text=True, env=env)
+        time.sleep(1)
+        if waiter.poll() is not None:
+            print("FAIL a second acquire did not wait for the held lock")
+            return False
+        os.kill(first, signal.SIGKILL)  # holder dies without releasing
+        try:
+            token = waiter.communicate(timeout=10)[0].strip()
+        except subprocess.TimeoutExpired:
+            print("FAIL waiter never got the lock after the holder died")
+            waiter.kill()
+            return False
+        run("release", facts, token)
+        # an owner that exits (killed run) frees the lock too
+        owner = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        env["FACTS_LOCK_OWNER_PID"] = str(owner.pid)
+        run("acquire", facts)
+        owner.kill()
+        owner.wait()
+        env["FACTS_LOCK_OWNER_PID"] = str(os.getpid())
+        try:
+            subprocess.check_output([sys.executable, str(LOCK), "acquire", facts],
+                                    text=True, env=env, timeout=10)
+        except subprocess.TimeoutExpired:
+            print("FAIL lock stayed held after its owner exited")
+            return False
+    return True
+
+
 def main() -> int:
     for name in ("ansible/tasks/bootstrap/write-generated-facts.yml",
                  "ansible/tasks/unwiring/registry.yml",
@@ -59,12 +99,11 @@ def main() -> int:
             if got != {f"a{n}", f"b{n}"}:
                 print(f"FAIL round {n}: facts.yml holds {sorted(got)}")
                 return 1
-            if os.path.exists(facts + ".lock"):
-                print(f"FAIL round {n}: lock left behind")
-                return 1
             if oct(os.stat(facts).st_mode & 0o777) != "0o600":
                 print("FAIL mode is not 0600")
                 return 1
+    if not recovery():
+        return 1
     print(f"OK {ROUNDS} rounds kept both keys")
     return 0
 

@@ -1,5 +1,5 @@
 ---
-# Take or release the lock that serializes every read, merge and write of
+# Take or release the flock (held by a detached process for the whole transaction) that serializes every read, merge and write of
 # config/.generated/facts.yml (ansible/scripts/facts-lock.py). Two live runs may overlap;
 # without it the later reader's stale copy overwrites the earlier writer's key.
 #
