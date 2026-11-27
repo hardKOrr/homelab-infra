@@ -2405,6 +2405,15 @@ set -euo pipefail
 # Merge rather than overwrite: facts.yml grows one role key at a time and already holds
 # whatever earlier bootstrap steps wrote.
 install -d -o rundeck -g rundeck -m 0750 "$(dirname "$FACTS")"
+# Same lock as ansible/scripts/facts-lock.py (an flock on facts.yml.lock), held across the
+# read, merge and write, including the branch that creates the file. The lock file stays
+# rundeck-owned so the Ansible writers, which run as rundeck, can open it.
+# Open-or-create in place (never `install`, which replaces the file and so its inode,
+# and with it the lock another writer may already hold).
+# Created by rundeck itself so it is usable the moment it appears.
+runuser -u rundeck -- bash -c 'umask 077; : >> "$1"' _ "$FACTS.lock"
+exec 9<>"$FACTS.lock"
+flock 9
 if [ -f "$FACTS" ]; then
   "$VENV_DIR/bin/python3" - "$FACTS" "$PATCH" <<'PY'
 import sys, yaml

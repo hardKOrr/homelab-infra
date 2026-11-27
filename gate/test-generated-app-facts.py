@@ -23,7 +23,12 @@ def read_tasks(path):
 
 
 def named_task(tasks, name):
-    return next(task for task in tasks if task.get("name") == name)
+    def walk(items):
+        for task in items:
+            yield task
+            yield from walk(task.get("block", []))
+
+    return next(task for task in walk(tasks) if task.get("name") == name)
 
 
 def app_producers_publish_named_instance_keys():

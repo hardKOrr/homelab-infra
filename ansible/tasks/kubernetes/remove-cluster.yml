@@ -222,40 +222,54 @@
     firewall_k3s_nodes: []
   when: k3s_remove_alias | length > 0
 
-- name: k3s Remove | Read generated topology for registry cleanup
-  ansible.builtin.set_fact:
-    _k3s_remove_facts_on_disk: >-
-      {{ lookup('ansible.builtin.file',
-                playbook_dir ~ '/../../../config/.generated/facts.yml',
-                errors='ignore') | from_yaml | default({}, true) }}
+# One lock spans the read and the write of the registry (see tasks/bootstrap/facts-lock.yml).
+- name: k3s Remove | Read, change and write generated topology under the facts lock
+  vars:
+    facts_lock_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+  block:
+    - name: k3s Remove | Take the facts lock
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: acquire
 
-- name: k3s Remove | Refuse to unregister a different cluster
-  ansible.builtin.assert:
-    that:
-      - >-
-        'kubernetes' not in _k3s_remove_facts_on_disk
-        or (_k3s_remove_facts_on_disk.kubernetes.instance | default('')) == k3s_remove_instance
-    fail_msg: >-
-      Refusing to remove the Kubernetes topology registry because it now belongs to a
-      different cluster.
-  when: k3s_remove_registry_matches | bool
+    - name: k3s Remove | Read generated topology for registry cleanup
+      ansible.builtin.set_fact:
+        _k3s_remove_facts_on_disk: >-
+          {{ lookup('ansible.builtin.file',
+                    playbook_dir ~ '/../../../config/.generated/facts.yml',
+                    errors='ignore') | from_yaml | default({}, true) }}
 
-- name: k3s Remove | Remove the selected cluster from generated topology
-  ansible.builtin.copy:
-    dest: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-    mode: "0600"
-    content: >-
-      {{ _k3s_remove_facts_on_disk
-         | dict2items
-         | rejectattr('key', 'equalto', 'kubernetes')
-         | items2dict
-         | to_nice_yaml(indent=2) }}
-  become: false
-  delegate_to: localhost
-  when:
-    - >-
-      _k3s_remove_facts_on_disk.get('kubernetes', {}).get('instance', '')
-      == k3s_remove_instance
+    - name: k3s Remove | Refuse to unregister a different cluster
+      ansible.builtin.assert:
+        that:
+          - >-
+            'kubernetes' not in _k3s_remove_facts_on_disk
+            or (_k3s_remove_facts_on_disk.kubernetes.instance | default('')) == k3s_remove_instance
+        fail_msg: >-
+          Refusing to remove the Kubernetes topology registry because it now belongs to a
+          different cluster.
+      when: k3s_remove_registry_matches | bool
+
+    - name: k3s Remove | Remove the selected cluster from generated topology
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: commit
+        facts_lock_content: >-
+          {{ _k3s_remove_facts_on_disk
+             | dict2items
+             | rejectattr('key', 'equalto', 'kubernetes')
+             | items2dict
+             | to_nice_yaml(indent=2) }}
+      when:
+        - >-
+          _k3s_remove_facts_on_disk.get('kubernetes', {}).get('instance', '')
+          == k3s_remove_instance
+
+  always:
+    - name: k3s Remove | Release the facts lock
+      ansible.builtin.include_tasks: ../bootstrap/facts-lock.yml
+      vars:
+        facts_lock_action: release
 
 - name: k3s Remove | Report the retained recovery points
   ansible.builtin.debug:
