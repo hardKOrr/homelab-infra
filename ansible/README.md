@@ -169,7 +169,7 @@ are the live procedures for one instance; moving PBS with its datastore is in
   hosts and groups.
 - `scripts/` contains runner entry points and committed helpers used by jobs and tasks.
 - `callback_plugins/` defines the common job and terminal output; `library/` holds
-  controller-side modules.
+  controller-side modules; `test_plugins/` holds the Jinja tests (`iso_appliance`).
 - `files/` contains controller-side helper programs installed or called by tasks, grouped
   as `files/decommission/`, `files/pbs/`, `files/proxmox/`, `files/recovery/`, and `files/runner/`.
 - `templates/kubernetes/` holds the shared Kubernetes recovery CronJob and Job and the
