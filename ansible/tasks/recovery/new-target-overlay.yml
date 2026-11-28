@@ -1,0 +1,43 @@
+---
+# Restore App, destination=new: the settings a new target must not share with its
+# source, derived from the target's name so the target needs no hand-authored values.
+# An app with an external database gets its own database name and login role; a Docker
+# app that publishes a port gets its own host port, because the target can share the
+# source's stack host. Values the target's own config file sets win. The target's
+# credential item is homelab-infra/apps/<target>, never the source's.
+#
+# Inputs: _ra_target, _ra_app, _ra_destination, _app_defaults, _instance_config,
+#   _target_config, _ra_defaults_key.
+# Result: _ra_new_target_overlay ({} for destination=existing); restore-app-target.yml
+#   passes it to the provisioning playbook as recovery_target_overlay, which
+#   tasks/apps/load-config.yml merges under the instance file.
+- name: Derive the new restore target's own database login and port
+  vars:
+    _nto_source: >-
+      {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_instance_config | default({}), recursive=True) }}
+    _nto_authored: "{{ (_target_config | default({})).get('app', {}) }}"
+    # A letter or underscore first, at most 32 characters (MariaDB/MySQL login limit),
+    # with a hash suffix so two long names never collapse into one.
+    _nto_slug: >-
+      {%- set s = _ra_target | regex_replace('[^A-Za-z0-9_]', '_') -%}
+      {%- set s = ('r_' ~ s) if s[0:1] | regex_search('[0-9]') else s -%}
+      {{ s if s | length <= 32 else (s[:23] ~ '_' ~ (_ra_target | hash('sha1'))[:8]) }}
+    _nto_source_port: "{{ (_nto_source.get('app', {})).get('port', 0) | int }}"
+    _nto_port: >-
+      {%- set p = 20000 + ((_ra_target | hash('sha1'))[:6] | int(base=16)) % 10000 -%}
+      {{ p + 1 if p == _nto_source_port | int else p }}
+    _nto_app: >-
+      {%- set out = {} -%}
+      {%- if (_nto_source.get('app', {})).get('database') is mapping
+             and 'name' not in _nto_authored.get('database', {}) -%}
+      {%-   set _ = out.update({'database': {'name': _nto_slug, 'role': _nto_slug}}) -%}
+      {%- endif -%}
+      {%- if _nto_source_port | int > 0 and 'port' not in _nto_authored
+             and (_nto_source.get('hosting', {})).get('method', 'docker') == 'docker' -%}
+      {%-   set _ = out.update({'port': _nto_port | int}) -%}
+      {%- endif -%}
+      {{ out | to_json }}
+  ansible.builtin.set_fact:
+    _ra_new_target_overlay: >-
+      {{ {'app': _nto_app | from_json} if (_ra_destination == 'new' and (_nto_app | from_json) | length > 0) else {} }}

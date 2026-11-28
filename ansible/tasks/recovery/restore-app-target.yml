@@ -23,6 +23,8 @@
       - "instance={{ _ra_target }}"
       - -e
       - recovery_isolated=true
+      - -e
+      - "{{ {'recovery_target_overlay': _ra_new_target_overlay | default({})} | to_json }}"
   environment:
     ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
   changed_when: true
@@ -97,6 +99,7 @@
   ansible.builtin.set_fact:
     restore_target_config: >-
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_ra_new_target_overlay | default({}), recursive=True)
          | combine(_target_config | default({}), recursive=True)
          | combine({'app': (homelabinfra_vault.apps | default({})).get(_ra_target, {})},
                    recursive=True) }}
