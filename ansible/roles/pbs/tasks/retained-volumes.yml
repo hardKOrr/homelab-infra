@@ -35,7 +35,7 @@
   ansible.builtin.set_fact:
     _pbs_k8s_matches: >-
       {{ _pbs_k8s_matches | default({}) | combine({item: (k8s_orphan_volumes
-           | selectattr('phase', 'equalto', 'Available')
+           | selectattr('phase', 'in', ['Available', 'Released'])
            | selectattr('path', 'search', '_' ~ k8s_namespace ~ '_' ~ instance ~ '-' ~ item ~ '$')
            | map(attribute='name') | list)}) }}
   loop: "{{ ['config', 'state', 'datastore'] | reject('in', _pbs_k8s_claim_names) | list }}"
@@ -48,6 +48,19 @@
       {{ instance }}-{{ item.key }}; PBS will not guess which holds its data. Reclaim the
       ones that are not wanted (playbooks/maintenance/reclaim-volume.yml) and Deploy again.
   loop: "{{ _pbs_k8s_matches | default({}) | dict2items }}"
+
+# Remove clears the claimRef and returns; the PV controller makes the volume Available
+# separately. A claim rendered in that gap would bind or provision another disk, so wait for
+# the matching volume, and fail rather than bind past one that never becomes bindable.
+- name: PBS Kubernetes volumes | Wait for a matching volume that is still being released
+  ansible.builtin.command:
+    argv: [k3s, kubectl, wait, "--for=jsonpath={.status.phase}=Available", "pv/{{ item.1 }}", --timeout=120s]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop: "{{ _pbs_k8s_matches | default({}) | dict2items | subelements('value') }}"
+  loop_control:
+    label: "{{ item.0.key }}: {{ item.1 }}"
+  changed_when: false
 
 - name: PBS Kubernetes volumes | Require the retained datastore when the config says reuse
   ansible.builtin.assert:

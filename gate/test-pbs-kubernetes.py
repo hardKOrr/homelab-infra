@@ -74,6 +74,8 @@ assert recovery["archives"][0]["claim"] == "{{ restore_target }}-config" and rec
 # The default password is replaced over the pod's loopback, before any Service exists.
 assert "pbs_api_via_pod: true" in deploy
 assert deploy.index("Replace the image's default administrator password") < deploy.index("Publish the listener")
+assert "_pbs_k8s_keep_open" in deploy and "pbspbs" in deploy
+assert "--for=jsonpath={.status.phase}=Available" in (ROLE / "tasks/retained-volumes.yml").read_text()
 assert "retained-volumes.yml" in deploy and "recovery-backup.yml" not in deploy
 sched = (ROLE / "tasks/schedule-backup.yml").read_text()
 assert "tasks/kubernetes/recovery-backup.yml" in sched
