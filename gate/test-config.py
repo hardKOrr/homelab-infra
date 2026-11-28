@@ -1305,6 +1305,20 @@ def doctor_and_secret_shape():
             "single-node Proxmox config should need only proxmox.node and "
             "proxmox.storage\n" + result.stdout + result.stderr
         )
+
+        # A scalar hosting (the old `hosting: appliance`) is refused naming the file;
+        # a hosting mapping passes.
+        (target / "apps").mkdir(exist_ok=True)
+        hosting_file = target / "apps" / "hosting-probe.yml"
+        hosting_file.write_text("hosting: appliance\n", encoding="utf-8")
+        result = doctor(target)
+        output = result.stdout + result.stderr
+        assert result.returncode != 0 and "apps/hosting-probe.yml" in output, output
+        assert "hosting.method: docker|kubernetes|native" in output, output
+        hosting_file.write_text("hosting:\n  method: native\n", encoding="utf-8")
+        result = doctor(target)
+        assert result.returncode == 0, result.stdout + result.stderr
+        hosting_file.unlink()
     invalid = doctor(fixtures / "invalid")
     assert invalid.returncode != 0, "invalid configuration accepted"
     output = invalid.stdout + invalid.stderr
