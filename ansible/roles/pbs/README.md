@@ -34,6 +34,29 @@ For a node-local retained disk, pin the Docker VM stack to the node that can see
 volume. If that node cannot reach the default VM or template pool, set the corresponding
 `storage` or `template_storage` in [the stack override](../../vars/stack-defaults.yml).
 
+## Kubernetes hosting
+
+`hosting.method: kubernetes` runs the same image in the namespace `app-<instance>`:
+[`playbooks/apps/pbs.yml`](../../playbooks/apps/pbs.yml) Play 2b runs `tasks/kubernetes.yml`
+on localhost, which applies `templates/manifest.yaml.j2` (config, state and datastore
+volumes on the default StorageClass, one Deployment) and delegates `proxmox-backup-manager`
+and the API calls to the cluster's API node (`pbs_exec_host`), so `token.yml`,
+`admin-password.yml`, `register-reused-datastore.yml` and `export.yml` are shared with the other
+methods. Until the default `admin@pbs` password is replaced, Deploy reaches the API over
+the pod's loopback (`tasks/api-call.yml`) and no Service exists; then the ClusterIP Service and
+a LoadBalancer on the ingress VIP at `app.port` are created, so one cluster runs one PBS. A
+redeploy binds each claim to the volume an earlier Remove retained for it
+(`tasks/retained-volumes.yml`, matched by the provisioner's directory name) and fails if
+two volumes match. There is no Ingress: Caddy and PVE
+address the VIP over HTTPS. The datastore volume is never archived. The CronJob is scheduled in Play 3, once
+the registry names this PBS. Backup App archives the config volume (`config.pxar`) through it, and Restore App replaces it through
+the shared recovery Job while preserving the live platform token and TLS identity. `datastore_disk` and
+`second_copy` are not available.
+
+Remove App with `delete_data=true` clears the configuration and state volumes while
+retaining the datastore and its recovery points. Deploy reattaches that datastore to the
+fresh pods. Use Reclaim Volume to explicitly destroy a detached datastore.
+
 ## Optional second copy
 
 `second_copy` is disabled by default. When enabled, it attaches a second retained disk on

@@ -9,6 +9,9 @@
                catalog), so a broken client environment fails the plan, not the restore.
                Reports what the target holds now; every target volume is mounted read-only
                by the kubelet.
+    stage    — only with `stage_first`: runs while the app is still up, for an app that
+               holds its own recovery point (PBS). Downloads each volume archive into
+               `.restore-stage` on its claim, so stopping the app cannot remove the source.
     restore  — ordered steps, each one only after the one before it succeeded:
                  stage    the database dump and ConfigMap archives into scratch
                  load     the database, from the app's database step
@@ -22,12 +25,15 @@
 
   Context (from recovery-restore.yml):
     k8s_pbs_repository, k8s_pbs_fingerprint
-    _kr  — mode, job_name, target, timeout, secret, backup_id, snapshot, scratch_gi,
+    k8s_restore_job  — mode, job_name, target, timeout, secret, backup_id, snapshot, scratch_gi,
            client (backup.client: image, key_url, repository, suite, component), archives[{name, claim, owner} | {name,
            config_map}], database (tasks/database/kubernetes-recovery-step.yml) or {}
 #}
+{% set _kr = k8s_restore_job %}
 {% set db = _kr.database | default({}, true) %}
 {% set plan = _kr.mode == 'plan' %}
+{% set stage_only = _kr.mode == 'stage' %}
+{% set stage_first = _kr.stage_first | default(false) | bool %}
 {% set volumes = _kr.archives | rejectattr('config_map', 'defined') | list %}
 {% set staged = _kr.archives | selectattr('config_map', 'defined') | list %}
 {% set labels %}
@@ -189,8 +195,32 @@ for file in /recovery/{{ archive.name }}/*; do
 done
 {% endfor %}
 {% endset %}
-{% set replace %}
+{% set stage_volumes %}
+echo "=== staging ${SNAPSHOT} into the target volumes ==="
 {% for archive in volumes %}
+rm -rf /volumes/{{ archive.name }}/.restore-stage
+mkdir /volumes/{{ archive.name }}/.restore-stage
+proxmox-backup-client restore "${SNAPSHOT}" {{ archive.name }}.pxar /volumes/{{ archive.name }}/.restore-stage
+echo "staged {{ archive.name }}: $(volume_state /volumes/{{ archive.name }}/.restore-stage)"
+{% endfor %}
+{% endset %}
+{% set replace %}
+{% if stage_first and _kr.before_replace | default('') %}
+{{ _kr.before_replace }}
+{% endif %}
+{% for archive in volumes %}
+{% if stage_first %}
+# The archive was staged on the claim before the app stopped: move it into place.
+echo "replacing {{ archive.claim }}: was $(volume_state /volumes/{{ archive.name }})"
+test -d /volumes/{{ archive.name }}/.restore-stage
+find /volumes/{{ archive.name }} -mindepth 1 -maxdepth 1 ! -name .restore-stage -exec rm -rf {} +
+find /volumes/{{ archive.name }}/.restore-stage -mindepth 1 -maxdepth 1 -exec mv {} /volumes/{{ archive.name }}/ \;
+rmdir /volumes/{{ archive.name }}/.restore-stage
+{% if archive.owner | default('') | length > 0 %}
+chown -R {{ archive.owner }} /volumes/{{ archive.name }}
+{% endif %}
+echo "restored {{ archive.claim }}: now $(volume_state /volumes/{{ archive.name }})"
+{% else %}
 # Emptied, then filled: a restore that only added files would leave the target holding a
 # mixture of two points in time.
 echo "replacing {{ archive.claim }}: was $(volume_state /volumes/{{ archive.name }})"
@@ -200,10 +230,13 @@ proxmox-backup-client restore "${SNAPSHOT}" {{ archive.name }}.pxar /volumes/{{ 
 chown -R {{ archive.owner }} /volumes/{{ archive.name }}
 {% endif %}
 echo "restored {{ archive.claim }}: now $(volume_state /volumes/{{ archive.name }})"
+{% endif %}
 {% endfor %}
 {% endset %}
 {% set steps = [] %}
-{% if plan %}
+{% if stage_only %}
+{% set _ = steps.append(client_step('stage-volumes', stage_volumes, true, false)) %}
+{% elif plan %}
 {% set _ = steps.append(client_step('preview', preview, true, true)) %}
 {% if db %}
 {% set _ = steps.append(database_step('inspect', db.inspect)) %}

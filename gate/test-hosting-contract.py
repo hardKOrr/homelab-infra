@@ -40,7 +40,7 @@ EXTRA_IMPLEMENTED = {
     "homepage": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "jellyfin": {"docker-lxc"},
     "plex": {"docker-lxc"},
-    "pbs": {"docker-lxc", "docker-vm"},
+    "pbs": {"docker-lxc", "docker-vm", "kubernetes"},
     "jellyseerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "maintainerr": {"docker-lxc", "docker-vm", "native-lxc", "native-vm"},
     "forgejo-runner": {"docker-lxc"},
@@ -118,6 +118,7 @@ def current_combination(slug, defaults):
         if any(path in source for path in (
             "tasks/proxmox/lxc-create.yml",
             "tasks/proxmox/vm-create.yml",
+            "tasks/proxmox/vm-clone.yml",
             "tasks/database/resolve-backend-placement.yml",
         )) or ("name: _template-native" in source
                and defaults.get("hosting", {}).get("method") == "native"):

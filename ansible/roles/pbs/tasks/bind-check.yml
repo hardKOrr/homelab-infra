@@ -1,0 +1,60 @@
+---
+# Prove each PBS claim is bound to a volume made or retained for it before the workload can
+# write to it. Remove leaves other instances' volumes Available, and Kubernetes binds a
+# claim to any compatible one at binding time, which retained-volumes.yml's earlier
+# inventory cannot rule out. The claims are applied alone, bound through a read-only Job
+# when the class binds on first use, and the volume behind each is read back: the
+# provisioner's directory is named `pvc-<uuid>_<namespace>_<claim>`, so a volume that is
+# not named for this claim is refused, and so is every later Deploy while the claim holds it.
+
+- name: PBS Kubernetes bind | Apply the claims alone
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    pbs_claims_only: true
+    pbs_listener_open: false
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: PBS Kubernetes bind | Read the claims
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, pvc, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_pvcs
+  changed_when: false
+
+- name: PBS Kubernetes bind | Bind the claims that are still waiting for a first consumer
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+  vars:
+    k8s_job_name: "{{ instance }}-bind"
+    k8s_job_manifest: "{{ lookup('ansible.builtin.template', 'bind-job.yaml.j2') }}"
+    k8s_job_timeout: 300
+    k8s_job_report_changed: false
+  when: >-
+    (_pbs_k8s_pvcs.stdout | from_json)['items'] | rejectattr('status.phase', 'equalto', 'Bound') | list | length > 0
+
+- name: PBS Kubernetes bind | Read the bound claims
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, pvc, -o, json]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_pvcs_bound
+  changed_when: false
+
+- name: PBS Kubernetes bind | Read the volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/list-orphan-volumes.yml
+
+- name: PBS Kubernetes bind | Require each claim's volume to be named for it
+  vars:
+    _pbs_k8s_claim: "{{ (_pbs_k8s_pvcs_bound.stdout | from_json)['items'] | selectattr('metadata.name', 'equalto', instance ~ '-' ~ item) | first | default({}) }}"
+    _pbs_k8s_volume: "{{ k8s_volumes | selectattr('name', 'equalto', _pbs_k8s_claim.spec.volumeName | default('')) | first | default({}) }}"
+  ansible.builtin.assert:
+    that:
+      - _pbs_k8s_claim.status.phase | default('') == 'Bound'
+      - _pbs_k8s_volume.path | default('') is search('_' ~ k8s_namespace ~ '_' ~ instance ~ '-' ~ item ~ '$')
+    fail_msg: >-
+      Claim {{ instance }}-{{ item }} is {{ _pbs_k8s_claim.status.phase | default('missing') }}
+      on volume {{ _pbs_k8s_claim.spec.volumeName | default('none') }}, which is not named for
+      it ({{ _pbs_k8s_volume.path | default('unknown path') }}). PBS will not write to it.
+      Delete the claim, reclaim the volume it took (playbooks/maintenance/reclaim-volume.yml)
+      and Deploy again.
+  loop: [config, state, datastore]

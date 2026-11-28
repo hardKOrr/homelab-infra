@@ -1,0 +1,26 @@
+---
+# Schedule PBS's own application backup on Kubernetes. Run from Play 3 of playbooks/apps/pbs.yml,
+# after configure-pbs.yml has recorded this PBS and its current token in the registry:
+# recovery-backup.yml reads that target, and an earlier run would find none (a clean
+# deployment) or the previous server's (a switch from another method).
+- name: PBS Kubernetes | Resolve the cluster and namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: PBS Kubernetes | Derive the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ instance }}"
+
+# The configuration volume is the recovery unit; the datastore holds the backups themselves
+# and is retained, never archived. PBS is not stopped (the backup target may be this very
+# PBS; its configuration files are replaced atomically), as on the Docker method.
+- name: PBS Kubernetes | Schedule the application backup
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
+  vars:
+    k8s_recovery:
+      archives:
+        - name: config
+          claim: "{{ instance }}-config"
+      describe: >-
+        PBS's configuration volume (users, API tokens, certificate and datastore
+        registration), without the datastore

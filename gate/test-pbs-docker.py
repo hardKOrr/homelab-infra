@@ -42,7 +42,7 @@ passed = set(include["vars"])
 assert "pbs_listener_open" in passed and not any(name in str(publish["when"]) for name in passed), publish["when"]
 defaults = yaml.safe_load((ROOT / "ansible/vars/app-defaults/pbs.yml").read_text())["pbs_defaults"]
 assert defaults["hosting"]["method"] == "native" and defaults["stack"] == ""
-assert set(defaults["hosting"]["supported"]) == {"native-vm", "docker-lxc", "docker-vm"}
+assert set(defaults["hosting"]["supported"]) == {"native-vm", "docker-lxc", "docker-vm", "kubernetes"}
 role = yaml.safe_load((ROOT / "ansible/roles/pbs/defaults/main.yml").read_text())
 assert "docker', 'exec'" in role["pbs_manager_argv"] and role["pbs_auth_id"] == "root@pam"
 print("PBS Docker method renders as expected.")

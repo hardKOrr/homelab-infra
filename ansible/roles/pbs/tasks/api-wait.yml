@@ -1,9 +1,25 @@
 ---
 # Phase of main.yml and docker.yml: wait until the PBS API answers on this guest.
 
+# On Kubernetes before the listener is published the answer comes over the pod's loopback
+# (api-call.yml says why).
+- name: Wait for the PBS API to answer over the pod's loopback
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, "deployment/{{ instance }}", --,
+           curl, --insecure, --silent, --output, /dev/null, "https://localhost:{{ pbs_container_port }}/api2/json/ping"]
+  delegate_to: "{{ pbs_exec_host }}"
+  become: true
+  register: _pbs_health_pod
+  until: _pbs_health_pod.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+  when: pbs_api_via_pod | default(false) | bool
+
 - name: Wait for the PBS API to answer
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
   ansible.builtin.uri:
-    url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"
+    url: "{{ pbs_api_base }}/api2/json/ping"
     validate_certs: false   # PBS serves a self-signed certificate until one is installed
     status_code: [200, 401]
   register: _pbs_health
@@ -11,3 +27,4 @@
   retries: 30
   delay: 5
   changed_when: false
+  when: not (pbs_api_via_pod | default(false) | bool)

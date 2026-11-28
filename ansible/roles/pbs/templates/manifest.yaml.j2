@@ -1,0 +1,158 @@
+{#
+  PBS on Kubernetes: its volumes, one Deployment and its Services, in the namespace the
+  instance owns. Rendered by tasks/kubernetes.yml and applied through
+  tasks/kubernetes/apply-manifest.yml.
+
+  Three volumes: `config` (/etc/proxmox-backup, the recovery unit), `state`
+  (/var/lib/proxmox-backup) and the datastore, mounted at its configured path so PBS sees
+  the same path on every method. Logs are disposable.
+
+  A NetworkPolicy denies all ingress to the pod until then. Both Services, the ClusterIP one Deploy reaches the API through and the LoadBalancer that
+  publishes the listener on the ingress VIP, are rendered only once the image's default
+  administrator password has been replaced (pbs_listener_open): until then Deploy reaches
+  the pod over its own loopback and nothing selects it. No Ingress: PBS speaks HTTPS and clients (PVE, the backup Jobs)
+  address it directly on the VIP.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+{% set datastore_path = homelabinfra_config.infrastructure.backups.datastore_path %}
+{% for claim in [['config', app_config.app.storage.config], ['state', app_config.app.storage.state], ['datastore', app_config.app.storage.datastore]] %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-{{ claim[0] }}
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ claim[1] }}Gi
+{% if (pbs_retained_volumes | default({}))[claim[0]] is defined %}
+  # A volume an earlier Remove retained for exactly this claim (tasks/kubernetes.yml).
+  volumeName: {{ pbs_retained_volumes[claim[0]] }}
+{% endif %}
+{% endfor %}
+{% if not (pbs_claims_only | default(false) | bool) %}
+---
+# The listener starts on the pod IP, which other workloads can reach directly. Until the
+# default password is replaced no pod may connect (kubelet probes and `kubectl exec` are not
+# pod traffic); the policy stays closed if the rotation fails and opens only in the apply
+# that publishes the Services.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ instance }}-listener
+  labels:
+{{ labels }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+{% if pbs_listener_open | bool %}
+  ingress:
+    - {}
+{% else %}
+  ingress: []
+{% endif %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  # Recreate: the volumes are ReadWriteOnce on a node-pinned StorageClass.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      initContainers:
+        # The datastore root must be owned by `backup` and exactly 0755 (native datastore
+        # reuse checks it); a fresh volume's root belongs to root.
+        - name: datastore-owner
+          image: {{ app_config.app.image }}
+          command: [sh, -c, "chown {{ pbs_backup_uid }}:{{ pbs_backup_uid }} {{ datastore_path | quote }} && chmod 0755 {{ datastore_path | quote }}"]
+          securityContext: {runAsUser: 0}
+          volumeMounts:
+            - {name: datastore, mountPath: {{ datastore_path | to_json }}}
+      containers:
+        - name: pbs
+          image: {{ app_config.app.image }}
+          ports:
+            - containerPort: {{ pbs_container_port }}
+          readinessProbe:
+            tcpSocket: {port: {{ pbs_container_port }}}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: {{ pbs_container_port }}}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/proxmox-backup}
+            - {name: state, mountPath: /var/lib/proxmox-backup}
+            - {name: logs, mountPath: /var/log/proxmox-backup}
+            - {name: run, mountPath: /run}
+            - {name: datastore, mountPath: {{ datastore_path | to_json }}}
+      # The image documents SIGHUP as its stop signal.
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - {name: config, persistentVolumeClaim: {claimName: {{ instance }}-config}}
+        - {name: state, persistentVolumeClaim: {claimName: {{ instance }}-state}}
+        - {name: datastore, persistentVolumeClaim: {claimName: {{ instance }}-datastore}}
+        - {name: logs, emptyDir: {}}
+        - {name: run, emptyDir: {medium: Memory}}
+{% if pbs_listener_open | bool %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ pbs_container_port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}-lan
+  labels:
+{{ labels }}
+  annotations:
+    metallb.io/loadBalancerIPs: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    metallb.io/allow-shared-ip: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ pbs_container_port }}
+{% endif %}
+{% endif %}

@@ -369,6 +369,10 @@
       {{ _pbs_existing_storage | length == 1
          and (_pbs_existing_storage | first).server | default('') != _pbs_pve_server }}
 
+- name: PBS | Register Proxmox delegation for storage replacement or provenance
+  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
+  when: _pbs_storage_endpoint_changed | bool or _pbs_existing_storage | length == 0
+
 - name: PBS | Read running PVE backup tasks before replacing the storage entry
   ansible.builtin.command:
     argv:
@@ -530,12 +534,6 @@
       server and datastore.
 
 # Only a registration created by this task is recorded in the node-root-private journal.
-- name: PBS | Register provenance delegation
-  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
-  when: >-
-    _pve_storages.json.data | map(attribute='storage') | list
-    is not contains('pbs-homelab')
-
 - name: PBS | Record newly created registration identity
   ansible.builtin.script:
     cmd: >-

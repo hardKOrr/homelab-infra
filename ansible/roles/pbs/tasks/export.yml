@@ -4,7 +4,7 @@
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the PBS endpoint to the playbook
   ansible.builtin.set_fact:
-    pbs_url: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    pbs_url: "{{ pbs_endpoint }}"
     pbs_token_id: "{{ _pbs_token_id }}"
     pbs_token_secret: "{{ _pbs_token_secret }}"
     pbs_token_rotated: "{{ not (_pbs_token_usable | bool) }}"

@@ -1,0 +1,155 @@
+---
+# pbs role, hosting.method: kubernetes — PBS in the community container image in the
+# namespace the instance owns. Called from the Kubernetes play of playbooks/apps/pbs.yml
+# with `tasks_from: kubernetes.yml`, on localhost: kubectl and the PBS API calls are
+# delegated to the cluster's API node (pbs_exec_host), which reaches the pod's ClusterIP.
+#
+# Same sequence as the Docker method (tasks/docker.yml), and the same shared task files:
+# the listener is published (a LoadBalancer Service on the ingress VIP) only after the
+# image's default administrator password is replaced; the API token, the retained
+# datastore registration and the exports are the native method's own task files.
+
+- name: PBS Kubernetes | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: PBS Kubernetes | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# PVE storage registration (configure-pbs.yml) and the backup and restore repositories
+# (tasks/backup/resolve-pbs-target.yml) drop the port and use PBS's own 8007.
+- name: PBS Kubernetes | Require the standard PBS port
+  ansible.builtin.assert:
+    that: app_config.app.port | int == pbs_container_port | int
+    fail_msg: >-
+      PBS on Kubernetes publishes {{ pbs_container_port }}: the PVE storage and the backup
+      clients do not carry another app.port. Refusing before any change.
+
+- name: PBS Kubernetes | Find the volumes a Remove retained for this instance
+  ansible.builtin.include_tasks: retained-volumes.yml
+
+- name: PBS Kubernetes | Reach the cluster and publish the VIP endpoint
+  ansible.builtin.set_fact:
+    pbs_exec_host: "{{ k8s_api_host }}"
+    # Until the default password is replaced the API is reached over the pod's loopback.
+    pbs_api_via_pod: true
+    pbs_endpoint: "https://{{ homelabinfra_infra.kubernetes.ingress_vip }}:{{ app_config.app.port }}"
+
+# The listener stays open on a repeat Deploy only while the running pod's configuration has
+# passed the password check: the Service must exist AND the pod must answer and refuse the
+# image's factory password. A replaced or lost configuration volume reseeds that password,
+# a pod that cannot be asked counts as unverified, and either keeps the policy closed until
+# the rotation below has been verified.
+- name: PBS Kubernetes | Check whether the listener was already published
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, service, "{{ instance }}-lan", --ignore-not-found, -o, name]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_published
+  changed_when: false
+
+- name: PBS Kubernetes | Ask the running pod whether the factory password still works
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, -i, "deployment/{{ instance }}", --, curl, --config, "-"]
+    stdin: |
+      url = "https://localhost:{{ pbs_container_port }}/api2/json/access/ticket"
+      request = "POST"
+      insecure
+      silent
+      output = "/dev/null"
+      write-out = "%{http_code}"
+      data = "username={{ pbs_admin_id | urlencode }}&password=pbspbs"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_factory
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _pbs_k8s_published.stdout | length > 0
+
+- name: PBS Kubernetes | Decide whether the listener may stay open
+  ansible.builtin.set_fact:
+    _pbs_k8s_keep_open: >-
+      {{ _pbs_k8s_published.stdout | length > 0
+         and _pbs_k8s_factory.rc | default(1) == 0
+         and _pbs_k8s_factory.stdout | default('') == '401' }}
+
+- name: PBS Kubernetes | Bind the volumes and prove they belong to this instance
+  ansible.builtin.include_tasks: bind-check.yml
+
+- name: PBS Kubernetes | Deploy the workload
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    pbs_listener_open: "{{ _pbs_k8s_keep_open }}"
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 600
+
+- name: PBS Kubernetes | Wait for the PBS API to answer
+  ansible.builtin.include_tasks: api-wait.yml
+
+- name: PBS Kubernetes | Replace the image's default administrator password
+  ansible.builtin.include_tasks: admin-password.yml
+
+- name: PBS Kubernetes | Publish the listener now that the default password is gone
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    pbs_listener_open: true
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for: ["deployment/{{ instance }}"]
+    k8s_wait_timeout: 600
+
+- name: PBS Kubernetes | Read the Service address the API is reached on
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, service, "{{ instance }}", -o, "jsonpath={.spec.clusterIP}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_cluster_ip
+  changed_when: false
+
+# Published and rotated: the rest of Deploy reaches the API through the Service.
+- name: PBS Kubernetes | Address the API through the Service
+  ansible.builtin.set_fact:
+    pbs_api_base: "https://{{ _pbs_k8s_cluster_ip.stdout }}:{{ app_config.app.port }}"
+    pbs_api_via_pod: false
+
+# The image has only admin@pbs; the token owner is root@pam as on the other methods.
+- name: PBS Kubernetes | Read the PBS users
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_users
+  changed_when: false
+
+- name: PBS Kubernetes | Create the token owner user
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'create', pbs_auth_id] }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: (_pbs_users.stdout | from_json | selectattr('userid', 'equalto', pbs_auth_id) | list) | length == 0
+  changed_when: true
+
+- name: PBS Kubernetes | Resolve, store and prove the API token
+  ansible.builtin.include_tasks: token.yml
+
+# Remove App deletes the namespace; the retained volume keeps the chunks. Let PBS validate
+# and reopen the store when a fresh pod finds them.
+- name: PBS Kubernetes | Check for existing datastore chunks
+  ansible.builtin.command:
+    argv: >-
+      {{ pbs_manager_argv[:-1] + ['test', '-d',
+         homelabinfra_config.infrastructure.backups.datastore_path ~ '/.chunks'] }}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_chunks
+  changed_when: false
+  failed_when: false
+
+- name: PBS Kubernetes | Register the retained datastore without initialising it
+  ansible.builtin.include_tasks: register-reused-datastore.yml
+  when: >-
+    app_config.app.datastore_mode | default('create') == 'reuse'
+    or _pbs_k8s_chunks.rc == 0
+
+- name: PBS Kubernetes | Hand the endpoint and token back to the playbook
+  ansible.builtin.include_tasks: export.yml

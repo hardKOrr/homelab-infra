@@ -10,6 +10,8 @@
   no_log: true
 
 - name: List existing API tokens
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     cmd: "{{ pbs_manager_argv | join(' ') }} user list-tokens {{ pbs_auth_id }} --output-format json"
   register: _pbs_tokens
@@ -28,8 +30,9 @@
 # VM or a hand-deleted token would otherwise leave configure-pbs.yml failing later
 # with an opaque 401.
 - name: Verify the recorded token still authenticates
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
   ansible.builtin.uri:
-    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    url: "{{ pbs_api_base }}/api2/json/access/permissions"
     headers:
       Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_recorded_secret }}"
     validate_certs: false
@@ -52,6 +55,8 @@
 # PBS reveals a token secret only at creation, so a token whose secret we cannot
 # verify is useless to us and has to be replaced.
 - name: Remove the unusable API token
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     cmd: "{{ pbs_manager_argv | join(' ') }} user delete-token {{ pbs_auth_id }} {{ app_config.app.api_token_name | default('ansible') }}"
   when:
@@ -77,6 +82,8 @@
 # The prefix is stripped below before from_json. list-tokens DOES take
 # --output-format json, which is why the neighbouring calls look different.
 - name: Create the API token
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     cmd: >-
       {{ pbs_manager_argv | join(' ') }} user generate-token {{ pbs_auth_id }}
@@ -111,12 +118,14 @@
         vault_item_name: homelab-infra/backups
         vault_item_fields:
           instance: "{{ instance }}"
-          host: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+          host: "{{ pbs_endpoint }}"
           api_token_id: "{{ _pbs_token_id }}"
           api_token_secret: "{{ _pbs_token_secret }}"
         vault_item_secret_fields: [api_token_secret]
   rescue:
     - name: Revoke a newly created token whose vault write failed
+      delegate_to: "{{ pbs_exec_host | default(omit) }}"
+      become: "{{ true if pbs_exec_host is defined else omit }}"
       ansible.builtin.command:
         cmd: >-
           {{ pbs_manager_argv | join(' ') }} user delete-token {{ pbs_auth_id }}
@@ -136,12 +145,16 @@
 # declarative, so it is read first and updated only when the grant is absent —
 # re-applying it otherwise reports `changed` on every re-run.
 - name: Read the current PBS ACL
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     cmd: "{{ pbs_manager_argv | join(' ') }} acl list --output-format json"
   register: _pbs_acl_list
   changed_when: false
 
 - name: Grant the token Admin on the datastore tree
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     cmd: "{{ pbs_manager_argv | join(' ') }} acl update / Admin --auth-id '{{ _pbs_token_id }}'"
   when: >-
@@ -161,8 +174,9 @@
 #
 # Placed after the ACL grant so the token is tested in the state Play 3 will find it.
 - name: Verify the effective API token authenticates
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
   ansible.builtin.uri:
-    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    url: "{{ pbs_api_base }}/api2/json/access/permissions"
     headers:
       Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_token_secret }}"
     validate_certs: false   # self-signed until a certificate is installed

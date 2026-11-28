@@ -233,7 +233,7 @@ def restore_pod(mode, archives, database, target="app", backup_config=None):
             "k8s_recovery": {"archives": archives, "database": database},
         })
     job = yaml.safe_load(render(RESTORE.read_text(encoding="utf-8"), {
-        "_kr": kr, "k8s_pbs_repository": "token@pbs:store",
+        "k8s_restore_job": kr, "k8s_pbs_repository": "token@pbs:store",
         "k8s_pbs_fingerprint": FINGERPRINT,
     }))
     assert job["kind"] == "Job" and job["spec"]["backoffLimit"] == 0

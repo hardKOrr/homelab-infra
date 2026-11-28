@@ -18,6 +18,10 @@
 # is skipped and Play 1b finds or creates that stack host instead; Play 2 then runs the
 # community image there (roles/pbs/tasks/docker.yml). Keep the stack dedicated to PBS.
 #
+# KUBERNETES — with `hosting.method: kubernetes` Plays 1, 1b and 2 do nothing; Play 2b runs
+# the community image in the instance's namespace (roles/pbs/tasks/kubernetes.yml) and
+# publishes the listener as a LoadBalancer on the cluster's ingress VIP.
+#
 # Play 3 provisions the datastore, backup job and notification routing via
 # tasks/bootstrap/configure-pbs.yml, then records the `backups` registry key.
 
@@ -83,10 +87,10 @@
           schedule, and a distinct absolute datastore path. Refusing an unsafe second copy.
       when: app_config.second_copy.enabled | default(false) | bool
 
-    # Docker is provisioned by Play 1b on its stack host.
-    - name: End the native provisioning play for the Docker method
+    # Docker is provisioned by Play 1b on its stack host; Kubernetes has no guest.
+    - name: End the native provisioning play for the Docker and Kubernetes methods
       ansible.builtin.meta: end_play
-      when: app_config.hosting.method | default('native') == 'docker'
+      when: app_config.hosting.method | default('native') in ['docker', 'kubernetes']
 
   tasks:
     # VM PATH — dedicated VM per instance. Mirrors the native LXC playbooks: an
@@ -600,6 +604,49 @@
         tasks_from: "{{ 'docker.yml' if app_config.hosting.method | default('native') == 'docker' else 'main.yml' }}"
 
 
+# ── Play 2b: Deploy on the cluster ─────────────────────────────────────────────
+# Skipped unless hosting.method is kubernetes. Runs on localhost: kubectl and the PBS API
+# calls are delegated to the cluster's API node.
+- name: "PBS | Deploy on the cluster"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: pbs
+
+    - name: End the cluster play for the other methods
+      ansible.builtin.meta: end_play
+      when: app_config.hosting.method | default('native') != 'kubernetes'
+
+  tasks:
+    - name: Refuse VM-only options before anything is created
+      ansible.builtin.assert:
+        that:
+          - app_config.proxmox.vm.datastore_disk is not defined
+          - not (app_config.second_copy.enabled | default(false) | bool)
+        fail_msg: >-
+          PBS on Kubernetes keeps its datastore on a cluster volume: it has no
+          proxmox.vm.datastore_disk and no second_copy. Refusing before any change.
+
+    - name: Refresh inventory for Kubernetes access
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Open the declared cluster network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+
+    - name: Deploy PBS on Kubernetes
+      ansible.builtin.include_role:
+        name: pbs
+        tasks_from: kubernetes
+
+
 # ── Play 3: Record facts, configure, wire ──────────────────────────────────────
 # Records the API token, configures the datastore and backup job, then registers
 # the app with platform services. Runs on localhost (API calls). Idempotent.
@@ -624,14 +671,21 @@
         resolve_estate_name: "{{ _pbs_deploy_host.app_config.routing.estate | default('') }}"
 
   vars:
-    _pbs_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    # Kubernetes has no guest: its Play 2b facts live on localhost.
+    _pbs_k8s: "{{ hostvars['localhost'].app_config.hosting.method | default('native') == 'kubernetes' }}"
+    _pbs_deploy_host: >-
+      {{ hostvars['localhost'] if _pbs_k8s | bool else hostvars[groups['deploy_' ~ instance][0]] }}
 
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _pbs_deploy_host.ansible_host }}"
+    wiring_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip if _pbs_k8s | bool else _pbs_deploy_host.ansible_host }}
     wiring_upstream_port: "{{ _pbs_deploy_host.app_config.app.port }}"
+    # The Kubernetes listener is a LoadBalancer on the VIP that serves PBS's own certificate.
+    wiring_upstream_scheme: "{{ 'https' if _pbs_k8s | bool else 'http' }}"
+    wiring_upstream_tls_insecure_skip_verify: "{{ _pbs_k8s | bool }}"
     wiring_subdomain: "{{ _pbs_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Proxmox Backup Server ({{ instance }})"
@@ -670,6 +724,13 @@
         ((homelabinfra_infra | default({})).kubernetes | default({})).nodes
         | default([]) | length > 0
 
+    # The registry now names this PBS and its current token, which the CronJob targets.
+    - name: PBS | Schedule the Kubernetes application backup
+      ansible.builtin.include_role:
+        name: pbs
+        tasks_from: schedule-backup
+      when: _pbs_k8s | bool
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:
@@ -703,8 +764,13 @@
 
     # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
     # shows what each host actually runs. Defaults cover every input - see the task file.
-    - name: Record the app on its Proxmox guest
+    - name: Record the app on its Proxmox guest or on every cluster node
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ homelabinfra_infra.kubernetes.nodes | map(attribute='name') | list
+             if _pbs_k8s | bool else groups['deploy_' ~ instance] }}
+        record_guest_kind: "{{ _pbs_deploy_host.app_config.hosting.method | default('native') }}"
 
     # configure-pbs.yml already sends its own "backups configured" message with the
     # job details, so this one reports the deploy itself.

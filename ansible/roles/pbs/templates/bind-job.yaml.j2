@@ -1,0 +1,34 @@
+{#
+  Mounts the instance's three claims read-only and exits, so a claim whose class binds on
+  first use is bound before the workload exists (tasks/bind-check.yml verifies which volume
+  each one got). Nothing is written to a volume that may belong to someone else.
+#}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ instance }}-bind
+  labels:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bind
+          image: {{ app_config.app.image }}
+          command: ["true"]
+          volumeMounts:
+{% for claim in ['config', 'state', 'datastore'] %}
+            - {name: {{ claim }}, mountPath: /bind/{{ claim }}, readOnly: true}
+{% endfor %}
+      volumes:
+{% for claim in ['config', 'state', 'datastore'] %}
+        - {name: {{ claim }}, persistentVolumeClaim: {claimName: {{ instance }}-{{ claim }}, readOnly: true}}
+{% endfor %}

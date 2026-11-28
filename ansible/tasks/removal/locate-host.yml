@@ -91,6 +91,7 @@
   ansible.builtin.include_tasks: ../unwiring/kubernetes.yml
   vars:
     unwire_delete_data: "{{ delete_data | default(false) | bool }}"
+    unwire_retain_claims: "{{ _rm_k8s_retain_claims | default([]) }}"
   when: _rm_kind == 'kubernetes'
 
 # DEGRADATION BY DESIGN — and in fact not a degradation at all: a host that is not
