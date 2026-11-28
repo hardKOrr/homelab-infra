@@ -66,6 +66,8 @@ HOSTS = {
     # an instance named "appliance" is a native deployment; notes outside the markers are not records
     "appliance": (NOTE % ("appliance", "native"), False),
     "operator-note": ("| appliance | hand-written |\n" + NOTE % ("operator-note", "native"), False),
+    # a native record outranks a name that matches an appliance app
+    "opnsense-monitor": (NOTE % ("opnsense-monitor", "native"), False),
     "edge-docker": (NOTE % ("edge-docker", "docker"), False),
     "proxmox-datacenter-manager-secondary": ("", True),
     "bookstack-2": ("", False),

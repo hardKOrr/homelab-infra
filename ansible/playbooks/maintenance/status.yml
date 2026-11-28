@@ -93,12 +93,14 @@
     # Play 3 reads this to leave the guest out of its SSH tallies: nothing was attempted.
     # Only a row inside the marker-delimited app records counts, and only its kind column
     # (`| instance | kind | url | deployed |`): an instance called "appliance" or operator
-    # text elsewhere in the notes must not match.
+    # text elsewhere in the notes must not match. A guest with a record is classified by
+    # it alone; the name-based app defaults are for guests deployed before records existed.
     - name: Decide whether this guest is an ISO appliance
       ansible.builtin.set_fact:
         _st_appliance: >-
           {{ (_st_records | regex_search('(?m)^\|[^|\n]*\|\s*appliance\s*\|') | default('', true) | length > 0)
-             or _st_app_config is iso_appliance }}
+             if (_st_records | regex_search('(?m)^\|[^|\n]*\|\s*(docker|native|kubernetes|appliance)\s*\|') | default('', true) | length > 0)
+             else (_st_app_config is iso_appliance) }}
       vars:
         _st_records: >-
           {{ (proxmox_description | default(''))
