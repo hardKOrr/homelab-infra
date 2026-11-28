@@ -27,11 +27,21 @@
     _nto_port: >-
       {%- set p = 20000 + ((_ra_target | hash('sha1'))[:6] | int(base=16)) % 10000 -%}
       {{ p + 1 if p == _nto_source_port | int else p }}
+    _nto_src_db: "{{ _nto_source.get('app', {}).get('database', {}) }}"
+    _nto_src_item: "{{ (homelabinfra_vault.apps | default({})).get(instance | default(''), {}) }}"
+    # Every name and login the source uses, from its config and its canonical item.
+    _nto_taken: >-
+      {{ [_nto_src_db.get('name', ''), _nto_src_db.get('role', ''),
+          _nto_src_item.get('database_name', ''), _nto_src_item.get('database_user', '')]
+         | select | list }}
+    # A generated value that equals one of the source's takes a suffix instead.
+    _nto_generated: "{{ _nto_slug if _nto_slug not in _nto_taken else _nto_slug[:28] ~ '_new' }}"
+    _nto_db_name: "{{ _nto_authored.get('database', {}).get('name', _nto_generated) }}"
+    _nto_db_role: "{{ _nto_authored.get('database', {}).get('role', _nto_generated) }}"
     _nto_app: >-
       {%- set out = {} -%}
-      {%- if (_nto_source.get('app', {})).get('database') is mapping
-             and 'name' not in _nto_authored.get('database', {}) -%}
-      {%-   set _ = out.update({'database': {'name': _nto_slug, 'role': _nto_slug}}) -%}
+      {%- if _nto_src_db is mapping and _nto_src_db | length > 0 -%}
+      {%-   set _ = out.update({'database': {'name': _nto_db_name, 'role': _nto_db_role}}) -%}
       {%- endif -%}
       {%- if _nto_source_port | int > 0 and 'port' not in _nto_authored
              and (_nto_source.get('hosting', {})).get('method', 'docker') == 'docker' -%}
@@ -41,3 +51,26 @@
   ansible.builtin.set_fact:
     _ra_new_target_overlay: >-
       {{ {'app': _nto_app | from_json} if (_ra_destination == 'new' and (_nto_app | from_json) | length > 0) else {} }}
+
+# Fail closed before the child deploy provisions anything: the target's final database
+# name or login (authored or derived) must not be one the source uses.
+- name: Refuse a new target whose database name or login is the source's
+  ansible.builtin.assert:
+    that:
+      - (_ra_new_target_overlay.app.database.name | default('')) not in _nto_taken
+      - (_ra_new_target_overlay.app.database.role | default('')) not in _nto_taken
+    fail_msg: >-
+      The new restore target {{ _ra_target }} would use a database name or login the source
+      uses. Set a different app.database.name and app.database.role in
+      config/apps/{{ _ra_target }}.yml.
+  vars:
+    _nto_source: >-
+      {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_instance_config | default({}), recursive=True) }}
+    _nto_src_db: "{{ _nto_source.get('app', {}).get('database', {}) }}"
+    _nto_src_item: "{{ (homelabinfra_vault.apps | default({})).get(instance | default(''), {}) }}"
+    _nto_taken: >-
+      {{ [_nto_src_db.get('name', ''), _nto_src_db.get('role', ''),
+          _nto_src_item.get('database_name', ''), _nto_src_item.get('database_user', '')]
+         | select | list }}
+  when: _ra_destination == 'new'
