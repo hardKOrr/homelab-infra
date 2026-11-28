@@ -34,6 +34,8 @@
 #     stage_first  true when the app holds its own recovery point (PBS): each volume archive
 #                  is downloaded onto its claim, as `.restore-stage`, while the app still
 #                  runs, and the Job then moves it into place after the app has stopped
+#     before_replace  optional shell steps for the staged restore Job, before replacing
+#                  the live volumes
 #     describe     what a restore replaces, for the plan message
 #     verify       lines telling the operator how to verify the restored application
 #
@@ -128,6 +130,7 @@
       archives: "{{ k8s_recovery.archives }}"
       database: "{{ k8s_recovery.database | default({}, true) }}"
       stage_first: "{{ k8s_recovery.stage_first | default(false) | bool }}"
+      before_replace: "{{ k8s_recovery.before_replace | default('') }}"
 
 - name: k8s restore | Sync the restore credentials into the target namespace
   ansible.builtin.include_tasks: sync-secret.yml

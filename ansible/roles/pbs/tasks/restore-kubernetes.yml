@@ -3,11 +3,8 @@
 # from one PBS recovery point through the shared Kubernetes recovery Job. The datastore
 # volume holds the backups themselves and is never archived or replaced.
 #
-# The point predates this PBS's published token and certificate. Unlike the Docker method
-# (restore-staged.yml), the shared Job has no staging hook, so the restored token or
-# certificate may differ from the ones PVE and Vaultwarden hold: the verify step below
-# runs Deploy, which re-proves the token (recreating it when needed) and re-registers the
-# certificate fingerprint with PVE.
+# Carry the current platform token and TLS identity into the restored configuration
+# before replacing the volume. PVE, Vaultwarden and backup clients keep using them.
 - name: PBS Kubernetes restore | Restore through the shared recovery Job
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-restore.yml
   vars:
@@ -19,14 +16,16 @@
           owner: "{{ pbs_backup_uid }}:{{ pbs_backup_uid }}"
       # The recovery point lives in this PBS: stage it before the pod stops.
       stage_first: true
+      before_replace: |
+        test -f /volumes/config/.restore-stage/user.cfg
+        apt-get install -y -qq --no-install-recommends python3 >/dev/null
+        python3 - /volumes/config /volumes/config/.restore-stage {{ homelabinfra_infra.backups.api_token_id | quote }} <<'PBS_PRESERVE_AUTH'
+        {{ lookup('ansible.builtin.file', role_path ~ '/files/preserve-auth.py') }}
+        PBS_PRESERVE_AUTH
       stop:
         - "{{ restore_target }}"
       describe: >-
         the {{ restore_target }}-config volume (users, API tokens, certificate and datastore
         registration); the datastore volume is kept
       verify:
-        - >-
-          Run Deploy PBS for {{ restore_target }}: it re-proves the platform API token and
-          the certificate fingerprint PVE trusts against the restored configuration. Then
-          open https://{{ restore_target }}.<estate domain>/ and check that the datastore
-          lists its existing backups.
+        - Open https://{{ restore_target }}.<estate domain>/ and check that the datastore lists its existing backups.

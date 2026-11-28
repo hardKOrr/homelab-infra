@@ -204,6 +204,9 @@ echo "staged {{ archive.name }}: $(volume_state /volumes/{{ archive.name }}/.res
 {% endfor %}
 {% endset %}
 {% set replace %}
+{% if stage_first and _kr.before_replace | default('') %}
+{{ _kr.before_replace }}
+{% endif %}
 {% for archive in volumes %}
 {% if stage_first %}
 # The archive was staged on the claim before the app stopped: move it into place.

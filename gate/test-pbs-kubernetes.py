@@ -2,10 +2,12 @@
 """PBS's Kubernetes method renders one Deployment with its three volumes, keeps the listener
 closed until the default password is replaced, and backs up and restores through the shared
 recovery tasks."""
+import json
 import sys
 from pathlib import Path
 
 import jinja2
+from jinja2.nativetypes import NativeEnvironment
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +72,20 @@ assert "_pbs_k8s_bound | combine" in volumes, "an existing claim keeps its volum
 for name in ("api-call.yml", "api-wait.yml"):
     assert "pbs_container_port" in (ROLE / "tasks" / name).read_text(), name
 
+api = yaml.safe_load((ROLE / "tasks/api-call.yml").read_text())
+collect = next(task for task in api if task["name"] == "PBS API | Collect the answer")
+native = NativeEnvironment(undefined=jinja2.StrictUndefined)
+native.filters.update(bool=bool, from_json=json.loads)
+for lines, expected in (
+    (["authentication failed", "401"], {"status": 401, "json": {}}),
+    (['{"data": {"ticket": "example"}}', "200"], {"status": 200, "json": {"data": {"ticket": "example"}}}),
+):
+    execution = {"stdout_lines": lines}
+    values = {key: native.from_string(source).render(_pbs_call_exec=execution)
+              for key, source in collect["vars"].items()}
+    assert native.from_string(collect["ansible.builtin.set_fact"]["pbs_call"]).render(
+        pbs_api_via_pod=True, **values) == expected
+
 deploy = (ROLE / "tasks/kubernetes.yml").read_text()
 assert "tasks/kubernetes/apply-manifest.yml" in deploy
 assert deploy.index("Require the standard PBS port") < deploy.index("apply-manifest.yml")
@@ -106,6 +122,7 @@ restore_env.filters["to_json"] = env.filters["to_json"]
 client = {"image": "img", "key_url": "u", "repository": "r", "suite": "s", "component": "c"}
 base = {"target": "pbs", "timeout": 900, "secret": "pbs-restore", "backup_id": "pbs", "snapshot": "host/pbs/x",
         "scratch_gi": 2, "client": client, "database": {}, "stage_first": True,
+        "before_replace": "echo preserve-current-identity",
         "archives": [{"name": "config", "claim": "pbs-config", "owner": "34:34"}]}
 for mode in ("stage", "restore"):
     job = yaml.safe_load(restore_env.get_template("recovery-restore.yaml.j2").render(
@@ -114,8 +131,10 @@ for mode in ("stage", "restore"):
     script = containers[0]["args"][0]
     if mode == "stage":
         assert "restore \"${SNAPSHOT}\" config.pxar /volumes/config/.restore-stage" in script
+        assert "preserve-current-identity" not in script
     else:
         assert "config.pxar" not in script and "mv {} /volumes/config/" in script, script
+        assert script.index("preserve-current-identity") < script.index("find /volumes/config")
 
 # The API calls Deploy shares with the other methods must delegate to the cluster node.
 for name in ("token.yml", "api-wait.yml", "api-call.yml", "register-reused-datastore.yml"):

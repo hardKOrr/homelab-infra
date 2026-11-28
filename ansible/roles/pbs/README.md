@@ -50,9 +50,12 @@ redeploy binds each claim to the volume an earlier Remove retained for it
 two volumes match. There is no Ingress: Caddy and PVE
 address the VIP over HTTPS. The datastore volume is never archived. The CronJob is scheduled in Play 3, once
 the registry names this PBS. Backup App archives the config volume (`config.pxar`) through it, and Restore App replaces it through
-the shared recovery Job; run **Deploy PBS** afterwards so the platform token and the certificate
-fingerprint PVE trusts are proven against the restored configuration. `datastore_disk` and
+the shared recovery Job while preserving the live platform token and TLS identity. `datastore_disk` and
 `second_copy` are not available.
+
+Remove App with `delete_data=true` clears the configuration and state volumes while
+retaining the datastore and its recovery points. Deploy reattaches that datastore to the
+fresh pods. Use Reclaim Volume to explicitly destroy a detached datastore.
 
 ## Optional second copy
 

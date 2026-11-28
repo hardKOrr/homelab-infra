@@ -51,10 +51,15 @@
 - name: PBS API | Collect the answer
   ansible.builtin.set_fact:
     pbs_call: >-
-      {{ {'status': (_pbs_call_exec.stdout.rsplit('\n', 1)[-1] | int),
-          'json': ((_pbs_call_exec.stdout.rsplit('\n', 1)[0] | from_json) if _pbs_call_exec.stdout.rsplit('\n', 1)[0] | trim | length > 0 else {})}
+      {{ {'status': _pbs_exec_status | int,
+          'json': (_pbs_exec_lines | join('\n') | from_json)
+                  if 200 <= _pbs_exec_status | int < 300 and _pbs_exec_lines | join('') | trim else {}}
          if pbs_api_via_pod | default(false) | bool
          else {'status': _pbs_call_uri.status, 'json': _pbs_call_uri.json | default({})} }}
+  vars:
+    # PBS sends plain text on authentication failures.
+    _pbs_exec_status: "{{ _pbs_call_exec.stdout_lines | last | default('0') | int }}"
+    _pbs_exec_lines: "{{ _pbs_call_exec.stdout_lines[:-1] }}"
   no_log: true
 
 - name: PBS API | Require an expected status

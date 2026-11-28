@@ -1,0 +1,5 @@
+---
+# The datastore holds the recovery points for PBS itself as well as its clients.
+- name: PBS remove | Retain the Kubernetes datastore
+  ansible.builtin.set_fact:
+    _rm_k8s_retain_claims: ["{{ instance }}-datastore"]
