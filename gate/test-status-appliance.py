@@ -26,6 +26,7 @@ def check(name, condition):
 
 check("PDM is an appliance", iso_appliance(defaults("proxmox-datacenter-manager")))
 check("a Docker app is not", not iso_appliance(defaults("bookstack")))
+check("a native app is not", not iso_appliance(defaults("ntfy")))
 check("an empty config is not", not iso_appliance({}))
 
 plays = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/status.yml").read_text())
@@ -65,6 +66,8 @@ HOSTS = {
     "edge-docker": (NOTE % ("edge-docker", "docker"), False),
     "proxmox-datacenter-manager-secondary": ("", True),
     "bookstack-2": ("", False),
+    "ntfy-2": ("", False),
+    "ntfy": ("", False),
 }
 if shutil.which("ansible-playbook"):
     names_before_block = [t for t in play["tasks"] if "block" not in t and "Check" not in t["name"]]
