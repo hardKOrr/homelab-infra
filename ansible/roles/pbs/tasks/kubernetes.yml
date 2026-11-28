@@ -15,10 +15,14 @@
 - name: PBS Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
-- name: PBS Kubernetes | Require a usable Service port
+# PVE storage registration (configure-pbs.yml) and the backup and restore repositories
+# (tasks/backup/resolve-pbs-target.yml) drop the port and use PBS's own 8007.
+- name: PBS Kubernetes | Require the standard PBS port
   ansible.builtin.assert:
-    that: app_config.app.port | string is match('^[1-9][0-9]{0,4}$') and app_config.app.port | int <= 65535
-    fail_msg: app.port is the Service and VIP port and must be 1-65535; the pod always listens on 8007.
+    that: app_config.app.port | int == pbs_container_port | int
+    fail_msg: >-
+      PBS on Kubernetes publishes {{ pbs_container_port }}: the PVE storage and the backup
+      clients do not carry another app.port. Refusing before any change.
 
 - name: PBS Kubernetes | Find the volumes a Remove retained for this instance
   ansible.builtin.include_tasks: retained-volumes.yml

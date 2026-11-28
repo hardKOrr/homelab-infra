@@ -62,6 +62,7 @@ for name in ("api-call.yml", "api-wait.yml"):
 
 deploy = (ROLE / "tasks/kubernetes.yml").read_text()
 assert "tasks/kubernetes/apply-manifest.yml" in deploy
+assert deploy.index("Require the standard PBS port") < deploy.index("apply-manifest.yml")
 tasks = yaml.safe_load(deploy)
 sched = (ROLE / "tasks/schedule-backup.yml").read_text()
 backup = next(t for t in yaml.safe_load(sched) if "Schedule the application backup" in t["name"])
