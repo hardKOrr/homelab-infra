@@ -328,6 +328,10 @@ endpoint_changed = task(configure, "PBS | Detect a changed PVE storage endpoint"
 assert "_pbs_existing_storage | length == 1" in str(endpoint_changed["ansible.builtin.set_fact"])
 assert "_pbs_pve_server" in str(endpoint_changed["ansible.builtin.set_fact"])
 running_backups = task(configure, "PBS | Read running PVE backup tasks before replacing the storage entry")
+delegate = task(configure, "PBS | Register Proxmox delegation for storage replacement or provenance")
+assert delegate["ansible.builtin.include_tasks"] == "../proxmox/register-nodes.yml"
+assert "_pbs_storage_endpoint_changed | bool" in delegate["when"]
+assert configure.index(endpoint_changed) < configure.index(delegate) < configure.index(running_backups)
 assert running_backups["ansible.builtin.command"]["argv"] == [
     "pvesh", "get", "/cluster/tasks", "--output-format", "json"
 ]
