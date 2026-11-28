@@ -63,6 +63,9 @@ check("ansible.cfg loads the test plugin",
 NOTE = "<!-- homelab-infra:apps -->\n| instance | kind | url | deployed |\n|---|---|---|---|\n| %s | %s | | 2026-01-01 |\n<!-- /homelab-infra:apps -->"
 HOSTS = {
     "edge-firewall": (NOTE % ("edge-firewall", "appliance"), True),
+    # an instance named "appliance" is a native deployment; notes outside the markers are not records
+    "appliance": (NOTE % ("appliance", "native"), False),
+    "operator-note": ("| appliance | hand-written |\n" + NOTE % ("operator-note", "native"), False),
     "edge-docker": (NOTE % ("edge-docker", "docker"), False),
     "proxmox-datacenter-manager-secondary": ("", True),
     "bookstack-2": ("", False),
