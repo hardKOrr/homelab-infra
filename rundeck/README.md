@@ -432,6 +432,8 @@ interactive SSH session:
   `lab-run.sh` refuses Seed mode once the vault-mode marker exists, so a credential
   authored later cannot go through the importer.
 - **Config Doctor** validates everything and names each problem by file and key path.
+  It rejects an `apps/<instance>.yml` whose `hosting` is not a mapping
+  (`hosting.method: docker|kubernetes|native`), before a route rebuild trips on it.
 
 Every write first copies the current file to `<dir>/.backups/<file>.<timestamp>`, prunes
 that file's backups to the newest 20, and writes the diff to the job log. This is

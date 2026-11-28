@@ -719,6 +719,11 @@ for path in app_files:
             report("ERROR", where, key,
                    "must be a mapping -- a scalar here clobbers the whole default subtree")
 
+    if "hosting" in data and not isinstance(data["hosting"], dict):
+        report("ERROR", where, "hosting",
+               "must be a mapping -- write hosting.method: docker|kubernetes|native, "
+               "not a scalar such as `hosting: appliance`")
+
     if "stack" in data and isinstance(data["stack"], dict):
         report("ERROR", where, "stack", "must be a scalar stack name, e.g. media")
 
