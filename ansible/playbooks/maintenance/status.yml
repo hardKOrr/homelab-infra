@@ -88,6 +88,12 @@
           {{ (_st_defaults_file | default({}))[_st_app_slug | replace('-', '_') ~ '_defaults']
              | default({}) }}
 
+    # Play 3 reads this to leave the guest out of its SSH tallies: nothing was attempted.
+    - name: Record that SSH checks are skipped for this guest
+      ansible.builtin.set_fact:
+        _st_ssh_skipped: true
+      when: _st_app_config is iso_appliance
+
     - name: Check the guest over SSH
       when: not (_st_app_config is iso_appliance)
       block:
@@ -168,7 +174,14 @@
     # reported as a healthy one with nothing to say.
     _st_unreachable: >-
       {{ _st_guests | map('extract', hostvars)
+         | rejectattr('_st_ssh_skipped', 'defined')
          | rejectattr('_st_containers', 'defined')
+         | map(attribute='inventory_hostname') | list }}
+    # Guests Play 2 actually tried over SSH: an appliance is neither reachable nor
+    # unreachable, so the "nothing was reachable" states compare against this count.
+    _st_ssh_guests: >-
+      {{ _st_guests | map('extract', hostvars)
+         | rejectattr('_st_ssh_skipped', 'defined')
          | map(attribute='inventory_hostname') | list }}
     # Set by tasks/kubernetes/list-orphan-volumes.yml, and undefined on a lab with no
     # cluster or a cluster that did not answer — both of which render as no section at all.
@@ -458,7 +471,7 @@
             none — has bootstrap run? (or Proxmox credentials are not exported)
           {% endif %}
           {% for h in _st_guests %}
-            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ (hostvars[h]._st_stale_services | default([]) | length) if (hostvars[h]._st_stale_checked | default(false) | bool) else 'not checked' }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
+            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ (hostvars[h]._st_stale_services | default([]) | length) if (hostvars[h]._st_stale_checked | default(false) | bool) else 'not checked' }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined and hostvars[h]._st_ssh_skipped is not defined else '' }}
           {% endfor %}
 
           {%- if _st_public_dns_section | default(false) | bool %}
@@ -478,7 +491,7 @@
           {% for h in _st_guests if hostvars[h]._st_containers | default([]) | length > 0 %}
           {% set _ = _ctr_hosts.append(h) %}
           {% endfor %}
-          {% if _ctr_hosts | length == 0 and _st_unreachable | length == _st_guests | length %}
+          {% if _ctr_hosts | length == 0 and _st_unreachable | length == _st_ssh_guests | length %}
             unknown — no guest was reachable, so nothing could be read
           {% elif _ctr_hosts | length == 0 %}
             none — no Docker host reported a container
@@ -554,7 +567,7 @@
 
           NATIVE APP UPDATES
           {% set _updates = hostvars.values() | selectattr('_st_update', 'defined') | map(attribute='_st_update') | selectattr('update_available', 'equalto', true) | list %}
-          {% if _updates | length == 0 and _st_unreachable | length == _st_guests | length %}
+          {% if _updates | length == 0 and _st_unreachable | length == _st_ssh_guests | length %}
             unknown — no guest was reachable, so nothing could be read
           {% elif _updates | length == 0 %}
             all native apps are current (or none report a version)
