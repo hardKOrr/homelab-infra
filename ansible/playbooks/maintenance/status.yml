@@ -60,68 +60,123 @@
       {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
 
   tasks:
-    - name: Check whether this guest runs Docker
-      ansible.builtin.stat:
-        path: /usr/bin/docker
-      register: _st_docker_stat
-      failed_when: false
-
-    # The Go-template braces are escaped: Ansible templates this string before the
-    # shell ever sees it.
-    - name: List containers
-      ansible.builtin.command:
-        cmd: >-
-          docker ps --all
-          --format {% raw %}'{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}'{% endraw %}
-      register: _st_docker_ps
-      changed_when: false
-      failed_when: false
-      when: _st_docker_stat.stat.exists | default(false)
-
-    - name: Record container lines
+    # An ISO appliance has no SSH contract, so none of the checks below can reach it.
+    # Deploy records the guest's kind in its notes (tasks/proxmox/record-app-on-guest.yml),
+    # whatever the instance is called; guests deployed before that fall back to the app
+    # defaults. The app is the longest app-defaults slug the instance name equals or starts with
+    # (`<slug>-`), as in tasks/wiring/rebuild-caddy-route.yml; the guest, backup and
+    # monitor rows still come from Play 3.
+    - name: Match the guest's instance name to app defaults
       ansible.builtin.set_fact:
-        _st_containers: "{{ _st_docker_ps.stdout_lines | default([]) }}"
+        _st_app_slug: >-
+          {%- set found = [] -%}
+          {%- for path in lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../vars/app-defaults/*.yml', wantlist=True) -%}
+          {%- set slug = path | basename | replace('.yml', '') -%}
+          {%- if inventory_hostname == slug or inventory_hostname.startswith(slug ~ '-') -%}
+          {%- set _ = found.append({'slug': slug, 'length': slug | length}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ (found | sort(attribute='length', reverse=true) | first | default({'slug': ''})).slug }}
 
-    - name: Check whether this guest ships lab-update-check
-      ansible.builtin.stat:
-        path: /usr/local/bin/lab-update-check
-      register: _st_check_stat
-      failed_when: false
+    - name: Load the defaults of the app this guest runs
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ _st_app_slug }}.yml"
+        name: _st_defaults_file
+      when: _st_app_slug | length > 0
 
-    - name: Run the update check
-      ansible.builtin.command: /usr/local/bin/lab-update-check
-      register: _st_check_raw
-      changed_when: false
-      failed_when: false
-      when: _st_check_stat.stat.exists | default(false)
-
-    - name: Parse the update check result
+    - name: Read the guest's hosting shape
       ansible.builtin.set_fact:
-        _st_update: "{{ _st_check_raw.stdout | from_json }}"
-      when:
-        - _st_check_stat.stat.exists | default(false)
-        - _st_check_raw.rc | default(1) == 0
+        _st_app_config: >-
+          {{ (_st_defaults_file | default({}))[_st_app_slug | replace('-', '_') ~ '_defaults']
+             | default({}) }}
 
-    - name: Check whether this guest ships the stale-service detector
-      ansible.builtin.stat:
-        path: /usr/local/bin/lab-stale-services
-      register: _st_stale_stat
-      failed_when: false
-
-    - name: Read stale host services
-      ansible.builtin.command: /usr/local/bin/lab-stale-services
-      register: _st_stale_raw
-      changed_when: false
-      failed_when: false
-      when: _st_stale_stat.stat.exists | default(false)
-
-    - name: Record stale host services
+    # Play 3 reads this to leave the guest out of its SSH tallies: nothing was attempted.
+    # Only a row inside the marker-delimited app records counts, and only its kind column
+    # (`| instance | kind | url | deployed |`): an instance called "appliance" or operator
+    # text elsewhere in the notes must not match. A guest with a record is classified by
+    # it alone; the name-based app defaults are for guests deployed before records existed.
+    - name: Decide whether this guest is an ISO appliance
       ansible.builtin.set_fact:
-        _st_stale_services: "{{ _st_stale_raw.stdout_lines | default([]) }}"
-        _st_stale_checked: true
-      when:
-        - _st_stale_stat.stat.exists | default(false)
-        - _st_stale_raw.rc | default(1) == 0
+        _st_appliance: >-
+          {{ (_st_records | regex_search('(?m)^\|[^|\n]*\|\s*appliance\s*\|') | default('', true) | length > 0)
+             if (_st_records | regex_search('(?m)^\|[^|\n]*\|\s*(docker|native|kubernetes|appliance)\s*\|') | default('', true) | length > 0)
+             else (_st_app_config is iso_appliance) }}
+      vars:
+        _st_records: >-
+          {{ (proxmox_description | default(''))
+             | regex_search('(?s)<!-- homelab-infra:apps -->(.*?)<!-- /homelab-infra:apps -->', '\1')
+             | default('', true) | join('') }}
+
+    - name: Record that SSH checks are skipped for this guest
+      ansible.builtin.set_fact:
+        _st_ssh_skipped: true
+      when: _st_appliance | bool
+
+    - name: Check the guest over SSH
+      when: not (_st_appliance | bool)
+      block:
+      - name: Check whether this guest runs Docker
+        ansible.builtin.stat:
+          path: /usr/bin/docker
+        register: _st_docker_stat
+        failed_when: false
+
+      # The Go-template braces are escaped: Ansible templates this string before the
+      # shell ever sees it.
+      - name: List containers
+        ansible.builtin.command:
+          cmd: >-
+            docker ps --all
+            --format {% raw %}'{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}'{% endraw %}
+        register: _st_docker_ps
+        changed_when: false
+        failed_when: false
+        when: _st_docker_stat.stat.exists | default(false)
+
+      - name: Record container lines
+        ansible.builtin.set_fact:
+          _st_containers: "{{ _st_docker_ps.stdout_lines | default([]) }}"
+
+      - name: Check whether this guest ships lab-update-check
+        ansible.builtin.stat:
+          path: /usr/local/bin/lab-update-check
+        register: _st_check_stat
+        failed_when: false
+
+      - name: Run the update check
+        ansible.builtin.command: /usr/local/bin/lab-update-check
+        register: _st_check_raw
+        changed_when: false
+        failed_when: false
+        when: _st_check_stat.stat.exists | default(false)
+
+      - name: Parse the update check result
+        ansible.builtin.set_fact:
+          _st_update: "{{ _st_check_raw.stdout | from_json }}"
+        when:
+          - _st_check_stat.stat.exists | default(false)
+          - _st_check_raw.rc | default(1) == 0
+
+      - name: Check whether this guest ships the stale-service detector
+        ansible.builtin.stat:
+          path: /usr/local/bin/lab-stale-services
+        register: _st_stale_stat
+        failed_when: false
+
+      - name: Read stale host services
+        ansible.builtin.command: /usr/local/bin/lab-stale-services
+        register: _st_stale_raw
+        changed_when: false
+        failed_when: false
+        when: _st_stale_stat.stat.exists | default(false)
+
+      - name: Record stale host services
+        ansible.builtin.set_fact:
+          _st_stale_services: "{{ _st_stale_raw.stdout_lines | default([]) }}"
+          _st_stale_checked: true
+        when:
+          - _st_stale_stat.stat.exists | default(false)
+          - _st_stale_raw.rc | default(1) == 0
 
 
 # ── Play 3: Platform services and rendering ────────────────────────────────────
@@ -137,7 +192,14 @@
     # reported as a healthy one with nothing to say.
     _st_unreachable: >-
       {{ _st_guests | map('extract', hostvars)
+         | rejectattr('_st_ssh_skipped', 'defined')
          | rejectattr('_st_containers', 'defined')
+         | map(attribute='inventory_hostname') | list }}
+    # Guests Play 2 actually tried over SSH: an appliance is neither reachable nor
+    # unreachable, so the "nothing was reachable" states compare against this count.
+    _st_ssh_guests: >-
+      {{ _st_guests | map('extract', hostvars)
+         | rejectattr('_st_ssh_skipped', 'defined')
          | map(attribute='inventory_hostname') | list }}
     # Set by tasks/kubernetes/list-orphan-volumes.yml, and undefined on a lab with no
     # cluster or a cluster that did not answer — both of which render as no section at all.
@@ -427,7 +489,7 @@
             none — has bootstrap run? (or Proxmox credentials are not exported)
           {% endif %}
           {% for h in _st_guests %}
-            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ (hostvars[h]._st_stale_services | default([]) | length) if (hostvars[h]._st_stale_checked | default(false) | bool) else 'not checked' }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
+            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ (hostvars[h]._st_stale_services | default([]) | length) if (hostvars[h]._st_stale_checked | default(false) | bool) else 'not checked' }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined and hostvars[h]._st_ssh_skipped is not defined else '' }}
           {% endfor %}
 
           {%- if _st_public_dns_section | default(false) | bool %}
@@ -447,7 +509,7 @@
           {% for h in _st_guests if hostvars[h]._st_containers | default([]) | length > 0 %}
           {% set _ = _ctr_hosts.append(h) %}
           {% endfor %}
-          {% if _ctr_hosts | length == 0 and _st_unreachable | length == _st_guests | length %}
+          {% if _ctr_hosts | length == 0 and _st_unreachable | length == _st_ssh_guests | length %}
             unknown — no guest was reachable, so nothing could be read
           {% elif _ctr_hosts | length == 0 %}
             none — no Docker host reported a container
@@ -523,7 +585,7 @@
 
           NATIVE APP UPDATES
           {% set _updates = hostvars.values() | selectattr('_st_update', 'defined') | map(attribute='_st_update') | selectattr('update_available', 'equalto', true) | list %}
-          {% if _updates | length == 0 and _st_unreachable | length == _st_guests | length %}
+          {% if _updates | length == 0 and _st_unreachable | length == _st_ssh_guests | length %}
             unknown — no guest was reachable, so nothing could be read
           {% elif _updates | length == 0 %}
             all native apps are current (or none report a version)

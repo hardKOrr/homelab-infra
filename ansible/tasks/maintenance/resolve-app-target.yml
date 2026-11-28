@@ -94,8 +94,7 @@
   ansible.builtin.set_fact:
     _rat_kind: >-
       {{ 'appliance'
-         if (app_config.get('proxmox', {}).get('installer')
-             or app_config.get('install', {}).get('method') == 'official-iso')
+         if app_config is iso_appliance
          else (app_config.get('hosting', {}).get('method')
                | default(_rat_declared_hosting
                          | default('docker' if _rat_stack | length > 0 else 'native', true), true)) }}

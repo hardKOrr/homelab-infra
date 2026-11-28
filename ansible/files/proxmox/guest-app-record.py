@@ -265,7 +265,7 @@ def main():
     parser.add_argument("--guest", default="", help="guest hostname to resolve")
     parser.add_argument("--vmid", default="", help="guest vmid; overrides --guest when set")
     parser.add_argument(
-        "--kind", default="native", choices=["docker", "native", "kubernetes"]
+        "--kind", default="native", choices=["docker", "native", "kubernetes", "appliance"]
     )
     parser.add_argument("--url", default="")
     parser.add_argument("--date", default=datetime.date.today().isoformat())
