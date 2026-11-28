@@ -35,17 +35,18 @@ check("one block holds the SSH checks", len(gate) == 1)
 
 env = jinja2.Environment()
 env.tests["iso_appliance"] = iso_appliance
+env.filters["bool"] = lambda v: str(v).lower() in ("true", "1", "yes")
 
 
-def enters_block(app):
-    """Evaluate the block's real `when` for a guest whose defaults are `app`."""
+def enters_block(appliance):
+    """Evaluate the block's real `when` for a guest the play decided is (not) an appliance."""
     cond = gate[0]["when"]
     cond = cond if isinstance(cond, str) else " and ".join(cond)
-    return env.from_string("{{ " + cond.strip("{} ") + " }}").render(_st_app_config=defaults(app)) == "True"
+    return env.from_string("{{ " + cond.strip("{} ") + " }}").render(_st_appliance=appliance) == "True"
 
 
-check("a native guest enters the SSH block", enters_block("bookstack"))
-check("an appliance does not enter the SSH block", not enters_block("proxmox-datacenter-manager"))
+check("a native guest enters the SSH block", enters_block(False))
+check("an appliance does not enter the SSH block", not enters_block(True))
 names = {t["name"] for t in gate[0]["block"]}
 for need in ("Check whether this guest runs Docker", "List containers",
              "Check whether this guest ships lab-update-check"):
@@ -55,22 +56,34 @@ check("nothing else reaches the guest", not any("Check" in n or "List" in n for 
 check("ansible.cfg loads the test plugin",
       "test_plugins" in (ROOT / "ansible/ansible.cfg").read_text())
 
-# A suffixed instance resolves to the longest app slug, then is classified by it.
+# The play's own decision tasks, run over real inventory hosts. The notes record wins over
+# the name, so a guest whose name holds no app slug is still an appliance; a suffixed name
+# is matched to its app for guests deployed before the record existed.
+NOTE = "<!-- homelab-infra:apps -->\n| instance | kind | url | deployed |\n|---|---|---|---|\n| %s | %s | | 2026-01-01 |\n<!-- /homelab-infra:apps -->"
+HOSTS = {
+    "edge-firewall": (NOTE % ("edge-firewall", "appliance"), True),
+    "edge-docker": (NOTE % ("edge-docker", "docker"), False),
+    "proxmox-datacenter-manager-secondary": ("", True),
+    "bookstack-2": ("", False),
+}
 if shutil.which("ansible-playbook"):
-    tasks = [t for t in play["tasks"] if "block" not in t][:3]
-    tasks.append({"ansible.builtin.debug": {"msg": "{{ inventory_hostname }}={{ _st_app_config is iso_appliance }}"}})
+    names_before_block = [t for t in play["tasks"] if "block" not in t and "Check" not in t["name"]]
+    tasks = names_before_block[:4]
+    tasks.append({"ansible.builtin.debug": {"msg": "{{ inventory_hostname }}={{ _st_appliance | bool }}"}})
+    inventory = {"all": {"hosts": {h: {"proxmox_description": d} for h, (d, _) in HOSTS.items()}}}
     with tempfile.TemporaryDirectory() as tmp:
+        inv = Path(tmp) / "inv.yml"
+        inv.write_text(yaml.safe_dump(inventory))
         probe = ROOT / "ansible/playbooks/maintenance" / f"_probe_{Path(tmp).name}.yml"
         probe.write_text(yaml.safe_dump([{"hosts": "all", "gather_facts": False,
                                           "connection": "local", "tasks": tasks}]))
         try:
-            out = subprocess.run(
-                ["ansible-playbook", "-i", "proxmox-datacenter-manager-secondary,bookstack-2,", str(probe)],
-                cwd=ROOT / "ansible", capture_output=True, text=True, check=True).stdout
+            out = subprocess.run(["ansible-playbook", "-i", str(inv), str(probe)],
+                                 cwd=ROOT / "ansible", capture_output=True, text=True, check=True).stdout
         finally:
             probe.unlink()
-    check("suffixed appliance is skipped", "proxmox-datacenter-manager-secondary=True" in out)
-    check("suffixed native guest is not", "bookstack-2=False" in out)
+    for host, (_, want) in HOSTS.items():
+        check(f"{host} appliance={want}", f"{host}={want}" in out)
 
 # Play 3: a skipped appliance is not UNREACHABLE and is not counted as an SSH guest.
 report = next(p for p in plays if p["name"] == "Status | Report")

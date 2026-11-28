@@ -61,7 +61,9 @@
 
   tasks:
     # An ISO appliance has no SSH contract, so none of the checks below can reach it.
-    # The app is the longest app-defaults slug the instance name equals or starts with
+    # Deploy records the guest's kind in its notes (tasks/proxmox/record-app-on-guest.yml),
+    # whatever the instance is called; guests deployed before that fall back to the app
+    # defaults. The app is the longest app-defaults slug the instance name equals or starts with
     # (`<slug>-`), as in tasks/wiring/rebuild-caddy-route.yml; the guest, backup and
     # monitor rows still come from Play 3.
     - name: Match the guest's instance name to app defaults
@@ -89,13 +91,19 @@
              | default({}) }}
 
     # Play 3 reads this to leave the guest out of its SSH tallies: nothing was attempted.
+    - name: Decide whether this guest is an ISO appliance
+      ansible.builtin.set_fact:
+        _st_appliance: >-
+          {{ (proxmox_description | default('')) is search('[|] *appliance *[|]')
+             or _st_app_config is iso_appliance }}
+
     - name: Record that SSH checks are skipped for this guest
       ansible.builtin.set_fact:
         _st_ssh_skipped: true
-      when: _st_app_config is iso_appliance
+      when: _st_appliance | bool
 
     - name: Check the guest over SSH
-      when: not (_st_app_config is iso_appliance)
+      when: not (_st_appliance | bool)
       block:
       - name: Check whether this guest runs Docker
         ansible.builtin.stat:
