@@ -14,6 +14,10 @@
 # clones it; Play 2 installs the PBS packages from Proxmox's apt repository. The
 # template build is idempotent and shared — any future VM app clones the same one.
 #
+# DOCKER — with `hosting.method: docker` and `stack: <name>` (guest_type lxc or vm) Play 1
+# is skipped and Play 1b finds or creates that stack host instead; Play 2 then runs the
+# community image there (roles/pbs/tasks/docker.yml). Keep the stack dedicated to PBS.
+#
 # Play 3 provisions the datastore, backup job and notification routing via
 # tasks/bootstrap/configure-pbs.yml, then records the `backups` registry key.
 
@@ -78,6 +82,11 @@
           source_vmid, a different Proxmox storage ID, a positive GiB size, a PBS calendar
           schedule, and a distinct absolute datastore path. Refusing an unsafe second copy.
       when: app_config.second_copy.enabled | default(false) | bool
+
+    # Docker is provisioned by Play 1b on its stack host.
+    - name: End the native provisioning play for the Docker method
+      ansible.builtin.meta: end_play
+      when: app_config.hosting.method | default('native') == 'docker'
 
   tasks:
     # VM PATH — dedicated VM per instance. Mirrors the native LXC playbooks: an
@@ -480,6 +489,76 @@
           when: app_config.second_copy.enabled | default(false) | bool
 
 
+# ── Play 1b: Provision the Docker stack host ───────────────────────────────────
+# Skipped for the native method. Finds or creates the stack host (an LXC or a VM per the
+# stack's guest_type) and, on a VM, attaches the retained datastore disk to it.
+- name: "PBS | Provision the Docker stack host"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load the app config
+      ansible.builtin.include_tasks: ../../tasks/apps/load-config.yml
+      vars:
+        load_config_app: pbs
+
+    - name: Validate supported hosting method
+      ansible.builtin.include_tasks: ../../tasks/hosting/validate-app.yml
+      vars:
+        hosting_app_slug: pbs
+
+    - name: End the Docker provisioning play for the native method
+      ansible.builtin.meta: end_play
+      when: app_config.hosting.method | default('native') != 'docker'
+
+  tasks:
+    - name: Refuse Docker options PBS does not carry before any guest exists
+      ansible.builtin.assert:
+        that:
+          - not (app_config.second_copy.enabled | default(false) | bool)
+          - >-
+            app_config.proxmox.vm.datastore_disk is not defined
+            or _hosting_guest_type == 'vm'
+          - >-
+            app_config.app.datastore_mode | default('create') != 'reuse'
+            or app_config.proxmox.vm.datastore_disk is defined
+        fail_msg: >-
+          PBS on Docker has no second_copy; a retained datastore_disk needs a VM stack
+          (guest_type: vm), and datastore_mode: reuse needs that disk. Refusing before any change.
+
+    - name: Find or create the stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+        stack_avoid_vmid_reserved: "{{ (app_config.proxmox.vm.datastore_disk | default({})).source_vmid | default('') }}"
+
+    - name: Resolve the stack host's tag and Proxmox identity for the datastore disk
+      ansible.builtin.set_fact:
+        _pbs_docker_host: "{{ homelabinfra_instance.stack.hostname }}"
+        _pbs_docker_stack_tag: "_.stack+{{ _stack_id }}"
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Attach the retained PBS datastore disk to the stack VM
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
+      vars:
+        pbs_disk_vmid: "{{ hostvars[_pbs_docker_host].proxmox_vmid }}"
+        pbs_disk_node: "{{ hostvars[_pbs_docker_host].proxmox_node }}"
+        pbs_disk_guest_ip: "{{ homelabinfra_instance.stack.ip_address }}"
+        pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
+        pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+        pbs_disk_index: 1
+        pbs_disk_device: scsi1
+        pbs_disk_serial: homelab-pbs-store
+        pbs_disk_owner_tags: ["_+lab", "{{ _pbs_docker_stack_tag }}"]
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the PBS VM to install and configure Proxmox Backup Server.
 - name: "PBS | Deploy"
@@ -509,10 +588,16 @@
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+      when: app_config.hosting.method | default('native') == 'docker'
+
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy PBS
       ansible.builtin.include_role:
         name: pbs
+        tasks_from: "{{ 'docker.yml' if app_config.hosting.method | default('native') == 'docker' else 'main.yml' }}"
 
 
 # ── Play 3: Record facts, configure, wire ──────────────────────────────────────

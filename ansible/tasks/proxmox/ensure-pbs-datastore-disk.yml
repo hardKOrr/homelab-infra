@@ -2,7 +2,9 @@
 # Attach one declared, retained PBS data volume to an owned PBS VM.
 #
 # Inputs: pbs_disk_vmid, pbs_disk_node, pbs_disk_guest_ip, pbs_disk_config, pbs_disk_mode,
-# plus optional pbs_disk_index, pbs_disk_device and pbs_disk_serial (defaults select disk 1).
+# plus optional pbs_disk_index, pbs_disk_device and pbs_disk_serial (defaults select disk 1)
+# and pbs_disk_owner_tags, the tags the live VM must carry (default `_+lab` and `_<instance>`;
+# a Docker PBS on a stack host proves ownership with `_+lab` and the stack's tag).
 # The PVE volume is stable across guest replacement: storage:vm-<source_vmid>-disk-N.
 # source_vmid is reserved for the datastore volume, not a PBS guest, so PVE guest destroy
 # cannot free the retained disk. Reuse never allocates storage or overwrites a volume.
@@ -62,15 +64,16 @@
 - name: PBS disk | Confirm live ownership and reject a different disk in the selected slot
   ansible.builtin.assert:
     that:
-      - "'_+lab' in (_pbs_disk_config_parsed.tags | default('')).split(';')"
-      - "('_' ~ instance) in (_pbs_disk_config_parsed.tags | default('')).split(';')"
+      - >-
+        (pbs_disk_owner_tags | default(['_+lab', '_' ~ instance]))
+        | difference((_pbs_disk_config_parsed.tags | default('')).split(';')) | length == 0
       - >-
         _pbs_disk_config_parsed[_pbs_disk_device] is not defined
         or (_pbs_disk_config_parsed[_pbs_disk_device].split(',') | first)
            == _pbs_disk_expected_volid
     fail_msg: >-
-      PBS datastore disk attach requires the live VM to retain _+lab and _{{ instance }}
-      and {{ _pbs_disk_device }} to be empty or already reference the declared retained
+      PBS datastore disk attach requires the live VM to retain
+      {{ pbs_disk_owner_tags | default(['_+lab', '_' ~ instance]) | join(' and ') }} and {{ _pbs_disk_device }} to be empty or already reference the declared retained
       volume. No disk was attached or replaced.
   vars:
     _pbs_disk_config_parsed: "{{ _pbs_disk_vm_config.stdout | from_json }}"

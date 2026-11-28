@@ -6,7 +6,7 @@
 
 - name: PBS datastore reuse | List local registrations
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+    argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores
   changed_when: false
 
@@ -32,7 +32,7 @@
 
 - name: PBS datastore reuse | Read datastore create options
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, create, --help]
+    argv: "{{ pbs_manager_argv + ['datastore', 'create', '--help'] }}"
   register: _pbs_reuse_create_help
   changed_when: false
   failed_when: false
@@ -44,16 +44,20 @@
          ((_pbs_reuse_create_help.stdout | default('')) ~
           (_pbs_reuse_create_help.stderr | default(''))) }}
 
+- name: PBS datastore reuse | Require the container to support datastore reuse
+  ansible.builtin.assert:
+    that: _pbs_reuse_native_supported | bool
+    fail_msg: The PBS container image must support --reuse-datastore to register an existing chunk store.
+  when:
+    - _pbs_reuse_registered | length == 0
+    - app_config.hosting.method | default('native') == 'docker'
+
 - name: PBS datastore reuse | Register the retained directory without initialising it
   ansible.builtin.command:
-    argv:
-      - proxmox-backup-manager
-      - datastore
-      - create
-      - "{{ app_config.app.datastore_name }}"
-      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
-      - --reuse-datastore
-      - 'true'
+    argv: >-
+      {{ pbs_manager_argv + ['datastore', 'create', app_config.app.datastore_name,
+         homelabinfra_config.infrastructure.backups.datastore_path,
+         '--reuse-datastore', 'true'] }}
   register: _pbs_reuse_create
   changed_when: _pbs_reuse_create.rc == 0
   when:
@@ -111,7 +115,7 @@
 
 - name: PBS datastore reuse | Read registrations after reuse
   ansible.builtin.command:
-    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+    argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores_after
   changed_when: false
 

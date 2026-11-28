@@ -52,7 +52,7 @@ safe_modes = task(provision_tasks, "Select safe modes for the PBS second-copy di
 assert "_pbs_second_copy_volume_exists" in str(safe_modes["ansible.builtin.set_fact"])
 assert "'create'" in str(safe_modes["ansible.builtin.set_fact"])
 assert "'attach'" in str(safe_modes["ansible.builtin.set_fact"])
-pbs_configure = task(pbs[2]["tasks"], "Configure datastore, backup job and notifications")
+pbs_configure = task(pbs[3]["tasks"], "Configure datastore, backup job and notifications")
 assert "pbs_second_copy" in pbs_configure["vars"]
 assert "pbs_second_copy_datastore_mode" in pbs_configure["vars"]
 configure_tasks = load_yaml("ansible/tasks/bootstrap/configure-pbs.yml")

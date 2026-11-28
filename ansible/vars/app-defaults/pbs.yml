@@ -11,8 +11,12 @@
 pbs_defaults:
   hosting:
     method: native
-    supported: [native-vm]
+    supported: [native-vm, docker-lxc, docker-vm]
     impossible: {}
+  # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm)
+  # runs the community image on that stack host, dedicated to PBS. The native VM default
+  # is unchanged; the Docker method has no second_copy.
+  stack: ""
   proxmox:
     type: vm
     vm:
@@ -71,11 +75,40 @@ pbs_defaults:
       name: debian-12-cloud
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
+  # Docker method: the configuration directory is the recovery point (see the role README).
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
+
   app:
     port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)
     datastore_name: homelab
     datastore_mode: create     # reuse requires a recovered registration; never initialises
     api_token_name: ansible     # token id becomes root@pam!ansible
+    # Docker method only: PBS has no upstream image, so this is the community build
+    # (https://github.com/ayufan/pve-backup-server-dockerfiles). Its admin@pbs password is
+    # replaced at Deploy; the token stays root@pam!ansible on both methods.
+    image: ayufan/proxmox-backup-server:v4.2.0-1
     service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
                                          # name; playbooks/apps/remove.yml stops this
 

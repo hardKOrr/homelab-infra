@@ -1,9 +1,11 @@
 ---
+# On Docker, tasks/docker.yml recreates the project itself when its Compose file changes.
 - name: Restart pbs
   ansible.builtin.include_tasks: ../../../tasks/apps/restart.yml
   vars:
     restart_runtime: native
     restart_services: ["{{ pbs_service_name }}"]
+  when: pbs_native | bool
 
 - name: Reload systemd
   ansible.builtin.systemd:

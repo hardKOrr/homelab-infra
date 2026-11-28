@@ -9,10 +9,30 @@ datastore path. This gives the datastore a storage identity independent of the r
 PBS OS disk.
 
 Role layout: `tasks/main.yml` imports `tasks/main/install.yml` (repositories, datastore
-disks, packages, services, API liveness) and `tasks/main/token.yml` (token reuse or
+disks, packages, services, API liveness) and `tasks/token.yml` (token reuse or
 recreation, vault write, ACL, proof), then exports the endpoint. `tasks/datastore-disk.yml`
 mounts one declared disk through `tasks/datastore-disk/`: `device.yml`, `stage.yml`,
 `copy.yml` and `mount.yml`.
+
+## Docker hosting
+
+`hosting.method: docker` with `stack: <name>` runs the community image
+`app.image` ([ayufan/pve-backup-server-dockerfiles](https://github.com/ayufan/pve-backup-server-dockerfiles))
+on that stack's LXC or VM; PBS has no upstream image. `playbooks/apps/pbs.yml` Play 1b
+finds or creates the host, `tasks/docker.yml` mounts the optional `datastore_disk` (VM
+only), deploys the Compose project and reuses the native `token.yml`,
+`register-reused-datastore.yml` and `export.yml`. The container has no PAM and ships only `admin@pbs`, so Deploy creates `root@pam` as the
+token owner: the token stays `root@pam!ansible` as on the native method, which keeps PBS's
+backup-group ownership valid across a switch. `proxmox-backup-manager` runs through
+`docker exec` (`pbs_manager_argv`). Configuration, state and logs are host directories under
+`/opt/<instance>` owned by `backup` as the image sets them. Remove App preserves the
+bind-mounted datastore. Deploy re-registers the existing chunks if the Compose project was
+removed. Deploy replaces the image's default `admin@pbs` password with a generated one
+kept in `homelab-infra/apps/<instance>` (`admin_password`) and reuses it on repeat. `second_copy` is refused on Docker.
+
+For a node-local retained disk, pin the Docker VM stack to the node that can see the exact
+volume. If that node cannot reach the default VM or template pool, set the corresponding
+`storage` or `template_storage` in [the stack override](../../vars/stack-defaults.yml).
 
 ## Optional second copy
 
@@ -239,3 +259,10 @@ drives. Never let two PBS guests write to the source and received copies at the 
 7. Keep the original volume until the application restore and a new scheduled backup have
    both passed. If Deploy fails, stop the replacement before changing volume attachment or
    configuration; the source volume remains the recovery point.
+
+## Recovery (Docker)
+
+Backup App archives `/opt/<instance>/etc` (configuration, users, tokens, certificates) as
+`config.pxar`, live, because the target PBS may be this one; the datastore is the backups
+themselves and is retained, not archived. Restore App swaps that directory back. The drill
+canary is a `p2-canary-pbs-<id>@pbs` user with an ACL (`tasks/drill-canary.yml`).

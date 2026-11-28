@@ -1,0 +1,74 @@
+---
+# Drill canary hook (playbooks/maintenance/drill-canary.yml), through proxmox-backup-manager
+# in the container (tasks/drill/app-exec.yml):
+#   data           user p2-canary-pbs-<id>@pbs
+#   configuration  an Audit ACL on / for that user
+# The final verify (drill_final) removes both.
+- name: PBS drill canary | Name the canary
+  ansible.builtin.set_fact:
+    _pbs_canary: "p2-canary-pbs-{{ drill_canary_id }}@pbs"
+
+- name: PBS drill canary | Write the user and its ACL
+  when: drill_canary_action == 'create'
+  block:
+    - name: PBS drill canary | List the users
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: [proxmox-backup-manager, user, list, --output-format, json]
+
+    - name: PBS drill canary | Add the user
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: [proxmox-backup-manager, user, create, "{{ _pbs_canary }}"]
+        drill_exec_changes: true
+      when: (drill_exec_result.stdout | from_json | selectattr('userid', 'equalto', _pbs_canary) | list) | length == 0
+
+    - name: PBS drill canary | Grant the ACL
+      ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+      vars:
+        drill_exec_argv: [proxmox-backup-manager, acl, update, /, Audit, --auth-id, "{{ _pbs_canary }}"]
+        drill_exec_changes: true
+
+- name: PBS drill canary | Read the users
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [proxmox-backup-manager, user, list, --output-format, json]
+
+- name: PBS drill canary | Remember whether the user exists
+  ansible.builtin.set_fact:
+    _pbs_canary_has_user: >-
+      {{ (drill_exec_result.stdout | from_json | selectattr('userid', 'equalto', _pbs_canary) | list) | length == 1 }}
+
+- name: PBS drill canary | Read the ACL
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [proxmox-backup-manager, acl, list, --output-format, json]
+
+- name: PBS drill canary | Remember whether the ACL exists
+  ansible.builtin.set_fact:
+    _pbs_canary_has_acl: >-
+      {{ (drill_exec_result.stdout | from_json | selectattr('ugid', 'equalto', _pbs_canary)
+          | selectattr('roleid', 'equalto', 'Audit') | list) | length == 1 }}
+
+- name: PBS drill canary | Require none on a fresh instance
+  ansible.builtin.assert:
+    that:
+      - not _pbs_canary_has_user
+      - not _pbs_canary_has_acl
+    fail_msg: "{{ instance }} already has {{ _pbs_canary }} on a fresh install: data survived Remove."
+  when: drill_canary_action == 'fresh'
+
+- name: PBS drill canary | Require the user and its ACL
+  ansible.builtin.assert:
+    that:
+      - _pbs_canary_has_user
+      - _pbs_canary_has_acl
+    fail_msg: "{{ instance }} lacks the {{ _pbs_canary }} user or its Audit ACL."
+  when: drill_canary_action in ['create', 'verify']
+
+- name: PBS drill canary | Delete the canary after the final verify
+  ansible.builtin.include_tasks: ../../../tasks/drill/app-exec.yml
+  vars:
+    drill_exec_argv: [proxmox-backup-manager, user, remove, "{{ _pbs_canary }}"]
+    drill_exec_changes: true
+  when: drill_canary_action == 'verify' and drill_final | default(false) | bool

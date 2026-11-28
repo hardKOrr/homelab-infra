@@ -1,0 +1,115 @@
+---
+# pbs role, hosting.method: docker — PBS in the community container image on a stack host
+# (an LXC or a VM). Called from Play 2 of playbooks/apps/pbs.yml with `tasks_from: docker.yml`.
+# The datastore is a host directory (on a VM, optionally the retained `datastore_disk`)
+# bind-mounted at the same path inside the container; token handling, the retained-datastore
+# registration and the exports are the native method's own task files.
+
+- name: PBS Docker | Mount the persistent datastore disk
+  ansible.builtin.include_tasks: datastore-disk.yml
+  vars:
+    pbs_datastore_disk_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    pbs_datastore_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+    pbs_datastore_disk_serial: homelab-pbs-store
+    pbs_datastore_disk_label: pbs-datastore
+    pbs_datastore_required_mounts: ["{{ homelabinfra_config.infrastructure.backups.datastore_path }}"]
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+# The image's startup script sets these to backup:backup 0700 on every start and seeds an
+# empty /etc/proxmox-backup from its own defaults, so Deploy creates them the same way and a
+# repeat changes nothing.
+- name: PBS Docker | Create the configuration, state and log directories
+  ansible.builtin.file:
+    path: "{{ pbs_project_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ pbs_backup_uid }}"
+    group: "{{ pbs_backup_uid }}"
+    mode: "0700"
+  loop: [etc, lib, logs]
+
+# The listener is published to the network only after the managed administrator password
+# is in place and verified (the marker below). Until then it binds the guest's loopback, so
+# the image's default login is never reachable from outside, and a failed initialization
+# leaves the port closed.
+- name: PBS Docker | Check whether the service was already published
+  ansible.builtin.stat:
+    path: "{{ pbs_project_dir }}/.published"
+  register: _pbs_published_marker
+
+# The container's `backup` user owns the datastore directory; PBS manages what is inside it.
+# Native datastore reuse checks that the root directory is exactly 0755.
+- name: PBS Docker | Deploy the Compose project
+  ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+  vars:
+    compose_project_dir: "{{ pbs_project_dir }}"
+    pbs_listener_open: "{{ _pbs_published_marker.stat.exists }}"
+    compose_dirs:
+      - path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+        owner: "{{ pbs_backup_uid }}"
+        group: "{{ pbs_backup_uid }}"
+        mode: "0755"
+
+- name: PBS Docker | Wait for the PBS API to answer
+  ansible.builtin.include_tasks: api-wait.yml
+
+- name: PBS Docker | Replace the image's default administrator password
+  ansible.builtin.include_tasks: admin-password.yml
+
+- name: PBS Docker | Publish the listener now that the default password is gone
+  when: not _pbs_published_marker.stat.exists
+  block:
+    - name: PBS Docker | Record the publication
+      ansible.builtin.file:
+        path: "{{ pbs_project_dir }}/.published"
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: PBS Docker | Publish the Compose project
+      ansible.builtin.include_tasks: ../../../tasks/stack/compose-deploy.yml
+      vars:
+        compose_project_dir: "{{ pbs_project_dir }}"
+        # Not the block guard's variable: an include parameter overrides a fact of the same name.
+        pbs_listener_open: true
+
+    - name: PBS Docker | Wait for the published PBS API
+      ansible.builtin.include_tasks: api-wait.yml
+
+# The image has only admin@pbs; the token owner is root@pam as on the native method.
+- name: PBS Docker | Read the PBS users
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"
+  register: _pbs_users
+  changed_when: false
+
+- name: PBS Docker | Create the token owner user
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'create', pbs_auth_id] }}"
+  when: (_pbs_users.stdout | from_json | selectattr('userid', 'equalto', pbs_auth_id) | list) | length == 0
+  changed_when: true
+
+- name: PBS Docker | Resolve, store and prove the API token
+  ansible.builtin.include_tasks: token.yml
+
+# Remove App deletes the Compose project and its registration but keeps the datastore,
+# including on a stack without a separate disk. Let PBS validate and reopen the store.
+- name: PBS Docker | Check for existing datastore chunks
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: _pbs_docker_chunks
+
+- name: PBS Docker | Register the retained datastore without initialising it
+  ansible.builtin.include_tasks: register-reused-datastore.yml
+  when: >-
+    app_config.app.datastore_mode | default('create') == 'reuse'
+    or _pbs_docker_chunks.stat.isdir | default(false)
+
+- name: PBS Docker | Hand the endpoint and token back to the playbook
+  ansible.builtin.include_tasks: export.yml

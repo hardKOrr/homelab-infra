@@ -20,6 +20,7 @@
 #       guest_type: vm        # lxc | vm; defaults to vm
 #       node: <pve-node-3>       # optional pin for a new stack VM
 #       storage: <vm-image-store> # optional Proxmox VM image storage
+#       template_storage: <vm-image-store> # optional cloud template storage on the pinned node
 #
 # Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
 # values apply when the host is CREATED. Changing them later does not move a running host;
@@ -98,6 +99,14 @@ stack_defaults:
     cores: 4
     memory: 4096
     disk_size: 64
+
+  # Proxmox Backup Server on Docker alone: it holds the lab's backups, so no other app
+  # shares its host. Boot tier 60 like the native VM — backups start after what they back up.
+  pbs:
+    boot_order: 60
+    cores: 2
+    memory: 2048
+    disk_size: 32
 
   # The *arr suite, download clients and Bazarr. Many small containers, and the media
   # itself lives on mounted storage rather than the rootfs.

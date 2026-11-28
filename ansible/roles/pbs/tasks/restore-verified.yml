@@ -1,0 +1,52 @@
+---
+# restore-swap.yml verified hook: the restored configuration lists its users and the token.
+- name: PBS restore | Wait for the restored PBS API
+  ansible.builtin.include_tasks: api-wait.yml
+
+- name: PBS restore | Read the restored users
+  ansible.builtin.command:
+    argv: "{{ pbs_manager_argv + ['user', 'list', '--output-format', 'json'] }}"
+  register: _pbs_restore_users
+  changed_when: false
+
+- name: PBS restore | Require the token owner
+  ansible.builtin.assert:
+    that: >-
+      _pbs_restore_users.stdout | from_json | selectattr('userid', 'equalto', pbs_auth_id)
+      | list | length == 1
+    fail_msg: The restored PBS configuration has no {{ pbs_auth_id }} user.
+
+# The credential every client uses must still work against the restored configuration, and
+# the certificate it pins must be unchanged. A failure here rolls the swap back.
+- name: PBS restore | Authenticate with the platform token and list the datastores
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/admin/datastore"
+    headers:
+      Authorization: "PBSAPIToken={{ homelabinfra_infra.backups.api_token_id }}:{{ homelabinfra_infra.backups.api_token_secret }}"
+    validate_certs: false
+  register: _pbs_restore_stores
+  changed_when: false
+  no_log: true
+
+- name: PBS restore | Read the restored certificate fingerprint
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/nodes/localhost/certificates/info"
+    headers:
+      Authorization: "PBSAPIToken={{ homelabinfra_infra.backups.api_token_id }}:{{ homelabinfra_infra.backups.api_token_secret }}"
+    validate_certs: false
+  register: _pbs_restore_certs_after
+  changed_when: false
+  no_log: true
+
+- name: PBS restore | Require the effective credential, datastore and certificate
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_restore_stores.json.data | selectattr('store', 'equalto', app_config.app.datastore_name)
+        | list | length == 1
+      - >-
+        (_pbs_restore_certs_after.json.data | selectattr('fingerprint', 'defined')
+         | map(attribute='fingerprint') | first) == _pbs_restore_fingerprint
+    fail_msg: >-
+      After the restore the platform token cannot list the {{ app_config.app.datastore_name }}
+      datastore, or the certificate fingerprint changed. The swap is rolled back.
