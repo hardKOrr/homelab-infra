@@ -30,7 +30,7 @@ def render(open_listener):
 closed = render(False)
 kinds = [(doc["kind"], doc["metadata"]["name"]) for doc in closed]
 assert kinds == [("PersistentVolumeClaim", "pbs-config"), ("PersistentVolumeClaim", "pbs-state"),
-                 ("PersistentVolumeClaim", "pbs-datastore"), ("Deployment", "pbs")], \
+                 ("PersistentVolumeClaim", "pbs-datastore"), ("NetworkPolicy", "pbs-listener"), ("Deployment", "pbs")], \
     "no Service selects the pod while the factory password is valid: " + str(kinds)
 bound = yaml.safe_load_all(env.get_template("manifest.yaml.j2").render(
     instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_listener_open=False,
@@ -48,7 +48,9 @@ mounts = {m["name"]: m["mountPath"] for m in pod["containers"][0]["volumeMounts"
 assert mounts["datastore"] == "/mnt/backup" and mounts["config"] == "/etc/proxmox-backup", mounts
 assert "chmod 0755 '/mnt/backup'" in pod["initContainers"][0]["command"][2]
 
+assert next(d for d in closed if d["kind"] == "NetworkPolicy")["spec"]["ingress"] == []
 opened = render(True)
+assert next(d for d in opened if d["kind"] == "NetworkPolicy")["spec"]["ingress"] == [{}]
 lan = next(doc for doc in opened if doc["metadata"]["name"] == "pbs-lan")
 assert lan["spec"]["type"] == "LoadBalancer" and lan["spec"]["ports"][0]["port"] == 8007, lan
 assert lan["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == "192.0.2.50"

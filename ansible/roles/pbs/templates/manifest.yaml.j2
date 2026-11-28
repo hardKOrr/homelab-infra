@@ -7,7 +7,7 @@
   (/var/lib/proxmox-backup) and the datastore, mounted at its configured path so PBS sees
   the same path on every method. Logs are disposable.
 
-  Both Services, the ClusterIP one Deploy reaches the API through and the LoadBalancer that
+  A NetworkPolicy denies all ingress to the pod until then. Both Services, the ClusterIP one Deploy reaches the API through and the LoadBalancer that
   publishes the listener on the ingress VIP, are rendered only once the image's default
   administrator password has been replaced (pbs_listener_open): until then Deploy reaches
   the pod over its own loopback and nothing selects it. No Ingress: PBS speaks HTTPS and clients (PVE, the backup Jobs)
@@ -36,6 +36,29 @@ spec:
   volumeName: {{ pbs_retained_volumes[claim[0]] }}
 {% endif %}
 {% endfor %}
+---
+# The listener starts on the pod IP, which other workloads can reach directly. Until the
+# default password is replaced no pod may connect (kubelet probes and `kubectl exec` are not
+# pod traffic); the policy stays closed if the rotation fails and opens only in the apply
+# that publishes the Services.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ instance }}-listener
+  labels:
+{{ labels }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+{% if pbs_listener_open | bool %}
+  ingress:
+    - {}
+{% else %}
+  ingress: []
+{% endif %}
 ---
 apiVersion: apps/v1
 kind: Deployment
