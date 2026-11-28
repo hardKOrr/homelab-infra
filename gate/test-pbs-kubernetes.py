@@ -56,6 +56,7 @@ only = [d["kind"] for d in yaml.safe_load_all(env.get_template("manifest.yaml.j2
 assert only == ["PersistentVolumeClaim"] * 3, only
 binder = yaml.safe_load(env.get_template("bind-job.yaml.j2").render(instance="pbs", app_config=defaults))
 mounts = binder["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+assert binder["spec"]["template"]["spec"]["containers"][0]["command"] == ["true"], "command is a string array"
 assert len(mounts) == 3 and all(m["readOnly"] for m in mounts), "the binder never writes to a volume"
 opened = render(True)
 assert next(d for d in opened if d["kind"] == "NetworkPolicy")["spec"]["ingress"] == [{}]

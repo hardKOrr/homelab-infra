@@ -23,7 +23,7 @@ spec:
       containers:
         - name: bind
           image: {{ app_config.app.image }}
-          command: [true]
+          command: ["true"]
           volumeMounts:
 {% for claim in ['config', 'state', 'datastore'] %}
             - {name: {{ claim }}, mountPath: /bind/{{ claim }}, readOnly: true}
