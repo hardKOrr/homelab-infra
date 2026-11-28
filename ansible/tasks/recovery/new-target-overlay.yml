@@ -58,7 +58,10 @@
     # A Redis backend is its own deployed app, so one is only chosen, never created: the
     # authored instance, else redis-<target> when that backend is registered, else the
     # source's, which the check below refuses.
-    _nto_src_redis: "{{ _nto_source.get('app', {}).get('redis', {}).get('instance', '') }}"
+    # Only an app whose restore replays Redis data (recovery.new_target_own_redis) needs one.
+    _nto_src_redis: >-
+      {{ _nto_source.get('app', {}).get('redis', {}).get('instance', '')
+         if _nto_source.get('recovery', {}).get('new_target_own_redis', false) | bool else '' }}
     _nto_redis: >-
       {{ _nto_authored.get('redis', {}).get('instance',
            ('redis-' ~ _ra_target)
@@ -82,7 +85,19 @@
     that:
       - (_ra_new_target_overlay.app.database.name | default('')) not in _nto_taken
       - (_ra_new_target_overlay.app.database.role | default('')) not in _nto_taken
-      - _nto_src_redis == '' or (_ra_new_target_overlay.app.redis.instance | default('')) != _nto_src_redis
+      # A real Redis backend of its own: registered, provider redis, an endpoint, and not
+      # the source's endpoint under another key. The restore role checks again later, but
+      # the child deploy changes PostgreSQL first.
+      - >-
+        _nto_src_redis == '' or (
+          _nto_redis_new != _nto_src_redis
+          and _nto_databases.get(_nto_redis_new, {}).get('provider', '') == 'redis'
+          and _nto_databases.get(_nto_redis_new, {}).get('host', '') | length > 0
+          and _nto_databases.get(_nto_redis_new, {}).get('port', 0) | int > 0
+          and not (_nto_databases.get(_nto_redis_new, {}).get('host', '')
+                     == _nto_databases.get(_nto_src_redis, {}).get('host', 'x')
+                   and _nto_databases.get(_nto_redis_new, {}).get('port', 0) | int
+                       == _nto_databases.get(_nto_src_redis, {}).get('port', -1) | int))
       - >-
         _nto_source_port | int == 0 or (_ra_new_target_overlay.app.port | default(0) | int)
         != _nto_source_port | int
@@ -97,7 +112,11 @@
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
          | combine(_instance_config | default({}), recursive=True) }}
     _nto_source_port: "{{ (_nto_source.get('app', {})).get('port', 0) | int }}"
-    _nto_src_redis: "{{ _nto_source.get('app', {}).get('redis', {}).get('instance', '') }}"
+    _nto_src_redis: >-
+      {{ _nto_source.get('app', {}).get('redis', {}).get('instance', '')
+         if _nto_source.get('recovery', {}).get('new_target_own_redis', false) | bool else '' }}
+    _nto_redis_new: "{{ (_ra_new_target_overlay.app.redis.instance | default('')) if _nto_src_redis != '' else '' }}"
+    _nto_databases: "{{ homelabinfra_infra.databases | default({}) }}"
     _nto_src_db: "{{ _nto_source.get('app', {}).get('database', {}) }}"
     _nto_src_item: "{{ (homelabinfra_vault.apps | default({})).get(instance | default(''), {}) }}"
     _nto_taken: >-

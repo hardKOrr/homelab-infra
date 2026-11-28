@@ -21,10 +21,11 @@ def h(name):
 defaults = {'plane_defaults': {
     'routing': {'subdomain': 'plane', 'proxy': 'internal'},
     'hosting': {'method': 'docker'},
+    'recovery': {'new_target_own_redis': True},
     'app': {'port': 8093, 'database': {'provider': 'postgresql', 'instance': 'pg',
                                        'name': 'plane', 'role': 'plane'},
                 'redis': {'instance': 'redis-plane'}}}}
-base = {'homelabinfra_infra': {'databases': {'redis-' + n: {} for n in ('plane-b', '1plane-b', 'plane-blue', 'plane.blue', 'plane_blue', 'x' * 40)}}, '_ra_app': 'plane', '_ra_defaults_key': 'plane_defaults',
+base = {'homelabinfra_infra': {'databases': {'redis-plane': {'provider': 'redis', 'host': '10.0.0.5', 'port': 6379}} | {'redis-' + n: {'provider': 'redis', 'host': '10.0.0.9', 'port': 6379} for n in ('plane-b', '1plane-b', 'plane-blue', 'plane.blue', 'plane_blue', 'x' * 40)}}, '_ra_app': 'plane', '_ra_defaults_key': 'plane_defaults',
         '_app_defaults': defaults, '_instance_config': {}}
 cases = [
     ('plane-b', 'new', {}, "o.app.database.name == 'plane_b_%s' and o.app.database.role == 'plane_b_%s'" % (h('plane-b'), h('plane-b'))
@@ -47,12 +48,18 @@ cases = [
      {'homelabinfra_vault': {'apps': {'plane': {'database_name': 'plane_blue_' + h('plane-blue'),
                                                 'database_user': 'plane_blue_' + h('plane-blue')}}},
       'instance': 'plane'}),
+    # An app whose restore does not replay Redis (Immich) keeps its Redis and is not refused.
+    ('plane-b', 'new', {}, "o.app.redis is not defined",
+     {'_app_defaults': {'plane_defaults': defaults['plane_defaults'] | {'recovery': {}}}}),
 ]
 refused = [
     ('plane-b', {'app': {'database': {'name': 'plane'}}}),
     ('plane-b', {'app': {'database': {'role': 'plane'}}}),
     ('plane-b', {'app': {'port': 8093}}),
     ('plane-b', {'app': {'redis': {'instance': 'redis-plane'}}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-typo'}}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-alias'}}}, {'redis-alias': {'provider': 'redis', 'host': '10.0.0.5', 'port': 6379}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-wrong'}}}, {'redis-wrong': {'provider': 'postgresql', 'host': '10.0.0.7', 'port': 5432}}),
 ]
 tasks = []
 for target, dest, authored, check, *extra in cases:
@@ -69,10 +76,10 @@ with tempfile.TemporaryDirectory(prefix='new-target-overlay-') as directory:
         env=os.environ | {'ANSIBLE_STDOUT_CALLBACK': 'default', 'ANSIBLE_NOCOLOR': '1'},
         capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
-for target, authored in refused:
+for target, authored, *more_db in refused:
     play = [{'hosts': 'localhost', 'gather_facts': False, 'tasks': [
         {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml'),
-         'vars': base | {'_ra_target': target, '_ra_destination': 'new', '_target_config': authored}}]}]
+         'vars': base | ({'homelabinfra_infra': {'databases': base['homelabinfra_infra']['databases'] | more_db[0]}} if more_db else {}) | {'_ra_target': target, '_ra_destination': 'new', '_target_config': authored}}]}]
     with tempfile.TemporaryDirectory(prefix='new-target-overlay-') as directory:
         playbook = Path(directory) / 'refuse.yml'
         playbook.write_text(yaml.safe_dump(play))
