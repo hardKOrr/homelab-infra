@@ -18,12 +18,13 @@
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
          | combine(_instance_config | default({}), recursive=True) }}
     _nto_authored: "{{ (_target_config | default({})).get('app', {}) }}"
-    # A letter or underscore first, at most 32 characters (MariaDB/MySQL login limit),
-    # with a hash suffix so two long names never collapse into one.
+    # A letter or underscore first, at most 32 characters (MariaDB/MySQL login limit). A
+    # name that is already a plain identifier is kept; any other gets a hash of the full
+    # instance name, so plane-blue and plane.blue never normalize to the same login.
     _nto_slug: >-
       {%- set s = _ra_target | regex_replace('[^A-Za-z0-9_]', '_') -%}
       {%- set s = ('r_' ~ s) if s[0:1] | regex_search('[0-9]') else s -%}
-      {{ s if s | length <= 32 else (s[:23] ~ '_' ~ (_ra_target | hash('sha1'))[:8]) }}
+      {{ s if (s == _ra_target and s | length <= 32) else (s[:23] ~ '_' ~ (_ra_target | hash('sha1'))[:8]) }}
     _nto_source_port: "{{ (_nto_source.get('app', {})).get('port', 0) | int }}"
     _nto_port: >-
       {%- set p = 20000 + ((_ra_target | hash('sha1'))[:6] | int(base=16)) % 10000 -%}
@@ -44,6 +45,9 @@
       {%- if _nto_src_db is mapping and _nto_src_db | length > 0 -%}
       {%-   set _ = out.update({'database': {'name': _nto_db_name, 'role': _nto_db_role}}) -%}
       {%- endif -%}
+      {%- if _nto_src_redis | length > 0 -%}
+      {%-   set _ = out.update({'redis': {'instance': _nto_redis}}) -%}
+      {%- endif -%}
       {%- if _nto_source_port | int > 0
              and (_nto_source.get('hosting', {})).get('method', 'docker') == 'docker' -%}
       {%-   set _ = out.update({'port': _nto_authored.get('port', _nto_port) | int}) -%}
@@ -51,6 +55,15 @@
       {{ out | to_json }}
     # A routed source gives its target a route of its own; an authored subdomain wins and
     # the shared validator still refuses one that equals the source's.
+    # A Redis backend is its own deployed app, so one is only chosen, never created: the
+    # authored instance, else redis-<target> when that backend is registered, else the
+    # source's, which the check below refuses.
+    _nto_src_redis: "{{ _nto_source.get('app', {}).get('redis', {}).get('instance', '') }}"
+    _nto_redis: >-
+      {{ _nto_authored.get('redis', {}).get('instance',
+           ('redis-' ~ _ra_target)
+           if ('redis-' ~ _ra_target) in (homelabinfra_infra.databases | default({}))
+           else _nto_src_redis) }}
     _nto_routing: >-
       {{ {'subdomain': _ra_target}
          if (_nto_source.get('routing', {})).get('proxy', 'none') != 'none'
@@ -69,6 +82,7 @@
     that:
       - (_ra_new_target_overlay.app.database.name | default('')) not in _nto_taken
       - (_ra_new_target_overlay.app.database.role | default('')) not in _nto_taken
+      - _nto_src_redis == '' or (_ra_new_target_overlay.app.redis.instance | default('')) != _nto_src_redis
       - >-
         _nto_source_port | int == 0 or (_ra_new_target_overlay.app.port | default(0) | int)
         != _nto_source_port | int
@@ -76,11 +90,14 @@
       The new restore target {{ _ra_target }} would use a database name, login or published
       port the source uses (the target can share the source's stack host). Set a different
       app.database.name, app.database.role and app.port in config/apps/{{ _ra_target }}.yml.
+      A Redis backend is a deployed app of its own: deploy redis-{{ _ra_target }} (or set
+      app.redis.instance to another registered backend) before restoring to a new target.
   vars:
     _nto_source: >-
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
          | combine(_instance_config | default({}), recursive=True) }}
     _nto_source_port: "{{ (_nto_source.get('app', {})).get('port', 0) | int }}"
+    _nto_src_redis: "{{ _nto_source.get('app', {}).get('redis', {}).get('instance', '') }}"
     _nto_src_db: "{{ _nto_source.get('app', {}).get('database', {}) }}"
     _nto_src_item: "{{ (homelabinfra_vault.apps | default({})).get(instance | default(''), {}) }}"
     _nto_taken: >-

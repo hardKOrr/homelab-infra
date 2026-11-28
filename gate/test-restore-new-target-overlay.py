@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run tasks/recovery/new-target-overlay.yml: a destination=new restore target gets its
 own database name, role and host port, and never the source's."""
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -13,17 +14,26 @@ repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / '.venvs/homelab-ansible/bin/ansible-playbook'
 if not ansible.exists():
     ansible = Path('ansible-playbook')
+def h(name):
+    return hashlib.sha1(name.encode()).hexdigest()[:8]
+
+
 defaults = {'plane_defaults': {
     'routing': {'subdomain': 'plane', 'proxy': 'internal'},
     'hosting': {'method': 'docker'},
     'app': {'port': 8093, 'database': {'provider': 'postgresql', 'instance': 'pg',
-                                       'name': 'plane', 'role': 'plane'}}}}
-base = {'_ra_app': 'plane', '_ra_defaults_key': 'plane_defaults',
+                                       'name': 'plane', 'role': 'plane'},
+                'redis': {'instance': 'redis-plane'}}}}
+base = {'homelabinfra_infra': {'databases': {'redis-' + n: {} for n in ('plane-b', '1plane-b', 'plane-blue', 'plane.blue', 'plane_blue', 'x' * 40)}}, '_ra_app': 'plane', '_ra_defaults_key': 'plane_defaults',
         '_app_defaults': defaults, '_instance_config': {}}
 cases = [
-    ('plane-b', 'new', {}, "o.app.database.name == 'plane_b' and o.app.database.role == 'plane_b'"
-     " and o.app.port != 8093 and o.app.port | int >= 20000"),
-    ('1plane-b', 'new', {}, "o.app.database.name == 'r_1plane_b'"),
+    ('plane-b', 'new', {}, "o.app.database.name == 'plane_b_%s' and o.app.database.role == 'plane_b_%s'" % (h('plane-b'), h('plane-b'))
+     + " and o.app.redis.instance == 'redis-plane-b' and o.app.port != 8093 and o.app.port | int >= 20000"),
+    ('1plane-b', 'new', {}, "o.app.database.name == 'r_1plane_b_%s'" % h('1plane-b')),
+    # Names that normalize to one slug still get different logins.
+    ('plane-blue', 'new', {}, "o.app.database.name == 'plane_blue_%s'" % h('plane-blue')),
+    ('plane.blue', 'new', {}, "o.app.database.name == 'plane_blue_%s'" % h('plane.blue')),
+    ('plane_blue', 'new', {}, "o.app.database.name == 'plane_blue'"),
     ('x' * 40, 'new', {}, "o.app.database.name | length == 32 and o.app.database.name == o.app.database.role"),
     ('plane-b', 'new', {}, "o.routing.subdomain == 'plane-b'"),
     ('plane-b', 'new', {'app': {'port': 9000, 'database': {'name': 'mine', 'role': 'mine'}}},
@@ -31,15 +41,18 @@ cases = [
     ('plane-b', 'existing', {}, "o == {}"),
     # Only database.name authored: the role is still generated, never the source's 'plane'.
     ('plane-b', 'new', {'app': {'database': {'name': 'mine'}}},
-     "o.app.database.name == 'mine' and o.app.database.role == 'plane_b'"),
+     "o.app.database.name == 'mine' and o.app.database.role == 'plane_b_%s'" % h('plane-b')),
     # The source's own item already uses the derived login: take a suffix.
-    ('plane-blue', 'new', {}, "o.app.database.role == 'plane_blue_new'",
-     {'homelabinfra_vault': {'apps': {'plane': {'database_name': 'plane_blue', 'database_user': 'plane_blue'}}}, 'instance': 'plane'}),
+    ('plane-blue', 'new', {}, "o.app.database.role == '%s_new'" % ('plane_blue_' + h('plane-blue'))[:28],
+     {'homelabinfra_vault': {'apps': {'plane': {'database_name': 'plane_blue_' + h('plane-blue'),
+                                                'database_user': 'plane_blue_' + h('plane-blue')}}},
+      'instance': 'plane'}),
 ]
 refused = [
     ('plane-b', {'app': {'database': {'name': 'plane'}}}),
     ('plane-b', {'app': {'database': {'role': 'plane'}}}),
     ('plane-b', {'app': {'port': 8093}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-plane'}}}),
 ]
 tasks = []
 for target, dest, authored, check, *extra in cases:
@@ -90,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix='new-target-provision-') as directory:
             "{{ _app_defaults.plane_defaults | combine(_written, recursive=True) }}"}},
         {'ansible.builtin.include_tasks': str(root / 'deploy-consumer.yml')},
         {'ansible.builtin.assert': {'that': [
-            "seen.item == 'plane-b'", "seen.name == 'plane_b'", "seen.role == 'plane_b'",
+            "seen.item == 'plane-b'", "seen.name == 'plane_b_%s'" % h('plane-b'), "seen.role == 'plane_b_%s'" % h('plane-b'),
             "app_config.app.port | int != 8093", "app_config.app.port | int >= 20000"]}},
     ]}]
     playbook = root / 'e2e.yml'
@@ -112,7 +125,7 @@ with tempfile.TemporaryDirectory(prefix='new-target-partial-') as directory:
         {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_written'}},
         {'ansible.builtin.assert': {'that': [
             "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.name == 'mine'",
-            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.role == 'plane_b'",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.role == 'plane_b_%s'" % h('plane-b'),
             "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.port == _ra_new_target_overlay.app.port",
             "(_app_defaults.plane_defaults | combine(_written, recursive=True)).routing.subdomain == 'plane-b'"]}},
     ]}]
