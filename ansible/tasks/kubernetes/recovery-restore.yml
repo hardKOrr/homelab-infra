@@ -31,6 +31,9 @@
 #     restart      Deployments restarted after the Job (disposable caches)
 #     after_restore_tasks  optional task file run after the Job, before the target starts
 #                  (for example re-keying the target's environment)
+#     stage_first  true when the app holds its own recovery point (PBS): each volume archive
+#                  is downloaded onto its claim, as `.restore-stage`, while the app still
+#                  runs, and the Job then moves it into place after the app has stopped
 #     describe     what a restore replaces, for the plan message
 #     verify       lines telling the operator how to verify the restored application
 #
@@ -124,6 +127,7 @@
       client: "{{ app_config.backup.client }}"
       archives: "{{ k8s_recovery.archives }}"
       database: "{{ k8s_recovery.database | default({}, true) }}"
+      stage_first: "{{ k8s_recovery.stage_first | default(false) | bool }}"
 
 - name: k8s restore | Sync the restore credentials into the target namespace
   ansible.builtin.include_tasks: sync-secret.yml
@@ -133,11 +137,25 @@
       {{ {'pbs-password': k8s_pbs_password}
          | combine((k8s_recovery.database | default({}, true)).secret_data | default({})) }}
 
+- name: k8s restore | Resolve the staging Job's identity
+  ansible.builtin.set_fact:
+    _kr_stage_identity: "{{ _kr | combine({'mode': 'stage', 'job_name': restore_target ~ '-restore-stage'}) }}"
+  when: _kr.stage_first | bool
+
 - name: k8s restore | Render the restore Job
   ansible.builtin.set_fact:
     _kr_manifest: >-
       {{ lookup('ansible.builtin.template',
                 playbook_dir ~ '/../../templates/kubernetes/recovery-restore.yaml.j2') }}
+
+- name: k8s restore | Render the staging Job
+  ansible.builtin.set_fact:
+    _kr_stage_manifest: >-
+      {{ lookup('ansible.builtin.template',
+                playbook_dir ~ '/../../templates/kubernetes/recovery-restore.yaml.j2') }}
+  vars:
+    _kr: "{{ _kr_stage_identity }}"
+  when: _kr.stage_first | bool
 
 # ── Plan: read-only, and the default ──────────────────────────────────────────
 - name: k8s restore | Show what a restore would do
@@ -180,6 +198,20 @@
       changed_when: true
 
 # ── Restore: the destructive path ─────────────────────────────────────────────
+# The app is still running, so a PBS restoring its own configuration still has its source.
+# An unreadable snapshot fails here, before anything is stopped or replaced.
+- name: k8s restore | Stage the archives onto the target's volumes
+  when:
+    - restore_overwrite | bool
+    - _kr.stage_first | bool
+  block:
+    - name: k8s restore | Run the staging job
+      ansible.builtin.include_tasks: run-job.yml
+      vars:
+        k8s_job_name: "{{ _kr_stage_identity.job_name }}"
+        k8s_job_manifest: "{{ _kr_stage_manifest }}"
+        k8s_job_timeout: "{{ _kr.timeout }}"
+
 - name: k8s restore | Read each stopped Deployment's pod selector
   when: restore_overwrite | bool
   ansible.builtin.command:

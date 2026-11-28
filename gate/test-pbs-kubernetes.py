@@ -58,6 +58,29 @@ assert restore["ansible.builtin.include_tasks"].endswith("tasks/kubernetes/recov
 assert recovery["archives"][0]["claim"] == "{{ restore_target }}-config" and recovery["stop"] == ["{{ restore_target }}"]
 assert "restore-kubernetes.yml" in (ROLE / "tasks/restore.yml").read_text()
 
+# A PBS restoring its own configuration reads the recovery point from itself: the archive is
+# staged onto the claim while the pod runs, and the Job after the stop only moves it into place.
+assert recovery["stage_first"] is True
+shared = (ROOT / "ansible/tasks/kubernetes/recovery-restore.yml").read_text()
+assert shared.index("Stage the archives onto the target's volumes") < shared.index("Stop the target application")
+restore_env = jinja2.Environment(loader=jinja2.FileSystemLoader(ROOT / "ansible/templates/kubernetes"),
+                                 undefined=jinja2.StrictUndefined, extensions=["jinja2.ext.do"])
+restore_env.filters["bool"] = bool
+restore_env.filters["to_json"] = env.filters["to_json"]
+client = {"image": "img", "key_url": "u", "repository": "r", "suite": "s", "component": "c"}
+base = {"target": "pbs", "timeout": 900, "secret": "pbs-restore", "backup_id": "pbs", "snapshot": "host/pbs/x",
+        "scratch_gi": 2, "client": client, "database": {}, "stage_first": True,
+        "archives": [{"name": "config", "claim": "pbs-config", "owner": "34:34"}]}
+for mode in ("stage", "restore"):
+    job = yaml.safe_load(restore_env.get_template("recovery-restore.yaml.j2").render(
+        _kr={**base, "mode": mode, "job_name": "pbs-" + mode}, k8s_pbs_repository="t@pbs:s", k8s_pbs_fingerprint="f"))
+    containers = job["spec"]["template"]["spec"]["containers"]
+    script = containers[0]["args"][0]
+    if mode == "stage":
+        assert "restore \"${SNAPSHOT}\" config.pxar /volumes/config/.restore-stage" in script
+    else:
+        assert "config.pxar" not in script and "mv {} /volumes/config/" in script, script
+
 # The API calls Deploy shares with the other methods must delegate to the cluster node.
 for name in ("token.yml", "api-wait.yml", "admin-password.yml", "register-reused-datastore.yml"):
     for task in yaml.safe_load((ROLE / "tasks" / name).read_text()):

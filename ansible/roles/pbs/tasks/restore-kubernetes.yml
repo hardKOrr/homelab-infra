@@ -17,6 +17,8 @@
         - name: config
           claim: "{{ restore_target }}-config"
           owner: "{{ pbs_backup_uid }}:{{ pbs_backup_uid }}"
+      # The recovery point lives in this PBS: stage it before the pod stops.
+      stage_first: true
       stop:
         - "{{ restore_target }}"
       describe: >-
