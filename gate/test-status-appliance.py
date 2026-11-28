@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Lab Status must not SSH into an ISO appliance, and must still check every other guest."""
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -37,4 +40,21 @@ outside = {t["name"] for t in play["tasks"] if "block" not in t}
 check("nothing else reaches the guest", not any("Check" in n or "List" in n for n in outside))
 check("ansible.cfg loads the test plugin",
       "test_plugins" in (ROOT / "ansible/ansible.cfg").read_text())
+
+# A suffixed instance resolves to the longest app slug, then is classified by it.
+if shutil.which("ansible-playbook"):
+    tasks = [t for t in play["tasks"] if "block" not in t][:3]
+    tasks.append({"ansible.builtin.debug": {"msg": "{{ inventory_hostname }}={{ _st_app_config is iso_appliance }}"}})
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = ROOT / "ansible/playbooks/maintenance" / f"_probe_{Path(tmp).name}.yml"
+        probe.write_text(yaml.safe_dump([{"hosts": "all", "gather_facts": False,
+                                          "connection": "local", "tasks": tasks}]))
+        try:
+            out = subprocess.run(
+                ["ansible-playbook", "-i", "proxmox-datacenter-manager-secondary,bookstack-2,", str(probe)],
+                cwd=ROOT / "ansible", capture_output=True, text=True, check=True).stdout
+        finally:
+            probe.unlink()
+    check("suffixed appliance is skipped", "proxmox-datacenter-manager-secondary=True" in out)
+    check("suffixed native guest is not", "bookstack-2=False" in out)
 print("ok")

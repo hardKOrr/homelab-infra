@@ -61,18 +61,31 @@
 
   tasks:
     # An ISO appliance has no SSH contract, so none of the checks below can reach it.
-    # The guest is named after its instance, so its defaults say whether it is one; its
-    # guest row, backup and monitor rows still come from Play 3.
+    # The app is the longest app-defaults slug the instance name equals or starts with
+    # (`<slug>-`), as in tasks/wiring/rebuild-caddy-route.yml; the guest, backup and
+    # monitor rows still come from Play 3.
+    - name: Match the guest's instance name to app defaults
+      ansible.builtin.set_fact:
+        _st_app_slug: >-
+          {%- set found = [] -%}
+          {%- for path in lookup('ansible.builtin.fileglob', playbook_dir ~ '/../../vars/app-defaults/*.yml', wantlist=True) -%}
+          {%- set slug = path | basename | replace('.yml', '') -%}
+          {%- if inventory_hostname == slug or inventory_hostname.startswith(slug ~ '-') -%}
+          {%- set _ = found.append({'slug': slug, 'length': slug | length}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ (found | sort(attribute='length', reverse=true) | first | default({'slug': ''})).slug }}
+
     - name: Load the defaults of the app this guest runs
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ inventory_hostname }}.yml"
+        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ _st_app_slug }}.yml"
         name: _st_defaults_file
-      failed_when: false
+      when: _st_app_slug | length > 0
 
     - name: Read the guest's hosting shape
       ansible.builtin.set_fact:
         _st_app_config: >-
-          {{ _st_defaults_file[inventory_hostname | replace('-', '_') ~ '_defaults']
+          {{ (_st_defaults_file | default({}))[_st_app_slug | replace('-', '_') ~ '_defaults']
              | default({}) }}
 
     - name: Check the guest over SSH
