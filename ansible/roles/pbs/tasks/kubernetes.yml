@@ -15,9 +15,14 @@
 - name: PBS Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
+- name: PBS Kubernetes | Find the volumes a Remove retained for this instance
+  ansible.builtin.include_tasks: retained-volumes.yml
+
 - name: PBS Kubernetes | Reach the cluster and publish the VIP endpoint
   ansible.builtin.set_fact:
     pbs_exec_host: "{{ k8s_api_host }}"
+    # Until the default password is replaced the API is reached over the pod's loopback.
+    pbs_api_via_pod: true
     pbs_endpoint: "https://{{ homelabinfra_infra.kubernetes.ingress_vip }}:{{ app_config.app.port }}"
 
 # The Service exists once the listener was published, which survives a repeat Deploy.
@@ -37,18 +42,6 @@
     k8s_wait_for: ["deployment/{{ instance }}"]
     k8s_wait_timeout: 600
 
-- name: PBS Kubernetes | Read the Service address the API is reached on
-  ansible.builtin.command:
-    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, service, "{{ instance }}", -o, "jsonpath={.spec.clusterIP}"]
-  delegate_to: "{{ k8s_api_host }}"
-  become: true
-  register: _pbs_k8s_cluster_ip
-  changed_when: false
-
-- name: PBS Kubernetes | Address the API through the Service
-  ansible.builtin.set_fact:
-    pbs_api_base: "https://{{ _pbs_k8s_cluster_ip.stdout }}:{{ app_config.app.port }}"
-
 - name: PBS Kubernetes | Wait for the PBS API to answer
   ansible.builtin.include_tasks: api-wait.yml
 
@@ -62,6 +55,20 @@
     k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
     k8s_wait_for: ["deployment/{{ instance }}"]
     k8s_wait_timeout: 600
+
+- name: PBS Kubernetes | Read the Service address the API is reached on
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, service, "{{ instance }}", -o, "jsonpath={.spec.clusterIP}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_cluster_ip
+  changed_when: false
+
+# Published and rotated: the rest of Deploy reaches the API through the Service.
+- name: PBS Kubernetes | Address the API through the Service
+  ansible.builtin.set_fact:
+    pbs_api_base: "https://{{ _pbs_k8s_cluster_ip.stdout }}:{{ app_config.app.port }}"
+    pbs_api_via_pod: false
 
 # The image has only admin@pbs; the token owner is root@pam as on the other methods.
 - name: PBS Kubernetes | Read the PBS users
@@ -104,17 +111,3 @@
 
 - name: PBS Kubernetes | Hand the endpoint and token back to the playbook
   ansible.builtin.include_tasks: export.yml
-
-# The configuration volume is the recovery unit; the datastore holds the backups themselves
-# and is retained, never archived. PBS is not stopped (the backup target may be this very
-# PBS; its configuration files are replaced atomically), as on the Docker method.
-- name: PBS Kubernetes | Schedule the application backup
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/recovery-backup.yml
-  vars:
-    k8s_recovery:
-      archives:
-        - name: config
-          claim: "{{ instance }}-config"
-      describe: >-
-        PBS's configuration volume (users, API tokens, certificate and datastore
-        registration), without the datastore

@@ -7,10 +7,10 @@
   (/var/lib/proxmox-backup) and the datastore, mounted at its configured path so PBS sees
   the same path on every method. Logs are disposable.
 
-  The ClusterIP Service is how Deploy reaches the API. The LoadBalancer Service, which
-  publishes the listener on the ingress VIP, is rendered only once the image's default
-  administrator password has been replaced (pbs_listener_open), as the Docker method binds
-  loopback until then. No Ingress: PBS speaks HTTPS and clients (PVE, the backup Jobs)
+  Both Services, the ClusterIP one Deploy reaches the API through and the LoadBalancer that
+  publishes the listener on the ingress VIP, are rendered only once the image's default
+  administrator password has been replaced (pbs_listener_open): until then Deploy reaches
+  the pod over its own loopback and nothing selects it. No Ingress: PBS speaks HTTPS and clients (PVE, the backup Jobs)
   address it directly on the VIP.
 #}
 {% set labels %}
@@ -31,6 +31,10 @@ spec:
   resources:
     requests:
       storage: {{ claim[1] }}Gi
+{% if (pbs_retained_volumes | default({}))[claim[0]] is defined %}
+  # A volume an earlier Remove retained for exactly this claim (tasks/kubernetes.yml).
+  volumeName: {{ pbs_retained_volumes[claim[0]] }}
+{% endif %}
 {% endfor %}
 ---
 apiVersion: apps/v1
@@ -93,6 +97,7 @@ spec:
         - {name: datastore, persistentVolumeClaim: {claimName: {{ instance }}-datastore}}
         - {name: logs, emptyDir: {}}
         - {name: run, emptyDir: {medium: Memory}}
+{% if pbs_listener_open | bool %}
 ---
 apiVersion: v1
 kind: Service
@@ -107,7 +112,6 @@ spec:
   ports:
     - port: {{ app_config.app.port }}
       targetPort: 8007
-{% if pbs_listener_open | bool %}
 ---
 apiVersion: v1
 kind: Service

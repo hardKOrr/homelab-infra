@@ -30,7 +30,15 @@ def render(open_listener):
 closed = render(False)
 kinds = [(doc["kind"], doc["metadata"]["name"]) for doc in closed]
 assert kinds == [("PersistentVolumeClaim", "pbs-config"), ("PersistentVolumeClaim", "pbs-state"),
-                 ("PersistentVolumeClaim", "pbs-datastore"), ("Deployment", "pbs"), ("Service", "pbs")], kinds
+                 ("PersistentVolumeClaim", "pbs-datastore"), ("Deployment", "pbs")], \
+    "no Service selects the pod while the factory password is valid: " + str(kinds)
+bound = yaml.safe_load_all(env.get_template("manifest.yaml.j2").render(
+    instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_listener_open=False,
+    pbs_retained_volumes={"datastore": "pvc-1234"},
+    homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
+    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.50"}}))
+claims = {d["metadata"]["name"]: d["spec"] for d in bound if d and d["kind"] == "PersistentVolumeClaim"}
+assert claims["pbs-datastore"]["volumeName"] == "pvc-1234" and "volumeName" not in claims["pbs-config"]
 assert all("storageClassName" not in doc["spec"] for doc in closed if doc["kind"] == "PersistentVolumeClaim"), \
     "PBS uses the cluster's default StorageClass"
 deployment = next(doc for doc in closed if doc["kind"] == "Deployment")["spec"]
@@ -47,15 +55,23 @@ assert lan["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == "192.0.2.
 assert not any(doc["kind"] == "Ingress" for doc in opened)
 
 deploy = (ROLE / "tasks/kubernetes.yml").read_text()
-for shared in ("tasks/kubernetes/apply-manifest.yml", "tasks/kubernetes/recovery-backup.yml"):
-    assert shared in deploy, shared
+assert "tasks/kubernetes/apply-manifest.yml" in deploy
 tasks = yaml.safe_load(deploy)
-backup = next(t for t in tasks if "Schedule the application backup" in t["name"])
+sched = (ROLE / "tasks/schedule-backup.yml").read_text()
+backup = next(t for t in yaml.safe_load(sched) if "Schedule the application backup" in t["name"])
 assert backup["vars"]["k8s_recovery"]["archives"] == [{"name": "config", "claim": "{{ instance }}-config"}]
 restore = yaml.safe_load((ROLE / "tasks/restore-kubernetes.yml").read_text())[0]
 recovery = restore["vars"]["k8s_recovery"]
 assert restore["ansible.builtin.include_tasks"].endswith("tasks/kubernetes/recovery-restore.yml")
 assert recovery["archives"][0]["claim"] == "{{ restore_target }}-config" and recovery["stop"] == ["{{ restore_target }}"]
+# The default password is replaced over the pod's loopback, before any Service exists.
+assert "pbs_api_via_pod: true" in deploy
+assert deploy.index("Replace the image's default administrator password") < deploy.index("Publish the listener")
+assert "retained-volumes.yml" in deploy and "recovery-backup.yml" not in deploy
+sched = (ROLE / "tasks/schedule-backup.yml").read_text()
+assert "tasks/kubernetes/recovery-backup.yml" in sched
+play = (ROOT / "ansible/playbooks/apps/pbs.yml").read_text()
+assert play.index("Configure datastore, backup job and notifications") < play.index("tasks_from: schedule-backup")
 assert "restore-kubernetes.yml" in (ROLE / "tasks/restore.yml").read_text()
 
 # A PBS restoring its own configuration reads the recovery point from itself: the archive is
@@ -82,7 +98,7 @@ for mode in ("stage", "restore"):
         assert "config.pxar" not in script and "mv {} /volumes/config/" in script, script
 
 # The API calls Deploy shares with the other methods must delegate to the cluster node.
-for name in ("token.yml", "api-wait.yml", "admin-password.yml", "register-reused-datastore.yml"):
+for name in ("token.yml", "api-wait.yml", "api-call.yml", "register-reused-datastore.yml"):
     for task in yaml.safe_load((ROLE / "tasks" / name).read_text()):
         for item in [task, *task.get("block", []), *task.get("rescue", [])]:
             if "ansible.builtin.uri" in item or "ansible.builtin.command" in item:

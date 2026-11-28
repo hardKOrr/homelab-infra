@@ -1,0 +1,63 @@
+---
+# One PBS API call, for the bootstrap steps that must not leave the guest or the pod: on the
+# native and Docker methods a `uri` to the listener (delegated to the cluster node on the
+# ones that set pbs_exec_host), on Kubernetes before the listener is published
+# (pbs_api_via_pod) `curl` over the pod's loopback, since no Service selects the pod while
+# the image's factory password is still valid. The request goes to curl on stdin, so no
+# credential is on a command line.
+#
+# Inputs: pbs_call_path, pbs_call_method (GET), pbs_call_headers ({}), pbs_call_body ({},
+# form-encoded), pbs_call_status ([200]).
+# Sets: pbs_call — {status, json}; fails when the status is not one of pbs_call_status.
+
+- name: PBS API | Call over the pod's loopback
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, -i, "deployment/{{ instance }}", --, curl, --config, "-"]
+    stdin: |
+      url = {{ ('https://localhost:' ~ app_config.app.port ~ pbs_call_path) | to_json }}
+      request = {{ (pbs_call_method | default('GET')) | to_json }}
+      insecure
+      silent
+      write-out = "\n%{http_code}"
+      {% for key, value in (pbs_call_headers | default({})).items() %}
+      header = {{ (key ~ ': ' ~ value) | to_json }}
+      {% endfor %}
+      {% if pbs_call_body | default({}) | length > 0 %}
+      data = {{ (pbs_call_body | urlencode) | to_json }}
+      {% endif %}
+  delegate_to: "{{ pbs_exec_host }}"
+  become: true
+  register: _pbs_call_exec
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: pbs_api_via_pod | default(false) | bool
+
+- name: PBS API | Call the listener
+  ansible.builtin.uri:
+    url: "{{ pbs_api_base }}{{ pbs_call_path }}"
+    method: "{{ pbs_call_method | default('GET') }}"
+    headers: "{{ pbs_call_headers | default({}) }}"
+    body_format: form-urlencoded
+    body: "{{ pbs_call_body | default(omit) }}"
+    validate_certs: false   # PBS serves a self-signed certificate until one is installed
+    status_code: "{{ pbs_call_status | default([200]) }}"
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  register: _pbs_call_uri
+  changed_when: false
+  no_log: true
+  when: not (pbs_api_via_pod | default(false) | bool)
+
+- name: PBS API | Collect the answer
+  ansible.builtin.set_fact:
+    pbs_call: >-
+      {{ {'status': (_pbs_call_exec.stdout.rsplit('\n', 1)[-1] | int),
+          'json': ((_pbs_call_exec.stdout.rsplit('\n', 1)[0] | from_json) if _pbs_call_exec.stdout.rsplit('\n', 1)[0] | trim | length > 0 else {})}
+         if pbs_api_via_pod | default(false) | bool
+         else {'status': _pbs_call_uri.status, 'json': _pbs_call_uri.json | default({})} }}
+  no_log: true
+
+- name: PBS API | Require an expected status
+  ansible.builtin.assert:
+    that: pbs_call.status in (pbs_call_status | default([200]))
+    fail_msg: "PBS answered {{ pbs_call_path }} with HTTP {{ pbs_call.status }}."

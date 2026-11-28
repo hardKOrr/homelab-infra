@@ -42,10 +42,14 @@ on localhost, which applies `templates/manifest.yaml.j2` (config, state and data
 volumes on the default StorageClass, one Deployment) and delegates `proxmox-backup-manager`
 and the API calls to the cluster's API node (`pbs_exec_host`), so `token.yml`,
 `admin-password.yml`, `register-reused-datastore.yml` and `export.yml` are shared with the other
-methods. The listener is a LoadBalancer Service on the ingress VIP at `app.port`, created only
-after the default `admin@pbs` password is replaced; one cluster therefore runs one PBS. There is no Ingress: Caddy and PVE
-address the VIP over HTTPS. The datastore volume is never archived. Backup App archives the
-config volume (`config.pxar`) through the shared CronJob, and Restore App replaces it through
+methods. Until the default `admin@pbs` password is replaced, Deploy reaches the API over
+the pod's loopback (`tasks/api-call.yml`) and no Service exists; then the ClusterIP Service and
+a LoadBalancer on the ingress VIP at `app.port` are created, so one cluster runs one PBS. A
+redeploy binds each claim to the volume an earlier Remove retained for it
+(`tasks/retained-volumes.yml`, matched by the provisioner's directory name) and fails if
+two volumes match. There is no Ingress: Caddy and PVE
+address the VIP over HTTPS. The datastore volume is never archived. The CronJob is scheduled in Play 3, once
+the registry names this PBS. Backup App archives the config volume (`config.pxar`) through it, and Restore App replaces it through
 the shared recovery Job; run **Deploy PBS** afterwards so the platform token and the certificate
 fingerprint PVE trusts are proven against the restored configuration. `datastore_disk` and
 `second_copy` are not available.

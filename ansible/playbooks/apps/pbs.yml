@@ -724,6 +724,13 @@
         ((homelabinfra_infra | default({})).kubernetes | default({})).nodes
         | default([]) | length > 0
 
+    # The registry now names this PBS and its current token, which the CronJob targets.
+    - name: PBS | Schedule the Kubernetes application backup
+      ansible.builtin.include_role:
+        name: pbs
+        tasks_from: schedule-backup
+      when: _pbs_k8s | bool
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:

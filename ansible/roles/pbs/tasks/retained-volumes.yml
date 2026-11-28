@@ -1,0 +1,52 @@
+---
+# Bind a redeployed PBS to the volumes an earlier Remove retained for it. Remove clears the
+# retained PV's claimRef, so a plain claim would bind any compatible Available volume or
+# provision an empty one, and only the provisioner's directory name
+# (`pvc-<uuid>_<namespace>_<claim>`) still says whose volume it was. Each claim that does
+# not exist yet is matched to the one retained volume carrying its name; two candidates
+# fail the Deploy rather than guess. Sets pbs_retained_volumes ({config|state|datastore: pv}).
+
+- name: PBS Kubernetes volumes | Read the instance's existing claims
+  ansible.builtin.command:
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, pvc, -o, "jsonpath={.items[*].metadata.name}"]
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_k8s_claims
+  changed_when: false
+
+- name: PBS Kubernetes volumes | Read the retained volumes
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/list-orphan-volumes.yml
+
+- name: PBS Kubernetes volumes | Match each missing claim to its retained volume
+  ansible.builtin.set_fact:
+    _pbs_k8s_matches: >-
+      {{ _pbs_k8s_matches | default({}) | combine({item: (k8s_orphan_volumes
+           | selectattr('phase', 'equalto', 'Available')
+           | selectattr('path', 'search', '_' ~ k8s_namespace ~ '_' ~ instance ~ '-' ~ item ~ '$')
+           | map(attribute='name') | list)}) }}
+  loop: "{{ ['config', 'state', 'datastore'] | reject('in', _pbs_k8s_claims.stdout.split() | map('regex_replace', '^' ~ instance ~ '-', '') | list) | list }}"
+
+- name: PBS Kubernetes volumes | Refuse an ambiguous retained volume
+  ansible.builtin.assert:
+    that: item.value | length <= 1
+    fail_msg: >-
+      {{ item.value | length }} retained volumes ({{ item.value | join(', ') }}) match claim
+      {{ instance }}-{{ item.key }}; PBS will not guess which holds its data. Reclaim the
+      ones that are not wanted (playbooks/maintenance/reclaim-volume.yml) and Deploy again.
+  loop: "{{ _pbs_k8s_matches | default({}) | dict2items }}"
+
+- name: PBS Kubernetes volumes | Require the retained datastore when the config says reuse
+  ansible.builtin.assert:
+    that: >-
+      app_config.app.datastore_mode | default('create') != 'reuse'
+      or 'datastore' not in (_pbs_k8s_matches | default({}))
+      or _pbs_k8s_matches.datastore | length == 1
+    fail_msg: datastore_mode is reuse, but no retained volume for {{ instance }}-datastore exists.
+
+- name: PBS Kubernetes volumes | Name the volumes to bind
+  ansible.builtin.set_fact:
+    pbs_retained_volumes: >-
+      {{ dict(_pbs_k8s_matches | default({}) | dict2items | selectattr('value', 'ne', [])
+              | map(attribute='key') | zip(_pbs_k8s_matches | default({}) | dict2items | selectattr('value', 'ne', [])
+              | map(attribute='value') | map('first'))) }}
+    _pbs_k8s_matches: {}
