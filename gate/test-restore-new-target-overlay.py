@@ -98,4 +98,27 @@ with tempfile.TemporaryDirectory(prefix='new-target-provision-') as directory:
     result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
                             env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+# A partial authored file (only database.name) is completed: deploy reads the same role,
+# port and route the restore resolved, and the authored name is kept.
+with tempfile.TemporaryDirectory(prefix='new-target-partial-') as directory:
+    root = Path(directory)
+    (root / 'plane-b.yml').write_text(yaml.safe_dump({'app': {'database': {'name': 'mine'}}}))
+    play = [{'hosts': 'localhost', 'gather_facts': False, 'vars': base | {
+        '_ra_target': 'plane-b', '_ra_destination': 'new'}, 'tasks': [
+        {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_target_config'}},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml')},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/write-new-target-config.yml'),
+         'vars': {'new_target_config_dir': str(root)}},
+        {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_written'}},
+        {'ansible.builtin.assert': {'that': [
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.name == 'mine'",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.role == 'plane_b'",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.port == _ra_new_target_overlay.app.port",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).routing.subdomain == 'plane-b'"]}},
+    ]}]
+    playbook = root / 'partial.yml'
+    playbook.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+                            env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
 print('Restore new target overlay: own database login and port passed')

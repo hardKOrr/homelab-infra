@@ -1,13 +1,19 @@
 ---
-# Restore App, destination=new: create config/apps/<target>.yml from the derived overlay
-# when the operator authored none, so the target's database identity, port and route are
-# the same for provisioning and for every later Deploy. An authored file is never changed.
+# Restore App, destination=new: create or complete config/apps/<target>.yml from the
+# derived overlay, so the target's database identity, port and route are the same for
+# provisioning and for every later Deploy. Authored values always win; only the missing
+# fields are added, so a partial file is completed (its comments are not kept) and a
+# complete file is left untouched.
 #
-# Inputs: _ra_target, _ra_new_target_overlay, new_target_config_dir (config/apps).
-- name: Create the new target's instance config from the derived overlay
+# Inputs: _ra_target, _ra_new_target_overlay, _target_config (the file as authored, {}
+#   when absent), new_target_config_dir (config/apps).
+- name: Create or complete the new target's instance config from the derived overlay
+  vars:
+    _wnt_merged: "{{ _ra_new_target_overlay | combine(_target_config | default({}), recursive=True) }}"
   ansible.builtin.copy:
     dest: "{{ new_target_config_dir }}/{{ _ra_target }}.yml"
-    content: "{{ _ra_new_target_overlay | to_nice_yaml }}"
+    content: "{{ _wnt_merged | to_nice_yaml }}"
     mode: "0640"
-    force: false
-  when: _ra_new_target_overlay | default({}) | length > 0
+  when:
+    - _ra_new_target_overlay | default({}) | length > 0
+    - _wnt_merged != (_target_config | default({}))
