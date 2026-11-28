@@ -25,10 +25,11 @@
 
   Context (from recovery-restore.yml):
     k8s_pbs_repository, k8s_pbs_fingerprint
-    _kr  — mode, job_name, target, timeout, secret, backup_id, snapshot, scratch_gi,
+    k8s_restore_job  — mode, job_name, target, timeout, secret, backup_id, snapshot, scratch_gi,
            client (backup.client: image, key_url, repository, suite, component), archives[{name, claim, owner} | {name,
            config_map}], database (tasks/database/kubernetes-recovery-step.yml) or {}
 #}
+{% set _kr = k8s_restore_job %}
 {% set db = _kr.database | default({}, true) %}
 {% set plan = _kr.mode == 'plan' %}
 {% set stage_only = _kr.mode == 'stage' %}

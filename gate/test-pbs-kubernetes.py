@@ -115,6 +115,8 @@ assert "restore-kubernetes.yml" in (ROLE / "tasks/restore.yml").read_text()
 assert recovery["stage_first"] is True
 shared = (ROOT / "ansible/tasks/kubernetes/recovery-restore.yml").read_text()
 assert shared.index("Stage the archives onto the target's volumes") < shared.index("Stop the target application")
+staging_render = next(task for task in yaml.safe_load(shared) if task["name"] == "k8s restore | Render the staging Job")
+assert staging_render["vars"] == {"k8s_restore_job": "{{ _kr_stage_identity }}"}
 restore_env = jinja2.Environment(loader=jinja2.FileSystemLoader(ROOT / "ansible/templates/kubernetes"),
                                  undefined=jinja2.StrictUndefined, extensions=["jinja2.ext.do"])
 restore_env.filters["bool"] = bool
@@ -126,7 +128,10 @@ base = {"target": "pbs", "timeout": 900, "secret": "pbs-restore", "backup_id": "
         "archives": [{"name": "config", "claim": "pbs-config", "owner": "34:34"}]}
 for mode in ("stage", "restore"):
     job = yaml.safe_load(restore_env.get_template("recovery-restore.yaml.j2").render(
-        _kr={**base, "mode": mode, "job_name": "pbs-" + mode}, k8s_pbs_repository="t@pbs:s", k8s_pbs_fingerprint="f"))
+        k8s_restore_job={**base, "mode": mode, "job_name": "pbs-" + mode},
+        _kr={**base, "mode": "restore", "job_name": "pbs-restore"},
+        k8s_pbs_repository="t@pbs:s", k8s_pbs_fingerprint="f"))
+    assert job["metadata"]["name"] == "pbs-" + mode
     containers = job["spec"]["template"]["spec"]["containers"]
     script = containers[0]["args"][0]
     if mode == "stage":

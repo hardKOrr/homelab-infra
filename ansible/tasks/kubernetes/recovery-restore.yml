@@ -150,6 +150,8 @@
     _kr_manifest: >-
       {{ lookup('ansible.builtin.template',
                 playbook_dir ~ '/../../templates/kubernetes/recovery-restore.yaml.j2') }}
+  vars:
+    k8s_restore_job: "{{ _kr }}"
 
 - name: k8s restore | Render the staging Job
   ansible.builtin.set_fact:
@@ -157,8 +159,15 @@
       {{ lookup('ansible.builtin.template',
                 playbook_dir ~ '/../../templates/kubernetes/recovery-restore.yaml.j2') }}
   vars:
-    _kr: "{{ _kr_stage_identity }}"
+    k8s_restore_job: "{{ _kr_stage_identity }}"
   when: _kr.stage_first | bool
+
+- name: k8s restore | Verify the staging manifest names the staging Job
+  ansible.builtin.assert:
+    that: (_kr_stage_manifest | from_yaml).metadata.name == _kr_stage_identity.job_name
+  when:
+    - _kr.stage_first | bool
+    - restore_overwrite | bool
 
 # ── Plan: read-only, and the default ──────────────────────────────────────────
 - name: k8s restore | Show what a restore would do
