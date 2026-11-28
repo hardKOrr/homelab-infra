@@ -73,6 +73,9 @@
          and _pbs_k8s_factory.rc | default(1) == 0
          and _pbs_k8s_factory.stdout | default('') == '401' }}
 
+- name: PBS Kubernetes | Bind the volumes and prove they belong to this instance
+  ansible.builtin.include_tasks: bind-check.yml
+
 - name: PBS Kubernetes | Deploy the workload
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
   vars:

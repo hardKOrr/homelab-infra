@@ -49,6 +49,14 @@ assert mounts["datastore"] == "/mnt/backup" and mounts["config"] == "/etc/proxmo
 assert "chmod 0755 '/mnt/backup'" in pod["initContainers"][0]["command"][2]
 
 assert next(d for d in closed if d["kind"] == "NetworkPolicy")["spec"]["ingress"] == []
+only = [d["kind"] for d in yaml.safe_load_all(env.get_template("manifest.yaml.j2").render(
+    instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_container_port=8007, pbs_listener_open=False,
+    pbs_claims_only=True, homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
+    homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.50"}})) if d]
+assert only == ["PersistentVolumeClaim"] * 3, only
+binder = yaml.safe_load(env.get_template("bind-job.yaml.j2").render(instance="pbs", app_config=defaults))
+mounts = binder["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+assert len(mounts) == 3 and all(m["readOnly"] for m in mounts), "the binder never writes to a volume"
 opened = render(True)
 assert next(d for d in opened if d["kind"] == "NetworkPolicy")["spec"]["ingress"] == [{}]
 lan = next(doc for doc in opened if doc["metadata"]["name"] == "pbs-lan")
@@ -77,6 +85,7 @@ assert "pbs_api_via_pod: true" in deploy
 assert deploy.index("Replace the image's default administrator password") < deploy.index("Publish the listener")
 assert "_pbs_k8s_keep_open" in deploy and "pbspbs" in deploy
 assert "--for=jsonpath={.status.phase}=Available" in (ROLE / "tasks/retained-volumes.yml").read_text()
+assert deploy.index("bind-check.yml") < deploy.index("Deploy the workload")
 assert "retained-volumes.yml" in deploy and "recovery-backup.yml" not in deploy
 sched = (ROLE / "tasks/schedule-backup.yml").read_text()
 assert "tasks/kubernetes/recovery-backup.yml" in sched

@@ -36,6 +36,7 @@ spec:
   volumeName: {{ pbs_retained_volumes[claim[0]] }}
 {% endif %}
 {% endfor %}
+{% if not (pbs_claims_only | default(false) | bool) %}
 ---
 # The listener starts on the pod IP, which other workloads can reach directly. Until the
 # default password is replaced no pod may connect (kubelet probes and `kubectl exec` are not
@@ -153,4 +154,5 @@ spec:
   ports:
     - port: {{ app_config.app.port }}
       targetPort: {{ pbs_container_port }}
+{% endif %}
 {% endif %}
