@@ -58,10 +58,8 @@
            | default(_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
                      .hosting.method, true) }}
       appliance: >-
-        {{ (_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
-            .get('proxmox', {}).get('installer')
-            or _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
-               .get('install', {}).get('method') == 'official-iso') | bool }}
+        {{ _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults']
+           is iso_appliance }}
       routing: >-
         {{ _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].routing
            | default({})

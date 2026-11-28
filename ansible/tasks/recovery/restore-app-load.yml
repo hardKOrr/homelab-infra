@@ -121,8 +121,7 @@
   ansible.builtin.set_fact:
     _ra_kind: >-
       {{ 'appliance'
-         if (app_config.get('proxmox', {}).get('installer')
-             or app_config.get('install', {}).get('method') == 'official-iso')
+         if app_config is iso_appliance
          else (app_config.get('hosting', {}).get('method')
                | default('docker' if app_config.stack is defined else 'native', true)) }}
     _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"

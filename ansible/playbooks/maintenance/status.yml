@@ -60,68 +60,86 @@
       {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
 
   tasks:
-    - name: Check whether this guest runs Docker
-      ansible.builtin.stat:
-        path: /usr/bin/docker
-      register: _st_docker_stat
+    # An ISO appliance has no SSH contract, so none of the checks below can reach it.
+    # The guest is named after its instance, so its defaults say whether it is one; its
+    # guest row, backup and monitor rows still come from Play 3.
+    - name: Load the defaults of the app this guest runs
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ inventory_hostname }}.yml"
+        name: _st_defaults_file
       failed_when: false
 
-    # The Go-template braces are escaped: Ansible templates this string before the
-    # shell ever sees it.
-    - name: List containers
-      ansible.builtin.command:
-        cmd: >-
-          docker ps --all
-          --format {% raw %}'{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}'{% endraw %}
-      register: _st_docker_ps
-      changed_when: false
-      failed_when: false
-      when: _st_docker_stat.stat.exists | default(false)
-
-    - name: Record container lines
+    - name: Read the guest's hosting shape
       ansible.builtin.set_fact:
-        _st_containers: "{{ _st_docker_ps.stdout_lines | default([]) }}"
+        _st_app_config: >-
+          {{ _st_defaults_file[inventory_hostname | replace('-', '_') ~ '_defaults']
+             | default({}) }}
 
-    - name: Check whether this guest ships lab-update-check
-      ansible.builtin.stat:
-        path: /usr/local/bin/lab-update-check
-      register: _st_check_stat
-      failed_when: false
+    - name: Check the guest over SSH
+      when: not (_st_app_config is iso_appliance)
+      block:
+      - name: Check whether this guest runs Docker
+        ansible.builtin.stat:
+          path: /usr/bin/docker
+        register: _st_docker_stat
+        failed_when: false
 
-    - name: Run the update check
-      ansible.builtin.command: /usr/local/bin/lab-update-check
-      register: _st_check_raw
-      changed_when: false
-      failed_when: false
-      when: _st_check_stat.stat.exists | default(false)
+      # The Go-template braces are escaped: Ansible templates this string before the
+      # shell ever sees it.
+      - name: List containers
+        ansible.builtin.command:
+          cmd: >-
+            docker ps --all
+            --format {% raw %}'{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}'{% endraw %}
+        register: _st_docker_ps
+        changed_when: false
+        failed_when: false
+        when: _st_docker_stat.stat.exists | default(false)
 
-    - name: Parse the update check result
-      ansible.builtin.set_fact:
-        _st_update: "{{ _st_check_raw.stdout | from_json }}"
-      when:
-        - _st_check_stat.stat.exists | default(false)
-        - _st_check_raw.rc | default(1) == 0
+      - name: Record container lines
+        ansible.builtin.set_fact:
+          _st_containers: "{{ _st_docker_ps.stdout_lines | default([]) }}"
 
-    - name: Check whether this guest ships the stale-service detector
-      ansible.builtin.stat:
-        path: /usr/local/bin/lab-stale-services
-      register: _st_stale_stat
-      failed_when: false
+      - name: Check whether this guest ships lab-update-check
+        ansible.builtin.stat:
+          path: /usr/local/bin/lab-update-check
+        register: _st_check_stat
+        failed_when: false
 
-    - name: Read stale host services
-      ansible.builtin.command: /usr/local/bin/lab-stale-services
-      register: _st_stale_raw
-      changed_when: false
-      failed_when: false
-      when: _st_stale_stat.stat.exists | default(false)
+      - name: Run the update check
+        ansible.builtin.command: /usr/local/bin/lab-update-check
+        register: _st_check_raw
+        changed_when: false
+        failed_when: false
+        when: _st_check_stat.stat.exists | default(false)
 
-    - name: Record stale host services
-      ansible.builtin.set_fact:
-        _st_stale_services: "{{ _st_stale_raw.stdout_lines | default([]) }}"
-        _st_stale_checked: true
-      when:
-        - _st_stale_stat.stat.exists | default(false)
-        - _st_stale_raw.rc | default(1) == 0
+      - name: Parse the update check result
+        ansible.builtin.set_fact:
+          _st_update: "{{ _st_check_raw.stdout | from_json }}"
+        when:
+          - _st_check_stat.stat.exists | default(false)
+          - _st_check_raw.rc | default(1) == 0
+
+      - name: Check whether this guest ships the stale-service detector
+        ansible.builtin.stat:
+          path: /usr/local/bin/lab-stale-services
+        register: _st_stale_stat
+        failed_when: false
+
+      - name: Read stale host services
+        ansible.builtin.command: /usr/local/bin/lab-stale-services
+        register: _st_stale_raw
+        changed_when: false
+        failed_when: false
+        when: _st_stale_stat.stat.exists | default(false)
+
+      - name: Record stale host services
+        ansible.builtin.set_fact:
+          _st_stale_services: "{{ _st_stale_raw.stdout_lines | default([]) }}"
+          _st_stale_checked: true
+        when:
+          - _st_stale_stat.stat.exists | default(false)
+          - _st_stale_raw.rc | default(1) == 0
 
 
 # ── Play 3: Platform services and rendering ────────────────────────────────────
