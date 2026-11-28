@@ -56,6 +56,7 @@ assert lan["spec"]["type"] == "LoadBalancer" and lan["spec"]["ports"][0]["port"]
 assert lan["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == "192.0.2.50"
 assert not any(doc["kind"] == "Ingress" for doc in opened)
 volumes = (ROLE / "tasks/retained-volumes.yml").read_text()
+assert "Refuse a fresh claim that could bind another instance" in volumes
 assert "_pbs_k8s_bound | combine" in volumes, "an existing claim keeps its volumeName on every apply"
 for name in ("api-call.yml", "api-wait.yml"):
     assert "pbs_container_port" in (ROLE / "tasks" / name).read_text(), name

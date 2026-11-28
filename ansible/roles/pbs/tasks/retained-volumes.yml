@@ -70,6 +70,47 @@
       or _pbs_k8s_matches.datastore | length == 1
     fail_msg: datastore_mode is reuse, but no retained volume for {{ instance }}-datastore exists.
 
+# A claim with no volume of its own is bound by Kubernetes to ANY Available volume of the
+# class that is large enough before it provisions one, and Remove leaves other apps' retained
+# volumes Available. PBS would then write its files into someone else's data, so a fresh
+# claim is created only when no such volume exists.
+- name: PBS Kubernetes volumes | Find foreign volumes a fresh claim could bind
+  ansible.builtin.set_fact:
+    _pbs_k8s_ours: "{{ _pbs_k8s_matches | default({}) | dict2items | map(attribute='value') | flatten }}"
+    _pbs_k8s_fresh: >-
+      {{ ['config', 'state', 'datastore']
+         | reject('in', _pbs_k8s_claim_names)
+         | reject('in', _pbs_k8s_matches | default({}) | dict2items | rejectattr('value', 'eq', []) | map(attribute='key') | list)
+         | list }}
+
+# Capacity in GiB; a size this task cannot read counts as large enough, never as safe.
+- name: PBS Kubernetes volumes | Size the foreign volumes
+  ansible.builtin.set_fact:
+    _pbs_k8s_foreign: >-
+      {{ _pbs_k8s_foreign | default([]) + [{'name': item.name, 'gib':
+           (item.capacity | regex_replace('Gi$', '') | int) if item.capacity is match('^[0-9]+Gi$')
+           else (item.capacity | regex_replace('Ti$', '') | int * 1024) if item.capacity is match('^[0-9]+Ti$')
+           else 0 if item.capacity is match('^[0-9]+Mi$') else 1000000}] }}
+  loop: >-
+    {{ k8s_orphan_volumes | selectattr('phase', 'equalto', 'Available')
+       | selectattr('storage_class', 'equalto', homelabinfra_infra.kubernetes.storage_class | default(''))
+       | rejectattr('name', 'in', _pbs_k8s_ours) | list }}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: PBS Kubernetes volumes | Refuse a fresh claim that could bind another instance's volume
+  vars:
+    _pbs_k8s_bindable: >-
+      {{ _pbs_k8s_foreign | default([]) | selectattr('gib', 'ge', app_config.app.storage[item] | int) | list }}
+  ansible.builtin.assert:
+    that: _pbs_k8s_bindable | length == 0
+    fail_msg: >-
+      A new {{ instance }}-{{ item }} claim could bind a retained volume that belongs to
+      another instance ({{ _pbs_k8s_bindable | map(attribute='name') | join(', ') }}) instead of
+      getting a volume of its own. Reclaim or delete the volumes that are not wanted
+      (playbooks/maintenance/reclaim-volume.yml) and Deploy again.
+  loop: "{{ _pbs_k8s_fresh }}"
+
 - name: PBS Kubernetes volumes | Name the volumes to bind
   ansible.builtin.set_fact:
     pbs_retained_volumes: >-
