@@ -189,7 +189,9 @@
     recovery_overwrite: "{{ _ra_overwrite }}"
     recovery_point: "{{ _ra_recovery_point }}"
     recovery_pre_restore_point: "{{ _ra_pre_restore_point }}"
-    recovery_target_config_present: "{{ _ra_target_config_file.stat.exists | default(false) }}"
+    recovery_target_config_present: >-
+      {{ _ra_target_config_file.stat.exists | default(false)
+         or (_ra_kind == 'docker' and _ra_new_target_overlay | default({}) | length > 0) }}
     recovery_source_route_key: "{{ _ra_source_route_key }}"
     recovery_target_route_key: "{{ _ra_target_route_key }}"
     recovery_target_name_collision: >-

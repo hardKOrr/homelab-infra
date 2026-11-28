@@ -1,0 +1,30 @@
+---
+# Restore App, destination=new: create or complete config/apps/<target>.yml from the
+# derived overlay, so the target's database identity, port and route are the same for
+# provisioning and for every later Deploy. Authored values always win; only the missing
+# fields are added, so a partial file is completed and a complete file is left untouched.
+# The write goes through tasks/config/write-config-file.yml, which backs up the exact
+# previous file (comments included) under config/apps/.backups/ first.
+#
+# Inputs: _ra_target, _ra_new_target_overlay, _target_config (the file as authored, {}
+#   when absent), new_target_config_dir (config/apps), new_target_config_exists (the file
+#   is on disk) and new_target_config_loaded (include_vars read it): an unreadable file
+#   stops here instead of being replaced.
+- name: Refuse to replace a target config that exists but could not be loaded
+  ansible.builtin.assert:
+    that: new_target_config_loaded | default(false) | bool
+    fail_msg: >-
+      config/apps/{{ _ra_target }}.yml exists but could not be read as a YAML mapping.
+      Fix or remove it; a generated config never replaces an unreadable file.
+  when: new_target_config_exists | default(false) | bool
+
+- name: Create or complete the new target's instance config from the derived overlay
+  ansible.builtin.include_tasks: ../config/write-config-file.yml
+  vars:
+    _wnt_merged: "{{ _ra_new_target_overlay | combine(_target_config | default({}), recursive=True) }}"
+    config_write_path: "{{ new_target_config_dir }}/{{ _ra_target }}.yml"
+    config_write_content: "{{ _wnt_merged | to_nice_yaml }}"
+    config_write_mode: "0640"
+  when:
+    - _ra_new_target_overlay | default({}) | length > 0
+    - _wnt_merged != (_target_config | default({}))

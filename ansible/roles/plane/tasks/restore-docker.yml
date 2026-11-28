@@ -169,15 +169,17 @@
         recovery_swap_runtime: "{{ plane_runtime }}"
         recovery_swap_backup_id: "{{ _plane_restore_backup_id }}"
         recovery_swap_archives: [database.pxar, redis.pxar, data.pxar, object-storage.pxar]
-        # Staging sits in the project directory, outside both backed-up paths.
-        recovery_swap_staging_parent: "{{ plane_project_dir }}"
+        # Restore App's extra-var instance is the backup source. Stage outside both
+        # backed-up paths in the target's project, and use the target to check DB ownership.
+        recovery_swap_staging_parent: "/opt/{{ restore_target }}"
         recovery_swap_paths: >-
           {{ _plane_restore_paths + ([] if plane_native | bool else _plane_restore_docker_paths) }}
         recovery_swap_database:
           config: "{{ app_config.app.database }}"
+          instance: "{{ restore_target }}"
           dump: database/plane.dump
         recovery_swap_stop_services: "{{ plane_native_services if plane_native | bool else _plane_restore_compose_services }}"
-        recovery_swap_compose_project: "{{ plane_project_dir }}"
+        recovery_swap_compose_project: "/opt/{{ restore_target }}"
         recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
         recovery_swap_replaced_hook: "{{ role_path }}/tasks/restore-replaced.yml"
         recovery_swap_rollback_hook: "{{ role_path }}/tasks/restore-rollback.yml"

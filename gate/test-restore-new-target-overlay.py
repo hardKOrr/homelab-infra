@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Run tasks/recovery/new-target-overlay.yml: a destination=new restore target gets its
+own database name, role and host port, and never the source's."""
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+import yaml
+
+repo = Path(__file__).resolve().parents[1]
+ansible = Path.home() / '.venvs/homelab-ansible/bin/ansible-playbook'
+if not ansible.exists():
+    ansible = Path('ansible-playbook')
+def h(name):
+    return hashlib.sha1(name.encode()).hexdigest()[:8]
+
+
+defaults = {'plane_defaults': {
+    'routing': {'subdomain': 'plane', 'proxy': 'internal'},
+    'hosting': {'method': 'docker'},
+    'recovery': {'new_target_own_redis': True},
+    'app': {'port': 8093, 'database': {'provider': 'postgresql', 'instance': 'pg',
+                                       'name': 'plane', 'role': 'plane'},
+                'redis': {'instance': 'redis-plane'}}}}
+base = {'homelabinfra_infra': {'databases': {'redis-plane': {'provider': 'redis', 'host': '10.0.0.5', 'port': 6379}} | {'redis-' + n: {'provider': 'redis', 'host': '10.0.0.9', 'port': 6379} for n in ('plane-b', '1plane-b', 'plane-blue', 'plane.blue', 'plane_blue', 'x' * 40)}}, '_ra_app': 'plane', '_ra_defaults_key': 'plane_defaults',
+        '_app_defaults': defaults, '_instance_config': {}}
+cases = [
+    ('plane-b', 'new', {}, "o.app.database.name == 'plane_b_%s' and o.app.database.role == 'plane_b_%s'" % (h('plane-b'), h('plane-b'))
+     + " and o.app.redis.instance == 'redis-plane-b' and o.app.port != 8093 and o.app.port | int >= 20000"),
+    ('1plane-b', 'new', {}, "o.app.database.name == 'r_1plane_b_%s'" % h('1plane-b')),
+    # Names that normalize to one slug still get different logins.
+    ('plane-blue', 'new', {}, "o.app.database.name == 'plane_blue_%s'" % h('plane-blue')),
+    ('plane.blue', 'new', {}, "o.app.database.name == 'plane_blue_%s'" % h('plane.blue')),
+    ('plane_blue', 'new', {}, "o.app.database.name == 'plane_blue'"),
+    ('x' * 40, 'new', {}, "o.app.database.name | length == 32 and o.app.database.name == o.app.database.role"),
+    ('plane-b', 'new', {}, "o.routing.subdomain == 'plane-b'"),
+    ('plane-b', 'new', {'app': {'port': 9000, 'database': {'name': 'mine', 'role': 'mine'}}},
+     "o.app.database.name == 'mine' and o.app.port == 9000"),
+    ('plane-b', 'existing', {}, "o == {}"),
+    # Only database.name authored: the role is still generated, never the source's 'plane'.
+    ('plane-b', 'new', {'app': {'database': {'name': 'mine'}}},
+     "o.app.database.name == 'mine' and o.app.database.role == 'plane_b_%s'" % h('plane-b')),
+    # The source's own item already uses the derived login: take a suffix.
+    ('plane-blue', 'new', {}, "o.app.database.role == '%s_new'" % ('plane_blue_' + h('plane-blue'))[:28],
+     {'homelabinfra_vault': {'apps': {'plane': {'database_name': 'plane_blue_' + h('plane-blue'),
+                                                'database_user': 'plane_blue_' + h('plane-blue')}}},
+      'instance': 'plane'}),
+    # An app whose restore does not replay Redis (Immich) keeps its Redis and is not refused.
+    ('plane-b', 'new', {}, "o.app.redis is not defined",
+     {'_app_defaults': {'plane_defaults': defaults['plane_defaults'] | {'recovery': {}}}}),
+]
+refused = [
+    ('plane-b', {'app': {'database': {'name': 'plane'}}}),
+    ('plane-b', {'app': {'database': {'role': 'plane'}}}),
+    ('plane-b', {'app': {'port': 8093}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-plane'}}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-typo'}}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-alias'}}}, {'redis-alias': {'provider': 'redis', 'host': '10.0.0.5', 'port': 6379}}),
+    ('plane-b', {'app': {'redis': {'instance': 'redis-wrong'}}}, {'redis-wrong': {'provider': 'postgresql', 'host': '10.0.0.7', 'port': 5432}}),
+]
+tasks = []
+for target, dest, authored, check, *extra in cases:
+    tasks += [
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml'),
+         'vars': base | (extra[0] if extra else {}) | {'_ra_target': target, '_ra_destination': dest, '_target_config': authored}},
+        {'ansible.builtin.assert': {'that': check}, 'vars': {'o': '{{ _ra_new_target_overlay }}'}},
+    ]
+with tempfile.TemporaryDirectory(prefix='new-target-overlay-') as directory:
+    playbook = Path(directory) / 'test.yml'
+    playbook.write_text(yaml.safe_dump([{'hosts': 'localhost', 'gather_facts': False, 'tasks': tasks}]))
+    result = subprocess.run(
+        [str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+        env=os.environ | {'ANSIBLE_STDOUT_CALLBACK': 'default', 'ANSIBLE_NOCOLOR': '1'},
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+for target, authored, *more_db in refused:
+    play = [{'hosts': 'localhost', 'gather_facts': False, 'tasks': [
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml'),
+         'vars': base | ({'homelabinfra_infra': {'databases': base['homelabinfra_infra']['databases'] | more_db[0]}} if more_db else {}) | {'_ra_target': target, '_ra_destination': 'new', '_target_config': authored}}]}]
+    with tempfile.TemporaryDirectory(prefix='new-target-overlay-') as directory:
+        playbook = Path(directory) / 'refuse.yml'
+        playbook.write_text(yaml.safe_dump(play))
+        result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+                                env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
+        assert result.returncode != 0 and 'uses' in result.stdout, authored
+# End to end: write the target's config, load it over the defaults and run the shared
+# database consumer with provision.yml stubbed to record its inputs.
+with tempfile.TemporaryDirectory(prefix='new-target-provision-') as directory:
+    root = Path(directory)
+    shutil.copy(repo / 'ansible/tasks/database/deploy-consumer.yml', root / 'deploy-consumer.yml')
+    (root / 'provision.yml').write_text(yaml.safe_dump([
+        {'ansible.builtin.set_fact': {
+            'seen': {'item': '{{ database_provision_app_instance }}',
+                     'name': '{{ database_provision_config.name }}',
+                     'role': '{{ database_provision_config.role }}'},
+            'database_provision_connection': {
+                'provider': 'postgresql', 'host': 'h', 'port': 5432, 'name': '{{ database_provision_config.name }}',
+                'user': '{{ database_provision_config.role }}', 'password': 'x'}}}]))
+    (root / 'config').mkdir()
+    play = [{'hosts': 'localhost', 'gather_facts': False, 'vars': base | {
+        '_ra_target': 'plane-b', '_ra_destination': 'new', '_target_config': {}}, 'tasks': [
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml')},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/write-new-target-config.yml'),
+         'vars': {'new_target_config_dir': str(root / 'config')}},
+        {'ansible.builtin.include_vars': {'file': str(root / 'config/plane-b.yml'), 'name': '_written'}},
+        {'ansible.builtin.set_fact': {'instance': 'plane-b', 'app_config':
+            "{{ _app_defaults.plane_defaults | combine(_written, recursive=True) }}"}},
+        {'ansible.builtin.include_tasks': str(root / 'deploy-consumer.yml')},
+        {'ansible.builtin.assert': {'that': [
+            "seen.item == 'plane-b'", "seen.name == 'plane_b_%s'" % h('plane-b'), "seen.role == 'plane_b_%s'" % h('plane-b'),
+            "app_config.app.port | int != 8093", "app_config.app.port | int >= 20000"]}},
+    ]}]
+    playbook = root / 'e2e.yml'
+    playbook.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+                            env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+# A partial authored file (only database.name) is completed: deploy reads the same role,
+# port and route the restore resolved, and the authored name is kept.
+with tempfile.TemporaryDirectory(prefix='new-target-partial-') as directory:
+    root = Path(directory)
+    (root / 'plane-b.yml').write_text(yaml.safe_dump({'app': {'database': {'name': 'mine'}}}))
+    play = [{'hosts': 'localhost', 'gather_facts': False, 'vars': base | {
+        '_ra_target': 'plane-b', '_ra_destination': 'new'}, 'tasks': [
+        {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_target_config'},
+         'register': '_ra_target_config_load'},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml')},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/write-new-target-config.yml'),
+         'vars': {'new_target_config_dir': str(root), 'new_target_config_exists': True,
+                  'new_target_config_loaded': "{{ (_ra_target_config_load.ansible_included_var_files | default([])) | length > 0 }}"}},
+        {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_written'}},
+        {'ansible.builtin.assert': {'that': [
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.name == 'mine'",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.database.role == 'plane_b_%s'" % h('plane-b'),
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).app.port == _ra_new_target_overlay.app.port",
+            "(_app_defaults.plane_defaults | combine(_written, recursive=True)).routing.subdomain == 'plane-b'"]}},
+    ]}]
+    playbook = root / 'partial.yml'
+    playbook.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+                            env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+# A malformed existing file is refused, never replaced.
+with tempfile.TemporaryDirectory(prefix='new-target-malformed-') as directory:
+    root = Path(directory)
+    (root / 'plane-b.yml').write_text('app: [unclosed\n')
+    play = [{'hosts': 'localhost', 'gather_facts': False, 'vars': base | {
+        '_ra_target': 'plane-b', '_ra_destination': 'new'}, 'tasks': [
+        {'ansible.builtin.include_vars': {'file': str(root / 'plane-b.yml'), 'name': '_target_config'},
+         'failed_when': False, 'register': '_ra_target_config_load'},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/new-target-overlay.yml')},
+        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/recovery/write-new-target-config.yml'),
+         'vars': {'new_target_config_dir': str(root), 'new_target_config_exists': True,
+                  'new_target_config_loaded': "{{ (_ra_target_config_load.ansible_included_var_files | default([])) | length > 0 }}"}},
+    ]}]
+    playbook = root / 'malformed.yml'
+    playbook.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(playbook)],
+                            env=os.environ | {'ANSIBLE_NOCOLOR': '1'}, capture_output=True, text=True)
+    assert result.returncode != 0 and 'could not be read' in result.stdout, result.stdout
+    assert (root / 'plane-b.yml').read_text() == 'app: [unclosed\n'
+print('Restore new target overlay: own database login and port passed')

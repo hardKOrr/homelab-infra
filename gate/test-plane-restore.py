@@ -28,8 +28,10 @@ def check_swap_inputs():
     assert swap["recovery_swap_archives"] == [
         "database.pxar", "redis.pxar", "data.pxar", "object-storage.pxar"]
     assert swap["recovery_swap_database"] == {
-        "config": "{{ app_config.app.database }}", "dump": "database/plane.dump"}
-    assert swap["recovery_swap_staging_parent"] == "{{ plane_project_dir }}"
+        "config": "{{ app_config.app.database }}", "instance": "{{ restore_target }}",
+        "dump": "database/plane.dump"}
+    assert swap["recovery_swap_staging_parent"] == "/opt/{{ restore_target }}"
+    assert swap["recovery_swap_compose_project"] == "/opt/{{ restore_target }}"
     facts = next(t for t in restore if t.get("name") == "Plane restore | Resolve the paths and services the swap replaces")[
         "ansible.builtin.set_fact"]
     assert swap["recovery_swap_paths"].split() == [

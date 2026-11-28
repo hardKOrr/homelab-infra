@@ -9,6 +9,16 @@
 # but the isolated flag suppresses route/SSO/DNS/monitor publication. The source is
 # never contacted; only the target's authored config and defaults are loaded by this
 # child playbook. Plan mode remains read-only and does not create the target.
+- name: Create the new target's instance config when none is authored
+  ansible.builtin.include_tasks: write-new-target-config.yml
+  vars:
+    new_target_config_dir: "{{ playbook_dir }}/../../../config/apps"
+    new_target_config_exists: "{{ _ra_target_config_file.stat.exists | default(false) }}"
+    new_target_config_loaded: "{{ (_ra_target_config_load.ansible_included_var_files | default([])) | length > 0 }}"
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
 - name: Provision the isolated new restore target
   when:
     - recovery_destination_resolved == 'new'
@@ -97,6 +107,7 @@
   ansible.builtin.set_fact:
     restore_target_config: >-
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+         | combine(_ra_new_target_overlay | default({}), recursive=True)
          | combine(_target_config | default({}), recursive=True)
          | combine({'app': (homelabinfra_vault.apps | default({})).get(_ra_target, {})},
                    recursive=True) }}

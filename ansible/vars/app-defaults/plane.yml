@@ -9,6 +9,9 @@ plane_defaults:
     impossible: {}
   stack: productivity
   recovery:
+    # The restore replays the named Redis dataset, so a new target needs a Redis backend
+    # of its own (tasks/recovery/new-target-overlay.yml).
+    new_target_own_redis: true
     methods: [native]
     native:
       backup_playbook: backup-app.yml
