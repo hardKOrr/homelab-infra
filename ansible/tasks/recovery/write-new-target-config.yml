@@ -1,0 +1,13 @@
+---
+# Restore App, destination=new: create config/apps/<target>.yml from the derived overlay
+# when the operator authored none, so the target's database identity, port and route are
+# the same for provisioning and for every later Deploy. An authored file is never changed.
+#
+# Inputs: _ra_target, _ra_new_target_overlay, new_target_config_dir (config/apps).
+- name: Create the new target's instance config from the derived overlay
+  ansible.builtin.copy:
+    dest: "{{ new_target_config_dir }}/{{ _ra_target }}.yml"
+    content: "{{ _ra_new_target_overlay | to_nice_yaml }}"
+    mode: "0640"
+    force: false
+  when: _ra_new_target_overlay | default({}) | length > 0

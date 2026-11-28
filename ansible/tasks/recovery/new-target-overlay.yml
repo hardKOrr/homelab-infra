@@ -9,8 +9,9 @@
 # Inputs: _ra_target, _ra_app, _ra_destination, _app_defaults, _instance_config,
 #   _target_config, _ra_defaults_key.
 # Result: _ra_new_target_overlay ({} for destination=existing); restore-app-target.yml
-#   passes it to the provisioning playbook as recovery_target_overlay, which
-#   tasks/apps/load-config.yml merges under the instance file.
+#   writes it to config/apps/<target>.yml when that file is absent (write-new-target-config.yml),
+#   so provisioning and every later Deploy read the same values. The target also gets a
+#   routing.subdomain of its own, so its route never equals the source's.
 - name: Derive the new restore target's own database login and port
   vars:
     _nto_source: >-
@@ -43,14 +44,23 @@
       {%- if _nto_src_db is mapping and _nto_src_db | length > 0 -%}
       {%-   set _ = out.update({'database': {'name': _nto_db_name, 'role': _nto_db_role}}) -%}
       {%- endif -%}
-      {%- if _nto_source_port | int > 0 and 'port' not in _nto_authored
+      {%- if _nto_source_port | int > 0
              and (_nto_source.get('hosting', {})).get('method', 'docker') == 'docker' -%}
-      {%-   set _ = out.update({'port': _nto_port | int}) -%}
+      {%-   set _ = out.update({'port': _nto_authored.get('port', _nto_port) | int}) -%}
       {%- endif -%}
       {{ out | to_json }}
+    # A routed source gives its target a route of its own; an authored subdomain wins and
+    # the shared validator still refuses one that equals the source's.
+    _nto_routing: >-
+      {{ {'subdomain': _ra_target}
+         if (_nto_source.get('routing', {})).get('proxy', 'none') != 'none'
+            and 'subdomain' not in (_target_config | default({})).get('routing', {})
+         else {} }}
   ansible.builtin.set_fact:
     _ra_new_target_overlay: >-
-      {{ {'app': _nto_app | from_json} if (_ra_destination == 'new' and (_nto_app | from_json) | length > 0) else {} }}
+      {{ ({'app': _nto_app | from_json} if (_nto_app | from_json) | length > 0 else {})
+         | combine({'routing': _nto_routing} if _nto_routing | length > 0 else {})
+         if _ra_destination == 'new' else {} }}
 
 # Fail closed before the child deploy provisions anything: the target's final database
 # name or login (authored or derived) must not be one the source uses.
@@ -59,14 +69,18 @@
     that:
       - (_ra_new_target_overlay.app.database.name | default('')) not in _nto_taken
       - (_ra_new_target_overlay.app.database.role | default('')) not in _nto_taken
+      - >-
+        _nto_source_port | int == 0 or (_ra_new_target_overlay.app.port | default(0) | int)
+        != _nto_source_port | int
     fail_msg: >-
-      The new restore target {{ _ra_target }} would use a database name or login the source
-      uses. Set a different app.database.name and app.database.role in
-      config/apps/{{ _ra_target }}.yml.
+      The new restore target {{ _ra_target }} would use a database name, login or published
+      port the source uses (the target can share the source's stack host). Set a different
+      app.database.name, app.database.role and app.port in config/apps/{{ _ra_target }}.yml.
   vars:
     _nto_source: >-
       {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
          | combine(_instance_config | default({}), recursive=True) }}
+    _nto_source_port: "{{ (_nto_source.get('app', {})).get('port', 0) | int }}"
     _nto_src_db: "{{ _nto_source.get('app', {}).get('database', {}) }}"
     _nto_src_item: "{{ (homelabinfra_vault.apps | default({})).get(instance | default(''), {}) }}"
     _nto_taken: >-

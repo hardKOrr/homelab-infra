@@ -45,7 +45,6 @@
       {{ _load_config_defaults
          | combine(_load_config_platform, recursive=True)
          | combine(load_config_layer | default({}), recursive=True)
-         | combine(recovery_target_overlay | default({}), recursive=True)
          | combine(_instance_config | default({}), recursive=True) }}
   vars:
     _load_config_defaults: >-

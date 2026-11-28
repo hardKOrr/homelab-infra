@@ -9,6 +9,14 @@
 # but the isolated flag suppresses route/SSO/DNS/monitor publication. The source is
 # never contacted; only the target's authored config and defaults are loaded by this
 # child playbook. Plan mode remains read-only and does not create the target.
+- name: Create the new target's instance config when none is authored
+  ansible.builtin.include_tasks: write-new-target-config.yml
+  vars:
+    new_target_config_dir: "{{ playbook_dir }}/../../../config/apps"
+  when:
+    - recovery_destination_resolved == 'new'
+    - _ra_overwrite | bool
+
 - name: Provision the isolated new restore target
   when:
     - recovery_destination_resolved == 'new'
@@ -23,8 +31,6 @@
       - "instance={{ _ra_target }}"
       - -e
       - recovery_isolated=true
-      - -e
-      - "{{ {'recovery_target_overlay': _ra_new_target_overlay | default({})} | to_json }}"
   environment:
     ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
   changed_when: true
