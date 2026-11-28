@@ -6,7 +6,17 @@
 # complete file is left untouched.
 #
 # Inputs: _ra_target, _ra_new_target_overlay, _target_config (the file as authored, {}
-#   when absent), new_target_config_dir (config/apps).
+#   when absent), new_target_config_dir (config/apps), new_target_config_exists (the file
+#   is on disk) and new_target_config_loaded (include_vars read it): an unreadable file
+#   stops here instead of being replaced.
+- name: Refuse to replace a target config that exists but could not be loaded
+  ansible.builtin.assert:
+    that: new_target_config_loaded | default(false) | bool
+    fail_msg: >-
+      config/apps/{{ _ra_target }}.yml exists but could not be read as a YAML mapping.
+      Fix or remove it; a generated config never replaces an unreadable file.
+  when: new_target_config_exists | default(false) | bool
+
 - name: Create or complete the new target's instance config from the derived overlay
   vars:
     _wnt_merged: "{{ _ra_new_target_overlay | combine(_target_config | default({}), recursive=True) }}"

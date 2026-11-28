@@ -56,6 +56,7 @@
   ansible.builtin.include_vars:
     file: "{{ playbook_dir }}/../../../config/apps/{{ _ra_target }}.yml"
     name: _target_config
+  register: _ra_target_config_load
   failed_when: false
 
 - name: Check whether the target instance configuration is authored

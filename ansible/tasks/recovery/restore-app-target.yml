@@ -13,6 +13,8 @@
   ansible.builtin.include_tasks: write-new-target-config.yml
   vars:
     new_target_config_dir: "{{ playbook_dir }}/../../../config/apps"
+    new_target_config_exists: "{{ _ra_target_config_file.stat.exists | default(false) }}"
+    new_target_config_loaded: "{{ (_ra_target_config_load.ansible_included_var_files | default([])) | length > 0 }}"
   when:
     - recovery_destination_resolved == 'new'
     - _ra_overwrite | bool
