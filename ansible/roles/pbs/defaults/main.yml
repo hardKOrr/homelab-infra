@@ -12,7 +12,18 @@ pbs_native: "{{ app_config.hosting.method | default('native') == 'native' }}"
 pbs_auth_id: root@pam
 pbs_admin_id: admin@pbs
 pbs_project_dir: "/opt/{{ instance }}"
-# proxmox-backup-manager runs inside the container on Docker.
-pbs_manager_argv: "{{ ['proxmox-backup-manager'] if pbs_native | bool else ['docker', 'exec', instance, 'proxmox-backup-manager'] }}"
+# proxmox-backup-manager runs inside the container on Docker, and in the pod on Kubernetes
+# (kubectl on the cluster's API node: tasks/kubernetes.yml sets pbs_exec_host there, and
+# the shared task files delegate their PBS commands and API calls to it).
+pbs_manager_argv: >-
+  {{ ['proxmox-backup-manager'] if pbs_native | bool
+     else ['k3s', 'kubectl', '--namespace', k8s_namespace, 'exec', 'deployment/' ~ instance, '--',
+           'proxmox-backup-manager']
+     if app_config.hosting.method | default('native') == 'kubernetes'
+     else ['docker', 'exec', instance, 'proxmox-backup-manager'] }}
+# Where this task's PBS API is reached from (the guest itself, or the cluster node, which
+# reaches the pod's Service address) and the address clients use.
+pbs_api_base: "https://localhost:{{ app_config.app.port }}"
+pbs_endpoint: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
 # The `backup` user's numeric id in the PBS image (and Debian), owner of the datastore.
 pbs_backup_uid: 34

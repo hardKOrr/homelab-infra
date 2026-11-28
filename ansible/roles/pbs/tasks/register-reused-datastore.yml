@@ -5,6 +5,8 @@
 # the datastore.cfg registration; it never runs datastore create without reuse.
 
 - name: PBS datastore reuse | List local registrations
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores
@@ -31,6 +33,8 @@
       different path or appears more than once. Refusing to change the retained store.
 
 - name: PBS datastore reuse | Read datastore create options
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     argv: "{{ pbs_manager_argv + ['datastore', 'create', '--help'] }}"
   register: _pbs_reuse_create_help
@@ -50,9 +54,11 @@
     fail_msg: The PBS container image must support --reuse-datastore to register an existing chunk store.
   when:
     - _pbs_reuse_registered | length == 0
-    - app_config.hosting.method | default('native') == 'docker'
+    - app_config.hosting.method | default('native') in ['docker', 'kubernetes']
 
 - name: PBS datastore reuse | Register the retained directory without initialising it
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     argv: >-
       {{ pbs_manager_argv + ['datastore', 'create', app_config.app.datastore_name,
@@ -114,6 +120,8 @@
     - not (_pbs_reuse_native_supported | bool)
 
 - name: PBS datastore reuse | Read registrations after reuse
+  delegate_to: "{{ pbs_exec_host | default(omit) }}"
+  become: "{{ true if pbs_exec_host is defined else omit }}"
   ansible.builtin.command:
     argv: "{{ pbs_manager_argv + ['datastore', 'list', '--output-format', 'json'] }}"
   register: _pbs_reuse_datastores_after

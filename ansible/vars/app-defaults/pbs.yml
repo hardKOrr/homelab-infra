@@ -11,7 +11,7 @@
 pbs_defaults:
   hosting:
     method: native
-    supported: [native-vm, docker-lxc, docker-vm]
+    supported: [native-vm, docker-lxc, docker-vm, kubernetes]
     impossible: {}
   # Docker method: `hosting.method: docker` plus `stack: <name>` (guest_type lxc or vm)
   # runs the community image on that stack host, dedicated to PBS. The native VM default
@@ -75,7 +75,8 @@ pbs_defaults:
       name: debian-12-cloud
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
-  # Docker method: the configuration directory is the recovery point (see the role README).
+  # Docker and Kubernetes: the configuration directory or volume is the recovery point (see
+  # the role README).
   recovery:
     methods: [native]
     native:
@@ -109,6 +110,13 @@ pbs_defaults:
     # (https://github.com/ayufan/pve-backup-server-dockerfiles). Its admin@pbs password is
     # replaced at Deploy; the token stays root@pam!ansible on both methods.
     image: ayufan/proxmox-backup-server:v4.2.0-1
+    # Kubernetes method: PVC sizes in GiB. The datastore volume holds the backups and is
+    # retained when the namespace is removed. The listener is a LoadBalancer Service on
+    # the ingress VIP at `port`, so two PBS instances cannot share a cluster.
+    storage:
+      config: 1
+      state: 2
+      datastore: 64
     service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
                                          # name; playbooks/apps/remove.yml stops this
 

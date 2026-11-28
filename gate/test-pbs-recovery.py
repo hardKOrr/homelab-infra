@@ -32,7 +32,7 @@ assert defaults["second_copy"]["enabled"] is False
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
 
-pbs_record_tasks = playbook[3]["tasks"]
+pbs_record_tasks = playbook[4]["tasks"]
 # homelabinfra_infra comes from load-user-vars' set_fact; an include_vars reload of
 # facts.yml under that name is shadowed by it and does nothing.
 assert not any(

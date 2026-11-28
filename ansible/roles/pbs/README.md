@@ -34,6 +34,22 @@ For a node-local retained disk, pin the Docker VM stack to the node that can see
 volume. If that node cannot reach the default VM or template pool, set the corresponding
 `storage` or `template_storage` in [the stack override](../../vars/stack-defaults.yml).
 
+## Kubernetes hosting
+
+`hosting.method: kubernetes` runs the same image in the namespace `app-<instance>`:
+[`playbooks/apps/pbs.yml`](../../playbooks/apps/pbs.yml) Play 2b runs `tasks/kubernetes.yml`
+on localhost, which applies `templates/manifest.yaml.j2` (config, state and datastore
+volumes on the default StorageClass, one Deployment) and delegates `proxmox-backup-manager`
+and the API calls to the cluster's API node (`pbs_exec_host`), so `token.yml`,
+`admin-password.yml`, `register-reused-datastore.yml` and `export.yml` are shared with the other
+methods. The listener is a LoadBalancer Service on the ingress VIP at `app.port`, created only
+after the default `admin@pbs` password is replaced; one cluster therefore runs one PBS. There is no Ingress: Caddy and PVE
+address the VIP over HTTPS. The datastore volume is never archived. Backup App archives the
+config volume (`config.pxar`) through the shared CronJob, and Restore App replaces it through
+the shared recovery Job; run **Deploy PBS** afterwards so the platform token and the certificate
+fingerprint PVE trusts are proven against the restored configuration. `datastore_disk` and
+`second_copy` are not available.
+
 ## Optional second copy
 
 `second_copy` is disabled by default. When enabled, it attaches a second retained disk on

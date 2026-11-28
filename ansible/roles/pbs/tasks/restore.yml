@@ -1,32 +1,14 @@
 ---
-# Restore the Docker PBS configuration directory through the shared swap.
-- name: PBS restore | Assert the recovery contract
-  ansible.builtin.assert:
-    that:
-      - restore_target_config.hosting.method | default(app_config.hosting.method | default('native')) == 'docker'
-      - app_config.backup.enabled | default(false) | bool
-      - restore_overwrite is defined
-      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
-      - homelabinfra_infra.backups is defined
-    fail_msg: >-
-      PBS restore supports the Docker method, a configured PBS target and a selected
-      recovery point for overwrite=true.
+# Restore the PBS configuration: Kubernetes through the shared recovery Job, Docker through
+# the shared swap of its configuration directory.
+- name: PBS restore | Use the Kubernetes recovery Job
+  ansible.builtin.include_tasks: restore-kubernetes.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('native')) == 'kubernetes'
 
-- name: PBS restore | Preview or replace the configuration directory
-  ansible.builtin.include_tasks: ../../../tasks/recovery/restore-swap.yml
-  vars:
-    recovery_swap_runtime: docker
-    recovery_swap_archives: [config.pxar]
-    recovery_swap_paths:
-      - path: "{{ pbs_project_dir }}/etc"
-        source: config
-        # The proxy runs as `backup`: it owns the whole tree, as the image sets at start.
-        owner: "{{ pbs_backup_uid }}"
-        group: "{{ pbs_backup_uid }}"
-        mode: "0700"
-    recovery_swap_compose_project: "{{ pbs_project_dir }}"
-    recovery_swap_stop_services: ["{{ instance }}"]
-    recovery_swap_staged_hook: "{{ role_path }}/tasks/restore-staged.yml"
-    # No health URL: the shared wait validates certificates and PBS serves a self-signed one.
-    # The verified hook waits with the same local TLS handling as Deploy.
-    recovery_swap_verified_hook: "{{ role_path }}/tasks/restore-verified.yml"
+- name: PBS restore | Use the Docker configuration swap
+  ansible.builtin.include_tasks: restore-docker.yml
+  when: >-
+    restore_target_config.hosting.method
+    | default(app_config.hosting.method | default('native')) == 'docker'
