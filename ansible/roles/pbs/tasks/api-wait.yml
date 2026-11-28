@@ -6,7 +6,7 @@
 - name: Wait for the PBS API to answer over the pod's loopback
   ansible.builtin.command:
     argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, "deployment/{{ instance }}", --,
-           curl, --insecure, --silent, --output, /dev/null, "https://localhost:{{ app_config.app.port }}/api2/json/ping"]
+           curl, --insecure, --silent, --output, /dev/null, "https://localhost:{{ pbs_container_port }}/api2/json/ping"]
   delegate_to: "{{ pbs_exec_host }}"
   become: true
   register: _pbs_health_pod

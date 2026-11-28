@@ -20,7 +20,7 @@ assert "kubernetes" in defaults["hosting"]["supported"] and defaults["hosting"][
 
 def render(open_listener):
     text = env.get_template("manifest.yaml.j2").render(
-        instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_listener_open=open_listener,
+        instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_container_port=8007, pbs_listener_open=open_listener,
         homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
         homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.50"}},
     )
@@ -33,7 +33,7 @@ assert kinds == [("PersistentVolumeClaim", "pbs-config"), ("PersistentVolumeClai
                  ("PersistentVolumeClaim", "pbs-datastore"), ("NetworkPolicy", "pbs-listener"), ("Deployment", "pbs")], \
     "no Service selects the pod while the factory password is valid: " + str(kinds)
 bound = yaml.safe_load_all(env.get_template("manifest.yaml.j2").render(
-    instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_listener_open=False,
+    instance="pbs", app_config=defaults, pbs_backup_uid=34, pbs_container_port=8007, pbs_listener_open=False,
     pbs_retained_volumes={"datastore": "pvc-1234"},
     homelabinfra_config={"infrastructure": {"backups": {"datastore_path": "/mnt/backup"}}},
     homelabinfra_infra={"kubernetes": {"ingress_vip": "192.0.2.50"}}))
@@ -55,6 +55,10 @@ lan = next(doc for doc in opened if doc["metadata"]["name"] == "pbs-lan")
 assert lan["spec"]["type"] == "LoadBalancer" and lan["spec"]["ports"][0]["port"] == 8007, lan
 assert lan["metadata"]["annotations"]["metallb.io/loadBalancerIPs"] == "192.0.2.50"
 assert not any(doc["kind"] == "Ingress" for doc in opened)
+volumes = (ROLE / "tasks/retained-volumes.yml").read_text()
+assert "_pbs_k8s_bound | combine" in volumes, "an existing claim keeps its volumeName on every apply"
+for name in ("api-call.yml", "api-wait.yml"):
+    assert "pbs_container_port" in (ROLE / "tasks" / name).read_text(), name
 
 deploy = (ROLE / "tasks/kubernetes.yml").read_text()
 assert "tasks/kubernetes/apply-manifest.yml" in deploy

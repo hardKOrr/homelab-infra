@@ -95,12 +95,12 @@ spec:
         - name: pbs
           image: {{ app_config.app.image }}
           ports:
-            - containerPort: 8007
+            - containerPort: {{ pbs_container_port }}
           readinessProbe:
-            tcpSocket: {port: 8007}
+            tcpSocket: {port: {{ pbs_container_port }}}
             periodSeconds: 10
           livenessProbe:
-            tcpSocket: {port: 8007}
+            tcpSocket: {port: {{ pbs_container_port }}}
             initialDelaySeconds: 60
             periodSeconds: 20
             failureThreshold: 6
@@ -134,7 +134,7 @@ spec:
     app.kubernetes.io/component: web
   ports:
     - port: {{ app_config.app.port }}
-      targetPort: 8007
+      targetPort: {{ pbs_container_port }}
 ---
 apiVersion: v1
 kind: Service
@@ -152,5 +152,5 @@ spec:
     app.kubernetes.io/component: web
   ports:
     - port: {{ app_config.app.port }}
-      targetPort: 8007
+      targetPort: {{ pbs_container_port }}
 {% endif %}

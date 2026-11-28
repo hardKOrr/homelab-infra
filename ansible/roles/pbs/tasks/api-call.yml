@@ -14,7 +14,7 @@
   ansible.builtin.command:
     argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", exec, -i, "deployment/{{ instance }}", --, curl, --config, "-"]
     stdin: |
-      url = {{ ('https://localhost:' ~ app_config.app.port ~ pbs_call_path) | to_json }}
+      url = {{ ('https://localhost:' ~ pbs_container_port ~ pbs_call_path) | to_json }}
       request = {{ (pbs_call_method | default('GET')) | to_json }}
       insecure
       silent

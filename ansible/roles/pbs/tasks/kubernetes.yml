@@ -15,6 +15,11 @@
 - name: PBS Kubernetes | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
+- name: PBS Kubernetes | Require a usable Service port
+  ansible.builtin.assert:
+    that: app_config.app.port | string is match('^[1-9][0-9]{0,4}$') and app_config.app.port | int <= 65535
+    fail_msg: app.port is the Service and VIP port and must be 1-65535; the pod always listens on 8007.
+
 - name: PBS Kubernetes | Find the volumes a Remove retained for this instance
   ansible.builtin.include_tasks: retained-volumes.yml
 

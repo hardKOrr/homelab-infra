@@ -4,15 +4,29 @@
 # provision an empty one, and only the provisioner's directory name
 # (`pvc-<uuid>_<namespace>_<claim>`) still says whose volume it was. Each claim that does
 # not exist yet is matched to the one retained volume carrying its name; two candidates
-# fail the Deploy rather than guess. Sets pbs_retained_volumes ({config|state|datastore: pv}).
+# fail the Deploy rather than guess. A claim that already exists keeps its bound volume in the
+# manifest: volumeName is immutable, and an apply that omitted it would try to clear it.
+# Sets pbs_retained_volumes ({config|state|datastore: pv}).
 
 - name: PBS Kubernetes volumes | Read the instance's existing claims
   ansible.builtin.command:
-    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, pvc, -o, "jsonpath={.items[*].metadata.name}"]
+    argv: [k3s, kubectl, --namespace, "{{ k8s_namespace }}", get, pvc, -o, json]
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _pbs_k8s_claims
   changed_when: false
+
+- name: PBS Kubernetes volumes | Note the volumes the existing claims are bound to
+  ansible.builtin.set_fact:
+    _pbs_k8s_bound: >-
+      {{ dict((_pbs_k8s_claims.stdout | from_json)['items']
+              | selectattr('spec.volumeName', 'defined')
+              | map(attribute='metadata.name') | map('regex_replace', '^' ~ instance ~ '-', '')
+              | zip((_pbs_k8s_claims.stdout | from_json)['items']
+                    | selectattr('spec.volumeName', 'defined') | map(attribute='spec.volumeName'))) }}
+    _pbs_k8s_claim_names: >-
+      {{ (_pbs_k8s_claims.stdout | from_json)['items'] | map(attribute='metadata.name')
+         | map('regex_replace', '^' ~ instance ~ '-', '') | list }}
 
 - name: PBS Kubernetes volumes | Read the retained volumes
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/list-orphan-volumes.yml
@@ -24,7 +38,7 @@
            | selectattr('phase', 'equalto', 'Available')
            | selectattr('path', 'search', '_' ~ k8s_namespace ~ '_' ~ instance ~ '-' ~ item ~ '$')
            | map(attribute='name') | list)}) }}
-  loop: "{{ ['config', 'state', 'datastore'] | reject('in', _pbs_k8s_claims.stdout.split() | map('regex_replace', '^' ~ instance ~ '-', '') | list) | list }}"
+  loop: "{{ ['config', 'state', 'datastore'] | reject('in', _pbs_k8s_claim_names) | list }}"
 
 - name: PBS Kubernetes volumes | Refuse an ambiguous retained volume
   ansible.builtin.assert:
@@ -46,7 +60,7 @@
 - name: PBS Kubernetes volumes | Name the volumes to bind
   ansible.builtin.set_fact:
     pbs_retained_volumes: >-
-      {{ dict(_pbs_k8s_matches | default({}) | dict2items | selectattr('value', 'ne', [])
+      {{ _pbs_k8s_bound | combine(dict(_pbs_k8s_matches | default({}) | dict2items | selectattr('value', 'ne', [])
               | map(attribute='key') | zip(_pbs_k8s_matches | default({}) | dict2items | selectattr('value', 'ne', [])
-              | map(attribute='value') | map('first'))) }}
+              | map(attribute='value') | map('first')))) }}
     _pbs_k8s_matches: {}

@@ -27,3 +27,5 @@ pbs_api_base: "https://localhost:{{ app_config.app.port }}"
 pbs_endpoint: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
 # The `backup` user's numeric id in the PBS image (and Debian), owner of the datastore.
 pbs_backup_uid: 34
+# The port PBS listens on inside the container; app.port is only the Service's.
+pbs_container_port: 8007
